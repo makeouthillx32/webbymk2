@@ -55,3 +55,9 @@ export type Feature = {
   title: string;
   paragraph: string;
 };
+export type CalendarText = {
+  title: string;  // This will come from en.ts
+  description: string;  // This will come from en.ts
+  breadcrumbTitle: string;  // This will come from en.ts
+  breadcrumbDescription: string;  // This will come from en.ts
+};

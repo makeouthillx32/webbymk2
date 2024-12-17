@@ -1,0 +1,15 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: unenter
+      POSTGRES_PASSWORD: unenter1005
+      POSTGRES_DB: calendardb
+    ports:
+      - "172.26.224.1:5432:5432"  # Bind to the specific IP address and port
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:

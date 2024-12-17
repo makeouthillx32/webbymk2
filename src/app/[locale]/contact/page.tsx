@@ -4,9 +4,6 @@ import { Metadata } from "next";
 import { getScopedI18n } from "@/locales/server";
 
 export const metadata: Metadata = {
-  title: "Kontakt | Formen Werkstatt",
-  description: "This is Contact Page for Startup Nextjs Template",
-  // other metadata
 };
 
 const ContactPage = async () => {

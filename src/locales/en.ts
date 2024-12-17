@@ -8,6 +8,12 @@ export default {
     contact: "Contact",
     services: "Services",
   },
+  calendar: {
+    title: "My Calendar",
+    description: "Book Me!!",
+    breadcrumbTitle: "My Calendar",
+    breadcrumbDescription: "Book Me!!"
+  },
 
   // Kick section
   kick: {
