@@ -5,22 +5,22 @@ export default function HeroHead() {
     <div
       className="absolute inset-0 pointer-events-none z-10"
       style={{
-        height: "8vh", // Default height
-        minHeight: "50px", // Ensures it doesn't get too small
+        height: "6vh", // Default smaller height
+        minHeight: "40px", // Ensures it doesn’t disappear
       }}
     >
-      {/* Responsive Styling */}
+      {/* Tailwind-based responsive styles */}
       <style jsx>{`
         @media (max-width: 768px) {
           div {
-            height: 6vh; /* Reduce height further on smaller screens */
-            min-height: 40px; /* Set a minimum size */
+            height: 4vh !important; /* Force smaller size on tablets */
+            min-height: 35px !important;
           }
         }
         @media (max-width: 480px) {
           div {
-            height: 5vh; /* Even smaller for very small devices */
-            min-height: 35px;
+            height: 3vh !important; /* Force even smaller size on phones */
+            min-height: 30px !important;
           }
         }
       `}</style>
