@@ -2,28 +2,8 @@
 
 export default function HeroHead() {
   return (
-    <div
-      className="absolute inset-0 pointer-events-none z-10"
-      style={{
-        height: "6vh", // Default smaller height
-        minHeight: "40px", // Ensures it doesn’t disappear
-      }}
-    >
-      {/* Tailwind-based responsive styles */}
-      <style jsx>{`
-        @media (max-width: 768px) {
-          div {
-            height: 4vh !important; /* Force smaller size on tablets */
-            min-height: 35px !important;
-          }
-        }
-        @media (max-width: 480px) {
-          div {
-            height: 3vh !important; /* Force even smaller size on phones */
-            min-height: 30px !important;
-          }
-        }
-      `}</style>
+    <div className="w-full py-6 sm:py-5 md:py-4 lg:py-4 xl:py-4"> {/* Adjusts padding based on screen size */}
+      <h1 className="text-4xl font-bold text-transparent select-none">.</h1> {/* Keeps structure without visible text */}
     </div>
   );
 }
