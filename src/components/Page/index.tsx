@@ -11,6 +11,21 @@ import { cn } from "@/utils/cn";
 export default function Hero() {
   return (
     <>
+      {/* Background video that wraps everything */}
+      <div className="absolute inset-0 -z-10 w-full h-full">
+        <video
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          className="absolute inset-0 w-full h-full object-cover"
+        >
+          <source src="/video/hero-video.mp4" type="video/mp4" />
+        </video>
+      </div>
+
+      {/* Main Content */}
       <section
         id="home"
         className={cn(
@@ -18,18 +33,6 @@ export default function Hero() {
           "dark:bg-gray-dark"
         )}
       >
-        {/* Background video that wraps everything */}
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          className="absolute inset-0 h-full w-full object-cover opacity-30"
-        >
-          <source src="/video/hero-video.mp4" type="video/mp4" />
-        </video>
-
         {/* Head Section */}
         <HeroHead />
 
