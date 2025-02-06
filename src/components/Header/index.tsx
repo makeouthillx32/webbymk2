@@ -72,8 +72,13 @@ const Header = () => {
         <div className="relative -mx-4 flex items-center justify-between">
           <div className="w-60 max-w-full px-4 xl:mr-12">
             <Link
-              onClick={() => setNavbarOpen(false)}
-              href="/"
+              href={navbarOpen ? "#" : "/"} // Stay on the same page if menu is open, navigate home if closed
+              onClick={(e) => {
+                if (navbarOpen) {
+                  e.preventDefault(); // Prevents navigation when menu is open
+                  setNavbarOpen(false); // Closes the menu instead
+                }
+              }}
               className={`header-logo block w-full ${
                 sticky ? "py-5 lg:py-2" : "py-8"
               }`}
@@ -83,7 +88,8 @@ const Header = () => {
                 src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}  // Logo switch based on theme
                 alt="logo" 
                 width={150} 
-                height={100} 
+                height={100}
+                priority
               />
             </Link>
           </div>
