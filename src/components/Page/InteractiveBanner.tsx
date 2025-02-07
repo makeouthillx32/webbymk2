@@ -26,6 +26,14 @@ export default function InteractiveBanner() {
         muted
         playsInline
         preload="auto"
+        style={{
+          opacity: 100,  // Reduce visual intensity for GPU efficiency
+          filter: "blur(0px)", // Slight blur reduces sharp pixel processing
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: "scale(1.1)", // Scale to avoid video cuts on mobile screens
+        }}
       />
 
       {/* Gradient Overlay */}

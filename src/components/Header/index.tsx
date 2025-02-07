@@ -84,13 +84,17 @@ const Header = () => {
               }`}
             >
               {/* Conditionally render the logo based on theme */}
-              <Image 
-                src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}  // Logo switch based on theme
-                alt="logo" 
-                width={150} 
-                height={100}
-                priority
-              />
+              {typeof window !== "undefined" && (
+                <Image 
+                  src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}  
+                  alt="logo" 
+                  width={150} 
+                  height={100}
+                  priority
+                  key={theme} // Forces re-render when theme changes
+                />
+              )}
+            
             </Link>
           </div>
           <div className="flex w-full items-center justify-between px-4">
