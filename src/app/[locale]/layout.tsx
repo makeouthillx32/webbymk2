@@ -16,7 +16,7 @@ export default function SubLayout({
   params: { locale: string };
 }) {
   return (
-    <I18nProviderClient locale={params.locale} suspense fallback={<Loading />}>
+    <I18nProviderClient locale={params.locale} fallback={<Loading />}>
       {/* Load Main Content First */}
       {children}
 
