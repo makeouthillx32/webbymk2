@@ -1,0 +1,529 @@
+/* ========== Combined Header & Navigation (Desktop) ========== */
+
+/* Header Component */
+.header-container {
+  border-bottom: 1px solid var(--lt-border);
+  padding: 0.5rem 1rem;
+  position: relative;
+  z-index: 100;
+  
+  /* Smooth transitions for theme changes */
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  
+  @media (min-width: 768px) {
+    padding: 0.75rem 1rem;
+
+  }
+  
+  @media (min-width: 1024px) {
+    padding: 1rem 1.5rem;
+  }
+}
+
+.header-content {
+  max-width: 80rem; /* 7xl */
+  margin: 0 auto;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  /* ✅ Fluid skeleton */
+  flex-wrap: wrap;
+
+  /* better spacing when wrapping */
+  gap: 0.75rem;
+
+  /* prevents flex overflow collisions */
+  min-width: 0;
+
+  /* Keep it stable */
+  @media (min-width: 768px) {
+    gap: 1rem;
+  }
+}
+
+/* Logo Section */
+.header-logo {
+  flex-shrink: 0;
+  
+  .logo-link {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+    
+    &:hover {
+      opacity: 0.8;
+    }
+    
+    &:focus {
+      outline: 2px solid;
+      outline-offset: 2px;
+      border-radius: 0.375rem;
+    }
+  }
+  
+  .logo-image {
+    height: 3rem; /* 12 */
+    width: auto;
+    max-width: none;
+    
+    @media (min-width: 768px) {
+      height: 3.5rem; /* 14 */
+    }
+  }
+}
+
+/* Navigation Section - Parent Container */
+.header-nav {
+  /* ✅ nav is flexible: grows on wide screens, drops under when needed */
+  flex: 1 1 520px;
+  min-width: 0;
+
+  display: none;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+
+  @media (min-width: 768px) {
+    display: flex;
+  }
+
+  /* ✅ when viewport tightens, nav takes full width (becomes row 2) */
+  @media (max-width: 1024px) {
+    flex-basis: 100%;
+    justify-content: center;
+  }
+}
+
+/* Navigation container - Child of header-nav */
+.nav-container {
+  @apply hidden md:flex items-center relative z-50;
+  
+  /* Ensure container doesn't overflow */
+  overflow: visible;
+  
+  /* Critical: Progressive spacing reduction to prevent overlap */
+  gap: 0.5rem; /* Start very small */
+  
+  /* 775px - 900px: Very tight spacing */
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.75rem;
+  }
+  
+  /* 900px - 1090px: Gradually increase spacing */
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  /* 1090px+: Full spacing */
+  @media (min-width: 1090px) {
+    gap: 2rem;
+  }
+}
+/* ===== Desktop: center logo on its own line (Tin Haul style) ===== */
+@media (min-width: 768px) {
+  .header-content {
+    justify-content: center; /* center the rows when wrapping */
+  }
+
+  .header-logo {
+    /* logo becomes its own row */
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+    order: 1;
+  }
+    .header-left {
+    transform: translateX(-6px);
+    opacity: 0;
+  }
+
+  .header-logo {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .header-actions {
+    /* actions sit on the right, same row as nav (below logo) */
+    margin-left: auto;
+    order: 3;
+  }
+
+  .header-nav {
+    /* nav sits centered below logo */
+    flex-basis: auto;
+    flex: 1 1 auto;
+    order: 2;
+  }
+
+  /* optional: make the logo larger like the reference */
+  .header-logo .logo-image {
+    height: 8.25rem; /* tweak: 4rem–5rem */
+  }
+}
+
+
+/* Navigation menu */
+.nav-menu {
+  @apply flex items-center;
+
+  /* ✅ smooth scaling instead of hard breakpoints */
+  gap: clamp(0.75rem, 2vw, 2rem);
+
+  /* ✅ allow wrapping instead of collisions */
+  flex-wrap: wrap;
+  justify-content: center;
+
+  min-width: 0;
+}
+
+/* Navigation item container */
+.nav-item {
+  @apply relative;
+  
+  /* Ensure dropdown positioning context */
+  position: relative;
+  
+  &:hover .dropdown-content {
+    @apply block;
+  }
+  
+  /* Coordinated with header responsive behavior */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    flex-shrink: 1;
+  }
+}
+
+/* Top-level nav link - Coordinated with header auth buttons */
+.nav-top-link {
+  @apply relative z-10 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none;
+
+  text-decoration: none;
+
+  /* ✅ storefront vibe */
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+
+  /* ✅ smaller padding = less collision */
+  padding: 0.5rem 0.25rem;
+
+  margin-top: 0;
+    position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0.15rem;
+
+    /* ✅ underline is half width */
+    width: 90%;
+    height: 2px;
+
+    /* use current text color */
+    background: currentColor;
+
+    /* animate from left → right */
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 220ms ease;
+    opacity: 0.75;
+  }
+
+  &:hover::after,
+  &[data-state="open"]::after {
+    transform: scaleX(1);
+  }
+
+  &[data-state="open"] {
+    @apply bg-transparent;
+  }
+
+  &:hover {
+    opacity: 0.85;
+  }
+
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+}
+
+/* Sub navigation link */
+.nav-sub-link {
+  display: block;
+  padding: 0.55rem 0.85rem; /* tighter + consistent */
+  font-size: 0.875rem;
+  line-height: 1.2;
+
+  border-radius: 0.375rem;  /* smaller than before */
+  text-decoration: none;
+  white-space: nowrap;
+
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+
+  &:hover {
+    background-color: hsl(var(--muted) / 0.1);
+  }
+
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+  }
+}
+
+/* Dropdown panel - Enhanced positioning */
+.nav-dropdown {
+  position: absolute;
+  z-index: 1000;
+
+  top: calc(100% + 0.6rem);
+  left: 0;
+
+  min-width: 100%;
+  width: max-content;
+
+  padding: 0.35rem;
+  border-radius: 0.5rem;
+  box-shadow: var(--lt-shadow);
+  border: 1px solid var(--lt-border);
+  background: var(--lt-bg);
+
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+
+  &[data-state="open"] {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+}
+
+/* Keep hover working while mouse travels into dropdown */
+.nav-item:hover > .nav-dropdown,
+.nav-item:focus-within > .nav-dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Actions Section - Coordinated with nav */
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  
+  /* Progressive spacing to prevent overlap */
+  gap: 0.5rem;
+  
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.5rem;
+  }
+  
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 0.75rem;
+  }
+  
+  @media (min-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  /* Mobile spacing */
+  @media (max-width: 767px) {
+    gap: 0.75rem;
+  }
+}
+
+/* Desktop Auth - Coordinated styling with nav links */
+.header-auth {
+  display: none;
+  align-items: center;
+  
+  /* Progressive spacing to match nav */
+  gap: 0.5rem;
+  
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.75rem;
+  }
+  
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  @media (min-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  @media (min-width: 768px) {
+    display: flex;
+  }
+  
+  .auth-button {
+    font-weight: 600;
+    white-space: nowrap;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    transition: all 0.2s ease;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    
+    /* Progressive sizing to match nav links */
+    font-size: 0.75rem;
+    padding: 0.25rem 0.375rem;
+    
+    @media (min-width: 775px) and (max-width: 900px) {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.375rem;
+    }
+    
+    @media (min-width: 900px) and (max-width: 1090px) {
+      font-size: 0.8125rem;
+      padding: 0.375rem 0.5rem;
+    }
+    
+    @media (min-width: 1090px) {
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+    }
+    
+    &:hover {
+      text-decoration: underline;
+      opacity: 0.8;
+    }
+    
+    &:focus {
+      outline: 2px solid;
+      outline-offset: 2px;
+    }
+  }
+}
+
+/* Mobile Hamburger */
+.mobile-hamburger {
+  display: block;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  @media (min-width: 768px) {
+    display: none;
+  }
+  
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+  
+  &:hover {
+    background-color: hsl(var(--foreground) / 0.03);
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  .hamburger-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    transition: transform 0.2s ease;
+  }
+  
+  /* Icon rotation animation */
+  &.menu-open .hamburger-icon {
+    transform: rotate(90deg);
+  }
+}
+
+/* Mobile Drawer Overlay */
+.mobile-drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  pointer-events: auto;
+  
+  /* Backdrop blur effect */
+  backdrop-filter: blur(4px);
+  background-color: hsl(var(--foreground) / 0.05);
+  
+  /* Animation */
+  animation: fade-in 0.2s ease;
+}
+
+/* Theme Switcher Integration */
+.theme-switcher {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Utility classes for dropdown positioning */
+.dropdown-align-left {
+  left: 0 !important;
+  transform: none !important;
+}
+
+.dropdown-align-right {
+  left: auto !important;
+  right: 0 !important;
+  transform: none !important;
+}
+
+.dropdown-align-center {
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .mobile-hamburger:hover {
+    background-color: hsl(var(--muted) / 0.1);
+  }
+  
+  .mobile-drawer-overlay {
+    background-color: hsl(var(--foreground) / 0.2);
+  }
+}
+
+/* Animation keyframes */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Prevent horizontal scroll issues - Global coordination */
+@media (max-width: 1200px) {
+  .nav-container {
+    overflow-x: visible;
+    overflow-y: visible;
+  }
+  
+  .nav-dropdown {
+    /* Ensure dropdowns don't cause horizontal scroll */
+    max-width: calc(100vw - 2rem);
+  }
+  
+  .header-content {
+    /* Ensure header doesn't cause overflow */
+    max-width: calc(100vw - 2rem);
+  }
+}

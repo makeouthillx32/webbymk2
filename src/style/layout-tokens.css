@@ -1,0 +1,121 @@
+/*
+ * layout-tokens.css
+ * ─────────────────────────────────────────────────────────
+ * Single source of truth for layout-specific color tokens.
+ *
+ * CRITICAL RULE FOR iOS STATUS BAR:
+ *   --lt-status-bar MUST reference --lt-bg (always matches background)
+ *   JavaScript will read this to set the iOS status bar color
+ * ─────────────────────────────────────────────────────────
+ */
+
+:root {
+  --gp-bg:         hsl(var(--background));
+  --gp-fg:         hsl(var(--foreground));
+  --gp-border:     hsl(var(--border));
+  --gp-shadow:     var(--shadow-sm);
+  --gp-status-bar: hsl(var(--background)); /* References --gp-bg value */
+}
+
+.dark {
+  --gp-bg:         hsl(var(--background));
+  --gp-fg:         hsl(var(--foreground));
+  --gp-border:     hsl(var(--border));
+  --gp-shadow:     var(--shadow-md);
+  --gp-status-bar: hsl(var(--background)); /* References --gp-bg value */
+}
+
+/* ─── SHOP HEADER ─────────────────────────────────────── */
+[data-layout="shop"],
+:is([data-layout]) [data-layout="shop"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+.dark [data-layout="shop"],
+.dark :is([data-layout]) [data-layout="shop"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+/* ─── APP HEADER ──────────────────────────────────────── */
+[data-layout="app"],
+:is([data-layout]) [data-layout="app"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     hsl(var(--primary) / 0.2);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+.dark [data-layout="app"],
+.dark :is([data-layout]) [data-layout="app"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     hsl(var(--primary) / 0.2);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+/* ─── DASHBOARD HEADER ────────────────────────────────── */
+[data-layout="dashboard"],
+:is([data-layout]) [data-layout="dashboard"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+.dark [data-layout="dashboard"],
+.dark :is([data-layout]) [data-layout="dashboard"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+/* ─── SIDEBAR ─────────────────────────────────────────── */
+[data-layout="sidebar"],
+:is([data-layout]) [data-layout="sidebar"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+.dark [data-layout="sidebar"],
+.dark :is([data-layout]) [data-layout="sidebar"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+/* ─── FOOTER ──────────────────────────────────────────── */
+[data-layout="footer"],
+:is([data-layout]) [data-layout="footer"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}
+
+.dark [data-layout="footer"],
+.dark :is([data-layout]) [data-layout="footer"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+}

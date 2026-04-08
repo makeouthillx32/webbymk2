@@ -1,0 +1,3 @@
+- [ ] Verify existence of missing files: components/CLAUDE.js, lib/DECISIONS.js
+- [ ] Audit components/ and lib/ directories for incomplete or missing source files
+- [ ] Add directory structure validation to CI/CD pipeline to catch missing files early

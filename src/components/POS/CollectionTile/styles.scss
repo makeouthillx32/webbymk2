@@ -1,0 +1,54 @@
+/* components/POS/CollectionTile/styles.scss */
+
+.collection-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  border: 1.5px solid hsl(var(--border));
+  background: hsl(var(--card));
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+
+  &:hover {
+    border-color: var(--collection-accent, hsl(var(--primary)));
+    background: color-mix(in srgb, var(--collection-accent, hsl(var(--primary))) 6%, transparent);
+  }
+
+  &--active {
+    border-color: var(--collection-accent, hsl(var(--primary)));
+    background: color-mix(in srgb, var(--collection-accent, hsl(var(--primary))) 10%, transparent);
+
+    .collection-tile__title {
+      color: var(--collection-accent, hsl(var(--primary)));
+      font-weight: 700;
+    }
+  }
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+  }
+
+  &__title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    transition: color 0.15s;
+  }
+
+  &__count {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+    padding: 0.1rem 0.4rem;
+    margin-left: 0.125rem;
+  }
+}

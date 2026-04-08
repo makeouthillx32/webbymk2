@@ -1,0 +1,302 @@
+/* ═════════════════════════════════════════════════════
+   MERGED COMPONENT STYLES
+   Combines ribbon overlay with panel layouts
+   ═════════════════════════════════════════════════════ */
+
+/* ───────── VARIABLES ───────── */
+$ribbon-light: #2563eb;     // blue-500
+$ribbon-dark:  #2563eb;     // blue-600
+$ribbon-edge: hsl(222, 100%, 34%);
+$ribbon-text: var(--popover-foreground);
+$ribbon-shadow: rgba(104, 103, 103, 0.45);
+$home-bg: var(--background);
+
+
+// /* ───────── PANEL & CARD LAYOUT  dosnt do anything to i marked it out ───────── */
+// .panel {
+//   /* define ribbon height per panel scope */
+//   --ribbon-h: 3.5rem;
+//   position: relative;
+//   display: flex;
+//   justify-content: center;
+//   width: 100%;
+// }
+
+// .card {
+//   width: 100%;
+//   max-width: 72rem;    /* ≈1152px */
+//   padding: var(--ribbon-h) 1.5rem 2.5rem;
+//   background: $home-bg;
+//   border: 1px solid rgba(0, 0, 0, 0.12);
+//   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+//   border-radius: 0.5rem;
+//   margin: 0 auto; /* Center the card */
+
+// }
+
+// :global(.dark) .card {
+//   background: $home-bg;
+//   border-color: rgba(255, 255, 255, 0.12);
+// }
+
+ /* ───────── UNDERPAGE STYLE ───────── */
+.underpage {
+  /* main box */
+  box-shadow: 1px 1px 2px rgba(0, 0, 0, .25);
+  border: 1px solid rgba(0, 0, 0, .18);        /* crisp outer line */
+  border-radius: .75rem .75rem 0 0;            /* rounded top only */
+  position: relative;
+  margin: 0 auto;
+  width: 90%;          /* desktop width */
+  padding: 4.5em 1.5em 1.5em;
+  line-height: 2.5;
+  box-sizing: border-box;
+  top: -3em;        /* overlap the ribbon */
+
+  /* bottom‑only fade using mask – extended for smoother feather */
+  -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+  mask-image:         linear-gradient(to bottom, black 95%, transparent 100%);
+
+  /* ✨ engraved top & side inset line */
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;                          /* fill the box */
+    border: 2px solid rgba(255, 255, 255, .45);  /* light inner line */
+    border-bottom: 0;                  /* only top + sides */
+    border-radius: inherit;
+    pointer-events: none;
+    mix-blend-mode: overlay;           /* subtle imprint effect */
+  }
+
+  /* mobile tweak */
+  @media (max-width: 767px) {
+    width: 84%;
+  }
+
+  /* tablet font bump */
+  @media (min-width: 768px) and (max-width: 1023px) {
+    font-size: 1.1rem;
+  }
+
+  /* desktop font */
+  @media (min-width: 1024px) {
+    font-size: 1.2rem;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+}
+
+
+/* ───────── CENTER RIBBON COMPONENT ───────── */
+
+.ribbonContainer {
+  background: transparent !important;
+  position: relative;
+  text-align: center;
+  text-decoration-skip-ink: auto;
+  z-index: 1;
+  margin: 0 auto;         // 👈 center the 95% container
+  width: 95%;             // 👈 apply your shrink
+  display: flex;          // 👈 center the .ribbon inside
+  justify-content: center;
+  padding-top: 10px;
+  bottom: -1em;
+}
+
+.ribbon {
+  position: relative;
+  display: block;
+  width: 0%;     /* Take full width does nothing Satoshi-Light */
+  margin: 0 auto;
+  padding: 0.4em 0;
+
+  color: $ribbon-text;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  text-decoration: none;
+
+
+  /* Default blue ribbon with noise texture */
+  background-color: $ribbon-light;
+  box-shadow: 5px 5px 12px $ribbon-shadow;
+
+  /* Modified triangular tails to scale better */
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: -0.95em;
+    width: 0;
+    height: 0;
+    z-index: -5;
+  }
+  
+  /* LEFT tail */
+  &::before {
+    left: -2em;
+    bottom: -0.95em;
+    border: 1.5em solid $ribbon-light;
+    border-left-color: transparent;
+    box-shadow: 2px 2px 2px $ribbon-shadow;
+  }
+  
+  /* RIGHT tail */
+  &::after {
+    right: -2em;
+    border: 1.5em solid $ribbon-light;
+    border-right-color: transparent;
+    box-shadow: -2px 2px 2px $ribbon-shadow;
+  }
+
+  /* Rest of your ribbon styling remains unchanged */
+  .content {
+    position: relative;
+    display: block;
+    padding: 0.6875em 0;
+    border-top: .0625em dashed lighten($ribbon-light, 15%);
+    border-bottom: 0.0625em dashed lighten($ribbon-light, 15%);
+    box-shadow:
+      inset 0 1px 1px rgba(0, 0, 0, 0.08),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+      0 -1px 1px rgba(255, 255, 255, 0.2),
+      0 1px 1px rgba(0, 0, 0, 0.08);
+
+    /* little fold-overs under dashed area */
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      bottom: -1.4em;
+      width: 0;
+      height: 0;
+      border-style: solid;
+       z-index: -4;
+      border-color: darken($ribbon-light, 10%) transparent transparent transparent;
+    }
+    
+    &::before {
+      left: 0;
+      border-width: 1em 0 0 1em;
+    }
+    
+    &::after {
+      right: 0;
+      border-width: 1em 1em 0 0;
+    }
+  }
+  
+  /* Ribbon links styling */
+  a {
+    color: darken($ribbon-light, 15%);
+    text-decoration: none;
+    text-shadow: 1px 1px 1px rgba(255, 255, 255, 0.25);
+    
+    &:hover {
+      color: darken($ribbon-light, 10%);
+    }
+  }
+}
+
+
+/* ───── RIBBON + CARD WRAPPER ───── */
+
+.ribbonWrapper {
+  /* full‑width stack that keeps both elements centred */
+  width: 48rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;          // lets children use absolute offsets
+}
+
+/* stretch ribbon to match card width + side tails */
+.ribbonWrapper .ribbonContainer {
+  width: 100%;
+  /* 72 rem is your card’s max‑width; +4 em ≈ combined tail length */
+  max-width: calc(72rem + 4em);
+}
+
+/* pull the first under‑page panel up so it “tucks” under the ribbon */
+.ribbonWrapper .underpage {
+  width: 100%;
+  max-width: 72rem;
+  /* uses the same custom prop you set on .ribbon for height */
+  margin-top: calc(-1 * var(--ribbon-height, 3.5rem));
+}
+
+
+/* Add these media queries to ensure proper ribbon behavior on all screen sizes */
+
+/* Mobile-first approach */
+.ribbon {
+  width: calc(100% - 2em); /* Account for the triangular tails */
+  font-size: 0.9rem;
+  
+  &::before {
+    left: -1.5em;
+    border-width: 1.25em;
+    border-left-color: transparent;
+  }
+  
+  &::after {
+    right: -1.5em;
+    border-width: 1.25em;
+    border-right-color: transparent;
+  }
+}
+
+/* Tablet and up */
+@media (min-width: 768px) {
+  .ribbon {
+    font-size: 1rem;
+    
+    &::before {
+      left: -2em;
+      border-width: 1.5em;
+    }
+    
+    &::after {
+      right: -2em;
+      border-width: 1.5em;
+    }
+  }
+}
+
+/* Desktop */
+@media (min-width: 1024px) {
+  .ribbon-wrapper {
+    max-width: calc(100% - 2rem); /* Give some breathing room on very large screens */
+  }
+
+  .ribbon {
+    font-size: 1.1rem;
+  }
+  
+  .card {
+    margin-top: -1em; /* Adjust overlay amount */
+  }
+}
+
+/* Fix for very wide screens */
+@media (min-width: 1280px) {
+  .ribbon-wrapper {
+    max-width: 80rem; /* Cap the maximum width on very large screens */
+  }
+}
+
+
+
+/* Mobile-first */
+.underpage {
+  width: 84%;
+}
+
+/* Desktop and up */
+@media (min-width: 1024px) {
+  .underpage {
+    width: 90%;
+  }
+}

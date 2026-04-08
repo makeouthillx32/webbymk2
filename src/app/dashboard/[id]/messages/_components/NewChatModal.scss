@@ -1,0 +1,58 @@
+// =======================================
+// VARIABLES AND BREAKPOINTS
+// =======================================
+$breakpoint-sm: 640px;
+$breakpoint-md: 768px;
+$breakpoint-lg: 1024px;
+$header-height: 70px; // Define header height for consistent spacing
+
+// =======================================
+// NEW CHAT MODAL COMPONENT
+// =======================================
+.new-chat-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50; // Higher than everything
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 16px;
+  
+  &-content {
+    width: 100%;
+    max-width: 500px;
+    max-height: 85vh;
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  &-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  
+  &-body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px;
+  }
+  
+  &-footer {
+    padding: 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+}

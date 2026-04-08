@@ -1,0 +1,929 @@
+/* ========== Combined Header & Navigation (Desktop) ========== */
+
+/* Header Component */
+.header-container {
+  border-bottom: 1px solid var(--lt-border);
+  padding: 0.5rem 1rem;
+  position: relative;
+  z-index: 100;
+  
+  /* Smooth transitions for theme changes */
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  
+  @media (min-width: 768px) {
+    padding: 0.75rem 1rem;
+
+  }
+  
+  @media (min-width: 1024px) {
+    padding: 1rem 1.5rem;
+  }
+}
+
+.header-content {
+  max-width: 80rem; /* 7xl */
+  margin: 0 auto;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  /* ✅ Fluid skeleton */
+  flex-wrap: wrap;
+
+  /* better spacing when wrapping */
+  gap: 0.75rem;
+
+  /* prevents flex overflow collisions */
+  min-width: 0;
+
+  /* Keep it stable */
+  @media (min-width: 768px) {
+    gap: 1rem;
+  }
+}
+
+/* Logo Section */
+.header-logo {
+  flex-shrink: 0;
+  
+  .logo-link {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+    
+    &:hover {
+      opacity: 0.8;
+    }
+    
+    &:focus {
+      outline: 2px solid;
+      outline-offset: 2px;
+      border-radius: 0.375rem;
+    }
+  }
+  
+  .logo-image {
+    height: 3rem; /* 12 */
+    width: auto;
+    max-width: none;
+    
+    @media (min-width: 768px) {
+      height: 3.5rem; /* 14 */
+    }
+  }
+}
+
+/* Navigation Section - Parent Container */
+.header-nav {
+  /* ✅ nav is flexible: grows on wide screens, drops under when needed */
+  flex: 1 1 520px;
+  min-width: 0;
+
+  display: none;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+
+  @media (min-width: 768px) {
+    display: flex;
+  }
+
+  /* ✅ when viewport tightens, nav takes full width (becomes row 2) */
+  @media (max-width: 1024px) {
+    flex-basis: 100%;
+    justify-content: center;
+  }
+}
+
+/* Navigation container - Child of header-nav */
+.nav-container {
+  @apply hidden md:flex items-center relative z-50;
+  
+  /* Ensure container doesn't overflow */
+  overflow: visible;
+  
+  /* Critical: Progressive spacing reduction to prevent overlap */
+  gap: 0.5rem; /* Start very small */
+  
+  /* 775px - 900px: Very tight spacing */
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.75rem;
+  }
+  
+  /* 900px - 1090px: Gradually increase spacing */
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  /* 1090px+: Full spacing */
+  @media (min-width: 1090px) {
+    gap: 2rem;
+  }
+}
+/* ===== Desktop: center logo on its own line (Tin Haul style) ===== */
+@media (min-width: 768px) {
+  .header-content {
+    justify-content: center; /* center the rows when wrapping */
+  }
+
+  .header-logo {
+    /* logo becomes its own row */
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+    order: 1;
+  }
+    .header-left {
+    transform: translateX(-6px);
+    opacity: 0;
+  }
+
+  .header-logo {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .header-actions {
+    /* actions sit on the right, same row as nav (below logo) */
+    margin-left: auto;
+    order: 3;
+  }
+
+  .header-nav {
+    /* nav sits centered below logo */
+    flex-basis: auto;
+    flex: 1 1 auto;
+    order: 2;
+  }
+
+  /* optional: make the logo larger like the reference */
+  .header-logo .logo-image {
+    height: 8.25rem; /* tweak: 4rem–5rem */
+  }
+}
+
+
+/* Navigation menu */
+.nav-menu {
+  @apply flex items-center;
+
+  /* ✅ smooth scaling instead of hard breakpoints */
+  gap: clamp(0.75rem, 2vw, 2rem);
+
+  /* ✅ allow wrapping instead of collisions */
+  flex-wrap: wrap;
+  justify-content: center;
+
+  min-width: 0;
+}
+
+/* Navigation item container */
+.nav-item {
+  @apply relative;
+  
+  /* Ensure dropdown positioning context */
+  position: relative;
+  
+  &:hover .dropdown-content {
+    @apply block;
+  }
+  
+  /* Coordinated with header responsive behavior */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    flex-shrink: 1;
+  }
+}
+
+/* Top-level nav link - Coordinated with header auth buttons */
+.nav-top-link {
+  @apply relative z-10 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none;
+
+  text-decoration: none;
+
+  /* ✅ storefront vibe */
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+
+  /* ✅ smaller padding = less collision */
+  padding: 0.5rem 0.25rem;
+
+  margin-top: 0;
+    position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0.15rem;
+
+    /* ✅ underline is half width */
+    width: 90%;
+    height: 2px;
+
+    /* use current text color */
+    background: currentColor;
+
+    /* animate from left → right */
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 220ms ease;
+    opacity: 0.75;
+  }
+
+  &:hover::after,
+  &[data-state="open"]::after {
+    transform: scaleX(1);
+  }
+
+  &[data-state="open"] {
+    @apply bg-transparent;
+  }
+
+  &:hover {
+    opacity: 0.85;
+  }
+
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+}
+
+/* Sub navigation link */
+.nav-sub-link {
+  display: block;
+  padding: 0.55rem 0.85rem; /* tighter + consistent */
+  font-size: 0.875rem;
+  line-height: 1.2;
+
+  border-radius: 0.375rem;  /* smaller than before */
+  text-decoration: none;
+  white-space: nowrap;
+
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+
+  &:hover {
+    background-color: hsl(var(--muted) / 0.1);
+  }
+
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+  }
+}
+
+/* Dropdown panel - Enhanced positioning */
+.nav-dropdown {
+  position: absolute;
+  z-index: 1000;
+
+  /* ✅ give it a little breathing room (not too close) */
+  top: calc(100% + 0.6rem);
+  left: 0;
+  transform: none;
+
+  /* ✅ match trigger width */
+  min-width: 100%;
+  width: max-content; /* can grow only if items are wider than trigger */
+
+  padding: 0.35rem;
+  border-radius: 0.5rem;
+  box-shadow: var(--lt-shadow);
+
+  display: none;
+
+  &[data-state="open"] {
+    display: block;
+  }
+}
+
+/* Actions Section - Coordinated with nav */
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  
+  /* Progressive spacing to prevent overlap */
+  gap: 0.5rem;
+  
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.5rem;
+  }
+  
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 0.75rem;
+  }
+  
+  @media (min-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  /* Mobile spacing */
+  @media (max-width: 767px) {
+    gap: 0.75rem;
+  }
+}
+
+/* Desktop Auth - Coordinated styling with nav links */
+.header-auth {
+  display: none;
+  align-items: center;
+  
+  /* Progressive spacing to match nav */
+  gap: 0.5rem;
+  
+  @media (min-width: 775px) and (max-width: 900px) {
+    gap: 0.75rem;
+  }
+  
+  @media (min-width: 900px) and (max-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  @media (min-width: 1090px) {
+    gap: 1rem;
+  }
+  
+  @media (min-width: 768px) {
+    display: flex;
+  }
+  
+  .auth-button {
+    font-weight: 600;
+    white-space: nowrap;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    transition: all 0.2s ease;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    
+    /* Progressive sizing to match nav links */
+    font-size: 0.75rem;
+    padding: 0.25rem 0.375rem;
+    
+    @media (min-width: 775px) and (max-width: 900px) {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.375rem;
+    }
+    
+    @media (min-width: 900px) and (max-width: 1090px) {
+      font-size: 0.8125rem;
+      padding: 0.375rem 0.5rem;
+    }
+    
+    @media (min-width: 1090px) {
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+    }
+    
+    &:hover {
+      text-decoration: underline;
+      opacity: 0.8;
+    }
+    
+    &:focus {
+      outline: 2px solid;
+      outline-offset: 2px;
+    }
+  }
+}
+
+/* Mobile Hamburger */
+.mobile-hamburger {
+  display: block;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  @media (min-width: 768px) {
+    display: none;
+  }
+  
+  &:focus {
+    outline: 2px solid;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+  
+  &:hover {
+    background-color: hsl(var(--foreground) / 0.03);
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  .hamburger-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    transition: transform 0.2s ease;
+  }
+  
+  /* Icon rotation animation */
+  &.menu-open .hamburger-icon {
+    transform: rotate(90deg);
+  }
+}
+
+/* Mobile Drawer Overlay */
+.mobile-drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  pointer-events: auto;
+  
+  /* Backdrop blur effect */
+  backdrop-filter: blur(4px);
+  background-color: hsl(var(--foreground) / 0.05);
+  
+  /* Animation */
+  animation: fade-in 0.2s ease;
+}
+
+/* Theme Switcher Integration */
+.theme-switcher {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Utility classes for dropdown positioning */
+.dropdown-align-left {
+  left: 0 !important;
+  transform: none !important;
+}
+
+.dropdown-align-right {
+  left: auto !important;
+  right: 0 !important;
+  transform: none !important;
+}
+
+.dropdown-align-center {
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .mobile-hamburger:hover {
+    background-color: hsl(var(--muted) / 0.1);
+  }
+  
+  .mobile-drawer-overlay {
+    background-color: hsl(var(--foreground) / 0.2);
+  }
+}
+
+/* Animation keyframes */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Prevent horizontal scroll issues - Global coordination */
+@media (max-width: 1200px) {
+  .nav-container {
+    overflow-x: visible;
+    overflow-y: visible;
+  }
+  
+  .nav-dropdown {
+    /* Ensure dropdowns don't cause horizontal scroll */
+    max-width: calc(100vw - 2rem);
+  }
+  
+  .header-content {
+    /* Ensure header doesn't cause overflow */
+    max-width: calc(100vw - 2rem);
+  }
+}
+
+/* ========== Navigation (Mobile) - Structure & Animations Only ========== */
+
+/* Mobile drawer content */
+.drawer-content {
+  height: 100%;
+  width: 100%;
+
+  /* ✅ only the inside scrolls */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+
+  /* ✅ kill old hidden dropdown state */
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+
+  /* ✅ scrollbar styling */
+  scrollbar-width: thin; /* firefox */
+  scrollbar-color: hsl(var(--foreground) / 0.12) transparent;
+}
+
+/* Chrome/Safari scrollbar */
+.drawer-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.drawer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.drawer-content::-webkit-scrollbar-thumb {
+  background: hsl(var(--foreground) / 0.12);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.drawer-content::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--foreground) / 0.18);
+  background-clip: padding-box;
+}
+
+/* Mobile menu container structure */
+.mobile-menu-container {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0;
+  gap: 1px;
+  
+  /* Ensure no backdrop effects */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Mobile menu item structure */
+.mobile-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0.9rem 1rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+
+  position: relative;
+
+  /* ✅ faint row separators (top + bottom) */
+  border-top: 1px solid hsl(var(--accent-foreground) / 0.16);
+ 
+
+  .menu-link {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
+
+    &:focus { outline: none; }
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+  }
+
+  /* ✅ right side icon area with a vertical divider */
+  .menu-toggle,
+  .menu-icon-slot {
+    margin-left: 0.75rem;
+    padding-left: 0.85rem; /* space after divider */
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+
+    border-left: 1px solid hsl(var(--accent-foreground) / 0.16);
+
+    &:focus { outline: none; }
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+  }
+}
+
+/* Mobile submenu structure */
+.mobile-submenu {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  
+  .submenu-link {
+    padding: 0.75rem 1rem 0.75rem 2rem;
+    font-size: 0.875rem;
+    font-weight: 400;
+    text-decoration: none;
+    position: relative;
+    
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+    
+    /* Subtle press animation */
+    &:active {
+      transform: translateX(2px);
+    }
+  }
+}
+
+/* Mobile auth section structure */
+.mobile-auth-section {
+  .auth-button {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    display: block;
+    text-align: left;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-decoration: none;
+    
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.375rem;
+    }
+    
+    /* Active state animation */
+    &:active {
+      transform: translateY(0) !important;
+    }
+  }
+}
+
+/* ========== HOME PAGE HEADER PROTECTION ONLY ========== */
+
+/* ONLY target the home page header with .header-container class */
+.header-container {
+  /* Prevent any backdrop effects */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  
+  /* Ensure it stays on top */
+  position: relative !important;
+  z-index: 20 !important;
+  
+  /* Force hardware acceleration to separate layer */
+  transform: translateZ(0) !important;
+  will-change: auto !important;
+  
+  /* Prevent inheritance of any backdrop effects */
+  isolation: isolate !important;
+  
+  /* Ensure solid background */
+  opacity: 1 !important;
+  
+  /* Home header specific children */
+  .header-content,
+  .header-logo,
+  .header-nav, 
+  .header-actions,
+  .header-auth,
+  .theme-switcher,
+  .mobile-hamburger {
+    /* No backdrop effects on any header elements */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    
+    /* Ensure solid backgrounds where needed */
+    background-color: transparent !important;
+    
+    /* Prevent overlay effects */
+    opacity: 1 !important;
+  }
+  
+  /* Logo specific protection */
+  .logo-link,
+  .logo-image {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    opacity: 1 !important;
+  }
+}
+/* ===== Header motion smoothing ===== */
+.header-content,
+.header-left,
+.header-logo,
+.header-actions {
+  transition:
+    transform 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms ease,
+    gap 260ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+/* Mobile drawer overlay */
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60; 
+  background: hsl(var(--foreground) / 0.25);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  
+  /* Critical Fix: Hide by default */
+  opacity: 0;
+  pointer-events: none; 
+  visibility: hidden;
+  transition: opacity 240ms ease, visibility 240ms;
+  cursor: pointer;
+}
+
+/* Show only when the drawer is open */
+.mobile-drawer-open .mobile-drawer-overlay {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.mobile-drawer-shell {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: min(86vw, 360px);
+
+  z-index: 61; /* --z-drawer panel */
+  border-right: 1px solid hsl(var(--border));
+  box-shadow: var(--lt-shadow);
+
+  /* ✅ THE ONLY SCROLLER */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* ✅ THEMED scrollbar (Firefox) */
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--accent-foreground) / 0.28) transparent;
+}
+
+/* ✅ THEMED scrollbar (Chrome/Safari/Edge) */
+.mobile-drawer-shell::-webkit-scrollbar {
+  width: 10px;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-thumb {
+  background: hsl(var(--accent-foreground) / 0.26);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--accent-foreground) / 0.36);
+  background-clip: padding-box;
+}
+
+/* ========== MOBILE SPECIFIC OVERRIDES - HOME PAGE ONLY ========== */
+@media (max-width: 768px) {
+  /* ONLY protect home page header - be very specific */
+  .header-container {
+    /* No backdrop effects whatsoever */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    
+    /* Highest z-index */
+    z-index: 20 !important; /* --z-header */
+    position: relative !important;
+    
+    /* Force GPU layer */
+    transform: translateZ(0) !important;
+    isolation: isolate !important;
+    
+    /* Prevent any overlays */
+    &::before,
+    &::after {
+      display: none !important;
+    }
+  }
+  
+
+  .header-content {
+    transform: translateY(0);
+  }
+
+  .header-left {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .header-logo {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .header-actions {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  /* Enhanced touch targets for mobile - accessibility */
+  .mobile-menu-item {
+    min-height: 48px; /* Accessibility guideline for touch targets */
+  }
+  
+  .submenu-link {
+    min-height: 44px; /* Slightly smaller for hierarchy */
+  }
+  
+  .auth-button {
+    min-height: 48px;
+  }
+}
+
+/* ========== ANIMATION KEYFRAMES ========== */
+@keyframes mobile-drawer-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+    visibility: visible;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+  }
+}
+
+@keyframes mobile-drawer-slide-up {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-20px);
+    visibility: visible;
+  }
+}
+
+/* Animation classes with consistent timing */
+.animate-slide-down {
+  animation: mobile-drawer-slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  visibility: visible !important;
+}
+
+.animate-slide-up {
+  animation: mobile-drawer-slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  visibility: visible !important;
+}
+
+/* Ensure drawer starts hidden but animatable */
+.drawer-content {
+  /* ✅ NOT scrollable */
+  height: auto;
+  width: 100%;
+  overflow: visible;
+
+  /* remove old dropdown hidden stuff */
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.mobile-menu-container {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* Optional: top breathing strip for a close button area */
+.drawer-topbar {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 14px;
+
+}

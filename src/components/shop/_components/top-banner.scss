@@ -1,0 +1,176 @@
+/* components/home/_components/landing/top-banner.scss */
+
+.top-banner {
+  position: relative;
+  width: 100%;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+
+  /* End caps */
+  --cap-width: 18px;
+  --fade-width: 42px;
+  --cap-border: var(--border);
+  --cap-bg: var(--card);
+
+  /* Keep inner content from sitting under the caps */
+  padding-left: calc(var(--cap-width) + 6px);
+  padding-right: calc(var(--cap-width) + 6px);
+
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: calc(var(--cap-width) + var(--fade-width));
+    pointer-events: none;
+    z-index: 5; /* above marquee track */
+  }
+
+  /* Left cap */
+  &::before {
+    left: 0;
+    background:
+      linear-gradient(to right, var(--cap-bg) 0 var(--cap-width), transparent var(--cap-width)),
+      linear-gradient(to right, var(--cap-bg) 0%, rgba(0, 0, 0, 0) 100%);
+    border-right: 1px solid var(--cap-border);
+    opacity: 1;
+  }
+
+  /* Right cap */
+  &::after {
+    right: 0;
+    background:
+      linear-gradient(to left, var(--cap-bg) 0 var(--cap-width), transparent var(--cap-width)),
+      linear-gradient(to left, var(--cap-bg) 0%, rgba(0, 0, 0, 0) 100%);
+    border-left: 1px solid var(--cap-border);
+    opacity: 1;
+  }
+
+  @media (max-width: 420px) {
+    --cap-width: 14px;
+    --fade-width: 30px;
+  }
+}
+
+.top-banner__inner {
+  max-width: 80rem; /* ~max-w-7xl */
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.2;
+}
+
+.top-banner__static {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* -----------------------
+   Marquee (FIXED)
+   ----------------------- */
+.top-banner__marquee {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.top-banner__marqueeTrack {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  width: max-content;
+
+  /* spacing between repeats */
+  gap: 3rem;
+
+  will-change: transform;
+  animation: banner-marquee linear infinite;
+
+  /* ✅ SPEED belongs to speed-ms (duration) */
+  animation-duration: var(--banner-speed-ms, 30000ms);
+
+  /* keep text away from caps so it fades nicely */
+  padding-left: calc(var(--cap-width) + 8px);
+  padding-right: calc(var(--cap-width) + 8px);
+
+  span {
+    display: inline-block;
+    padding-right: 3rem;
+  }
+}
+
+/* Pause-on-hover support */
+.top-banner[data-paused="true"] .top-banner__marqueeTrack {
+  animation-play-state: paused;
+}
+
+/* ✅ Correct distance for duplicated content:
+   When you repeat the text multiple times, move only HALF for seamless loop. */
+@keyframes banner-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* -----------------------
+   Slideshow
+   ----------------------- */
+.top-banner__slideshow {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.top-banner__slide {
+  display: inline-block;
+  white-space: nowrap;
+  animation: banner-slide-fade var(--banner-speed-ms, 450ms) ease;
+}
+
+@keyframes banner-slide-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* -----------------------
+   Typewriter
+   ----------------------- */
+.top-banner__typewriter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.top-banner__typed {
+  display: inline-block;
+}
+
+.top-banner__caret {
+  width: 10px;
+  height: 1em;
+  margin-left: 6px;
+  border-left: 2px solid currentColor;
+  opacity: 0.75;
+  animation: banner-caret 900ms steps(1) infinite;
+}
+
+@keyframes banner-caret {
+  0%, 49% { opacity: 0.75; }
+  50%, 100% { opacity: 0; }
+}

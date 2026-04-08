@@ -1,0 +1,96 @@
+// =======================================
+// VARIABLES AND BREAKPOINTS
+// =======================================
+$breakpoint-sm: 640px;
+$breakpoint-md: 768px;
+$breakpoint-lg: 1024px;
+$header-height: 70px;
+
+// =======================================
+// RIGHT SIDEBAR COMPONENT
+// =======================================
+.chat-right-sidebar {
+  display: flex;
+  flex-direction: column;
+  
+  // Desktop behavior
+  @media (min-width: $breakpoint-lg) {
+    position: relative;
+    width: 280px;
+    height: 100%;
+    box-shadow: none;
+    
+    &.open {
+      transform: translateX(0);
+    }
+  }
+  
+  // Mobile and tablet: only show when in overlay
+  @media (max-width: #{$breakpoint-lg - 1px}) {
+    display: none;
+    
+    .mobile-right-sidebar-overlay & {
+      display: flex;
+      width: 100%;
+      height: 100%;
+    }
+  }
+  
+  &-content {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+// Mobile right sidebar overlay
+.mobile-right-sidebar-overlay {
+  position: fixed;
+  top: $header-height;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  animation: fade-in 0.3s ease;
+  
+  // Close on backdrop click
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+  }
+  
+  // Sidebar slides in from right
+  .chat-right-sidebar-content {
+    margin-left: auto;
+    width: 85%;
+    max-width: 320px;
+    height: 100%;
+    border-left: 1px solid rgba(0, 0, 0, 0.1);
+    transform: translateX(0);
+    animation: slide-in-right 0.3s ease;
+    z-index: 2;
+    position: relative;
+    
+    // Ensure proper spacing from top
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+// =======================================
+// IOS SAFARI FIXES
+// =======================================
+
+// Safe area insets for notched devices
+@supports (padding: max(0px)) {
+  .chat-right-sidebar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

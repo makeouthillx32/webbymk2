@@ -1,0 +1,759 @@
+/* Updated TSC.css file using theme color palette and CSS variables */
+.timesheet-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: var(--font-sans);
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.timesheet-container h1 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: hsl(var(--foreground));
+}
+
+.week-tabs {
+  display: flex;
+  overflow-x: auto;
+  margin-bottom: 15px;
+  border-bottom: 1px solid hsl(var(--border));
+  padding-bottom: 2px;
+}
+
+.week-tab {
+  padding: 10px 15px;
+  border: 1px solid hsl(var(--border));
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background-color: hsl(var(--muted));
+  margin-right: 5px;
+  cursor: pointer;
+  position: relative;
+  color: hsl(var(--muted-foreground));
+  transition: all 0.2s ease-in-out;
+}
+
+.week-tab.active {
+  background-color: hsl(var(--card));
+  border-bottom: 2px solid hsl(var(--card));
+  margin-bottom: -1px;
+  font-weight: bold;
+  color: hsl(var(--card-foreground));
+}
+
+.week-tab:hover {
+  background-color: hsl(var(--muted) / 0.8);
+}
+
+.week-tab.active:hover {
+  background-color: hsl(var(--card));
+}
+
+.week-tab.add-week {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.week-tab.add-week:hover {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+.remove-week-button {
+  margin-left: 8px;
+  color: hsl(var(--destructive));
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.remove-week-button:hover {
+  color: hsl(var(--destructive) / 0.9);
+}
+
+.week-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.week-name-input {
+  font-size: 18px;
+  font-weight: bold;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  width: 200px;
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.week-name-input:focus {
+  border-color: hsl(var(--ring));
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.week-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.add-week-from-current {
+  padding: 8px 15px;
+  background-color: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.add-week-from-current:hover {
+  background-color: hsl(var(--secondary) / 0.9);
+}
+
+.action-buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.custom-day-input {
+  flex: 1;
+  max-width: 200px;
+}
+
+.custom-day-input input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--input));
+  color: hsl(var(--foreground));
+}
+
+.custom-day-input input:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.add-button {
+  padding: 8px 15px;
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.add-button:hover {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+.no-days-message {
+  text-align: center;
+  padding: 30px;
+  background-color: hsl(var(--muted));
+  border-radius: var(--radius);
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.timesheet-table {
+  width: 100%;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 20px;
+}
+
+/* Mobile-first timesheet row styles */
+.timesheet-row {
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+  background-color: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.row-alternate {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.day-label {
+  font-weight: bold;
+  color: hsl(var(--card-foreground));
+  font-size: 16px;
+}
+
+.hours-total-mobile {
+  display: block;
+  font-weight: bold;
+  color: hsl(var(--primary));
+  font-size: 14px;
+}
+
+.hours-total-desktop {
+  display: none;
+}
+
+.remove-row-button {
+  background-color: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  transition: all 0.2s ease-in-out;
+}
+
+.remove-row-button:hover {
+  background-color: hsl(var(--destructive) / 0.9);
+}
+
+.time-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.time-row {
+  display: flex;
+  gap: 15px;
+}
+
+.time-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.time-label {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.time-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.break-row {
+  display: flex;
+  gap: 15px;
+  align-items: flex-end;
+}
+
+.break-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.break-label {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.break-input {
+  display: flex;
+}
+
+.hour-select, .minute-select, .ampm-select, .break-select {
+  text-align: center;
+  padding: 8px 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  font-size: 14px;
+  background-color: hsl(var(--input));
+  color: hsl(var(--foreground));
+  transition: all 0.2s ease-in-out;
+}
+
+.hour-select:focus, .minute-select:focus, .ampm-select:focus, .break-select:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.hour-select, .minute-select {
+  width: 50px;
+}
+
+.ampm-select {
+  width: 65px;
+}
+
+.break-select {
+  width: 100%;
+  padding: 8px;
+}
+
+.time-separator {
+  margin: 0 2px;
+  font-weight: bold;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+}
+
+.week-total-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 15px;
+  background-color: hsl(var(--accent) / 0.1);
+  border-top: 2px solid hsl(var(--border));
+  font-weight: bold;
+  color: hsl(var(--accent-foreground));
+}
+
+.week-total-label {
+  margin-right: 20px;
+}
+
+.week-total-hours {
+  width: 100px;
+  text-align: right;
+  color: hsl(var(--primary));
+}
+
+.totals-section {
+  padding: 15px;
+  background-color: hsl(var(--card));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid hsl(var(--border));
+}
+
+.week-summaries {
+  margin-bottom: 20px;
+}
+
+.week-summaries h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: hsl(var(--card-foreground));
+}
+
+.week-summary-list {
+  margin-bottom: 15px;
+}
+
+.week-summary-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px dashed hsl(var(--border));
+  color: hsl(var(--card-foreground));
+}
+
+.all-weeks-total {
+  font-size: 18px;
+  margin: 15px 0;
+  color: hsl(var(--card-foreground));
+  font-weight: bold;
+}
+
+.hourly-rate-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.hourly-rate-section label {
+  color: hsl(var(--card-foreground));
+  font-weight: 500;
+}
+
+.hourly-rate-section input {
+  width: 80px;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--input));
+  color: hsl(var(--foreground));
+}
+
+.hourly-rate-section input:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.calculate-pay-button {
+  padding: 8px 15px;
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  font-weight: 500;
+}
+
+.calculate-pay-button:hover {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+.pay-calculation {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: hsl(var(--muted) / 0.3);
+  border-radius: var(--radius);
+  border: 1px solid hsl(var(--border));
+}
+
+.pay-detail {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: hsl(var(--card-foreground));
+}
+
+.pay-total {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--border));
+  font-weight: bold;
+  font-size: 18px;
+  color: hsl(var(--primary));
+}
+
+/* Desktop styles (768px and up) */
+@media (min-width: 768px) {
+  .timesheet-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 15px;
+  }
+
+  .row-header {
+    margin-bottom: 0;
+    width: 140px;
+    flex-shrink: 0;
+  }
+
+  .day-label {
+    width: 120px;
+  }
+
+  .hours-total-mobile {
+    display: none;
+  }
+
+  .hours-total-desktop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+  }
+
+  .hours-label {
+    font-size: 12px;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+
+  .hours-value {
+    font-weight: bold;
+    color: hsl(var(--primary));
+  }
+
+  .time-section {
+    flex-direction: row;
+    flex: 1;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .time-row {
+    flex: 1;
+    gap: 20px;
+  }
+
+  .break-row {
+    gap: 20px;
+    align-items: center;
+  }
+
+  .time-group {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .break-group {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .time-label, .break-label, .hours-label {
+    display: none;
+  }
+
+  .remove-row-button {
+    width: 25px;
+    height: 25px;
+    margin-left: 10px;
+  }
+}
+
+/* Large desktop styles (1024px and up) */
+@media (min-width: 1024px) {
+  .hour-select, .minute-select {
+    width: 60px;
+  }
+
+  .ampm-select {
+    width: 80px;
+  }
+
+  .break-select {
+    width: 100px;
+  }
+}
+
+/* Additional mobile improvements */
+@media (max-width: 767px) {
+  .timesheet-container {
+    padding: 10px;
+  }
+
+  .week-tabs {
+    padding: 0 5px;
+  }
+
+  .week-tab {
+    padding: 8px 12px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 15px;
+  }
+
+  .custom-day-input {
+    max-width: none;
+  }
+
+  .add-button {
+    padding: 10px 15px;
+    font-size: 14px;
+  }
+
+  /* Make sure selects are touch-friendly */
+  select {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  /* Week header mobile adjustments */
+  .week-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .week-name-input {
+    width: 100%;
+    font-size: 16px;
+  }
+
+  .week-actions {
+    justify-content: center;
+  }
+
+  .add-week-from-current {
+    width: 100%;
+    padding: 10px 15px;
+  }
+
+  /* Mobile-friendly hourly rate section */
+  .hourly-rate-section {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .hourly-rate-section input {
+    width: 100%;
+  }
+
+  .calculate-pay-button {
+    width: 100%;
+    padding: 10px 15px;
+  }
+  /* Add these styles to your TSC.css file */
+
+  .simple-timesheet-export {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    border: 2px solid #2563eb;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  }
+
+  .simple-timesheet-export h3 {
+    margin: 0 0 1.5rem 0;
+    color: #1e40af;
+    font-size: 1.25rem;
+  }
+
+  .export-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-group label {
+    font-weight: 600;
+    color: #374151;
+    font-size: 0.9rem;
+  }
+
+  .form-group input[type="text"] {
+    padding: 0.75rem;
+    border: 2px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.2s ease;
+  }
+
+  .form-group input[type="text"]:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  }
+
+  .radio-group {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    font-weight: normal;
+  }
+
+  .radio-group label:hover {
+    background-color: rgba(37, 99, 235, 0.05);
+  }
+
+  .radio-group input[type="radio"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
+  .export-summary {
+    grid-column: 1 / -1;
+    background: white;
+    padding: 1rem;
+    border-radius: 6px;
+    border-left: 4px solid #10b981;
+    margin: 1rem 0;
+  }
+
+  .export-summary p {
+    margin: 0 0 0.5rem 0;
+    color: #374151;
+    font-weight: 600;
+  }
+
+  .export-summary ul {
+    margin: 0;
+    padding-left: 1.5rem;
+    color: #6b7280;
+  }
+
+  .export-summary li {
+    margin-bottom: 0.25rem;
+  }
+
+  .export-help {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+  }
+
+  .export-help p {
+    margin: 0 0 0.75rem 0;
+    color: #374151;
+    font-weight: 600;
+  }
+
+  .export-help ul {
+    margin: 0;
+    padding-left: 1.5rem;
+    color: #6b7280;
+  }
+
+  .export-help li {
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+  }
+
+  .export-help strong {
+    color: #374151;
+  }
+
+  /* Responsive adjustments */
+  @media (max-width: 768px) {
+    .export-form {
+      grid-template-columns: 1fr;
+    }
+    
+    .radio-group {
+      flex-direction: column;
+    }
+    
+    .simple-timesheet-export {
+      padding: 1rem;
+    }
+  }
+}

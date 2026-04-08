@@ -1,0 +1,19 @@
+/* app/settings/collections/_components/collections.scss */
+
+.collections-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .collections-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .collections-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

@@ -1,0 +1,366 @@
+// components/Docustore/Toolbar/styles.scss
+
+// =======================================
+// VARIABLES AND BREAKPOINTS
+// =======================================
+$breakpoint-sm: 640px;
+$breakpoint-md: 768px;
+$breakpoint-lg: 1024px;
+$breakpoint-xl: 1280px;
+
+// Touch target sizes
+$min-touch-target: 44px;
+$button-height: 40px;
+$mobile-padding: 0.75rem;
+$desktop-padding: 1rem;
+
+// Z-index values
+$z-dropdown: 50;
+$z-mobile-dropdown: 9999;
+
+// Colors (using CSS custom properties for theme support)
+$border-color: hsl(var(--border));
+$background: hsl(var(--background));
+$card-background: hsl(var(--card));
+
+// =======================================
+// UTILITY CLASSES
+// =======================================
+
+// Hide scrollbar but keep functionality
+.scrollbar-hide {
+  -ms-overflow-style: none;  // IE and Edge
+  scrollbar-width: none;     // Firefox
+  
+  &::-webkit-scrollbar {
+    display: none;           // Chrome, Safari, Opera
+  }
+}
+
+// =======================================
+// TOOLBAR BASE STYLES
+// =======================================
+.toolbar {
+  position: relative;
+  
+  // Smooth horizontal scrolling
+  .overflow-x-auto {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    
+    // Ensure content doesn't jump
+    scroll-snap-type: x proximity;
+  }
+  
+  // Base button styles
+  button {
+    transition: all 0.2s ease-in-out;
+    
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+    
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+    }
+  }
+  
+  // Dropdown menu base styles
+  .dropdown-menu {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 
+                0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    backdrop-filter: blur(8px);
+    border: 1px solid $border-color;
+  }
+}
+
+// =======================================
+// MOBILE STYLES (< 640px)
+// =======================================
+@media (max-width: #{$breakpoint-sm - 1px}) {
+  .toolbar {
+    overflow: visible;
+    
+    // Mobile layout adjustments
+    .mobile-toolbar-row {
+      padding: $mobile-padding;
+      
+      // Horizontally scrollable button container
+      .button-container {
+        display: flex;
+        gap: $mobile-padding;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+        
+        // Scroll snapping for better UX
+        scroll-snap-type: x mandatory;
+        
+        > * {
+          scroll-snap-align: start;
+          flex-shrink: 0;
+        }
+      }
+    }
+    
+    // Mobile-optimized buttons
+    button {
+      min-height: $min-touch-target;
+      touch-action: manipulation; // Remove 300ms tap delay
+      white-space: nowrap;
+      
+      // Ensure proper spacing
+      &.mobile-button {
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+      }
+    }
+    
+    // Mobile dropdown positioning
+    .dropdown-menu {
+      position: fixed !important;
+      left: 1rem !important;
+      right: 1rem !important;
+      width: auto !important;
+      max-width: none !important;
+      z-index: $z-mobile-dropdown;
+      
+      // Mobile-friendly max height
+      max-height: 60vh;
+      overflow-y: auto;
+      
+      // Better mobile touch targets
+      button {
+        min-height: $min-touch-target;
+        padding: 0.75rem 1rem;
+      }
+    }
+    
+    // Search input mobile optimization
+    input[type="text"] {
+      font-size: 16px; // Prevent zoom on iOS
+      padding: 0.75rem 2.5rem 0.75rem 2.5rem;
+    }
+    
+    // Mobile-specific spacing
+    .gap-3 > * {
+      margin-right: $mobile-padding;
+      
+      &:last-child {
+        margin-right: 0;
+      }
+    }
+    
+    // Hide elements that don't fit on mobile
+    .mobile-hidden {
+      display: none !important;
+    }
+    
+    // Mobile upload button - ensure it's always accessible
+    .upload-button {
+      background: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      border-radius: 0.5rem;
+      font-weight: 600;
+      min-width: 100px;
+      
+      &:hover:not(:disabled) {
+        background: hsl(var(--primary) / 0.9);
+      }
+      
+      &:disabled {
+        background: hsl(var(--primary) / 0.6);
+      }
+    }
+  }
+}
+
+// =======================================
+// TABLET STYLES (640px - 1023px)
+// =======================================
+@media (min-width: $breakpoint-sm) and (max-width: #{$breakpoint-lg - 1px}) {
+  .toolbar {
+    .tablet-adjustments {
+      padding: $desktop-padding;
+    }
+    
+    // Show tablet-specific elements
+    .hidden-mobile {
+      display: flex;
+    }
+    
+    // Adjust spacing for tablet
+    .desktop-spacing {
+      gap: 0.5rem;
+    }
+    
+    // Tablet dropdown positioning
+    .dropdown-menu {
+      z-index: $z-dropdown;
+    }
+  }
+}
+
+// =======================================
+// DESKTOP STYLES (>= 1024px)
+// =======================================
+@media (min-width: $breakpoint-lg) {
+  .toolbar {
+    // Full desktop layout
+    .desktop-layout {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: $desktop-padding;
+    }
+    
+    // Desktop button hover effects
+    button {
+      &:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+    }
+    
+    // Desktop-specific spacing
+    .desktop-gap {
+      gap: 1rem;
+    }
+    
+    // Show desktop labels
+    .desktop-label {
+      display: inline;
+    }
+    
+    // Desktop dropdown positioning
+    .dropdown-menu {
+      position: absolute;
+      z-index: $z-dropdown;
+      min-width: 200px;
+    }
+  }
+}
+
+// =======================================
+// LARGE DESKTOP STYLES (>= 1280px)
+// =======================================
+@media (min-width: $breakpoint-xl) {
+  .toolbar {
+    // Extra large screen optimizations
+    .xl-spacing {
+      gap: 1.5rem;
+    }
+    
+    // Show all desktop labels on XL screens
+    .xl-label {
+      display: inline;
+    }
+    
+    // Larger search input on XL screens
+    .search-input-xl {
+      max-width: 500px;
+    }
+  }
+}
+
+// =======================================
+// ACCESSIBILITY IMPROVEMENTS
+// =======================================
+
+// High contrast mode support
+@media (prefers-contrast: high) {
+  .toolbar {
+    border-width: 2px;
+    
+    button {
+      border-width: 2px;
+      
+      &:focus-visible {
+        outline-width: 3px;
+      }
+    }
+  }
+}
+
+// Reduced motion support
+@media (prefers-reduced-motion: reduce) {
+  .toolbar {
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+// Dark mode specific adjustments
+@media (prefers-color-scheme: dark) {
+  .toolbar {
+    .dropdown-menu {
+      backdrop-filter: blur(12px);
+      background: hsl(var(--card) / 0.95);
+    }
+  }
+}
+
+// =======================================
+// SELECTION BAR RESPONSIVE STYLES
+// =======================================
+.selection-bar {
+  // Mobile selection bar
+  @media (max-width: #{$breakpoint-sm - 1px}) {
+    .selection-actions {
+      overflow-x: auto;
+      gap: 0.5rem;
+      
+      button {
+        white-space: nowrap;
+        flex-shrink: 0;
+        min-height: $button-height;
+      }
+    }
+  }
+  
+  // Desktop selection bar
+  @media (min-width: $breakpoint-sm) {
+    .selection-actions {
+      gap: 0.75rem;
+    }
+  }
+}
+
+// =======================================
+// ANIMATION KEYFRAMES
+// =======================================
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+// Apply animations to dropdowns
+.dropdown-enter {
+  animation: fadeInUp 0.2s ease-out;
+}
+
+.dropdown-exit {
+  animation: fadeOut 0.15s ease-in;
+}

@@ -1,0 +1,23 @@
+// components/POS/icons.tsx
+export {
+  Search,
+  X,
+  Plus,
+  Minus,
+  ShoppingCart,
+  Trash2,
+  CreditCard,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronDown,
+  User,
+  Package,
+  Tag,
+  RotateCcw,
+  Loader2,
+  AlertCircle,
+  Receipt,
+  Keyboard,
+  Star,
+  Filter,
+} from "lucide-react";

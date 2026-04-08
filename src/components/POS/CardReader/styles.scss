@@ -1,0 +1,386 @@
+// components/POS/CardReader/styles.scss
+
+.card-reader {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 1.25rem;
+  gap: 1.25rem;
+  overflow-y: auto;
+
+  // ── Header ──────────────────────────────────────────────────────────────
+  &__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  &__title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    letter-spacing: -0.01em;
+  }
+
+  &__subtitle {
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  // ── Status card ─────────────────────────────────────────────────────────
+  &__status-card {
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 0.875rem;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    background: hsl(var(--card));
+    transition: border-color 0.2s;
+
+    &--connected {
+      border-color: hsl(142 71% 45% / 0.4);
+      background: hsl(142 71% 45% / 0.04);
+    }
+
+    &--error {
+      border-color: hsl(var(--destructive) / 0.4);
+      background: hsl(var(--destructive) / 0.04);
+    }
+  }
+
+  // ── Reader illustration row ──────────────────────────────────────────────
+  &__reader-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  &__reader-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 0.625rem;
+    background: hsl(var(--muted));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: hsl(var(--muted-foreground));
+    transition: background 0.2s;
+
+    .card-reader__status-card--connected & {
+      background: hsl(142 71% 45% / 0.12);
+      color: hsl(142 71% 38%);
+    }
+  }
+
+  &__reader-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__reader-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__reader-serial {
+    font-size: 0.7rem;
+    color: hsl(var(--muted-foreground));
+    font-family: ui-monospace, monospace;
+    margin-top: 0.125rem;
+  }
+
+  &__reader-version {
+    font-size: 0.7rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  // ── Status pill ──────────────────────────────────────────────────────────
+  &__status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+
+    &--connected {
+      background: hsl(142 71% 45% / 0.12);
+      color: hsl(142 71% 35%);
+    }
+
+    &--disconnected {
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground));
+    }
+
+    &--discovering {
+      background: hsl(214 100% 60% / 0.1);
+      color: hsl(214 100% 50%);
+    }
+
+    &--error {
+      background: hsl(var(--destructive) / 0.1);
+      color: hsl(var(--destructive));
+    }
+  }
+
+  &__status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+
+    .card-reader__status-pill--connected & {
+      animation: cr-pulse 2s ease-in-out infinite;
+    }
+  }
+
+  // ── Battery bar ─────────────────────────────────────────────────────────
+  &__battery {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  &__battery-bar {
+    flex: 1;
+    height: 5px;
+    border-radius: 999px;
+    background: hsl(var(--muted));
+    overflow: hidden;
+  }
+
+  &__battery-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: hsl(142 71% 45%);
+    transition: width 0.4s ease;
+
+    &[data-level="low"] {
+      background: hsl(var(--destructive));
+    }
+
+    &[data-level="mid"] {
+      background: hsl(38 92% 50%);
+    }
+  }
+
+  &__battery-pct {
+    font-size: 0.7rem;
+    font-weight: 600;
+    min-width: 2.5rem;
+    text-align: right;
+    color: hsl(var(--foreground));
+  }
+
+  // ── Update banner ────────────────────────────────────────────────────────
+  &__update-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 0.875rem;
+    border-radius: 0.625rem;
+    background: hsl(38 92% 50% / 0.08);
+    border: 1px solid hsl(38 92% 50% / 0.25);
+    font-size: 0.775rem;
+    color: hsl(30 80% 35%);
+    line-height: 1.4;
+  }
+
+  // ── Discovered readers list ──────────────────────────────────────────────
+  &__readers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  &__readers-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 0.125rem;
+  }
+
+  &__reader-row-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0.875rem;
+    border-radius: 0.75rem;
+    border: 1.5px solid hsl(var(--border));
+    background: hsl(var(--card));
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+    width: 100%;
+
+    &:hover:not(:disabled) {
+      border-color: hsl(var(--primary));
+      background: hsl(var(--primary) / 0.04);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__reader-btn-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 0.5rem;
+    background: hsl(var(--muted));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: hsl(var(--muted-foreground));
+  }
+
+  &__reader-btn-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__reader-btn-name {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+
+  &__reader-btn-serial {
+    font-size: 0.7rem;
+    color: hsl(var(--muted-foreground));
+    font-family: ui-monospace, monospace;
+  }
+
+  &__reader-btn-signal {
+    font-size: 0.7rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  // ── Action buttons ───────────────────────────────────────────────────────
+  &__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  &__btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.75rem;
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+
+    &:active { transform: scale(0.98); }
+    &:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+    &--primary {
+      background: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      &:hover:not(:disabled) { opacity: 0.88; }
+    }
+
+    &--ghost {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+      &:hover:not(:disabled) { background: hsl(var(--muted) / 0.7); }
+    }
+
+    &--danger {
+      background: hsl(var(--destructive) / 0.1);
+      color: hsl(var(--destructive));
+      border: 1px solid hsl(var(--destructive) / 0.2);
+      &:hover:not(:disabled) { background: hsl(var(--destructive) / 0.18); }
+    }
+  }
+
+  // ── Info section ─────────────────────────────────────────────────────────
+  &__info {
+    border-radius: 0.75rem;
+    background: hsl(var(--muted) / 0.5);
+    padding: 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  &__info-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+
+  &__info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+
+    span:first-child {
+      color: hsl(var(--muted-foreground));
+    }
+
+    span:last-child {
+      color: hsl(var(--foreground));
+      font-weight: 500;
+    }
+  }
+
+  // ── Error message ────────────────────────────────────────────────────────
+  &__error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.75rem 0.875rem;
+    border-radius: 0.625rem;
+    background: hsl(var(--destructive) / 0.08);
+    border: 1px solid hsl(var(--destructive) / 0.2);
+    font-size: 0.775rem;
+    color: hsl(var(--destructive));
+    line-height: 1.45;
+  }
+
+  // ── Spinner ──────────────────────────────────────────────────────────────
+  &__spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: cr-spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+}
+
+// ── Keyframes ──────────────────────────────────────────────────────────────────
+@keyframes cr-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cr-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

@@ -1,0 +1,56 @@
+/* components/POS/CategoryTile/styles.scss */
+
+.category-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem 0.375rem 0.5rem;
+  border-radius: 9999px;
+  border: 1.5px solid hsl(var(--border));
+  background: hsl(var(--card));
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+
+  &:hover {
+    border-color: hsl(var(--primary) / 0.5);
+    background: hsl(var(--primary) / 0.05);
+  }
+
+  &--active {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary));
+
+    .category-tile__name,
+    .category-tile__count {
+      color: hsl(var(--primary-foreground));
+    }
+  }
+
+  &__icon {
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  &__name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    transition: color 0.15s;
+  }
+
+  &__count {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+    padding: 0.1rem 0.4rem;
+    transition: color 0.15s, background 0.15s;
+
+    .category-tile--active & {
+      background: hsl(var(--primary-foreground) / 0.2);
+    }
+  }
+}

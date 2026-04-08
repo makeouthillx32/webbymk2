@@ -1,0 +1,316 @@
+/* components/POS/styles.scss */
+
+/* ── Root layout ─────────────────────────────────────────────────────────── */
+.pos-root {
+  display: flex;
+  height: calc(100vh - 4rem); /* subtract breadcrumb bar */
+  background: hsl(var(--background));
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid hsl(var(--border));
+
+  &__left {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid hsl(var(--border));
+  }
+
+  &__content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__right {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    @media (min-width: 1280px) {
+      width: 360px;
+    }
+  }
+}
+
+/* ── Tab bar — matches Square POS style ──────────────────────────────────── */
+.pos-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 1rem;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  flex-shrink: 0;
+  height: 48px;
+
+  &__tab {
+    position: relative;
+    padding: 0 1rem;
+    height: 100%;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.15s;
+    white-space: nowrap;
+
+    &::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: hsl(var(--primary));
+      transform: scaleX(0);
+      transition: transform 0.2s;
+    }
+
+    &:hover {
+      color: hsl(var(--foreground));
+    }
+
+    &--active {
+      color: hsl(var(--primary));
+      font-weight: 600;
+
+      &::after {
+        transform: scaleX(1);
+      }
+    }
+  }
+
+  /* Small status dot next to the Reader tab label */
+  &__reader-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-left: 0.35rem;
+    vertical-align: middle;
+    flex-shrink: 0;
+    background: hsl(var(--muted-foreground) / 0.5);
+    transition: background 0.3s;
+
+    &--on {
+      background: hsl(142 71% 45%);
+      animation: reader-dot-pulse 2s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes reader-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+/* ── Error state ─────────────────────────────────────────────────────────── */
+.pos-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  height: 400px;
+  color: hsl(var(--destructive));
+  font-size: 0.9rem;
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background 0.15s;
+
+    &:hover {
+      background: hsl(var(--border));
+    }
+  }
+}
+
+/* ── Mobile layout (< 768px) ──────────────────────────────────────────────── */
+@media (max-width: 767px) {
+
+  /* Root becomes a single column, full viewport height */
+  .pos-root {
+    flex-direction: column;
+    height: 100dvh;          /* dynamic viewport height — handles iOS chrome */
+    border-radius: 0;
+    border: none;
+    position: relative;
+
+    /* Left panel takes all available space above the bar */
+    &__left {
+      flex: 1;
+      min-height: 0;
+      border-right: none;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    /* Desktop right panel hides on mobile */
+    &__right {
+      display: none;
+    }
+  }
+
+  /* Tab bar scrolls horizontally if tabs overflow */
+  .pos-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    &::-webkit-scrollbar { display: none; }
+  }
+
+  /* ── Sticky bottom bar ────────────────────────────────────────────────── */
+  .pos-mobile-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: hsl(var(--card));
+    border-top: 1px solid hsl(var(--border));
+
+    /* Safe area for iPhone home indicator */
+    padding-bottom: env(safe-area-inset-bottom);
+
+    &__btn {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    &__icon {
+      position: relative;
+      flex-shrink: 0;
+      color: hsl(var(--foreground));
+    }
+
+    &__badge {
+      position: absolute;
+      top: -6px;
+      right: -8px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 3px;
+      border-radius: 999px;
+      background: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      font-size: 0.6rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    &__label {
+      flex: 1;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: hsl(var(--foreground));
+    }
+
+    &__total {
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: hsl(var(--foreground));
+    }
+
+    &__chevron {
+      color: hsl(var(--muted-foreground));
+      transition: transform 0.25s ease;
+    }
+  }
+
+  /* ── Slide-up drawer ──────────────────────────────────────────────────── */
+  .pos-mobile-drawer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 51;
+    background: hsl(var(--card));
+    border-top: 1px solid hsl(var(--border));
+    border-radius: 1rem 1rem 0 0;
+    max-height: 85dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+
+    /* Starts off-screen */
+    transform: translateY(100%);
+    transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+
+    /* Safe area padding at bottom */
+    padding-bottom: env(safe-area-inset-bottom);
+
+    &--open {
+      transform: translateY(0);
+    }
+
+    &__handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 999px;
+      background: hsl(var(--muted-foreground) / 0.3);
+      margin: 0.75rem auto 0;
+      cursor: pointer;
+    }
+
+    /* Cart inside the drawer fills naturally */
+    .pos-cart {
+      border: none;
+      border-radius: 0;
+      max-height: none;
+    }
+  }
+
+  /* ── Backdrop ─────────────────────────────────────────────────────────── */
+  .pos-mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 49;
+    background: hsl(var(--foreground) / 0.35);
+    backdrop-filter: blur(1px);
+    animation: backdrop-in 0.2s ease forwards;
+  }
+
+  @keyframes backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Push content up so the fixed bar doesn't cover it */
+  .pos-root__content {
+    padding-bottom: 64px; /* height of the bar */
+  }
+}
+
+/* ── On tablet/desktop: hide the mobile-only elements ─────────────────────── */
+@media (min-width: 768px) {
+  .pos-mobile-bar,
+  .pos-mobile-drawer,
+  .pos-mobile-backdrop {
+    display: none !important;
+  }
+}

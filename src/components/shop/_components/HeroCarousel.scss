@@ -1,0 +1,112 @@
+.hero-carousel-container {
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--background);
+
+  /* Important: don't center children; stretch them to full width */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+
+  /* ✅ MOBILE: portrait ratio (1125×1470 => 75/98) */
+  aspect-ratio: 75 / 98;
+
+  @media (min-width: 1024px) {
+    /* ✅ DESKTOP: shallow banner */
+    aspect-ratio: 25 / 9;
+  }
+
+  animation: carousel-fade-in 0.4s ease-out;
+
+  /* ---- Embla / shadcn carousel structural fixes ---- */
+
+  /* The root carousel wrapper should fill the container */
+  :global(.carousel) {
+    width: 100%;
+    height: 100%;
+    min-width: 0; /* prevents flex overflow weirdness */
+  }
+
+  /* Depending on your carousel.tsx, these often exist */
+  :global(.carousel-viewport) {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* The track MUST be flex and must fill height */
+  :global(.carousel-content) {
+    display: flex;
+    height: 100%;
+    width: 100%;
+    margin-left: 0 !important; /* you were passing ml-0; enforce it */
+  }
+
+  /* Each slide fills the container height */
+  .hero-slide-item {
+    padding-left: 0 !important;
+    flex: 0 0 100%;
+    min-width: 100%;
+    height: 100%;
+    display: flex; /* helps child link stretch */
+  }
+
+  /* Your link must fill the slide */
+  .slide-link {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* next/image renders a wrapper span — force it to fill */
+  .slide-link :global(span) {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* Ensure the image fills and covers without jumping */
+  .hero-img {
+    display: block; /* removes baseline gap */
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* ---- Dots ---- */
+  .dots-container {
+    position: absolute;
+    bottom: 20px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    z-index: 20;
+    pointer-events: auto;
+
+    .dot {
+      height: 6px;
+      width: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.4);
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &.active {
+        width: 24px;
+        border-radius: 10px;
+        background: white;
+      }
+    }
+  }
+}
+
+@keyframes carousel-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

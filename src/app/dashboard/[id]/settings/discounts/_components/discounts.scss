@@ -1,0 +1,19 @@
+/* app/settings/discounts/_components/discounts.scss */
+
+.discounts-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .discounts-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .discounts-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

@@ -1,0 +1,19 @@
+id,business_name,address,before_open
+1,Water District," 500 West Ridgecrest Boulevard, Ridgecrest, CA 93555",true
+2,Balsam ST Trash,balsam ST,true
+3,Elks Lodge,"201 East Church Avenue, Ridgecrest, CA 93555",true
+4,Main Office (just trash),"201 E Ridgecrest Blvd,Ridgecrest, CA 93555",false
+5,Main Office (Full Clean),"201 E Ridgecrest Blvd,Ridgecrest, CA 93555",true
+6,Church,"639 N Norma St, Ridgecrest, CA 93555",true
+7,College Heights Trash,"College Heights Blvd, Ridgecrest, CA 93555",false
+8,Bowmen Trash,"Bowman Rd, Ridgecrest, CA 93555",false
+9,DJ's Pub,"135 Garnet Avenue, Ridgecrest, CA 93555",true
+10,Syntech,"917 W Inyokern Rd a, Ridgecrest, CA 93555",true
+11,City Yard,"672-676 Ridgecrest Blvd, Ridgecrest, CA 93555",false
+12,Thrift Shop,"200 N Gold Canyon St, Ridgecrest, CA 93555",true
+13,Gazebo Trash,"Bowman Rd, Ridgecrest, CA 93555",false
+14,Women's Center Bathrooms,"130 S China Lake Blvd, Ridgecrest, CA 93555",false
+15,Daily Independent,619 W Ridgecrest Blvd STE D,false
+16,Wylies,"909 W Inyokern Rd, Ridgecrest, CA 93555",false
+17,DJ's Bar and Grill-del later,"135 Garnet Avenue, Ridgecrest, CA 93555",true
+18,Perimeter Trash,"By Pizza factory, Beer-cave ,and Indian smokeshop",false

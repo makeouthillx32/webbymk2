@@ -1,0 +1,19 @@
+/* app/settings/tags/_components/tags.scss */
+
+.tags-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .tags-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .tags-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

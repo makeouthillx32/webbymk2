@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg id="svg2" viewBox="0 0 500 670" xmlns="http://www.w3.org/2000/svg" style="filter: url(&quot;#inner-shadow-filter-0&quot;); isolation: isolate;" xmlns:bx="https://boxy-svg.com">
+  <desc>Source: openclipart.org/detail/209545</desc>
+  <defs>
+    <filter id="inner-shadow-filter-0" bx:preset="inner-shadow 1 0 0 4 0.13 rgba(0,0,0,0.7)" color-interpolation-filters="sRGB" x="-50%" y="-50%" width="200%" height="200%">
+      <feOffset dx="0" dy="0"/>
+      <feGaussianBlur stdDeviation="4"/>
+      <feComposite operator="out" in="SourceGraphic"/>
+      <feComponentTransfer result="choke">
+        <feFuncA type="linear" slope="0.26"/>
+      </feComponentTransfer>
+      <feFlood flood-color="rgba(0,0,0,0.7)" result="color"/>
+      <feComposite operator="in" in="color" in2="choke" result="shadow"/>
+      <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+    </filter>
+    <filter id="drop-shadow-filter-1" bx:preset="drop-shadow 1 2 4 5 1 rgba(0,0,0,0.3)" color-interpolation-filters="sRGB" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5"/>
+      <feOffset dx="2" dy="4"/>
+      <feComponentTransfer result="offsetblur">
+        <feFuncA id="spread-ctrl" type="linear" slope="2"/>
+      </feComponentTransfer>
+      <feFlood flood-color="rgba(0,0,0,0.3)"/>
+      <feComposite in2="offsetblur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <bx:export>
+      <bx:file format="html" href="#object-0"/>
+    </bx:export>
+  </defs>
+  <g id="object-0" transform="matrix(2.322191, 0, 0, 2.322191, -297.548863, -347.504064)" style="">
+    <ellipse style="stroke: rgb(0, 0, 0); stroke-opacity: 0; fill: rgb(67, 101, 245);" cx="236.178" cy="288.076" rx="93.019" ry="93.615"/>
+    <path d="M 255.085 353.56 C 256.085 353.56 257.185 353.26 258.185 352.76 C 262.085 350.96 263.685 346.56 261.785 342.66 C 261.785 342.66 247.485 309.96 244.885 297.96 C 243.885 293.76 243.285 282.66 243.085 277.46 C 243.085 275.66 244.085 274.06 245.685 273.56 L 277.685 263.96 C 281.585 262.96 283.885 258.46 282.885 254.56 C 281.885 250.66 277.385 248.36 273.485 249.36 C 273.485 249.36 243.885 258.96 233.185 258.96 C 222.785 258.96 193.385 249.56 193.385 249.56 C 189.485 248.56 185.085 250.36 183.785 254.26 C 182.485 258.46 184.785 262.86 188.985 263.86 L 220.985 273.46 C 222.585 273.96 223.885 275.56 223.585 277.36 C 223.285 282.56 222.785 293.76 221.785 297.86 C 219.185 309.86 204.885 342.56 204.885 342.56 C 203.085 346.46 204.885 350.86 208.485 352.66 C 209.485 353.16 210.585 353.46 211.585 353.46 C 214.485 353.46 217.285 351.86 218.385 349.06 L 233.685 317.86 L 248.285 349.26 C 249.585 351.96 252.185 353.56 255.085 353.56 Z" style="fill: rgb(255, 255, 255); filter: url(&quot;#drop-shadow-filter-1&quot;); paint-order: stroke; stroke-width: 4px; stroke: rgba(0, 0, 0, 0.19); stroke-linecap: round; stroke-miterlimit: 15.77;"/>
+    <circle cx="233.785" cy="236.86" r="14.6" style="fill: rgb(255, 255, 255); paint-order: stroke; stroke-width: 4px; stroke: rgba(0, 0, 0, 0.19); stroke-linecap: round; stroke-miterlimit: 15.77; filter: url(&quot;#drop-shadow-filter-1&quot;);"/>
+  </g>
+</svg>

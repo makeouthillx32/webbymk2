@@ -1,0 +1,38 @@
+/* app/settings/categories/_components/categories.scss */
+
+/* Scope everything to categories manager only */
+.categories-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .categories-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .categories-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .categories-row {
+    transition: background-color 0.15s ease;
+  }
+
+  .categories-row:hover {
+    background-color: hsl(var(--muted) / 0.4);
+  }
+
+  .category-actions {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .category-indent {
+    display: inline-flex;
+    width: 1rem;
+  }
+}

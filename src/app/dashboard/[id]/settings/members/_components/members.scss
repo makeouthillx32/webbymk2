@@ -1,0 +1,59 @@
+// Members page specific styles
+.members-table {
+  // Custom scrollbar for the table
+  overflow-x-auto {
+    // Scrollbar styles can go here if needed
+  }
+  
+  // Responsive table handling
+  @media (max-width: 768px) {
+    overflow-x: scroll;
+  }
+
+  // Zebra striping for readability
+  tbody tr:nth-child(even) {
+    background-color: var(--app-muted);
+  }
+
+  // Hover effect for rows
+  tbody tr:hover {
+    background-color: rgba(87, 80, 241, 0.07); // Subtle highlight
+    transition: background-color 0.3s ease;
+  }
+
+  // Responsive column visibility
+  @media (max-width: 1024px) {
+    // Hide less important columns on smaller screens
+    .hide-mobile {
+      display: none;
+    }
+  }
+}
+
+// Action buttons styling
+.member-actions {
+  .action-btn {
+    transition: all 0.3s ease;
+    
+    &:hover {
+      background-color: rgba(87, 80, 241, 0.1);
+      transform: scale(1.05);
+    }
+  }
+}
+
+// Pagination styling
+.pagination {
+  .active-page {
+    background-color: var(--primary);
+    color: white;
+  }
+
+  .page-btn {
+    transition: all 0.3s ease;
+    
+    &:hover {
+      background-color: rgba(87, 80, 241, 0.1);
+    }
+  }
+}

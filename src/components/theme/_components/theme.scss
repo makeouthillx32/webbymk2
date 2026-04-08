@@ -1,0 +1,444 @@
+/* 
+ * Theme System Component Styles
+ * Pure structural and layout styles - NO COLOR LOGIC
+ */
+
+// Variables - Structure Only
+:root {
+  --theme-transition-speed: 0.2s;
+  --theme-border-radius: var(--radius, 0.5rem);
+  --theme-box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1);
+  --theme-stroke-width: 2px;
+}
+
+// Mixins - Layout Only
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@mixin theme-border {
+  border: var(--theme-stroke-width) solid;
+  box-shadow: var(--theme-box-shadow);
+}
+
+// --------------------------------------
+// Theme Selector Overlay
+// --------------------------------------
+.theme-selector {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100; /* --z-overlay */
+  @include flex-center;
+  padding: 1rem;
+  padding-top: calc(1rem + var(--header-height, 70px));
+  overflow: auto;
+
+  &__container {
+    position: relative;
+    max-width: 28rem;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - var(--header-height, 70px) - 2rem);
+    border-radius: var(--theme-border-radius);
+    overflow: hidden;
+    @include theme-border;
+  }
+
+  &__header {
+    padding: 1rem;
+    @include flex-between;
+    border-bottom: var(--theme-stroke-width) solid;
+  }
+
+  &__title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  &__close {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    @include flex-center;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all var(--theme-transition-speed) ease;
+
+    &:hover {
+      transform: scale(1.05);
+    }
+  }
+
+  &__controls {
+    padding: 0 1rem 1rem;
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  &__control-button {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: calc(var(--theme-border-radius) - 0.25rem);
+    border: 1px solid;
+    cursor: pointer;
+    transition: all var(--theme-transition-speed) ease;
+    font-size: 0.875rem;
+
+    &:hover {
+      transform: translateY(-1px);
+    }
+
+    &:active {
+      transform: translateY(1px);
+    }
+
+    svg {
+      width: 1.125rem;
+      height: 1.125rem;
+    }
+  }
+
+  &__content {
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  &__section {
+    padding: 1.25rem;
+
+    &:not(:last-child) {
+      margin-bottom: 1rem;
+      border-bottom: 1px solid;
+    }
+  }
+
+  &__section-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0 0 1.25rem;
+    display: flex;
+    align-items: center;
+    
+    &::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      margin-left: 0.75rem;
+    }
+  }
+
+  &__footer {
+    text-align: center;
+    padding: 1rem;
+    font-size: 0.875rem;
+    border-top: var(--theme-stroke-width) solid;
+  }
+
+  &__brand {
+    font-weight: 600;
+  }
+
+  &__keyboard-hint {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    opacity: 0.8;
+  }
+}
+
+// --------------------------------------
+// Theme Preset Card
+// --------------------------------------
+.theme-preset-card {
+  display: flex;
+  align-items: center;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid;
+  transition: all var(--theme-transition-speed) ease;
+  border-radius: calc(var(--theme-border-radius) - 0.25rem);
+  
+  &:hover {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+  }
+
+  &__color-preview {
+    margin-right: 1rem;
+    flex-shrink: 0;
+  }
+
+  &__swatch {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    border: 2px solid;
+    transition: all var(--theme-transition-speed) ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+    &--active {
+      box-shadow: 0 0 0 2px,
+                  0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  &__content {
+    flex-grow: 1;
+    margin-right: 0.5rem;
+  }
+
+  &__title {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+
+  &__description {
+    margin: 0;
+    font-size: 0.875rem;
+    opacity: 0.7;
+  }
+
+  &__actions {
+    flex-shrink: 0;
+  }
+
+  &__button {
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.375rem 0.75rem;
+    border-radius: 9999px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all var(--theme-transition-speed) ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+    &:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+    }
+
+    &:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
+
+    &--active {
+      border-color: transparent;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+  }
+}
+
+// --------------------------------------
+// Accessibility Toggle
+// --------------------------------------
+.accessibility-toggle {
+  display: flex;
+  align-items: center;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid;
+  transition: all var(--theme-transition-speed) ease;
+  border-radius: calc(var(--theme-border-radius) - 0.25rem);
+  
+  &:hover {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+  }
+
+  &__switch {
+    margin-right: 1rem;
+    flex-shrink: 0;
+  }
+
+  &__track {
+    position: relative;
+    width: 3rem;
+    height: 1.75rem;
+    border-radius: 9999px;
+    border: 1px solid;
+    transition: all var(--theme-transition-speed) ease;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+
+    &--enabled {
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  &__thumb {
+    position: absolute;
+    top: 0.125rem;
+    left: 0.125rem;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    border: none;
+    transition: all var(--theme-transition-speed) ease;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+
+    &--enabled {
+      transform: translateX(1.25rem);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  &__content {
+    flex-grow: 1;
+  }
+
+  &__title {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+
+  &__description {
+    margin: 0;
+    font-size: 0.875rem;
+    opacity: 0.7;
+  }
+}
+
+// Theme presets placeholder
+.theme-presets-placeholder {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border-radius: var(--theme-border-radius);
+  border: 1px dashed;
+  opacity: 0.6;
+  
+  &__text {
+    text-align: center;
+    font-size: 0.875rem;
+    margin: 0;
+  }
+}
+
+// Media queries for responsiveness
+@media (max-width: 768px) {
+  .theme-selector {
+    &__container {
+      max-width: 68%;
+      max-height: 80vh;
+    }
+
+    &__controls {
+      flex-direction: column;
+    }
+
+    &__section {
+      padding: 1rem;
+    }
+
+    &__section-title {
+      font-size: 1rem;
+    }
+  }
+
+  .theme-preset-card {
+    flex-wrap: wrap;
+
+    &__actions {
+      margin-top: 0.5rem;
+      width: 100%;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    &__swatch {
+      width: 2rem;
+      height: 2rem;
+    }
+
+    &__title {
+      font-size: 0.9rem;
+    }
+
+    &__description {
+      font-size: 0.8rem;
+    }
+  }
+
+  .accessibility-toggle {
+    &__track {
+      width: 2.5rem;
+      height: 1.5rem;
+    }
+
+    &__thumb {
+      width: 1.25rem;
+      height: 1.25rem;
+
+      &--enabled {
+        transform: translateX(1rem);
+      }
+    }
+
+    &__title {
+      font-size: 0.9rem;
+    }
+
+    &__description {
+      font-size: 0.8rem;
+    }
+  }
+
+  .theme-toggle {
+    z-index: 100;
+    bottom: 4rem;
+  }
+}
+
+// Extra small devices
+@media (max-width: 480px) {
+  .theme-selector {
+    &__container {
+      max-width: 90%;
+    }
+
+    &__title {
+      font-size: 1.1rem;
+    }
+
+    &__control-button {
+      padding: 0.4rem 0.5rem;
+      font-size: 0.8rem;
+
+      svg {
+        width: 1rem;
+        height: 1rem;
+      }
+    }
+  }
+
+  .theme-toggle {
+    bottom: 5rem;
+  }
+}

@@ -1,0 +1,19 @@
+/* app/settings/inventory/_components/inventory.scss */
+
+.inventory-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .inventory-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .inventory-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

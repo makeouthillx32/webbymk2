@@ -1,0 +1,39 @@
+import { useState } from "react";
+
+const CheckboxOne = () => {
+  const [isChecked, setIsChecked] = useState<boolean>(false);
+
+  return (
+    <div>
+      <label
+        htmlFor="checkboxLabelOne"
+        className="flex cursor-pointer select-none items-center text-body-sm font-medium text-[hsl(var(--foreground))]"
+      >
+        <div className="relative">
+          <input
+            type="checkbox"
+            id="checkboxLabelOne"
+            className="sr-only"
+            onChange={() => {
+              setIsChecked(!isChecked);
+            }}
+          />
+          <div
+            className={`mr-2 flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius)*0.375)] border ${
+              isChecked
+                ? "border-[hsl(var(--sidebar-primary))] bg-[hsl(var(--muted))] dark:bg-transparent"
+                : "border-[hsl(var(--border))] dark:border-[hsl(var(--border))]"
+            }`}
+          >
+            <span
+              className={`h-2.5 w-2.5 rounded-[calc(var(--radius)*0.25)] ${isChecked && "bg-[hsl(var(--sidebar-primary))]"}`}
+            ></span>
+          </div>
+        </div>
+        Checkbox Text
+      </label>
+    </div>
+  );
+};
+
+export default CheckboxOne;

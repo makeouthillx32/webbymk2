@@ -1,0 +1,343 @@
+// =======================================
+// VARIABLES AND BREAKPOINTS
+// =======================================
+$breakpoint-sm: 640px;
+$breakpoint-md: 768px;
+$breakpoint-lg: 1024px;
+$header-height: 70px; // Define header height for consistent spacing
+
+// =======================================
+// CHAT MESSAGES COMPONENT
+// =======================================
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  padding-top: 20px; // Add extra top padding to prevent header cutoff
+  -webkit-overflow-scrolling: touch; // Smooth iOS scrolling
+  
+  // Disable text selection for the entire messages container
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  
+  // Remove blue highlight on tap (mobile)
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  
+  @media (min-width: $breakpoint-md) {
+    padding: 16px;
+    padding-top: 24px; // Add extra top padding for desktop
+  }
+  
+  .message {
+    max-width: 85%;
+    margin-bottom: 12px;
+    
+    // Ensure no text selection on messages
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    
+    // Remove tap highlighting
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    
+    @media (min-width: $breakpoint-md) {
+      max-width: 70%;
+    }
+    
+    &-bubble {
+      border-radius: 18px;
+      padding: 8px 12px;
+      word-break: break-word;
+      transition: all 0.2s ease;
+      
+      // Disable selection on message bubbles specifically
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      
+      // Remove tap highlight
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      
+      @media (min-width: $breakpoint-md) {
+        padding: 10px 16px;
+      }
+      
+      &:hover {
+        transform: translateY(-1px);
+      }
+      
+      // Enhanced cursor for interactive messages
+      &.cursor-pointer {
+        cursor: pointer;
+      }
+      
+      // Active state for touch feedback
+      &:active {
+        transform: scale(0.98);
+        transition: transform 0.1s ease;
+      }
+    }
+    
+    &-image {
+      border-radius: 12px;
+      overflow: hidden;
+      max-width: 300px;
+      max-height: 200px;
+      margin-top: 4px;
+      
+      // Disable selection on images
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      
+      img {
+        width: 100%;
+        height: auto;
+        max-height: 200px;
+        object-fit: cover;
+        display: block;
+        
+        // Prevent image dragging and selection
+        -webkit-user-drag: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        pointer-events: none; // Prevent right-click menu on images
+      }
+    }
+    
+    &-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 16px;
+      overflow: hidden;
+      
+      // Disable selection on avatars
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      
+      @media (min-width: $breakpoint-md) {
+        width: 40px;
+        height: 40px;
+      }
+    }
+  }
+  
+  // Desktop action indicator
+  @media (min-width: $breakpoint-md) {
+    .message:hover .group-hover\:opacity-100 {
+      opacity: 1;
+    }
+  }
+  
+  // Mobile long press feedback
+  @media (max-width: #{$breakpoint-md - 1px}) {
+    .message:active .message-bubble {
+      transform: scale(0.98);
+    }
+  }
+}
+
+// =======================================
+// FLOATING CONTEXT MENU
+// =======================================
+.message-context-menu {
+  position: fixed;
+  z-index: 80; /* --z-modal */
+  padding: 6px;
+  min-width: 160px;
+  animation: context-menu-appear 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center top;
+  
+  // Disable selection on context menu
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  
+  // Prevent menu from being affected by scroll momentum
+  position: fixed !important;
+  
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    
+    // Disable selection on menu items
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    
+    // Better touch targets for mobile
+    @media (max-width: #{$breakpoint-md - 1px}) {
+      padding: 12px 16px;
+      font-size: 16px; // Prevent iOS zoom
+      min-height: 44px; // Apple's recommended touch target
+    }
+    
+    // Icon styling
+    svg {
+      flex-shrink: 0;
+    }
+    
+    // Hover and active states
+    &:hover {
+      transform: translateX(2px);
+    }
+    
+    &:active {
+      transform: scale(0.98);
+    }
+    
+    // Copy button specific styling
+    &.copy-item {
+      // No specific styles needed, colors handled in TSX
+    }
+    
+    // Delete button specific styling  
+    &.delete-item {
+      // No specific styles needed, colors handled in TSX
+    }
+  }
+}
+
+// =======================================
+// CONTEXT MENU ANIMATIONS
+// =======================================
+@keyframes context-menu-appear {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(-10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes context-menu-disappear {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8) translateY(-10px);
+  }
+}
+
+// =======================================
+// CONTAINER LAYOUT
+// =======================================
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 70px); // Subtract header height
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+
+  @media (min-width: $breakpoint-md) {
+    flex-direction: row;
+  }
+}
+
+// Main chat content area
+.chat-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  height: 100%;
+  overflow: hidden; // Important: prevent content from overflowing
+}
+
+// =======================================
+// MOBILE RESPONSIVE FIXES
+// =======================================
+@media (max-width: #{$breakpoint-md - 1px}) {
+  // Fix iOS height issues for chat container
+  .chat-container {
+    height: 100dvh; // Use dynamic viewport height for better mobile support
+    min-height: 100%;
+  }
+  
+  // Improve mobile scrolling performance for messages
+  .chat-messages {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+  
+  // Enhanced mobile context menu
+  .message-context-menu {
+    // Slightly larger on mobile for better touch interaction
+    min-width: 180px;
+    padding: 8px;
+    
+    // Add backdrop blur effect on mobile for better visibility
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  
+  // Better mobile feedback for message interactions
+  .message-bubble {
+    // Add slight scale feedback on touch
+    &:active {
+      transform: scale(0.98);
+      transition: transform 0.1s ease;
+    }
+  }
+}
+
+// =======================================
+// ACCESSIBILITY IMPROVEMENTS
+// =======================================
+@media (prefers-reduced-motion: reduce) {
+  .message-context-menu {
+    animation: none;
+  }
+  
+  .message-bubble,
+  .context-menu-item {
+    transition: none;
+  }
+}
+
+// High contrast mode support
+@media (prefers-contrast: high) {
+  .message-context-menu {
+    border-width: 2px;
+  }
+  
+  .context-menu-item {
+    border: 1px solid transparent;
+    
+    &:focus,
+    &:hover {
+      border: 1px solid currentColor;
+    }
+  }
+}

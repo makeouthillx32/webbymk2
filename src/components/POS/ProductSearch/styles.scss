@@ -1,0 +1,132 @@
+/* components/POS/ProductSearch/styles.scss */
+
+.product-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 2.625rem;
+  border-radius: 0.625rem;
+  border: 1.5px solid hsl(var(--border));
+  background: hsl(var(--background));
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:focus-within {
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+  }
+
+  /* Search / spinner icon */
+  &__icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+    transition: color 0.15s;
+
+    .product-search:focus-within & {
+      color: hsl(var(--primary));
+    }
+  }
+
+  /* Spinning loader (replaces magnifier while isLoading) */
+  &__spinner {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid hsl(var(--border));
+    border-top-color: hsl(var(--primary));
+    border-radius: 50%;
+    animation: pos-search-spin 0.65s linear infinite;
+  }
+
+  @keyframes pos-search-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Text input */
+  &__input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    caret-color: hsl(var(--primary));
+
+    &::placeholder {
+      color: hsl(var(--muted-foreground));
+    }
+
+    /* Remove browser search clear button (Chrome) */
+    &::-webkit-search-cancel-button {
+      -webkit-appearance: none;
+    }
+  }
+
+  /* Right-side area: count + clear, OR slash hint */
+  &__right {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding-right: 0.625rem;
+    flex-shrink: 0;
+  }
+
+  /* Result count badge */
+  &__count {
+    font-size: 0.675rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+    padding: 0.15rem 0.5rem;
+    white-space: nowrap;
+  }
+
+  /* Clear (×) button */
+  &__clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 9999px;
+    border: none;
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+
+    &:hover {
+      background: hsl(var(--destructive) / 0.12);
+      color: hsl(var(--destructive));
+    }
+  }
+
+  /* Keyboard shortcut hint */
+  &__hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    border-radius: 0.25rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.6);
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-family: ui-monospace, monospace;
+    color: hsl(var(--muted-foreground));
+    line-height: 1;
+    user-select: none;
+  }
+}

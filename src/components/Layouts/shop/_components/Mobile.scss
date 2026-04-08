@@ -1,0 +1,417 @@
+/* ========== Navigation (Mobile) - Structure & Animations Only ========== */
+
+/* Mobile drawer content */
+.drawer-content {
+  height: 100%;
+  width: 100%;
+
+  /* ✅ only the inside scrolls */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+
+  /* ✅ kill old hidden dropdown state */
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+
+  /* ✅ scrollbar styling */
+  scrollbar-width: thin; /* firefox */
+  scrollbar-color: hsl(var(--foreground) / 0.12) transparent;
+}
+
+/* Chrome/Safari scrollbar */
+.drawer-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.drawer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.drawer-content::-webkit-scrollbar-thumb {
+  background: hsl(var(--foreground) / 0.12);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.drawer-content::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--foreground) / 0.18);
+  background-clip: padding-box;
+}
+
+/* Mobile menu container structure */
+.mobile-menu-container {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0;
+  gap: 1px;
+  
+  /* Ensure no backdrop effects */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Mobile menu item structure */
+.mobile-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0.9rem 1rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+
+  position: relative;
+
+  /* ✅ faint row separators (top + bottom) */
+  border-top: 1px solid hsl(var(--accent-foreground) / 0.16);
+ 
+
+  .menu-link {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
+
+    &:focus { outline: none; }
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+  }
+
+  /* ✅ right side icon area with a vertical divider */
+  .menu-toggle {
+    margin-left: 0.75rem;
+    padding-left: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+
+    border-left: 1px solid hsl(var(--accent-foreground) / 0.16);
+
+    &:focus { outline: none; }
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+  }
+
+  .menu-icon-slot {
+    display: none;
+  }
+}
+
+/* Mobile submenu structure */
+.mobile-submenu {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  
+  .submenu-link {
+    padding: 0.75rem 1rem 0.75rem 2rem;
+    font-size: 0.875rem;
+    font-weight: 400;
+    text-decoration: none;
+    position: relative;
+    
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.25rem;
+    }
+    
+    /* Subtle press animation */
+    &:active {
+      transform: translateX(2px);
+    }
+  }
+}
+
+/* Mobile auth section structure */
+.mobile-auth-section {
+  .auth-button {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    display: block;
+    text-align: left;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-decoration: none;
+    
+    &:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+      border-radius: 0.375rem;
+    }
+    
+    /* Active state animation */
+    &:active {
+      transform: translateY(0) !important;
+    }
+  }
+}
+
+/* ========== HOME PAGE HEADER PROTECTION ONLY ========== */
+
+/* ONLY target the home page header with .header-container class */
+.header-container {
+  /* Prevent any backdrop effects */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  
+  /* Ensure it stays on top */
+  position: relative !important;
+  z-index: 20 !important;
+  
+  /* Force hardware acceleration to separate layer */
+  transform: translateZ(0) !important;
+  will-change: auto !important;
+  
+  /* Prevent inheritance of any backdrop effects */
+  isolation: isolate !important;
+  
+  /* Ensure solid background */
+  opacity: 1 !important;
+  
+  /* Home header specific children */
+  .header-content,
+  .header-logo,
+  .header-nav, 
+  .header-actions,
+  .header-auth,
+  .theme-switcher,
+  .mobile-hamburger {
+    /* No backdrop effects on any header elements */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    
+    /* Ensure solid backgrounds where needed */
+    background-color: transparent !important;
+    
+    /* Prevent overlay effects */
+    opacity: 1 !important;
+  }
+  
+  /* Logo specific protection */
+  .logo-link,
+  .logo-image {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    opacity: 1 !important;
+  }
+}
+/* ===== Header motion smoothing ===== */
+.header-content,
+.header-left,
+.header-logo,
+.header-actions {
+  transition:
+    transform 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms ease,
+    gap 260ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+/* Mobile drawer overlay */
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60; 
+  background: hsl(var(--foreground) / 0.25);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  
+  /* Critical Fix: Hide by default */
+  opacity: 0;
+  pointer-events: none; 
+  visibility: hidden;
+  transition: opacity 240ms ease, visibility 240ms;
+  cursor: pointer;
+}
+
+/* Show only when the drawer is open */
+.mobile-drawer-open .mobile-drawer-overlay {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.mobile-drawer-shell {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: min(86vw, 360px);
+
+  z-index: 61; /* --z-drawer panel */
+  border-right: 1px solid hsl(var(--border));
+  box-shadow: var(--lt-shadow);
+
+  /* ✅ THE ONLY SCROLLER */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* ✅ THEMED scrollbar (Firefox) */
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--accent-foreground) / 0.28) transparent;
+}
+
+/* ✅ THEMED scrollbar (Chrome/Safari/Edge) */
+.mobile-drawer-shell::-webkit-scrollbar {
+  width: 10px;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-thumb {
+  background: hsl(var(--accent-foreground) / 0.26);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.mobile-drawer-shell::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--accent-foreground) / 0.36);
+  background-clip: padding-box;
+}
+
+/* ========== MOBILE SPECIFIC OVERRIDES - HOME PAGE ONLY ========== */
+@media (max-width: 768px) {
+  /* ONLY protect home page header - be very specific */
+  .header-container {
+    /* No backdrop effects whatsoever */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    
+    /* Highest z-index */
+    z-index: 20 !important; /* --z-header */
+    position: relative !important;
+    
+    /* Force GPU layer */
+    transform: translateZ(0) !important;
+    isolation: isolate !important;
+    
+    /* Prevent any overlays */
+    &::before,
+    &::after {
+      display: none !important;
+    }
+  }
+  
+
+  .header-content {
+    transform: translateY(0);
+  }
+
+  .header-left {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .header-logo {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .header-actions {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  /* Enhanced touch targets for mobile - accessibility */
+  .mobile-menu-item {
+    min-height: 48px; /* Accessibility guideline for touch targets */
+  }
+  
+  .submenu-link {
+    min-height: 44px; /* Slightly smaller for hierarchy */
+  }
+  
+  .auth-button {
+    min-height: 48px;
+  }
+}
+
+/* ========== ANIMATION KEYFRAMES ========== */
+@keyframes mobile-drawer-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+    visibility: visible;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+  }
+}
+
+@keyframes mobile-drawer-slide-up {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-20px);
+    visibility: visible;
+  }
+}
+
+/* Animation classes with consistent timing */
+.animate-slide-down {
+  animation: mobile-drawer-slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  visibility: visible !important;
+}
+
+.animate-slide-up {
+  animation: mobile-drawer-slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  visibility: visible !important;
+}
+
+/* Ensure drawer starts hidden but animatable */
+.drawer-content {
+  /* ✅ NOT scrollable */
+  height: auto;
+  width: 100%;
+  overflow: visible;
+
+  /* remove old dropdown hidden stuff */
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.mobile-menu-container {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* Optional: top breathing strip for a close button area */
+.drawer-topbar {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 14px;
+
+}

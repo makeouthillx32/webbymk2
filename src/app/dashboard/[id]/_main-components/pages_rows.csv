@@ -1,0 +1,25 @@
+slug,title,parent_slug,anchor_id,template,back_label
+about,About Us,home,about,standard,Back to Home
+artists,Artists on the Edge,programs,artists,standard,Back to Programs
+autismdaycamp,Autism Day Camp,programs,autismdaycamp,standard,Back to Programs
+board,Board of Directors,about,board,standard,Back to About Us
+careers,Careers,about,careers,standard,Back to About Us
+carf,CARF Accreditation,services,carf,standard,Back to Services
+commercial,Commercial Cleaning,services,cms,standard,Back to Services
+donate,Donate Now,involved,donate,standard,Back to Get Involved
+early-childhood,Early Childhood Services,programs,early-childhood,standard,Back to Programs
+employment,Employment Services,programs,employment,standard,Back to Programs
+home,Home,,,standard,
+involved,Get Involved,home,get-involved,standard,Back to Home
+jobs,Jobs,careers,jobs,standard,Back to Careers
+learn,Learn & Connect,home,learn,standard,Back to Home
+pickup,Donation Pickup,services,pickup,standard,Back to Services
+privacy,Privacy Policy,home,privacy,standard,Back to Home
+programs,Programs & Services,home,programs,serviceGrid,Back to Home
+services,Business & Commercial Services,home,services,serviceGrid,Back to Home
+shredding,Shredding,services,shredding,standard,Back to Services
+supported-living,Supported Living Services,programs,supported-living,standard,Back to Programs
+terms,Terms & Conditions,home,terms,standard,Back to Home
+thriftstore,DART Thrift Store,services,thriftstore,standard,Back to Services
+title9,Title IX Information,about,title9,standard,Back to About Us
+transportation,Transportation,programs,transportation,standard,Back to Programs

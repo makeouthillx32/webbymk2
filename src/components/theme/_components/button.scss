@@ -1,0 +1,52 @@
+// components/theme/_components/button.scss
+
+.accessibility-toggle-btn {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 100; /* --z-overlay */
+  width: 3rem;            // 48px
+  height: 3rem;           // 48px
+  cursor: pointer;
+  padding: 0;
+  background: none;
+  border: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  transition: transform 0.2s ease, filter 0.2s ease;
+
+  &:hover {
+    transform: scale(1.1);
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+  }
+
+  &:active {
+    transform: scale(1.05);
+  }
+
+  &__icon {
+    width: 100%;
+    height: 100%;
+    display: block;
+    /* remove transform – let the SVG scale crisply */
+    transform: none;
+  }
+}
+
+// Tablet & up
+@media (max-width: 768px) {
+  .accessibility-toggle-btn {
+    bottom: 4rem;        // lift above nav bar
+    width: 3.5rem;       // 56px
+    height: 3.5rem;      // 56px
+  }
+}
+
+// Mobile
+@media (max-width: 480px) {
+  .accessibility-toggle-btn {
+    bottom: 1rem;
+    right: 1rem;
+    width: 3rem;         // 48px
+    height: 3rem;        // 48px
+  }
+}
