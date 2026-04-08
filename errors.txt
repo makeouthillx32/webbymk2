@@ -1,0 +1,178 @@
+PS Z:\WEBSITES\webbymk2> docker compose up -d --build
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SERVICE_ROLE_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"JWT_SECRET\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SMTP_ADMIN_EMAIL\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SMTP_HOST\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SMTP_PASS\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SMTP_USER\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"JWT_SECRET\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SERVICE_ROLE_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"JWT_SECRET\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SECRET_KEY_BASE\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"JWT_SECRET\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"ANON_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"SERVICE_ROLE_KEY\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"JWT_SECRET\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="The \"POSTGRES_PASSWORD\" variable is not set. Defaulting to a blank string."
+time="2026-04-07T19:44:55-07:00" level=warning msg="Z:\\WEBSITES\\webbymk2\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+#1 [internal] load local bake definitions
+#1 reading from stdin 616B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.94kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/oven/bun:1.1
+#3 DONE 0.0s
+
+#4 [internal] load metadata for docker.io/oven/bun:1.1-slim
+#4 DONE 0.7s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 494B done
+#5 DONE 0.0s
+
+#6 [deps 1/4] FROM docker.io/oven/bun:1.1@sha256:d6ad4d3280d3e7e92b793a924105d68766d60b1f36709f4cee11bc8737782621
+#6 resolve docker.io/oven/bun:1.1@sha256:d6ad4d3280d3e7e92b793a924105d68766d60b1f36709f4cee11bc8737782621 0.0s done
+#6 DONE 0.0s
+
+#7 [runner 1/6] FROM docker.io/oven/bun:1.1-slim@sha256:98d461b362506de2b89f9f9d03106ad9b3597e94971d8bb358395ce02d9c4f2b
+#7 resolve docker.io/oven/bun:1.1-slim@sha256:98d461b362506de2b89f9f9d03106ad9b3597e94971d8bb358395ce02d9c4f2b 0.0s done
+#7 DONE 0.0s
+
+#8 [runner 2/6] WORKDIR /app
+#8 CACHED
+
+#9 [runner 3/6] RUN addgroup --system --gid 1001 nodejs &&     adduser --system --uid 1001 nextjs
+#9 CACHED
+
+#10 [internal] load build context
+#10 transferring context: 10.23kB 0.0s done
+#10 DONE 0.0s
+
+#11 [deps 3/4] COPY package.json bun.lockb* ./
+#11 CACHED
+
+#12 [deps 4/4] RUN bun install --frozen-lockfile
+#12 CACHED
+
+#13 [builder 3/5] COPY --from=deps /app/node_modules ./node_modules
+#13 CACHED
+
+#14 [deps 2/4] WORKDIR /app
+#14 CACHED
+
+#15 [builder 4/5] COPY . .
+#15 CACHED
+
+#16 [builder 5/5] RUN bun run build
+#16 0.147 $ next build
+#16 0.851    ▲ Next.js 15.5.14
+#16 0.851 
+#16 0.871    Creating an optimized production build ...
+#16 13.34  ✓ Compiled successfully in 12.0s
+#16 13.48    Linting and checking validity of types ...
+#16 14.08 
+#16 14.08    We detected TypeScript in your project and reconfigured your tsconfig.json file for you.
+#16 14.08    The following suggested values were added to your tsconfig.json. These values can be changed to fit your project's needs:
+#16 14.08 
+#16 14.08       - target was set to ES2017 (For top-level `await`. Note: Next.js only polyfills for the esmodules target.)
+#16 14.08 
+#16 15.38 
+#16 15.38 ./src/components/Services/index.tsx
+#16 15.38 32:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 39:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 55:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Hero2/index.tsx
+#16 15.38 42:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Page/HeroYouTube.tsx
+#16 15.38 63:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Page/Discord.tsx
+#16 15.38 42:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Page/Pickme.tsx
+#16 15.38 40:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 60:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Page/Kick.tsx
+#16 15.38 32:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 39:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 55:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/components/Hero3/index.tsx
+#16 15.38 40:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 60:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 ./src/app/[locale]/services/[id]/page.tsx
+#16 15.38 32:6  Warning: React Hook useEffect has missing dependencies: 'id' and 'subserviceList'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+#16 15.38 
+#16 15.38 ./src/app/[locale]/hero3/page.tsx
+#16 15.38 32:6  Warning: React Hook useEffect has missing dependencies: 'id' and 'subserviceList'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+#16 15.38 
+#16 15.38 ./src/app/[locale]/hero2/page.tsx
+#16 15.38 32:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+#16 15.38 
+#16 15.38 info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+#16 16.98 Failed to compile.
+#16 16.98 
+#16 16.98 src/app/[locale]/calendar/layout.tsx
+#16 16.98 Type error: Type '{ params: { slug: string; }; }' does not satisfy the constraint 'LayoutProps'.
+#16 16.98   Types of property 'params' are incompatible.
+#16 16.98     Type '{ slug: string; }' is missing the following properties from type 'Promise<any>': then, catch, finally, [Symbol.toStringTag]
+#16 16.98 
+#16 17.01 Next.js build worker exited with code: 1 and signal: null
+#16 17.08 error: script "build" exited with code 1
+#16 ERROR: process "/bin/sh -c bun run build" did not complete successfully: exit code: 1
+------
+ > [builder 5/5] RUN bun run build:
+15.38 info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+16.98 Failed to compile.
+16.98 
+16.98 src/app/[locale]/calendar/layout.tsx
+16.98 Type error: Type '{ params: { slug: string; }; }' does not satisfy the constraint 'LayoutProps'.
+16.98   Types of property 'params' are incompatible.
+16.98     Type '{ slug: string; }' is missing the following properties from type 'Promise<any>': then, catch, finally, [Symbol.toStringTag]
+16.98 
+17.01 Next.js build worker exited with code: 1 and signal: null
+17.08 error: script "build" exited with code 1
+------
+[+] up 0/1
+ - Image web... Building 19.6s
+Dockerfile:31
+
+--------------------
+
+  29 |     ENV NEXT_TELEMETRY_DISABLED=1
+
+  30 |     
+
+  31 | >>> RUN bun run build
+
+  32 |     
+
+  33 |     # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
+
+--------------------
+
+failed to solve: process "/bin/sh -c bun run build" did not complete successfully: exit code: 1
+
+
+
+View build details: docker-desktop://dashboard/build/default/default/54src72gvsu6heynu1irvdbbe
+
+PS Z:\WEBSITES\webbymk2> 

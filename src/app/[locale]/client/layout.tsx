@@ -1,16 +1,17 @@
 "use client";
-import { ReactElement } from "react";
+import { ReactNode, use } from "react";
 import { I18nProviderClient } from "@/locales/client";
 
 export default function SubLayout({
   children,
   params,
 }: {
-  children: ReactElement;
-  params: { locale: string };
+  children: ReactNode;
+  params: Promise<{ locale: string }>;
 }) {
+  const { locale } = use(params);
   return (
-    <I18nProviderClient locale={params.locale} fallback={<p>Loading...</p>}>
+    <I18nProviderClient locale={locale} fallback={<p>Loading...</p>}>
       {children}
     </I18nProviderClient>
   );

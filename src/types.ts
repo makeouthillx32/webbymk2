@@ -1,3 +1,5 @@
+import type React from "react";
+
 export type Menu = {
   title: string;
   path?: string;
@@ -51,7 +53,7 @@ export type Brand = {
 
 export type Feature = {
   id: number;
-  icon: JSX.Element;
+  icon: React.ReactElement;
   title: string;
   paragraph: string;
 };

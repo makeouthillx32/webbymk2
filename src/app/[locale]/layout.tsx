@@ -1,5 +1,5 @@
 "use client";
-import { ReactElement, Suspense } from "react";
+import { ReactNode, Suspense, use } from "react";
 import { I18nProviderClient } from "@/locales/client";
 import dynamic from "next/dynamic";
 import Header from "@/components/Header";
@@ -12,11 +12,12 @@ export default function SubLayout({
   children,
   params,
 }: {
-  children: ReactElement;
-  params: { locale: string };
+  children: ReactNode;
+  params: Promise<{ locale: string }>;
 }) {
+  const { locale } = use(params);
   return (
-    <I18nProviderClient locale={params.locale} fallback={<Loading />}>
+    <I18nProviderClient locale={locale} fallback={<Loading />}>
       {/* Load Main Content First */}
       {children}
 

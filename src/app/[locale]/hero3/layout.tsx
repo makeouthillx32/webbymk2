@@ -3,9 +3,9 @@ import { Metadata } from "next";
 export async function generateMetadata({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }): Promise<Metadata> {
-  const { id } = params;
+  const { id } = await params;
 
   let str = id.replace(/-/g, " ");
   str = str.charAt(0).toUpperCase() + str.slice(1);

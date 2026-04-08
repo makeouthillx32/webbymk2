@@ -257,13 +257,9 @@ services:
       - unenter
 
   # ─── Next.js App ─────────────────────────────────────────────────────────────
+  # Image built separately via build-and-push.ps1 — pulled from GHCR
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL_BROWSER:-https://unenter.live}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+    image: ghcr.io/makeouthillx32/unenter:latest
     container_name: unt_app
     restart: unless-stopped
     ports:

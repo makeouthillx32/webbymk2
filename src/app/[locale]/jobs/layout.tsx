@@ -3,7 +3,7 @@ import { Metadata } from "next";
 export async function generateMetadata({
   params,
 }: {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   return {
     title: `Jobs | Formen Werkstatt` ,
