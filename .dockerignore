@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build output
+.next
+out
+build
+dist
+
+# Lockfiles (Bun generates these inside container)
+yarn.lock
+package-lock.json
+npm-debug.log*
+
+# Env files — never bake secrets into the image
+.env
+.env.local
+.env.*.local
+
+# Dev tooling
+.git
+.gitignore
+.eslintcache
+.prettierrc*
+*.md
+!README.md
+
+# Supabase local dev artifacts
+supabase/.branches
+supabase/.temp
+
+# OS
+.DS_Store
+Thumbs.db

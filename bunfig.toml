@@ -1,0 +1,17 @@
+[install]
+# Use exact versions to keep installs deterministic
+exact = false
+
+# Prefer the lockfile for faster installs
+frozen-lockfile = false
+
+# Auto-install peer deps
+peer = true
+
+[install.scopes]
+# If you have a private registry later, add it here
+# "@myorg" = { url = "https://registry.myorg.com/", token = "$NPM_TOKEN" }
+
+[run]
+# Bun will use this shell for scripts
+shell = "bun"

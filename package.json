@@ -1,29 +1,37 @@
 {
-  "name": "formenwerkstatt-landing-page",
-  "version": "0.1",
+  "name": "formenwerkstatt",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:migrate": "supabase migration up",
+    "db:types": "supabase gen types typescript --local > types/supabase.ts",
+    "ink:dev": "bun --watch ink/index.tsx",
+    "ink:run": "bun ink/index.tsx"
   },
   "dependencies": {
     "@calcom/atoms": "^1.0.63",
     "@react-three/drei": "^9.114.4",
     "@react-three/fiber": "^8.17.10",
+    "@supabase/ssr": "^0.5.0",
+    "@supabase/supabase-js": "^2.47.0",
     "@types/leaflet": "^1.9.12",
     "@types/react-leaflet": "^2.8.3",
     "axios": "^1.7.7",
     "clsx": "^2.1.1",
-    "eslint": "^8.56.0",
-    "eslint-config-next": "^14.1.0",
     "leaflet": "^1.9.4",
-    "next": "^14.1.0",
+    "next": "^15.0.0",
     "next-international": "^1.2.4",
-    "next-themes": "^0.2.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "next-themes": "^0.4.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "react-icons": "^5.3.0",
     "react-leaflet": "^4.2.1",
     "react-modal-video": "^2.0.1",
@@ -32,14 +40,17 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
-    "@types/node": "^20.8.9",
-    "@types/react": "^18.2.33",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@types/react-modal-video": "^1.2.3",
     "autoprefixer": "^10.4.17",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
     "postcss": "^8.4.35",
     "prettier": "^3.2.5",
-    "prettier-plugin-tailwindcss": "^0.5.11",
+    "prettier-plugin-tailwindcss": "^0.6.0",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.7.0"
   }
 }

@@ -1,15 +1,305 @@
-version: '3'
-services:
-  postgres:
-    image: postgres:13
-    environment:
-      POSTGRES_USER: unenter
-      POSTGRES_PASSWORD: unenter1005
-      POSTGRES_DB: calendardb
-    ports:
-      - "172.26.224.1:5432:5432"  # Bind to the specific IP address and port
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+version: "3.9"
 
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  unenter:
+    driver: bridge
+
+# ─── Volumes ──────────────────────────────────────────────────────────────────
 volumes:
-  postgres-data:
+  unt-db-data:
+  unt-minio-data:
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ─── Postgres ───────────────────────────────────────────────────────────────
+  db:
+    image: supabase/postgres:15.8.1.060
+    container_name: unt_db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"   # 5433 to avoid clash with Mission Control on 5432
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: supabase_admin
+    volumes:
+      - unt-db-data:/var/lib/postgresql/data
+      - ./supabase/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supabase_admin -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - unenter
+
+  # ─── Kong API Gateway ────────────────────────────────────────────────────────
+  kong:
+    image: kong:2.8.1
+    container_name: unt_kong
+    restart: unless-stopped
+    ports:
+      - "8001:8000"   # 8001 to avoid clash with Mission Control on 8000
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction
+      KONG_LOG_LEVEL: warn
+    volumes:
+      - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── Auth (GoTrue) ───────────────────────────────────────────────────────────
+  auth:
+    image: supabase/gotrue:v2.151.0
+    container_name: unt_auth
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://unenter.live}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${SITE_URL:-https://unenter.live}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-unenter.live}
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION:-/auth/v1/verify}
+      GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE:-/auth/v1/verify}
+      GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY:-/auth/v1/verify}
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${MAILER_URLPATHS_EMAIL_CHANGE:-/auth/v1/verify}
+      GOTRUE_LOG_LEVEL: warn
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── REST (PostgREST) ────────────────────────────────────────────────────────
+  rest:
+    image: postgrest/postgrest:v12.2.0
+    container_name: unt_rest
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage,graphql_public}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_LOG_LEVEL: warn
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── Realtime ────────────────────────────────────────────────────────────────
+  realtime:
+    image: supabase/realtime:v2.25.50
+    container_name: unt_realtime
+    restart: unless-stopped
+    ports:
+      - "4001:4000"   # 4001 to avoid clash with Mission Control on 4000
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: ${JWT_SECRET}
+      FLY_ALLOC_ID: fly123
+      FLY_APP_NAME: realtime
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      ENABLE_TAILSCALE: "false"
+      DNS_NODES: "''"
+      ANON_KEY: ${ANON_KEY}
+    command: >
+      sh -c "/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── MinIO ───────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: unt_minio
+    restart: unless-stopped
+    ports:
+      - "9002:9000"   # 9002 to avoid clash with Mission Control on 9000
+      - "9003:9001"   # Console UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-supa-storage}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-secret1234}
+      MINIO_DOMAIN: minio
+    volumes:
+      - unt-minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - unenter
+
+  # ─── MinIO bucket provisioner (one-shot) ─────────────────────────────────────
+  minio-setup:
+    image: minio/mc:latest
+    container_name: unt_minio_setup
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        mc alias set unt http://minio:9000 ${MINIO_ROOT_USER:-supa-storage} ${MINIO_ROOT_PASSWORD:-secret1234};
+        mc mb --ignore-existing unt/storage;
+        mc anonymous set download unt/storage;
+        echo 'MinIO bucket ready';
+        exit 0;
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── Supabase Storage (S3 → MinIO) ───────────────────────────────────────────
+  storage:
+    image: supabase/storage-api:v1.11.13
+    container_name: unt_storage
+    restart: unless-stopped
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      STORAGE_BACKEND: s3
+      GLOBAL_S3_BUCKET: ${GLOBAL_S3_BUCKET:-storage}
+      GLOBAL_S3_ENDPOINT: http://minio:9000
+      GLOBAL_S3_FORCE_PATH_STYLE: "true"
+      GLOBAL_S3_PROTOCOL: http
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-supa-storage}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-secret1234}
+      AWS_DEFAULT_REGION: ${REGION:-us-east-1}
+      FILE_SIZE_LIMIT: 52428800
+      TENANT_ID: ${STORAGE_TENANT_ID:-stub}
+      REGION: ${REGION:-us-east-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── Postgres Meta ───────────────────────────────────────────────────────────
+  meta:
+    image: supabase/postgres-meta:v0.84.2
+    container_name: unt_meta
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - unenter
+
+  # ─── Supabase Studio ─────────────────────────────────────────────────────────
+  studio:
+    image: supabase/studio:latest
+    container_name: unt_studio
+    restart: unless-stopped
+    ports:
+      - "3002:3000"   # 3002 — Mission Control has 3001, app has 3000
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-unenter}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-unenter.live}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${API_EXTERNAL_URL:-https://unenter.live}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+      kong:
+        condition: service_started
+      meta:
+        condition: service_started
+    networks:
+      - unenter
+
+  # ─── Next.js App ─────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL_BROWSER:-https://unenter.live}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+    container_name: unt_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: http://kong:8000
+      NEXT_PUBLIC_SUPABASE_URL_BROWSER: ${NEXT_PUBLIC_SUPABASE_URL_BROWSER:-https://unenter.live}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      kong:
+        condition: service_started
+    networks:
+      - unenter
+
+  # ─── Ink Terminal Dashboard ───────────────────────────────────────────────────
+  ink:
+    image: oven/bun:1.1
+    container_name: unt_ink
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: bun run ink:dev
+    tty: true
+    stdin_open: true
+    environment:
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      kong:
+        condition: service_started
+    networks:
+      - unenter
