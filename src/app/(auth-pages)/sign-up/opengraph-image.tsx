@@ -32,13 +32,13 @@ const roleToImageMap: Record<string, string> = {
 export default async function OGImage({
   searchParams,
 }: {
-  searchParams: SearchParams;
+  searchParams: Promise<SearchParams>;
 }) {
   // Ensure cookies are available (needed by your server client helper)
-  await cookies();
+  const [, resolvedSearchParams] = await Promise.all([cookies(), searchParams]);
 
   const supabase = await createClient();
-  const inviteCode = searchParams?.invite?.trim();
+  const inviteCode = resolvedSearchParams?.invite?.trim();
 
   let imagePath = "/images/default-invite.png";
 

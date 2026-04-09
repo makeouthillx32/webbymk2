@@ -13,16 +13,17 @@ async function requireAdmin() {
   return { ok: true as const, supabase };
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireAdmin();
   if (!gate.ok) return jsonError(401, "unauthorized", "Not signed in");
 
+  const { id } = await params;
   const patch = await req.json();
 
   const { data, error } = await gate.supabase
     .from("hero_slides")
     .update(patch)
-    .eq("id", params.id)
+    .eq("id", id)
     .select("*")
     .single();
 
@@ -30,15 +31,17 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ ok: true, data });
 }
 
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
+export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireAdmin();
   if (!gate.ok) return jsonError(401, "unauthorized", "Not signed in");
+
+  const { id } = await params;
 
   // Grab row first so we can delete the image from storage
   const { data: slide, error: readErr } = await gate.supabase
     .from("hero_slides")
     .select("id,bucket_name,object_path")
-    .eq("id", params.id)
+    .eq("id", id)
     .single();
 
   if (readErr) return jsonError(404, "not_found", "Slide not found", readErr);
@@ -49,7 +52,7 @@ export async function DELETE(_: Request, { params }: { params: { id: string } })
 
   if (storageErr) return jsonError(500, "storage_error", storageErr.message, storageErr);
 
-  const { error: delErr } = await gate.supabase.from("hero_slides").delete().eq("id", params.id);
+  const { error: delErr } = await gate.supabase.from("hero_slides").delete().eq("id", id);
   if (delErr) return jsonError(500, "db_error", delErr.message, delErr);
 
   return NextResponse.json({ ok: true, data: { deleted: true } });

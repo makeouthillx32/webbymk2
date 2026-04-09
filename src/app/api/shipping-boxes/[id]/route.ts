@@ -6,10 +6,10 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 // PATCH update a box
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient();
   const body = await req.json();
-  const { id } = params;
+  const { id } = await params;
   const { name, length_in, width_in, height_in, is_default, is_active } = body;
 
   // If setting as default, clear existing default first
@@ -41,9 +41,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 // DELETE a box
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient();
-  const { id } = params;
+  const { id } = await params;
 
   // Check it's not the default
   const { data: box } = await supabase

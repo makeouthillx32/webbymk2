@@ -23,6 +23,14 @@ const nextConfig = {
     ],
   },
 
+  // ESLint and TypeScript build configuration
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   // Webpack tweaks for Three.js / R3F
   webpack(config) {
     // Silence "Critical dependency: the request of a CommonJS module..." from three

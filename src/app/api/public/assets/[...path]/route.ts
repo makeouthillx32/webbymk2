@@ -19,11 +19,11 @@ const getCacheHeaders = (mimeType?: string) => {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
     const supabase = await createClient("service");
-    const pathParts = params.path;
+    const pathParts = (await params).path;
     
     if (!pathParts || pathParts.length === 0) {
       return NextResponse.json(
@@ -182,7 +182,7 @@ async function getFolderContents(
 
 export async function HEAD(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   // Same logic as GET but only return headers
   const getResponse = await GET(request, { params });
@@ -194,7 +194,7 @@ export async function HEAD(
 
 export async function OPTIONS(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   return new NextResponse(null, {
     status: 200,

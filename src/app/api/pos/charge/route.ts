@@ -17,9 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-11-20.acacia",
-});
+export const dynamic = "force-dynamic";
 
 // Sentinel IDs for custom/keypad line items that have no real product
 const CUSTOM_PRODUCT_ID = "00000000-0000-0000-0000-000000000001";
@@ -37,6 +35,9 @@ function generateOrderNumber(): string {
 }
 
 export async function POST(req: NextRequest) {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: "2024-11-20.acacia",
+  });
   const supabase = await createServerClient();
 
   const { data: { user }, error: authErr } = await supabase.auth.getUser();

@@ -26,22 +26,25 @@ type SearchParams = Message & {
 export default async function SignUpPage({
   searchParams,
 }: {
-  searchParams: SearchParams;
+  searchParams: Promise<SearchParams>;
 }) {
-  const cookieStore = await cookies();
+  const [cookieStore, resolvedSearchParams] = await Promise.all([
+    cookies(),
+    searchParams,
+  ]);
 
   // Invite is URL-driven (generated links). Cookie fallback optional.
   const inviteFromQuery =
-    typeof searchParams?.invite === "string" ? searchParams.invite : "";
+    typeof resolvedSearchParams?.invite === "string" ? resolvedSearchParams.invite : "";
   const inviteFromCookie = cookieStore.get("invite")?.value ?? "";
   const invite = inviteFromQuery || inviteFromCookie || "";
 
   // ✅ Error/message state should still render as a “card”, not a full-screen wrapper
-  if ("message" in searchParams) {
+  if ("message" in resolvedSearchParams) {
     return (
       <div className="mx-auto w-full max-w-2xl rounded-[var(--radius)] bg-[hsl(var(--card))] shadow-[var(--shadow-xl)] p-8 md:p-10">
         <AuthBreadcrumbs current="Sign up" />
-        <FormMessage message={searchParams} />
+        <FormMessage message={resolvedSearchParams} />
       </div>
     );
   }

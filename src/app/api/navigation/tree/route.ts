@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
 
-export const revalidate = 300; // 5 minutes
+export const dynamic = "force-dynamic";
 
 type DbCategory = {
   id: string;

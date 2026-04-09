@@ -3,7 +3,7 @@ import { createServerClient } from "@/utils/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Params = {
-  params: { id: string; imageId: string };
+  params: Promise<{ id: string; imageId: string }>;
 };
 
 function jsonError(status: number, code: string, message: string, details?: any) {

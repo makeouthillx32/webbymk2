@@ -1,12 +1,17 @@
-import { createServerClient, createServiceClient } from "@/utils/supabase/server";
+import { createServerClient } from "@/utils/supabase/server";
+import { createServerClient as createSupabaseClient } from "@supabase/ssr";
 import { notFound } from "next/navigation";
 import CollectionPageClient from "./_components/CollectionPageClient";
 
 
 // Generate static params for all collections at build time
 export async function generateStaticParams() {
-  // ✅ Use service client for build-time data fetching (no cookies needed)
-  const supabase = createServiceClient();
+  // Use a cookie-free client — cookies() is unavailable at build time
+  const supabase = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => [], setAll: () => {} } }
+  );
   const { data: collections } = await supabase
     .from("collections")
     .select("slug");

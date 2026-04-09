@@ -4,11 +4,11 @@ import { createClient } from "@/utils/supabase/server";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = createClient();
-    const { id } = params;
+    const { id } = await params;
 
     // Get current user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -131,11 +131,11 @@ export async function GET(
 // Get preview metadata without downloading the full file
 export async function HEAD(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = createClient();
-    const { id } = params;
+    const { id } = await params;
 
     // Get current user
     const { data: { user }, error: authError } = await supabase.auth.getUser();

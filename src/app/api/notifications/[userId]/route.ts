@@ -3,9 +3,10 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   const supabase = await createClient();
+  const { userId } = await params;
 
   // 1) Who’s calling?
   const {
@@ -30,8 +31,8 @@ export async function GET(
 
   const myRole = myProfile?.role ?? "guest";
 
-  // Only allow "me" or an admin to fetch another user's feed
-  if (params.userId !== me.id && myRole !== "admin") {
+  // Only allow "me" or an admin to fetch another user’s feed
+  if (userId !== me.id && myRole !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -39,7 +40,7 @@ export async function GET(
   const { data: targetProfile, error: tpErr } = await supabase
     .from("profiles")
     .select("role")
-    .or(`id.eq.${params.userId},user_id.eq.${params.userId}`)
+    .or(`id.eq.${userId},user_id.eq.${userId}`)
     .maybeSingle();
 
   if (tpErr || !targetProfile?.role) {
@@ -57,7 +58,7 @@ export async function GET(
     .select("id, title, subtitle, image_url, action_url, created_at")
     .or(
       [
-        `receiver_id.eq.${params.userId}`,
+        `receiver_id.eq.${userId}`,
         `target_role.eq.${targetRole}`,
         `target_role.is.null`,
       ].join(",")

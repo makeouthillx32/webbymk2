@@ -6,7 +6,8 @@
 //    - is_primary, sort_order, position, is_public all exist on product_images
 //    - products has is_featured (not "featured")
 
-import { createServerClient, createServiceClient } from "@/utils/supabase/server";
+import { createServerClient } from "@/utils/supabase/server";
+import { createServerClient as createSupabaseClient } from "@supabase/ssr";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import ProductDetailClient from "./_components/ProductDetailClient";
@@ -19,13 +20,18 @@ const SITE_URL =
 // ─── Static params ────────────────────────────────────────────────────────────
 
 export async function generateStaticParams() {
-  const supabase = createServiceClient();
+  // Use a cookie-free client — cookies() is unavailable at build time
+  const supabase = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => [], setAll: () => {} } }
+  );
   const { data: products } = await supabase
     .from("products")
     .select("slug")
     .eq("status", "active");
 
-  return products?.map((p) => ({ slug: p.slug })) ?? [];
+  return products?.map((p: { slug: string }) => ({ slug: p.slug })) ?? [];
 }
 
 // ─── Metadata ─────────────────────────────────────────────────────────────────

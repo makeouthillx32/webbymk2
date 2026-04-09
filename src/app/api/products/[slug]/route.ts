@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
 
-type Params = { params: { slug: string } };
+type Params = { params: Promise<{ slug: string }> };
 
 function jsonError(status: number, code: string, message: string, details?: any) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
@@ -17,7 +17,7 @@ function jsonError(status: number, code: string, message: string, details?: any)
 export async function GET(req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
 
-  const slug = params.slug;
+  const { slug } = await params;
   if (!slug) return jsonError(400, "INVALID_SLUG", "Missing slug");
 
   const { searchParams } = new URL(req.url);

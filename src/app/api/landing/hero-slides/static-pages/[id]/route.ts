@@ -13,16 +13,17 @@ async function requireAdmin() {
   return { ok: true as const, supabase };
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireAdmin();
   if (!gate.ok) return jsonError(401, "unauthorized", "Not signed in");
 
+  const { id } = await params;
   const patch = await req.json();
 
   const { data, error } = await gate.supabase
     .from("static_pages")
     .update(patch)
-    .eq("id", params.id)
+    .eq("id", id)
     .select("*")
     .single();
 

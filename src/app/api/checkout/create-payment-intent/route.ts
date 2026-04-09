@@ -3,11 +3,12 @@ import { createServerClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-11-20.acacia",
-});
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: "2024-11-20.acacia",
+  });
   try {
     const supabase = await createServerClient();
     const body = await request.json();

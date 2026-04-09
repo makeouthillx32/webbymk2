@@ -8,9 +8,9 @@ export const dynamic = 'force-dynamic';
 
 export async function DELETE(
   req: Request,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
-  const { code } = params;
+  const { code } = await params;
   const supabase = createRouteHandlerClient({ cookies, headers });
 
   // Attempt to delete the invite row

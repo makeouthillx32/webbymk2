@@ -46,10 +46,11 @@ interface PackageDimensions {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await createServerClient();
+    const { id } = await params;
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -85,7 +86,7 @@ export async function POST(
         customer_last_name,
         email
       `)
-      .eq('id', params.id)
+      .eq('id', id)
       .single();
 
     if (orderError || !order) {
@@ -263,7 +264,7 @@ export async function POST(
             `Postage: $${postage.toFixed(2)}`,
           ].join(' | '),
         })
-        .eq('id', params.id);
+        .eq('id', id);
     }
 
     return new NextResponse(pdfBuffer, {
@@ -291,10 +292,11 @@ export async function POST(
 // ── GET: reprint stored label from Supabase storage ───────────────
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await createServerClient();
+    const { id } = await params;
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -306,7 +308,7 @@ export async function GET(
     const { data: order } = await supabase
       .from('orders')
       .select('order_number, label_pdf_path, tracking_number, tracking_url, label_postage_cents')
-      .eq('id', params.id)
+      .eq('id', id)
       .single();
 
     if (!order?.label_pdf_path) {
