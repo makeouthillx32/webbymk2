@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { UploadIcon } from "@/assets/icons";
-import { ShowcaseSection } from "@/components/Layouts/showcase-section";
+import { ShowcaseSection } from "@/components/Layouts/sidebar/showcase-section";
 import Image from "next/image";
 import { useSessionContext } from "@supabase/auth-helpers-react";
 import toast from "react-hot-toast";

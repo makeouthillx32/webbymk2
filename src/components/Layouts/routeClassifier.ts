@@ -1,6 +1,4 @@
 // components/Layouts/routeClassifier.ts
-// Pure route classification — no React, no side effects.
-// Add new routes here when the app grows; ClientLayout reads this automatically.
 
 export interface RouteInfo {
   isHome: boolean;
@@ -8,22 +6,26 @@ export interface RouteInfo {
   isDashboardPage: boolean;
   isProductsPage: boolean;
   isCollectionsPage: boolean;
-  /** CMS static pages under app/pages/[slug] */
   isPagesRoute: boolean;
   isCheckoutRoute: boolean;
   isProfileMeRoute: boolean;
-  /** Auth/off-pages render with NO header or footer — clean PWA shell */
   isAuthPage: boolean;
-  /** Catch-all for single-segment shop routes like /tops, /new-releases */
   isCategoryPage: boolean;
-  /** Convenience: any route that should show the shop header + footer */
   isShopRoute: boolean;
-  /** Convenience: routes that use the app (minimal) header instead of shop */
   useAppHeader: boolean;
+  isLocalePage: boolean;
+  isLandingPage: boolean;
 }
 
 export function classifyRoute(pathname: string): RouteInfo {
-  const lower = pathname.toLowerCase();
+  // usePathname() returns the browser URL which keeps the locale prefix
+  // (e.g. /en/about) even though middleware rewrites the content to /about.
+  // Strip it before classifying so isLandingPage etc. fire correctly.
+  const isLocalePage = /^\/(en|de)(\/|$)/.test(pathname.toLowerCase());
+  const cleanPathname = isLocalePage
+    ? pathname.replace(/^\/(en|de)/, "") || "/"
+    : pathname;
+  const lower = cleanPathname.toLowerCase();
 
   const isAuthPage =
     lower.startsWith("/sign-in") ||
@@ -32,11 +34,10 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/reset-password") ||
     lower.startsWith("/auth/");
 
-  // Catch-all for single-segment paths like /tops, /new-releases.
-  // Must explicitly exclude every known non-category prefix to prevent false matches.
   const isCategoryPage =
-    /^\/[^/]+$/.test(pathname) &&
+    /^\/[^/]+$/.test(cleanPathname) &&
     !isAuthPage &&
+    !isLocalePage &&
     !lower.startsWith("/tools") &&
     !lower.startsWith("/dashboard") &&
     !lower.startsWith("/products") &&
@@ -47,20 +48,49 @@ export function classifyRoute(pathname: string): RouteInfo {
     !lower.startsWith("/settings") &&
     !lower.startsWith("/protected") &&
     !lower.startsWith("/auth") &&
-    !lower.startsWith("/api");
+    !lower.startsWith("/api") &&
+    !lower.startsWith("/shop") &&
+    !lower.startsWith("/about") &&
+    !lower.startsWith("/contact") &&
+    !lower.startsWith("/jobs") &&
+    !lower.startsWith("/services") &&
+    !lower.startsWith("/hero") &&
+    !lower.startsWith("/calendar") &&
+    !lower.startsWith("/legal") &&
+    !lower.startsWith("/share") &&
+    !lower.startsWith("/error") &&
+    cleanPathname !== "/";
 
-  const isHome = pathname === "/";
+  const isHome = cleanPathname === "/";
   const isToolsPage = lower.startsWith("/tools");
   const isDashboardPage = lower.startsWith("/dashboard");
   const isProductsPage = lower.startsWith("/products");
   const isCollectionsPage = lower.startsWith("/collections");
-  const isPagesRoute = lower.startsWith("/pages");   // app/pages/[slug] — static CMS pages
+  const isPagesRoute = lower.startsWith("/pages");
   const isCheckoutRoute = lower.startsWith("/checkout") || lower.startsWith("/cart");
   const isProfileMeRoute = lower.startsWith("/profile/me");
 
+  const isLandingPage =
+    isHome ||
+    lower.startsWith("/about") ||
+    lower.startsWith("/contact") ||
+    lower.startsWith("/jobs") ||
+    lower.startsWith("/services") ||
+    lower.startsWith("/hero") ||
+    lower.startsWith("/calendar") ||
+    lower.startsWith("/error");
+
   const isShopRoute =
-    isHome || isProductsPage || isCollectionsPage || isCategoryPage || isPagesRoute;
-  const useAppHeader = isCheckoutRoute || isProfileMeRoute;
+    isProductsPage || isCollectionsPage || isCategoryPage || isPagesRoute;
+
+  const useAppHeader =
+    isCheckoutRoute ||
+    isProfileMeRoute ||
+    lower.startsWith("/shop") ||
+    lower.startsWith("/legal") ||
+    lower.startsWith("/profile") ||
+    lower.startsWith("/settings") ||
+    lower.startsWith("/share");
 
   return {
     isHome,
@@ -75,5 +105,7 @@ export function classifyRoute(pathname: string): RouteInfo {
     isCategoryPage,
     isShopRoute,
     useAppHeader,
+    isLocalePage,
+    isLandingPage,
   };
 }

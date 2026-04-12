@@ -2,9 +2,16 @@
 import type { Theme } from '@/types/theme';
 import { createBrowserClient } from '@supabase/ssr';
 
+// Use NEXT_PUBLIC_SUPABASE_URL_BROWSER when available — this is the browser-accessible
+// URL (e.g. http://localhost:8001). NEXT_PUBLIC_SUPABASE_URL may point to the
+// Docker-internal hostname (kong:8000) which browsers cannot resolve.
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
 // Create Supabase client
 const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  supabaseUrl,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 

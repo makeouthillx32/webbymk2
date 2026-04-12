@@ -1,7 +1,7 @@
 'use client'
 import {useEffect,useMemo,useState} from 'react'
 import {ChevronDown,Search,MoreHorizontal} from 'lucide-react'
-import {ShowcaseSection} from '@/components/Layouts/showcase-section'
+import {ShowcaseSection} from '@/components/Layouts/sidebar/showcase-section'
 import './_components/members.scss'
 type Role='admin'|'member'|'guest'
 type User={id:string;display_name:string;avatar_url:string|null;email:string|null;role:Role;created_at:string|null;last_sign_in_at:string|null;email_confirmed_at:string|null;auth_providers:string[]}

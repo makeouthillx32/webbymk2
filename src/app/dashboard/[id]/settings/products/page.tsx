@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ShowcaseSection } from "@/components/Layouts/showcase-section";
+import { ShowcaseSection } from "@/components/Layouts/sidebar/showcase-section";
 import { toast } from "react-hot-toast";
 
 import LoadingState from "./_components/LoadingState";

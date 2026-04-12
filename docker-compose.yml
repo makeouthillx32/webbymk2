@@ -162,25 +162,6 @@ services:
     networks:
       - unenter
 
-  # ─── MinIO bucket provisioner (one-shot) ─────────────────────────────────────
-  minio-setup:
-    image: minio/mc:latest
-    container_name: unt_minio_setup
-    entrypoint: >
-      /bin/sh -c "
-        sleep 5;
-        mc alias set unt http://minio:9000 ${MINIO_ROOT_USER:-supa-storage} ${MINIO_ROOT_PASSWORD:-secret1234};
-        mc mb --ignore-existing unt/storage;
-        mc anonymous set download unt/storage;
-        echo 'MinIO bucket ready';
-        exit 0;
-      "
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - unenter
-
   # ─── Supabase Storage (S3 → MinIO) ───────────────────────────────────────────
   storage:
     image: supabase/storage-api:v1.11.13

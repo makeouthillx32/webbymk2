@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useSupabaseClient, useUser } from '@supabase/auth-helpers-react';
 import { X } from 'lucide-react';
-import { ShowcaseSection } from '@/components/Layouts/showcase-section';
+import { ShowcaseSection } from '@/components/Layouts/sidebar/showcase-section';
 import InviteGeneratorClient from './_components/InviteGeneratorClient';
 import './_components/invites.scss';
 

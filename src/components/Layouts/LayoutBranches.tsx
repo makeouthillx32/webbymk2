@@ -1,12 +1,14 @@
 "use client";
 
 // components/Layouts/LayoutBranches.tsx
-// The three concrete layout shells. ClientLayout picks the right one.
 
 import { lazy, Suspense, useState } from "react";
+import { I18nProviderClient } from "@/locales/client";
 import { Header as AppHeader } from "@/components/Layouts/app/nav";
 import { Header as DashboardHeader } from "@/components/Layouts/dashboard";
 import { Header as ShopHeader } from "@/components/Layouts/shop/Header";
+import LandingHeader from "@/components/Layouts/Landing/Header";
+import LandingFooter from "@/components/Layouts/Landing/Footer";
 import { Sidebar } from "@/components/Layouts/sidebar";
 import { SidebarProvider } from "@/components/Layouts/sidebar/sidebar-context";
 import MobileDrawer from "@/components/Layouts/shop/MobileDrawer";
@@ -20,9 +22,37 @@ import {
 } from "@/components/Layouts/LayoutShells";
 import type { ScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 
-const Footer = lazy(() => import("@/components/Layouts/footer"));
+const ShopFooter = lazy(() => import("@/components/Layouts/shop/footer"));
 
-// ─── Dashboard Layout ─────────────────────────────────────
+// Landing Layout
+
+interface LandingLayoutProps {
+  children: React.ReactNode;
+  screenSize: ScreenSize;
+  /** Active locale resolved server-side from the Next-Locale cookie / X-Next-Locale header. */
+  locale?: "en" | "de";
+}
+
+export function LandingLayout({ children, screenSize, locale = "de" }: LandingLayoutProps) {
+  return (
+    <CartProvider>
+      <RegionBootstrap />
+      <I18nProviderClient locale={locale}>
+        <div data-layout="landing">
+          <LandingHeader />
+          <main className="min-h-screen">{children}</main>
+          <LandingFooter />
+        </div>
+      </I18nProviderClient>
+      <AppAccessibility />
+      <AppCookieConsent screenSize={screenSize} />
+      <ConditionalOverlays />
+      <AppToaster />
+    </CartProvider>
+  );
+}
+
+// Dashboard Layout
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -45,7 +75,6 @@ export function DashboardLayout({ children, screenSize }: DashboardLayoutProps) 
           </SidebarProvider>
         </div>
       </div>
-
       <AppAccessibility />
       <AppCookieConsent screenSize={screenSize} />
       <ConditionalOverlays />
@@ -54,7 +83,7 @@ export function DashboardLayout({ children, screenSize }: DashboardLayoutProps) 
   );
 }
 
-// ─── Auth Layout (clean PWA shell — no header/footer) ────
+// Auth Layout
 
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -70,7 +99,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   );
 }
 
-// ─── Shop / App Layout ────────────────────────────────────
+// Shop / App Layout
 
 interface ShopLayoutProps {
   children: React.ReactNode;
@@ -94,7 +123,6 @@ export function ShopLayout({
   return (
     <CartProvider>
       <RegionBootstrap />
-
       <div data-layout={useAppHeader ? "app" : "shop"}>
         {useAppHeader ? (
           <AppHeader />
@@ -102,7 +130,6 @@ export function ShopLayout({
           showNav && <ShopHeader onMenuClick={() => setMobileMenuOpen(true)} />
         )}
 
-        {/* Mobile Drawer with Overlay */}
         {mobileMenuOpen && (
           <>
             <div
@@ -126,7 +153,7 @@ export function ShopLayout({
 
         {showFooter && (
           <Suspense fallback={<div className="h-96" />}>
-            <Footer />
+            <ShopFooter />
           </Suspense>
         )}
       </div>

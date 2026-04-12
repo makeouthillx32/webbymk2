@@ -3,10 +3,7 @@ FROM oven/bun:1.1 AS deps
 
 WORKDIR /app
 
-# Copy lockfile and package manifest first for layer caching
 COPY package.json bun.lockb* ./
-
-# Install all deps (including dev — needed for build)
 RUN bun install --frozen-lockfile
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
@@ -14,18 +11,25 @@ FROM oven/bun:1.1 AS builder
 
 WORKDIR /app
 
-# Bring in node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build args for env vars that need to be baked in at build time
+# All NEXT_PUBLIC vars must be declared as ARGs to be baked into the build
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_SUPABASE_URL_BROWSER
+ARG NEXT_PUBLIC_APP_TITLE
+ARG NEXT_PUBLIC_COMPANY_NAME
+ARG NEXT_PUBLIC_OWNER_USERNAME
+ARG NEXT_PUBLIC_OWNER_EMAIL
 
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-# Next.js collects anonymous telemetry — disable it
+ENV NEXT_PUBLIC_SUPABASE_URL_BROWSER=$NEXT_PUBLIC_SUPABASE_URL_BROWSER
+ENV NEXT_PUBLIC_APP_TITLE=$NEXT_PUBLIC_APP_TITLE
+ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
+ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
+ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN bun run build
@@ -38,11 +42,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Create a non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy only what's needed to run
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

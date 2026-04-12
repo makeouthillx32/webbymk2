@@ -4,7 +4,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import { cn } from "@/utils/cn";
-import Loading from "../Common/Loading";
+import Loading from "../../Layouts/overlays/Loading";
 
 /**
  * InteractiveBanner:

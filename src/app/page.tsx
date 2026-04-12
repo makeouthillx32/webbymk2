@@ -1,4 +1,4 @@
-import Page from "@/components/Page";
+import Page from "@/components/Landing/Page";
 import ScrollUp from "@/components/Common/ScrollUp";
 import { Metadata } from "next";
 

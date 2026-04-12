@@ -1,6 +1,6 @@
 "use client";
 
-import { useSupabaseClient } from "@supabase/auth-helpers-react";
+import { createBrowserClient } from "@supabase/ssr";
 import type { Provider } from "@supabase/supabase-js";
 
 type OAuthButton = {
@@ -15,9 +15,11 @@ function buildRedirectTo() {
 }
 
 export default function SignInWithProviders() {
-  const supabase = useSupabaseClient();
-
   const signIn = async (provider: Provider) => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {

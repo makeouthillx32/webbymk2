@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { createBrowserClient } from "@supabase/ssr";
 import type { Session, User } from "@supabase/auth-helpers-nextjs";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
@@ -286,9 +287,12 @@ export const Providers: React.FC<{ children: React.ReactNode; session?: Session 
   // AUTH / SESSION FIXES
   // -------------------------
 
+  // NEXT_PUBLIC_SUPABASE_URL_BROWSER is the browser-accessible URL.
+  // NEXT_PUBLIC_SUPABASE_URL may be the Docker-internal kong hostname which
+  // browsers cannot resolve. Always prefer the browser-specific variable.
   const supabase = useMemo(() => {
     return createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      (process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL)!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
   }, []);
@@ -396,25 +400,27 @@ export const Providers: React.FC<{ children: React.ReactNode; session?: Session 
   }, [supabase]);
 
   return (
-    <SessionContextProvider supabaseClient={supabase} initialSession={initialSession}>
-      <InternalAuthProvider
-        forceRefreshSession={forceRefreshSession}
-        session={liveSession}
-        isLoading={isAuthLoading}
-      >
-        <ThemeContext.Provider
-          value={{
-            themeType,
-            toggleTheme,
-            themeId,
-            setThemeId,
-            getTheme,
-            availableThemes,
-          }}
+    <NextThemesProvider attribute="class" defaultTheme="light">
+      <SessionContextProvider supabaseClient={supabase} initialSession={initialSession}>
+        <InternalAuthProvider
+          forceRefreshSession={forceRefreshSession}
+          session={liveSession}
+          isLoading={isAuthLoading}
         >
-          {children}
-        </ThemeContext.Provider>
-      </InternalAuthProvider>
-    </SessionContextProvider>
+          <ThemeContext.Provider
+            value={{
+              themeType,
+              toggleTheme,
+              themeId,
+              setThemeId,
+              getTheme,
+              availableThemes,
+            }}
+          >
+            {children}
+          </ThemeContext.Provider>
+        </InternalAuthProvider>
+      </SessionContextProvider>
+    </NextThemesProvider>
   );
 };
