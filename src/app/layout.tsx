@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { Titillium_Web } from "next/font/google";
+// globals.css MUST come first — it defines all --background/--foreground/--lt-*
+// CSS variables and imports layout-tokens.css. Without it, every var() call
+// resolves to nothing (transparent) until the JS theme engine hydrates.
+import "./globals.css";
 import "node_modules/react-modal-video/css/modal-video.css";
 import "@/styles/index.css";
 import "leaflet/dist/leaflet.css";
@@ -25,11 +29,6 @@ function isValidLocale(v: string | undefined | null): v is Locale {
   return VALID_LOCALES.includes(v as Locale);
 }
 
-// Resolve active locale server-side from the X-Next-Locale request header
-// (set by middleware for /en/* and /de/* in the same round-trip) or from
-// the Next-Locale cookie (present on all subsequent navigations).
-// This ensures I18nProviderClient gets the right value on first render
-// with no hydration mismatch and no flicker.
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const [cookieStore, headersList] = await Promise.all([cookies(), headers()]);
   const rawLocale =

@@ -1,38 +1,35 @@
 /*
  * layout-tokens.css
- * ─────────────────────────────────────────────────────────
  * Single source of truth for layout-specific color tokens.
  *
  * CRITICAL RULE FOR iOS STATUS BAR:
  *   --lt-status-bar MUST reference --lt-bg (always matches background)
  *   JavaScript will read this to set the iOS status bar color
- * ─────────────────────────────────────────────────────────
  */
 
 :root {
-  --gp-bg:         hsl(var(--background));
-  --gp-fg:         hsl(var(--foreground));
-  --gp-border:     hsl(var(--border));
-  --gp-shadow:     var(--shadow-sm);
-  --gp-status-bar: hsl(var(--background)); /* References --gp-bg value */
+  --gp-bg:         hsl(var(--secondary));
+  --gp-fg:         hsl(var(--secondary-foreground));
+  --gp-border:     hsl(var(--secondary) / 0.5);
+  --gp-shadow:     var(--shadow-md);
+  --gp-status-bar: hsl(var(--secondary));
 }
 
 .dark {
-  --gp-bg:         hsl(var(--background));
-  --gp-fg:         hsl(var(--foreground));
-  --gp-border:     hsl(var(--border));
-  --gp-shadow:     var(--shadow-md);
-  --gp-status-bar: hsl(var(--background)); /* References --gp-bg value */
+  --gp-bg:         hsl(var(--accent));
+  --gp-fg:         hsl(var(--accent-foreground));
+  --gp-border:     hsl(var(--accent) / 0.6);
+  --gp-shadow:     var(--shadow-lg);
+  --gp-status-bar: hsl(var(--accent));
 }
-
-/* ─── SHOP HEADER ─────────────────────────────────────── */
+/* SHOP HEADER */
 [data-layout="shop"],
 :is([data-layout]) [data-layout="shop"] {
   --lt-bg:         var(--gp-bg);
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
 .dark [data-layout="shop"],
@@ -41,17 +38,17 @@
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
-/* ─── APP HEADER ──────────────────────────────────────── */
+/* APP HEADER */
 [data-layout="app"],
 :is([data-layout]) [data-layout="app"] {
   --lt-bg:         var(--gp-bg);
   --lt-fg:         var(--gp-fg);
   --lt-border:     hsl(var(--primary) / 0.2);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
 .dark [data-layout="app"],
@@ -60,17 +57,17 @@
   --lt-fg:         var(--gp-fg);
   --lt-border:     hsl(var(--primary) / 0.2);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
-/* ─── DASHBOARD HEADER ────────────────────────────────── */
+/* DASHBOARD HEADER */
 [data-layout="dashboard"],
 :is([data-layout]) [data-layout="dashboard"] {
   --lt-bg:         var(--gp-bg);
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
 .dark [data-layout="dashboard"],
@@ -79,17 +76,17 @@
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
-/* ─── SIDEBAR ─────────────────────────────────────────── */
+/* SIDEBAR */
 [data-layout="sidebar"],
 :is([data-layout]) [data-layout="sidebar"] {
   --lt-bg:         var(--gp-bg);
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
 .dark [data-layout="sidebar"],
@@ -98,17 +95,17 @@
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
-/* ─── FOOTER ──────────────────────────────────────────── */
+/* FOOTER */
 [data-layout="footer"],
 :is([data-layout]) [data-layout="footer"] {
   --lt-bg:         var(--gp-bg);
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
 }
 
 .dark [data-layout="footer"],
@@ -117,5 +114,24 @@
   --lt-fg:         var(--gp-fg);
   --lt-border:     var(--gp-border);
   --lt-shadow:     var(--gp-shadow);
-  --lt-status-bar: var(--gp-bg); /* ✅ ALWAYS matches background */
+  --lt-status-bar: var(--gp-bg);
+}
+
+/* LANDING HEADER + FOOTER */
+[data-layout="landing"],
+:is([data-layout]) [data-layout="landing"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg);
+}
+
+.dark [data-layout="landing"],
+.dark :is([data-layout]) [data-layout="landing"] {
+  --lt-bg:         var(--gp-bg);
+  --lt-fg:         var(--gp-fg);
+  --lt-border:     var(--gp-border);
+  --lt-shadow:     var(--gp-shadow);
+  --lt-status-bar: var(--gp-bg);
 }

@@ -88,11 +88,12 @@ const Header = () => {
 
   return (
     <header
-      className={`header left-0 top-0 z-40 flex w-full items-center ${
+      className={cn(
+        "header left-0 top-0 z-40 flex w-full items-center",
         sticky
-          ? "fixed z-[9999] bg-white !bg-opacity-80 shadow-sticky backdrop-blur-sm transition dark:bg-gray-dark dark:shadow-sticky-dark"
+          ? "fixed z-[9999] shadow-sticky backdrop-blur-sm transition dark:shadow-sticky-dark bg-[var(--lt-bg)]"
           : "absolute bg-transparent"
-      }`}
+      )}
     >
       <div className="container">
         <div className="relative -mx-4 flex items-center justify-between">
@@ -127,18 +128,19 @@ const Header = () => {
                 aria-label="Mobile Menu"
                 className="absolute right-4 top-1/2 z-50 block translate-y-[-50%] rounded-lg px-3 py-[6px] ring-primary focus:ring-2 lg:hidden"
               >
-                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-black transition-all duration-300 dark:bg-white ${navbarOpen ? " top-[7px] rotate-45" : ""}`} />
-                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-black transition-all duration-300 dark:bg-white ${navbarOpen ? "opacity-0" : ""}`} />
-                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-black transition-all duration-300 dark:bg-white ${navbarOpen ? " top-[-8px] -rotate-45" : ""}`} />
+                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-[hsl(var(--foreground))] transition-all duration-300 ${navbarOpen ? " top-[7px] rotate-45" : ""}`} />
+                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-[hsl(var(--foreground))] transition-all duration-300 ${navbarOpen ? "opacity-0" : ""}`} />
+                <span className={`relative my-1.5 block h-0.5 w-[30px] bg-[hsl(var(--foreground))] transition-all duration-300 ${navbarOpen ? " top-[-8px] -rotate-45" : ""}`} />
               </button>
               <nav
                 ref={navbarRef}
                 id="navbarCollapse"
                 className={cn(
-                  `navbar absolute right-0 rounded border-[.5px] border-body-color/50 bg-white px-6 py-4 duration-300`,
-                  `dark:border-body-color/20 dark:bg-dark lg:visible lg:static lg:w-auto lg:border-none lg:!bg-transparent lg:p-0 lg:opacity-100`,
-                  `${navbarOpen && isSmallScreen ? "visibility top-[70%] w-full opacity-100" : "invisible top-[120%] opacity-0"}`,
-                  `${isSmallScreen ? "max-h-[calc(100vh-120px)] overflow-y-auto" : "overflow-visible"}`,
+                  "navbar absolute right-0 rounded border-[.5px] border-[hsl(var(--border))] px-6 py-4 duration-300",
+                  "bg-[var(--lt-bg)]",
+                  "lg:visible lg:static lg:w-auto lg:border-none lg:!bg-transparent lg:p-0 lg:opacity-100",
+                  navbarOpen && isSmallScreen ? "visibility top-[70%] w-full opacity-100" : "invisible top-[120%] opacity-0",
+                  isSmallScreen ? "max-h-[calc(100vh-120px)] overflow-y-auto" : "overflow-visible",
                 )}
               >
                 <ul className="block lg:flex lg:space-x-12">
@@ -148,11 +150,12 @@ const Header = () => {
                         <Link
                           onClick={() => setNavbarOpen(false)}
                           href={menuItem.path}
-                          className={`flex py-2 text-xl lg:mr-0 lg:inline-flex lg:px-0 lg:py-6 ${
+                          className={cn(
+                            "flex py-2 text-xl lg:mr-0 lg:inline-flex lg:px-0 lg:py-6",
                             cleanPath === menuItem.path
-                              ? "text-primary dark:text-white"
-                              : "text-dark hover:text-primary dark:text-white/70 dark:hover:text-white"
-                          }`}
+                              ? "text-primary"
+                              : "text-[hsl(var(--foreground))] hover:text-primary opacity-80 hover:opacity-100"
+                          )}
                         >
                           {menuItem.title}
                         </Link>
@@ -160,7 +163,7 @@ const Header = () => {
                         <>
                           <p
                             onClick={() => handleSubmenu(index)}
-                            className="flex cursor-pointer items-center justify-between py-2 text-xl text-dark group-hover:text-primary dark:text-white/70 dark:group-hover:text-white lg:mr-0 lg:inline-flex lg:px-0 lg:py-6"
+                            className="flex cursor-pointer items-center justify-between py-2 text-xl text-[hsl(var(--foreground))] opacity-80 group-hover:opacity-100 group-hover:text-primary lg:mr-0 lg:inline-flex lg:px-0 lg:py-6"
                           >
                             {menuItem.title}
                             <span className="pl-3">
@@ -171,15 +174,16 @@ const Header = () => {
                           </p>
                           <div
                             className={cn(
-                              `submenu relative left-4 top-full rounded-sm bg-white transition-[top] duration-300 group-hover:opacity-100 dark:bg-dark`,
-                              `lg:invisible lg:absolute lg:top-[110%] lg:rounded-lg lg:opacity-0 lg:shadow-lg lg:group-hover:visible lg:group-hover:top-full`,
-                              `lg:mr-6 lg:p-4`,
-                              `${openIndex === index ? "flex flex-col lg:flex-row" : "hidden"}`,
+                              "submenu relative left-4 top-full rounded-sm transition-[top] duration-300 group-hover:opacity-100",
+                              "bg-[var(--lt-bg)] border border-[hsl(var(--border))]",
+                              "lg:invisible lg:absolute lg:top-[110%] lg:rounded-lg lg:opacity-0 lg:shadow-lg lg:group-hover:visible lg:group-hover:top-full",
+                              "lg:mr-6 lg:p-4",
+                              openIndex === index ? "flex flex-col lg:flex-row" : "hidden",
                             )}
                           >
                             {serviceData.map((serviceItem) => (
                               <div key={serviceItem.title} className="lg:text-nowrap lg:px-4 lg:py-2">
-                                <p className={cn("cursor-default rounded py-2.5 text-lg text-dark transition dark:text-white")}>
+                                <p className={cn("cursor-default rounded py-2.5 text-lg text-[hsl(var(--foreground))] transition")}>
                                   {serviceItem.title}
                                 </p>
                                 {serviceItem.subServices.map(
@@ -189,7 +193,7 @@ const Header = () => {
                                         onClick={() => setNavbarOpen(false)}
                                         href={`/services${subService.path}`}
                                         key={subService.title}
-                                        className={cn("block px-2 py-1.5 text-sm text-dark transition hover:bg-primary hover:bg-opacity-10 dark:text-white")}
+                                        className={cn("block px-2 py-1.5 text-sm text-[hsl(var(--foreground))] transition hover:bg-primary hover:bg-opacity-10")}
                                       >
                                         {subService.title}
                                       </Link>
@@ -204,7 +208,7 @@ const Header = () => {
                   ))}
 
                   <li className="block lg:hidden">
-                    <div className="mt-4 flex items-center justify-end gap-2 rounded border border-gray-300 bg-gray-100 p-1 dark:border-gray-600 dark:bg-gray-800">
+                    <div className="mt-4 flex items-center justify-end gap-2 rounded border border-[hsl(var(--border))] bg-[var(--lt-bg)] p-1">
                       {LOCALES.map((l) => (
                         <button
                           key={l}
@@ -213,8 +217,8 @@ const Header = () => {
                           className={cn(
                             "rounded px-2 py-1 text-sm font-semibold uppercase transition",
                             activeLocale === l
-                              ? "bg-primary text-white"
-                              : "text-dark hover:bg-primary/10 dark:text-white/70 dark:hover:text-white"
+                              ? "bg-primary text-[hsl(var(--primary-foreground))]"
+                              : "text-[hsl(var(--foreground))] opacity-70 hover:bg-primary/10 hover:opacity-100"
                           )}
                         >
                           {l.toUpperCase()}
@@ -236,8 +240,8 @@ const Header = () => {
                   className={cn(
                     "rounded px-2 py-1 text-sm font-semibold uppercase transition",
                     activeLocale === l
-                      ? "bg-primary text-white"
-                      : "text-dark hover:bg-primary/10 dark:text-white/70 dark:hover:text-white"
+                      ? "bg-primary text-[hsl(var(--primary-foreground))]"
+                      : "text-[hsl(var(--foreground))] opacity-70 hover:bg-primary/10 hover:opacity-100"
                   )}
                 >
                   {l.toUpperCase()}

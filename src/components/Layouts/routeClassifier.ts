@@ -80,13 +80,19 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/calendar") ||
     lower.startsWith("/error");
 
+  // /shop and all its sub-routes use the shop layout + ShopHeader
   const isShopRoute =
-    isProductsPage || isCollectionsPage || isCategoryPage || isPagesRoute;
+    isProductsPage ||
+    isCollectionsPage ||
+    isCategoryPage ||
+    isPagesRoute ||
+    lower.startsWith("/shop");
 
+  // Only routes that explicitly need the app-shell header (checkout, profile, legal, etc.)
+  // /shop is intentionally excluded so it gets the ShopHeader instead
   const useAppHeader =
     isCheckoutRoute ||
     isProfileMeRoute ||
-    lower.startsWith("/shop") ||
     lower.startsWith("/legal") ||
     lower.startsWith("/profile") ||
     lower.startsWith("/settings") ||
