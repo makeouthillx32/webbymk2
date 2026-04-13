@@ -1,18 +1,14 @@
-// src/data/useServiceData.ts
+// src/data/fetchServicesData.ts
 //
-// Fetches service content from Supabase.
-// Returns the same `Services[]` shape as before — no consuming components need to change.
+// Server-side fetch for service data — use in Server Components and Route Handlers.
+// Uses the SSR Supabase client (reads auth cookies, respects RLS).
 //
-// Client components: call `useServicesData()` (React hook, fetches on mount).
-// Server components / RSC: import `fetchServicesData` from "@/data/fetchServicesData".
+// Usage in a Server Component:
+//   import { fetchServicesData } from "@/data/fetchServicesData";
+//   const services = await fetchServicesData("de");
 
-"use client";
-
-import { useEffect, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createClient } from "@/utils/supabase/server";
 import type { Services, subService } from "@/types";
-
-// ── Raw DB row types ──────────────────────────────────────────────────────────
 
 type Translations = Record<string, Record<string, string>>;
 
@@ -48,8 +44,6 @@ interface RawCategory {
   service_sub_services: RawSubService[];
 }
 
-// ── Transform DB rows → Services[] ───────────────────────────────────────────
-
 function transform(rows: RawCategory[], locale: string): Services[] {
   return rows.map((cat) => ({
     title:     cat.translations?.[locale]?.title     ?? cat.translations?.de?.title     ?? "",
@@ -77,10 +71,8 @@ function transform(rows: RawCategory[], locale: string): Services[] {
   }));
 }
 
-// ── Supabase query (shared between client hook + server fetch) ────────────────
-
-export async function queryServices(locale: string): Promise<Services[]> {
-  const supabase = createClient();
+export async function fetchServicesData(locale: string = "de"): Promise<Services[]> {
+  const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("service_categories")
@@ -102,23 +94,40 @@ export async function queryServices(locale: string): Promise<Services[]> {
     .returns<RawCategory[]>();
 
   if (error) {
-    console.error("[useServiceData] Supabase error:", error.message);
+    console.error("[fetchServicesData] Supabase error:", error.message);
     return [];
   }
 
   return transform(data ?? [], locale);
 }
 
-// ── React hook (client components) ───────────────────────────────────────────
+// Fetch a single category by slug (useful for individual service pages)
+export async function fetchServiceCategory(
+  slug: string,
+  locale: string = "de"
+): Promise<Services | null> {
+  const supabase = await createClient();
 
-const useServicesData = (locale: string = "de"): Services[] => {
-  const [services, setServices] = useState<Services[]>([]);
+  const { data, error } = await supabase
+    .from("service_categories")
+    .select(`
+      id, slug, image, tags, position, translations,
+      service_sub_services (
+        id, path, images, position, translations,
+        service_nested_lists (
+          id, position, translations,
+          service_nested_list_items (
+            id, position, translations
+          )
+        )
+      )
+    `)
+    .eq("slug", slug)
+    .eq("is_active", true)
+    .single()
+    .returns<RawCategory>();
 
-  useEffect(() => {
-    queryServices(locale).then(setServices);
-  }, [locale]);
+  if (error || !data) return null;
 
-  return services;
-};
-
-export default useServicesData;
+  return transform([data], locale)[0] ?? null;
+}

@@ -40,7 +40,8 @@ export function LandingLayout({ children, screenSize, locale = "de" }: LandingLa
       <I18nProviderClient locale={locale}>
         <div data-layout="landing">
           <LandingHeader />
-          <main className="min-h-screen">{children}</main>
+          {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+          <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
           <LandingFooter />
         </div>
       </I18nProviderClient>
@@ -62,7 +63,8 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children, screenSize }: DashboardLayoutProps) {
   return (
     <CartProvider>
-      <div data-layout="dashboard" className="dark:bg-dark_bg1 bg-gray-1">
+      {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+      <div data-layout="dashboard" className="dark:bg-dark_bg1 bg-gray-1" style={{ backgroundColor: "hsl(var(--background))" }}>
         <div className="flex h-screen overflow-hidden">
           <SidebarProvider>
             <Sidebar />
@@ -92,7 +94,8 @@ interface AuthLayoutProps {
 export function AuthLayout({ children }: AuthLayoutProps) {
   return (
     <CartProvider>
-      <main className="min-h-screen">{children}</main>
+      {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+      <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
       <AppAccessibility />
       <AppToaster />
     </CartProvider>
@@ -149,7 +152,8 @@ export function ShopLayout({
           </>
         )}
 
-        <main className="min-h-screen">{children}</main>
+        {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
 
         {showFooter && (
           <Suspense fallback={<div className="h-96" />}>

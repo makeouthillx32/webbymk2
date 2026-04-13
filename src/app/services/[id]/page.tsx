@@ -1,3 +1,4 @@
+//src/app/services/[id]/page.tsx
 "use client";
 import Breadcrumb from "@/components/Common/Breadcrumb";
 import Gallery from "@/components/Common/Gallery";

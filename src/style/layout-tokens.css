@@ -1,25 +1,27 @@
 /*
  * layout-tokens.css
+ * ─────────────────────────────────────────────────────────
  * Single source of truth for layout-specific color tokens.
  *
  * CRITICAL RULE FOR iOS STATUS BAR:
  *   --lt-status-bar MUST reference --lt-bg (always matches background)
  *   JavaScript will read this to set the iOS status bar color
+ * ─────────────────────────────────────────────────────────
  */
 
 :root {
   --gp-bg:         hsl(var(--secondary));
   --gp-fg:         hsl(var(--secondary-foreground));
-  --gp-border:     hsl(var(--secondary) / 0.5);
-  --gp-shadow:     var(--shadow-md);
+  --gp-border:     hsl(var(--secondary) / 0.3);
+  --gp-shadow:     var(--shadow-sm);
   --gp-status-bar: hsl(var(--secondary));
 }
 
 .dark {
   --gp-bg:         hsl(var(--accent));
   --gp-fg:         hsl(var(--accent-foreground));
-  --gp-border:     hsl(var(--accent) / 0.6);
-  --gp-shadow:     var(--shadow-lg);
+  --gp-border:     hsl(var(--accent) / 0.3);
+  --gp-shadow:     var(--shadow-md);
   --gp-status-bar: hsl(var(--accent));
 }
 /* SHOP HEADER */
