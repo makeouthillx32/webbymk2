@@ -25,7 +25,13 @@ export default function ClientLayout({
   const screenSize = useScreenSize();
   const route = classifyRoute(pathname);
 
-  const metaLayout = route.isDashboardPage ? "dashboard" : route.useAppHeader ? "app" : "shop";
+  const metaLayout = route.isDashboardPage
+    ? "dashboard"
+    : route.useAppHeader
+    ? "app"
+    : route.isLandingPage
+    ? "landing"
+    : "shop";
   useMetaThemeColor(metaLayout, themeType);
 
   useEffect(() => {

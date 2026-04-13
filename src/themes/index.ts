@@ -1,6 +1,16 @@
 // themes/index.ts
 import type { Theme } from '@/types/theme';
 import { createBrowserClient } from '@supabase/ssr';
+import defaultTheme from './default';
+import monochromeTheme from './monochrome';
+import vintageTheme from './vintage';
+import sharpTheme from './sharp';
+
+// Bundled fallback themes — always available even when DB is unreachable
+const LOCAL_THEMES: Theme[] = [defaultTheme, monochromeTheme, vintageTheme, sharpTheme];
+const LOCAL_THEME_MAP: Record<string, Theme> = Object.fromEntries(
+  LOCAL_THEMES.map(t => [t.id, t])
+);
 
 // Use NEXT_PUBLIC_SUPABASE_URL_BROWSER when available — this is the browser-accessible
 // URL (e.g. http://localhost:8001). NEXT_PUBLIC_SUPABASE_URL may point to the
@@ -21,16 +31,27 @@ let themeMapCache: Record<string, Theme> | null = null;
 let cacheExpiry: number = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Error backoff — after a DB failure, wait before retrying so mobile browsers
+// are not hammered with failing requests (Safari iOS will kill the page).
+let fetchErrorAt: number = 0;
+const ERROR_BACKOFF = 30 * 1000; // 30 seconds
+
 // Fetch themes from database
 export async function fetchThemes(): Promise<Theme[]> {
-  // Check cache first
+  // Return success-cached themes
   if (themesCache && Date.now() < cacheExpiry) {
     return themesCache;
   }
 
+  // Return local fallbacks during the error backoff window
+  if (fetchErrorAt && Date.now() - fetchErrorAt < ERROR_BACKOFF) {
+    console.warn('⚠️ DB in backoff window — using local theme fallbacks');
+    return LOCAL_THEMES;
+  }
+
   try {
     console.log('🎨 Fetching themes from database...');
-    
+
     const { data, error } = await supabase
       .from('themes')
       .select('*')
@@ -43,41 +64,42 @@ export async function fetchThemes(): Promise<Theme[]> {
     }
 
     if (!data || data.length === 0) {
-      console.warn('⚠️ No themes found in database');
-      return [];
+      console.warn('⚠️ No themes found in database — using local fallbacks');
+      return LOCAL_THEMES;
     }
 
     // Transform database rows to Theme objects
     const themes: Theme[] = data.map(row => {
       try {
-        // Parse the theme_data JSONB
         const themeData = row.theme_data as Theme;
-        
-        // Ensure the theme has all required properties
         return {
           ...themeData,
-          id: row.id, // Use database ID
-          name: row.name, // Use database name
-          description: row.description, // Use database description
-          previewColor: row.preview_color, // Use database preview color
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          previewColor: row.preview_color,
         };
       } catch (parseError) {
         console.error(`❌ Error parsing theme data for ${row.id}:`, parseError);
-        throw new Error(`Invalid theme data for ${row.id}`);
+        // Skip bad rows instead of throwing — one bad row shouldn't kill everything
+        return null;
       }
-    });
+    }).filter((t): t is Theme => t !== null);
 
     // Update cache
-    themesCache = themes;
-    themeMapCache = null; // Clear theme map cache
+    themesCache = themes.length > 0 ? themes : LOCAL_THEMES;
+    themeMapCache = null;
     cacheExpiry = Date.now() + CACHE_DURATION;
-    
-    console.log(`✅ Loaded ${themes.length} themes from database`);
-    return themes;
-    
+    fetchErrorAt = 0; // clear error state on success
+
+    console.log(`✅ Loaded ${themesCache.length} themes`);
+    return themesCache;
+
   } catch (error) {
-    console.error('❌ Fatal error fetching themes:', error);
-    throw error;
+    // Record the error time for backoff, then return local fallbacks
+    fetchErrorAt = Date.now();
+    console.warn('⚠️ DB unavailable — falling back to local bundled themes', error);
+    return LOCAL_THEMES;
   }
 }
 
@@ -99,14 +121,14 @@ export async function getThemeMap(): Promise<Record<string, Theme>> {
   return themeMapCache;
 }
 
-// Get a specific theme by ID
+// Get a specific theme by ID — always falls back to local bundled themes
 export async function getThemeById(id: string): Promise<Theme | null> {
   try {
     const themeMap = await getThemeMap();
-    return themeMap[id] || null;
+    return themeMap[id] || LOCAL_THEME_MAP[id] || LOCAL_THEME_MAP[defaultThemeId] || null;
   } catch (error) {
     console.error(`❌ Error getting theme ${id}:`, error);
-    return null;
+    return LOCAL_THEME_MAP[id] || LOCAL_THEME_MAP[defaultThemeId] || null;
   }
 }
 
@@ -125,14 +147,14 @@ export const themes = [] as Theme[];
 
 export const themeMap = {} as Record<string, Theme>;
 
-// Helper function to get available theme IDs
+// Helper function to get available theme IDs — never returns empty
 export async function getAvailableThemeIds(): Promise<string[]> {
   try {
     const themes = await fetchThemes();
-    return themes.map(theme => theme.id);
+    return themes.length > 0 ? themes.map(t => t.id) : LOCAL_THEMES.map(t => t.id);
   } catch (error) {
     console.error('❌ Error getting theme IDs:', error);
-    return [];
+    return LOCAL_THEMES.map(t => t.id);
   }
 }
 
@@ -172,10 +194,5 @@ export async function getSystemThemes(): Promise<Theme[]> {
   }
 }
 
-// Initialize themes on module load (optional - for warming cache)
-if (typeof window !== 'undefined') {
-  // Only in browser environment
-  fetchThemes().catch(error => {
-    console.warn('⚠️ Failed to pre-load themes:', error);
-  });
-}
+// NOTE: No module-load prefetch. The Providers component handles initial
+// theme loading inside a useEffect with proper error handling.

@@ -108,16 +108,15 @@ const Header = () => {
               }}
               className={`header-logo block w-full ${sticky ? "py-5 lg:py-2" : "py-8"}`}
             >
-              {typeof window !== "undefined" && (
-                <Image
-                  src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}
-                  alt="logo"
-                  width={150}
-                  height={100}
-                  priority
-                  key={theme}
-                />
-              )}
+              <Image
+                src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}
+                alt="logo"
+                width={150}
+                height={100}
+                priority
+                key={theme}
+                suppressHydrationWarning
+              />
             </Link>
           </div>
           <div className="flex w-full items-center justify-between px-4">
