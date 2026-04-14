@@ -42,6 +42,11 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
+            title: "Home-Page",
+            url: "/settings/homepage_content",
+            icon: Icons.FourCircle,
+          },
+          {
             title: "Pages",
             url: "/settings/static-pages",
             icon: Icons.Table,

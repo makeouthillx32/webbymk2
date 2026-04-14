@@ -11,8 +11,8 @@ import { CreateSectionModal } from "./CreateSectionModal";
 import { EditSectionModal } from "./EditSectionModal";
 import type { LandingSectionRow } from "./types";
 
-export default function LandingManager() {
-  const { sections, loading, error, refresh, updatePositions } = useLandingSections();
+export default function LandingManager({ embedded = false, page = 'shop' }: { embedded?: boolean; page?: string }) {
+  const { sections, loading, error, refresh, updatePositions } = useLandingSections(page);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingSection, setEditingSection] = useState<LandingSectionRow | null>(null);
 
@@ -51,12 +51,12 @@ export default function LandingManager() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className={embedded ? '' : 'p-6 max-w-7xl mx-auto'}>
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h1 className="text-3xl font-bold text-[var(--foreground)]">Landing Page</h1>
+            {!embedded && <h1 className="text-3xl font-bold text-[var(--foreground)]">Landing Page</h1>}
             <p className="text-sm text-[var(--muted-foreground)] mt-1">
               Drag to reorder sections • Toggle to show/hide
             </p>
@@ -130,6 +130,7 @@ export default function LandingManager() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onSuccess={refresh}
+        page={page}
       />
 
       <EditSectionModal

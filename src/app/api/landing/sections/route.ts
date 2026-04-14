@@ -15,14 +15,14 @@ export async function GET(req: NextRequest) {
     const supabase = await createServerClient();
     const { searchParams } = new URL(req.url);
     const activeOnly = searchParams.get('active_only') === 'true';
+    const page = searchParams.get('page') || 'shop';
 
     let query = supabase
       .from('landing_sections')
       .select('*')
+      .eq('page', page)
       .order('position', { ascending: true });
 
-    // For admin dashboard, get all sections
-    // For public landing page, get only active sections
     if (activeOnly) {
       query = query.eq('is_active', true);
     }
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
       return jsonError(400, 'invalid_json', 'Invalid JSON body');
     }
 
-    const { position, type, is_active, config } = body;
+    const { position, type, is_active, config, page } = body;
 
     if (!type) {
       return jsonError(400, 'missing_type', 'Section type is required');
@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
         type: String(type),
         is_active: is_active !== undefined ? !!is_active : true,
         config: config || {},
+        page: page || 'shop',
       })
       .select('*')
       .single();

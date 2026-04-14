@@ -4,7 +4,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import { cn } from "@/utils/cn";
-import Loading from "../../Layouts/overlays/Loading";
+import Loading from "../Layouts/overlays/Loading";
 
 /**
  * InteractiveBanner:
@@ -16,47 +16,62 @@ export default function InteractiveBanner() {
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
 
   return (
-    <div className="relative h-[80dvh] w-full overflow-hidden">
-      {/* Video Background */}
-      <video
-        className="absolute inset-0 w-full h-full object-cover"
-        src="/images/starry-background4K_1.webm"
-        autoPlay
-        loop
-        muted
-        playsInline
-        preload="auto"
-        style={{
-          opacity: 100,  // Reduce visual intensity for GPU efficiency
-          filter: "blur(0px)", // Slight blur reduces sharp pixel processing
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: "scale(1.1)", // Scale to avoid video cuts on mobile screens
-        }}
-      />
+    <>
+      {/* HeroHead spacing */}
+      <div className="w-full py-6 sm:py-5 md:py-4 lg:py-4 xl:py-4">
+        <h1 className="text-4xl font-bold text-transparent select-none">.</h1>
+      </div>
 
-      {/* Gradient Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-transparent to-slate-900"></div>
+      <div className="relative h-[80dvh] w-full overflow-hidden">
+        {/* Video Background */}
+        <video
+          className="absolute inset-0 w-full h-full object-cover"
+          src="/images/starry-background4K_1.webm"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          style={{
+            opacity: 100,  // Reduce visual intensity for GPU efficiency
+            filter: "blur(0px)", // Slight blur reduces sharp pixel processing
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            transform: "scale(1.1)", // Scale to avoid video cuts on mobile screens
+          }}
+        />
 
-      {/* Scene Overlay */}
-      {isOverlayVisible && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70">
-          <button
-            onClick={() => setIsOverlayVisible(false)}
-            className="rounded-lg bg-white px-6 py-3 text-lg font-semibold text-black transition-transform hover:scale-105"
-          >
-            Click to Explore 3D Scene
-          </button>
-        </div>
-      )}
+        {/* Gradient Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-transparent to-slate-900"></div>
 
-      {/* 3D Scene */}
-      <ThreeFiber />
+        {/* Scene Overlay */}
+        {isOverlayVisible && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70">
+            <button
+              onClick={() => setIsOverlayVisible(false)}
+              className="rounded-lg bg-white px-6 py-3 text-lg font-semibold text-black transition-transform hover:scale-105"
+            >
+              Click to Explore 3D Scene
+            </button>
+          </div>
+        )}
 
-      {/* Controls */}
-      <Controls handleOverlayClick={setIsOverlayVisible} />
-    </div>
+        {/* 3D Scene */}
+        <ThreeFiber />
+
+        {/* Controls */}
+        <Controls handleOverlayClick={setIsOverlayVisible} />
+      </div>
+
+      {/* Herofoot spacing */}
+      <div className="w-full relative bg-transparent min-h-[400px] sm:min-h-[600px] md:min-h-[800px]">
+        {/* 
+          This acts as empty spacing padding at the bottom of the video hero. 
+          Adjust these min-h-[...] Tailwind classes to control how much background video shows! 
+        */}
+      </div>
+    </>
   );
 }
 /**
@@ -191,8 +206,8 @@ export function ParticleSystem({ spawnRate }: ParticleSystemProps) {
   const BLUE_RING_RADIUS = 3.0;   // Final despawn ring
 
   // Probability (0–1) that a star despawns upon crossing a ring
-  const PURPLE_DESPAWN_CHANCE = 0.3; 
-  const GREEN_DESPAWN_CHANCE = 0.5; 
+  const PURPLE_DESPAWN_CHANCE = 0.3;
+  const GREEN_DESPAWN_CHANCE = 0.5;
 
   useFrame((state, delta) => {
     // Spawn new particles at a certain rate
@@ -210,7 +225,7 @@ export function ParticleSystem({ spawnRate }: ParticleSystemProps) {
 
       // Velocity points radially outward (from center)
       // Speed is gently small for slow outward motion
-      const speed = 0.05 + Math.random() * 0.1; 
+      const speed = 0.05 + Math.random() * 0.1;
       // Direction is position normalized
       const direction = position.clone().normalize().multiplyScalar(speed);
 

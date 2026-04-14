@@ -10,62 +10,50 @@ interface CreateSectionModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  page?: string;
 }
 
-const SECTION_TYPES = [
-  { 
-    value: "top_banner", 
-    label: "Top Banner (Custom by unenter)", 
-    description: "Announcement bar - Custom component, no configuration needed",
-    config: {} // No config - custom component handles everything
+const SHOP_SECTION_TYPES = [
+  {
+    value: "top_banner",
+    label: "Top Banner (Custom by unenter)",
+    description: "Announcement bar — custom component, no configuration needed",
+    config: {}
   },
-  { 
-    value: "hero_carousel", 
-    label: "Category Carousel (Custom by unenter)", 
-    description: "Category image carousel - Custom component, no configuration needed",
-    config: {} // No config - custom component handles everything
+  {
+    value: "hero_carousel",
+    label: "Category Carousel (Custom by unenter)",
+    description: "Category image carousel — custom component, no configuration needed",
+    config: {}
   },
-  { 
-    value: "categories_grid", 
-    label: "Categories Grid", 
+  {
+    value: "categories_grid",
+    label: "Categories Grid",
     description: "Display product categories in a grid layout",
-    config: { 
-      title: "Shop by Category", 
-      columns: 3,
-      showImages: true,
-      categoryIds: [] // Leave empty to show all categories
-    } 
+    config: { title: "Shop by Category", columns: 3, showImages: true, categoryIds: [] }
   },
-  { 
-    value: "static_html", 
-    label: "Static Page Embed", 
-    description: "Embed a pre-made static page by slug (managed in separate upload flow)",
-    config: { 
-      slug: "landing-qr-download",
-      showTitle: false,
-      containerWidth: "full" // "full" | "contained" | "narrow"
-    } 
+  {
+    value: "static_html",
+    label: "Static Page Embed",
+    description: "Embed a pre-made static page by slug",
+    config: { slug: "landing-qr-download", showTitle: false, containerWidth: "full" }
   },
-  { 
-    value: "products_grid", 
-    label: "Collection Products Grid", 
+  {
+    value: "products_grid",
+    label: "Collection Products Grid",
     description: "Display products from a specific collection",
-    config: { 
-      title: "Featured Collection",
-      description: "Shop our curated selection",
-      collection: "best-sellers", // Collection slug - shows products in this collection
-      limit: 8, 
-      sortBy: "featured",
-      viewAllHref: "/collections/best-sellers" // Link to full collection page
-    } 
+    config: { title: "Featured Collection", description: "Shop our curated selection", collection: "best-sellers", limit: 8, sortBy: "featured", viewAllHref: "/collections/best-sellers" }
   },
 ];
 
-export function CreateSectionModal({ open, onClose, onSuccess }: CreateSectionModalProps) {
-  const [type, setType] = useState("static_html");
+export function CreateSectionModal({ open, onClose, onSuccess, page = 'shop' }: CreateSectionModalProps) {
+  const SECTION_TYPES = [...SHOP_SECTION_TYPES];
+  const defaultType = SECTION_TYPES[0].value;
+
+  const [type, setType] = useState(defaultType);
   const [isActive, setIsActive] = useState(true);
-  const [config, setConfig] = useState(SECTION_TYPES.find(t => t.value === "static_html")?.config || {});
-  const [configText, setConfigText] = useState(JSON.stringify(SECTION_TYPES.find(t => t.value === "static_html")?.config, null, 2));
+  const [config, setConfig] = useState(SECTION_TYPES[0].config || {});
+  const [configText, setConfigText] = useState(JSON.stringify(SECTION_TYPES[0].config, null, 2));
   const [showJsonEditor, setShowJsonEditor] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +110,7 @@ export function CreateSectionModal({ open, onClose, onSuccess }: CreateSectionMo
           type,
           is_active: isActive,
           config: finalConfig,
+          page,
         }),
       });
 
@@ -135,11 +124,10 @@ export function CreateSectionModal({ open, onClose, onSuccess }: CreateSectionMo
       onClose();
       
       // Reset form
-      const defaultPreset = SECTION_TYPES[3];
-      setType("static_html");
+      setType(SECTION_TYPES[0].value);
       setIsActive(true);
-      setConfig(defaultPreset.config);
-      setConfigText(JSON.stringify(defaultPreset.config, null, 2));
+      setConfig(SECTION_TYPES[0].config);
+      setConfigText(JSON.stringify(SECTION_TYPES[0].config, null, 2));
       setShowJsonEditor(false);
     } catch (err: any) {
       setError(err.message || 'Failed to create section');
@@ -161,7 +149,7 @@ export function CreateSectionModal({ open, onClose, onSuccess }: CreateSectionMo
             <div>
               <h2 className="modal-title">Add Section</h2>
               <p className="modal-subtitle">
-                Create a new section for your landing page
+                {page === 'home' ? 'Add a section to the home page' : 'Create a new section for your shop landing page'}
               </p>
             </div>
             <button onClick={onClose} className="modal-close">

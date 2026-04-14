@@ -7,6 +7,7 @@ interface ClientInlineStaticPageProps {
   slug: string;
   compact?: boolean;
   showFooter?: boolean;
+  containerWidth?: "full" | "contained";
 }
 
 type StaticPageData = {
@@ -23,6 +24,7 @@ export function ClientInlineStaticPage({
   slug,
   compact = true,
   showFooter = false,
+  containerWidth = "contained",
 }: ClientInlineStaticPageProps) {
   const [page, setPage] = useState<StaticPageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,7 +67,7 @@ export function ClientInlineStaticPage({
 
   if (loading) {
     return (
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pb-16">
+      <section className={containerWidth === "full" ? "w-full" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pb-16"}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="rounded-lg bg-gray-800 aspect-[4/3] p-8 animate-pulse">
             <div className="h-10 bg-gray-700 rounded w-3/4 mb-4"></div>
@@ -95,7 +97,7 @@ export function ClientInlineStaticPage({
   }
 
   return (
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pb-16">
+    <section className={containerWidth === "full" ? "w-full" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pb-16"}>
       {page.content_format === 'html' ? (
         <div 
           className="static-page-content"

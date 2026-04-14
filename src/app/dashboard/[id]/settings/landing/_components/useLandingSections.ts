@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { LandingSectionRow } from "./types";
 
-export function useLandingSections() {
+export function useLandingSections(page: string = 'shop') {
   const [sections, setSections] = useState<LandingSectionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -14,7 +14,7 @@ export function useLandingSections() {
     setError(null);
 
     try {
-      const res = await fetch("/api/landing/sections", { cache: "no-store" });
+      const res = await fetch(`/api/landing/sections?page=${page}`, { cache: "no-store" });
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
@@ -33,7 +33,7 @@ export function useLandingSections() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   const updatePositions = useCallback(async (reorderedSections: LandingSectionRow[]) => {
     // Optimistically update UI

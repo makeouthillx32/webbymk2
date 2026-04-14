@@ -55,7 +55,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       {/* NO hardcoded bg class here — background-color is set by
           globals.css via hsl(var(--background)) so the iOS status bar
           always reads the correct theme color, never a hardcoded value. */}
-      <body className={titillium.className}>
+      <body className={titillium.className} suppressHydrationWarning>
         <Providers>
           <ClientLayout locale={locale}>{children}</ClientLayout>
         </Providers>
