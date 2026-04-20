@@ -1,0 +1,18 @@
+{
+  "_comment": "Local infrastructure config — never commit this file.",
+  "domain": "unenter.live",
+  "npm": {
+    "ip":       "192.168.50.75",
+    "port":     81,
+    "email":    "Skillet1005@gmail.com",
+    "password": "unenter1005",
+    "leEmail":  "Skillet1005@gmail.com"
+  },
+  "stack": {
+    "ip":        "192.168.50.204",
+    "proxyPort": 3080
+  },
+  "ddns": {
+    "hostname": "unenter.asuscomm.com"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "unenter-proxy",
+  "version": "1.0.0",
+  "description": "Multi-zone reverse proxy for unenter.live",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev":   "node --watch server.js"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

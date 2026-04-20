@@ -6,6 +6,7 @@ import { createBrowserClient } from "@supabase/ssr";
 import type { Session, User } from "@supabase/auth-helpers-nextjs";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
 import { setCookie, getCookie, iosSessionHelpers } from "@/lib/cookieUtils";
+import { getBrowserSupabaseUrl } from "@/lib/multiZone";
 import { usePathname, useRouter } from "next/navigation";
 import { Theme } from "@/types/theme";
 import { defaultThemeId, getThemeById, getAvailableThemeIds } from "@/themes";
@@ -292,7 +293,7 @@ export const Providers: React.FC<{ children: React.ReactNode; session?: Session 
   // browsers cannot resolve. Always prefer the browser-specific variable.
   const supabase = useMemo(() => {
     return createBrowserClient(
-      (process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL)!,
+      getBrowserSupabaseUrl(),
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
   }, []);

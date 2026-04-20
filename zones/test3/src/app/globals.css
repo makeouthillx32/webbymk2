@@ -1,0 +1,122 @@
+/* zones/__ZONE_KEY__/src/app/globals.css
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Self-contained — no cross-directory imports so this works identically in
+ * the flattened Docker build (/app/src/app/) and local dev.
+ *
+ * CSS vars mirror the core design system (src/app/globals.css + src/style/*).
+ * Keeping this file aligned with core is what allows shared core components
+ * (AppHeader, ClientLayout, Cart, etc.) to render with the correct theme
+ * colors in every zone instead of falling back to Tailwind defaults.
+ *
+ * If core's tokens change, update this template AND the per-zone copies.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 9.09% 97.84%;
+    --foreground: 0 0% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 20%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 20%;
+    --primary: 139.66 52.73% 43.14%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 218.54 79.19% 66.08%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 50.40 26.88% 81.76%;
+    --muted-foreground: 0 0% 43.14%;
+    --accent: 189.64 81.07% 66.86%;
+    --accent-foreground: 0 0% 20%;
+    --destructive: 0 84.24% 60.20%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 83.14%;
+    --input: 0 0% 83.14%;
+    --ring: 139.66 52.73% 43.14%;
+    --chart-1: 139.66 52.73% 43.14%;
+    --chart-2: 218.54 79.19% 66.08%;
+    --chart-3: 189.64 81.07% 66.86%;
+    --chart-4: 207.27 44% 49.02%;
+    --chart-5: 138.87 70.45% 34.51%;
+    --sidebar: 240 9.09% 97.84%;
+    --sidebar-foreground: 0 0% 20%;
+    --sidebar-primary: 139.66 52.73% 43.14%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 189.64 81.07% 66.86%;
+    --sidebar-accent-foreground: 0 0% 20%;
+    --sidebar-border: 0 0% 83.14%;
+    --sidebar-ring: 139.66 52.73% 43.14%;
+    --font-sans: Plus Jakarta Sans, sans-serif;
+    --font-serif: Source Serif 4, serif;
+    --font-mono: JetBrains Mono, monospace;
+    --radius: 0.5rem;
+    --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.10);
+
+    /* Layout-token fallbacks consumed by core AppHeader, ClientLayout, and
+       LandingLayout.  Without these, header + footer render on plain white. */
+    --gp-bg: hsl(var(--background));
+    --lt-header-bg: hsl(var(--background));
+    --lt-footer-bg: hsl(var(--background));
+    --x: 50%;
+    --y: 50%;
+  }
+
+  .dark {
+    --background: 220.00 14.75% 11.96%;
+    --foreground: 0 0% 89.80%;
+    --card: 197.14 6.93% 19.80%;
+    --card-foreground: 0 0% 89.80%;
+    --popover: 197.14 6.93% 19.80%;
+    --popover-foreground: 0 0% 89.80%;
+    --primary: 139.66 52.73% 43.14%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 207.27 44% 49.02%;
+    --secondary-foreground: 0 0% 89.80%;
+    --muted: 0 0% 26.67%;
+    --muted-foreground: 0 0% 63.92%;
+    --accent: 218.54 79.19% 66.08%;
+    --accent-foreground: 0 0% 89.80%;
+    --destructive: 0 84.24% 60.20%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 26.67%;
+    --input: 0 0% 26.67%;
+    --ring: 139.66 52.73% 43.14%;
+    --sidebar: 220.00 14.75% 11.96%;
+    --sidebar-foreground: 0 0% 89.80%;
+    --sidebar-primary: 139.66 52.73% 43.14%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 218.54 79.19% 66.08%;
+    --sidebar-accent-foreground: 0 0% 89.80%;
+    --sidebar-border: 0 0% 26.67%;
+    --sidebar-ring: 139.66 52.73% 43.14%;
+    --gp-bg: hsl(var(--background));
+    --lt-header-bg: hsl(var(--background));
+    --lt-footer-bg: hsl(var(--background));
+  }
+}
+
+* { border-color: hsl(var(--border)); }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  color: hsl(var(--foreground));
+  background-color: var(--gp-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.theme-transition-fallback {
+  transition: all 0.4s ease-in-out !important;
+}
+.theme-transition-fallback * {
+  transition: color 0.4s ease-in-out, background-color 0.4s ease-in-out, border-color 0.4s ease-in-out !important;
+}

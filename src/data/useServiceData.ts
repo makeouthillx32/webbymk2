@@ -111,14 +111,24 @@ export async function queryServices(locale: string): Promise<Services[]> {
 
 // ── React hook (client components) ───────────────────────────────────────────
 
-const useServicesData = (locale: string = "de"): Services[] => {
+type UseServicesDataResult = {
+  data: Services[];
+  loading: boolean;
+};
+
+const useServicesData = (locale: string = "en"): UseServicesDataResult => {
   const [services, setServices] = useState<Services[]>([]);
+  const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
-    queryServices(locale).then(setServices);
+    setLoading(true);
+    queryServices(locale).then((data) => {
+      setServices(data);
+      setLoading(false);
+    });
   }, [locale]);
 
-  return services;
+  return { data: services, loading };
 };
 
 export default useServicesData;

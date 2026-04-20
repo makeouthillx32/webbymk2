@@ -7,7 +7,7 @@ import { cn } from "@/utils/cn";
 import { useTheme } from "next-themes";
 
 const Footer = () => {
-  const servicesData = useServicesData();
+  const { data: servicesData } = useServicesData();
   const { theme } = useTheme();
 
   return (

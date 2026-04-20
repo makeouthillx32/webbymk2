@@ -71,7 +71,7 @@ function transform(rows: RawCategory[], locale: string): Services[] {
   }));
 }
 
-export async function fetchServicesData(locale: string = "de"): Promise<Services[]> {
+export async function fetchServicesData(locale: string = "en"): Promise<Services[]> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -104,7 +104,7 @@ export async function fetchServicesData(locale: string = "de"): Promise<Services
 // Fetch a single category by slug (useful for individual service pages)
 export async function fetchServiceCategory(
   slug: string,
-  locale: string = "de"
+  locale: string = "en"
 ): Promise<Services | null> {
   const supabase = await createClient();
 

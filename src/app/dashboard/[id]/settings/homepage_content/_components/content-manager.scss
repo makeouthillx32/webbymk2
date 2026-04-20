@@ -1,0 +1,32 @@
+/* homepage_content manager — mirrors categories.scss patterns */
+
+.content-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .content-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .content-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .content-row {
+    transition: background-color 0.15s ease;
+  }
+
+  .content-row:hover {
+    background-color: hsl(var(--muted) / 0.4);
+  }
+
+  .content-actions {
+    display: flex;
+    gap: 0.25rem;
+  }
+}

@@ -64,7 +64,7 @@ const DEFAULTS: HomeContent = {
 
 export async function fetchHomeContent(locale: string = 'en'): Promise<HomeContent> {
   const supabase = await createClient();
-  const lang = locale === 'de' ? 'de' : 'en';
+  const lang = (locale === 'de' ? 'de' : 'en') as 'en' | 'de';
 
   const { data, error } = await supabase
     .from('homepage_content')

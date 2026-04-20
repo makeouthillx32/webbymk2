@@ -4,6 +4,7 @@ export type Menu = {
   title: string;
   path?: string;
   newTab: boolean;
+  submenuType?: string; // e.g. 'services' → renders the services dropdown
 };
 
 export type Services = {

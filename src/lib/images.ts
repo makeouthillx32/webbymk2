@@ -47,6 +47,7 @@ function encodeObjectPath(path: string) {
 }
 
 const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ??
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
   process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ??
   "";

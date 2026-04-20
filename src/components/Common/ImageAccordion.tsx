@@ -27,7 +27,7 @@ interface Props {
   locale?: string;
 }
 
-export default async function ImageAccordion({ locale = "de" }: Props) {
+export default async function ImageAccordion({ locale = "en" }: Props) {
   const members = await fetchTeamMembers(locale);
 
   return (

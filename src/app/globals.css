@@ -3,11 +3,12 @@
  * @import statements MUST come before @tailwind directives
  * or PostCSS silently ignores them.
  * ───────────────────────────────────────────────────────── */
-@import "@/style/layout-tokens.css";
-@import "@/style/nav.css";
-@import "@/style/switch-to-dark-mode.css";
-@import "@/style/TSC.css";
-@import "@/style/home.css";
+@import "../style/layout-tokens.css";
+@import "../style/nav.css";
+@import "../style/switch-to-dark-mode.css";
+@import "../style/TSC.css";
+@import "../style/home.css";
+@import "../style/styles.css";
 
 @tailwind base;
 @tailwind components;

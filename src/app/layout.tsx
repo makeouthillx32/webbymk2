@@ -47,7 +47,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const rawLocale =
     headersList.get("X-Next-Locale") ??
     cookieStore.get("Next-Locale")?.value;
-  const locale: Locale = isValidLocale(rawLocale) ? rawLocale : "de";
+  const locale: Locale = isValidLocale(rawLocale) ? rawLocale : "en";
 
   return (
     <html lang={locale} suppressHydrationWarning>

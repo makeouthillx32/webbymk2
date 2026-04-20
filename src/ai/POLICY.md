@@ -58,7 +58,7 @@ These apply to every agent in every system. No exceptions. Ever.
 - Modify `openclaw.json` or any openclaw config
 
 ### Always Do
-- Read `Z:\WEBSITES\DCG.CO\CLAUDE.md` before touching any source file
+- Read `Z:\WEBSITES\DCG.CO\UNENTER.md` before touching any source file
 - Read `.vsm/LOCKS.md` before touching any source file
 - Read `.vsm/ACTIVE.md` before starting any task
 - Make one focused change per cycle

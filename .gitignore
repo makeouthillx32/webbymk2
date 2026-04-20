@@ -1,23 +1,29 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 .vscode
+
 # testing
-/coverage
+/coverage/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
 
 # production
-/build
+build/
+dist/
 
 # misc
 .DS_Store
 *.pem
+*.tsbuildinfo
+.eslintcache
+.node_repl_history
+.npm/
 
 # debug
 npm-debug.log*
@@ -25,9 +31,20 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-
 # local env files
 .env*.local
 .env
+
 # vercel
 .vercel
+
+# infrastructure config — sensitive IPs/credentials live in %APPDATA%\unenter\config.json
+# The /config/ folder at project root is just forwarding re-exports; exclude it entirely
+# so no future edits can accidentally reintroduce credentials here.
+/config/
+
+# Project specific logs and dumps
+*.dump
+errors.txt
+lastbuildlogs.ps
+

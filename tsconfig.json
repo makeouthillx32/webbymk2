@@ -9,6 +9,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "ink": [
+        "./node_modules/ink/build/index.js"
+      ],
+      "ink/*": [
+        "./node_modules/ink/build/*"
       ]
     },
     "allowJs": true,

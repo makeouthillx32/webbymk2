@@ -1,0 +1,20 @@
+{
+  "name": "@unenter/tui",
+  "private": true,
+  "description": "unt.ink zone manager TUI. Pins React 18 + ink v4 to avoid the React 19 / react-reconciler incompatibility in the main app.",
+  "scripts": {
+    "dev": "bun --watch App.tsx",
+    "build": "bun build.ts",
+    "start": "node dist/cli.mjs"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "ink": "4.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "react-devtools-core": "^7.0.1"
+  }
+}

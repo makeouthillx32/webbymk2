@@ -1,5 +1,5 @@
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM oven/bun:1.1 AS deps
+FROM oven/bun:1.2 AS deps
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ COPY package.json bun.lockb* ./
 RUN bun install --frozen-lockfile
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
-FROM oven/bun:1.1 AS builder
+FROM oven/bun:1.2 AS builder
 
 WORKDIR /app
 
@@ -35,17 +35,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
-FROM oven/bun:1.1-slim AS runner
+FROM oven/bun:1.2-slim AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOME=/tmp
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 

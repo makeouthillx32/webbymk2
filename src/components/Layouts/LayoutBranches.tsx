@@ -33,7 +33,7 @@ interface LandingLayoutProps {
   locale?: "en" | "de";
 }
 
-export function LandingLayout({ children, screenSize, locale = "de" }: LandingLayoutProps) {
+export function LandingLayout({ children, screenSize, locale = "en" }: LandingLayoutProps) {
   return (
     <CartProvider>
       <RegionBootstrap />

@@ -34,7 +34,7 @@ async function fetchAboutContent(locale: string) {
 export default async function AboutPage() {
   // Read locale from cookie (set by middleware / locale switcher)
   const cookieStore = await cookies();
-  const locale = (cookieStore.get("Next-Locale")?.value ?? "de") as string;
+  const locale = (cookieStore.get("Next-Locale")?.value ?? "en") as string;
 
   const content = await fetchAboutContent(locale);
 

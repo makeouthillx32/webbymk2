@@ -9,31 +9,41 @@ import TagButton from "@/components/Services/TagButton";
 import useServicesData from "@/data/useServiceData";
 import { subService } from "@/types";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function ServicePage() {
   const { id } = useParams();
   const router = useRouter();
-  const serviceData = useServicesData();
+  const { data: serviceData, loading } = useServicesData();
 
   const [relatedPosts, setRelatedPosts] = useState<subService[]>([]);
 
-  const subserviceList = serviceData.flatMap((service) => service.subServices);
-  const subservice = subserviceList.find(
-    (subservice) => subservice.path === `/${id}`,
+  const subserviceList = useMemo(
+    () => serviceData.flatMap((service) => service.subServices),
+    [serviceData],
+  );
+  const subservice = useMemo(
+    () => subserviceList.find((s) => s.path === `/${id}`),
+    [subserviceList, id],
   );
 
   useEffect(() => {
+    if (loading) return; // wait until fetch is complete
+
+    if (!subservice) {
+      router.push("/error");
+      return;
+    }
+
     const shuffledPosts = subserviceList
-      .filter((service) => service.path !== `/${id}`)
+      .filter((s) => s.path !== `/${id}`)
       .sort(() => Math.random() - 0.5)
       .slice(0, 3);
 
     setRelatedPosts(shuffledPosts);
-  }, []);
+  }, [id, subservice, loading]);
 
-  if (!subservice) {
-    router.push("/error");
+  if (loading || !subservice) {
     return null;
   }
 

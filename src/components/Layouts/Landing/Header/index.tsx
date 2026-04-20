@@ -29,17 +29,18 @@ function getPathLocale(pathname: string): "en" | "de" | null {
 
 const Header = () => {
   const { theme } = useTheme();
-  const menuData = useMenuData();
-  const serviceData = useServiceData();
+  const { data: serviceData } = useServiceData();
 
   const pathname = usePathname();
   const cleanPath = getCleanPath(pathname);
 
   const activeLocale: "en" | "de" = getPathLocale(pathname) ?? (
     typeof document !== "undefined"
-      ? ((document.cookie.match(/(?:^|;\s*)Next-Locale=([^;]+)/)?.[1] as "en" | "de" | undefined) ?? "de")
-      : "de"
+      ? ((document.cookie.match(/(?:^|;\s*)Next-Locale=([^;]+)/)?.[1] as "en" | "de" | undefined) ?? "en")
+      : "en"
   );
+
+  const menuData = useMenuData(activeLocale);
 
   const [navbarOpen, setNavbarOpen] = useState(false);
   const [sticky, setSticky] = useState(false);
@@ -145,20 +146,7 @@ const Header = () => {
                 <ul className="block lg:flex lg:space-x-12">
                   {menuData.map((menuItem, index) => (
                     <li key={index} className="group relative">
-                      {menuItem.path ? (
-                        <Link
-                          onClick={() => setNavbarOpen(false)}
-                          href={menuItem.path}
-                          className={cn(
-                            "flex py-2 text-xl lg:mr-0 lg:inline-flex lg:px-0 lg:py-6",
-                            cleanPath === menuItem.path
-                              ? "text-primary"
-                              : "text-[hsl(var(--foreground))] hover:text-primary opacity-80 hover:opacity-100"
-                          )}
-                        >
-                          {menuItem.title}
-                        </Link>
-                      ) : (
+                      {menuItem.submenuType ? (
                         <>
                           <p
                             onClick={() => handleSubmenu(index)}
@@ -202,6 +190,21 @@ const Header = () => {
                             ))}
                           </div>
                         </>
+                      ) : (
+                        <Link
+                          onClick={() => setNavbarOpen(false)}
+                          href={menuItem.path ?? '#'}
+                          target={menuItem.newTab ? '_blank' : undefined}
+                          rel={menuItem.newTab ? 'noopener noreferrer' : undefined}
+                          className={cn(
+                            "flex py-2 text-xl lg:mr-0 lg:inline-flex lg:px-0 lg:py-6",
+                            cleanPath === menuItem.path
+                              ? "text-primary"
+                              : "text-[hsl(var(--foreground))] hover:text-primary opacity-80 hover:opacity-100"
+                          )}
+                        >
+                          {menuItem.title}
+                        </Link>
                       )}
                     </li>
                   ))}

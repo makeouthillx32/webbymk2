@@ -34,6 +34,119 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/reset-password") ||
     lower.startsWith("/auth/");
 
+  // ── Blog zone override ─────────────────────────────────────────────────────
+  // When NEXT_PUBLIC_ZONE=blog is baked in at build time, every non-auth path
+  // is a blog page and must use the landing layout (LandingHeader + Footer).
+  // Without this, single-segment slugs like /my-post-slug trip isCategoryPage
+  // and render the shop layout instead.
+  if (process.env.NEXT_PUBLIC_ZONE === "blog" && !isAuthPage) {
+    return {
+      isHome:             cleanPathname === "/",
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage:     false,
+      isCollectionsPage:  false,
+      isPagesRoute:       false,
+      isCheckoutRoute:    false,
+      isProfileMeRoute:   false,
+      isAuthPage:         false,
+      isCategoryPage:     false,
+      isShopRoute:        false,
+      useAppHeader:       false,
+      isLocalePage,
+      isLandingPage:      true,
+    };
+  }
+
+  // ── Shop zone override ────────────────────────────────────────────────────
+  // When NEXT_PUBLIC_ZONE=shop is baked in, every route uses the shop layout.
+  // This ensures / (shop home), /products, /collections, /[categorySlug] etc.
+  // all get ShopHeader instead of the landing shell.
+  if (process.env.NEXT_PUBLIC_ZONE === "shop") {
+    const isProductsPage    = lower.startsWith("/products");
+    const isCollectionsPage = lower.startsWith("/collections");
+    const isCheckoutRoute   = lower.startsWith("/checkout") || lower.startsWith("/cart");
+    const isProfileMeRoute  = lower.startsWith("/profile/me");
+    const shopCategoryPage  =
+      /^\/[^/]+$/.test(cleanPathname) &&
+      !isAuthPage &&
+      cleanPathname !== "/" &&
+      !lower.startsWith("/products") &&
+      !lower.startsWith("/collections") &&
+      !lower.startsWith("/checkout") &&
+      !lower.startsWith("/shop") &&
+      !lower.startsWith("/profile") &&
+      !lower.startsWith("/settings") &&
+      !lower.startsWith("/share") &&
+      !lower.startsWith("/api");
+    const isShopRoute =
+      cleanPathname === "/" ||
+      lower.startsWith("/shop") ||
+      isProductsPage ||
+      isCollectionsPage ||
+      shopCategoryPage ||
+      lower.startsWith("/pages");
+    const useAppHeader =
+      isCheckoutRoute ||
+      isProfileMeRoute ||
+      lower.startsWith("/legal") ||
+      lower.startsWith("/profile") ||
+      lower.startsWith("/settings") ||
+      lower.startsWith("/share");
+    return {
+      isHome:             cleanPathname === "/",
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage,
+      isCollectionsPage,
+      isPagesRoute:       lower.startsWith("/pages"),
+      isCheckoutRoute,
+      isProfileMeRoute,
+      isAuthPage,
+      isCategoryPage:     shopCategoryPage,
+      isShopRoute,
+      useAppHeader,
+      isLocalePage,
+      isLandingPage:      false,  // shop zone never uses the landing shell
+    };
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // ── Test3 zone override ───────────────────────────────────────────────
+  // NEXT_PUBLIC_ZONE=test3 — layout: app
+  if (process.env.NEXT_PUBLIC_ZONE === "test3" && !isAuthPage) {
+    return {
+      isHome:             cleanPathname === "/",
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage:     false,
+      isCollectionsPage:  false,
+      isPagesRoute:       false,
+      isCheckoutRoute:    false,
+      isProfileMeRoute:   false,
+      isAuthPage,
+      isCategoryPage:     false,
+      isShopRoute:        true,
+      useAppHeader:       true,
+      isLocalePage,
+      isLandingPage:      false,
+    };
+  }
   const isCategoryPage =
     /^\/[^/]+$/.test(cleanPathname) &&
     !isAuthPage &&
@@ -59,6 +172,7 @@ export function classifyRoute(pathname: string): RouteInfo {
     !lower.startsWith("/legal") &&
     !lower.startsWith("/share") &&
     !lower.startsWith("/error") &&
+    !lower.startsWith("/blog") &&
     cleanPathname !== "/";
 
   const isHome = cleanPathname === "/";
@@ -78,6 +192,7 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/services") ||
     lower.startsWith("/hero") ||
     lower.startsWith("/calendar") ||
+    lower.startsWith("/blog") ||
     lower.startsWith("/error");
 
   // /shop and all its sub-routes use the shop layout + ShopHeader
