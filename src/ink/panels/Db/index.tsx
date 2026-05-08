@@ -3,18 +3,20 @@
 // Database panel — Supabase self-hosted service overview.
 //
 // Shows all unt_* Supabase containers with their live status.
-// Provides quick access to:
-//   [↑↓] navigate
-//   [b]   backup     — pg_dump streamed to OperationOverlay
-//   [l]   logs       — tail a specific container
-//   [c]   copy URL   — copy the Kong URL to clipboard
+// Navigation and Enter-to-open-logs are handled by SelectMenu.
+//
+//   [↑↓/jk]  navigate (SelectMenu)
+//   [↵]       open logs for the focused container (SelectMenu onSelect)
+//   [b]       backup — pg_dump streamed to OperationOverlay
+//   [c]       copy Kong API URL to clipboard
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState }  from "react";
-import { Box, Text, useInput } from "ink";
-import { KONG_URL }          from "../../db-api.ts";
-import { KeyHints }          from "../../components/KeyHint.tsx";
-import { Pane }              from "../../components/Pane.tsx";
+import React, { useState, useCallback } from "react";
+import { Box, Text, useInput }          from "ink";
+import { KONG_URL }                     from "../../db-api.ts";
+import { KeyHints }                     from "../../components/KeyHint.tsx";
+import { Pane }                         from "../../components/Pane.tsx";
+import { SelectMenu, type SelectOption } from "../../components/SelectMenu.tsx";
 
 // ── Supabase service manifest ─────────────────────────────────────────────────
 
@@ -36,41 +38,53 @@ const DB_SERVICES: DbService[] = [
   { label: "Imgproxy",  container: "unt_imgproxy",  desc: "image processing"         },
 ];
 
+// Map once — static data so no useMemo needed.
+const DB_OPTIONS: SelectOption[] = DB_SERVICES.map((svc) => ({
+  id:    svc.container,
+  label: svc.label,
+  desc:  `${svc.container}  ·  ${svc.desc}`,
+}));
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DbPanelProps {
   onLogs:   (container: string) => void;
   onBackup: () => void;
   onCopy:   (text: string) => void;
+  onGoBack: () => void;
 }
 
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
-  { k: "↑↓", label: "navigate"      },
-  { k: "l",  label: "logs (focused)" },
-  { k: "b",  label: "backup DB"     },
-  { k: "c",  label: "copy Kong URL" },
+  { k: "↑↓/jk", label: "navigate"      },
+  { k: "↵",     label: "logs (focused)" },
+  { k: "b",     label: "backup DB"      },
+  { k: "c",     label: "copy Kong URL"  },
 ];
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function DbPanel({ onLogs, onBackup, onCopy }: DbPanelProps) {
-  const [selected, setSelected] = useState(0);
+export function DbPanel({ onLogs, onBackup, onCopy, onGoBack }: DbPanelProps) {
 
+  // Tracks whichever service is currently highlighted in SelectMenu.
+  // Used by [b] and [c] — neither needs to know the cursor index directly.
+  const [highlighted, setHighlighted] = useState<DbService | null>(null);
+
+  const handleSelect = useCallback((opt: SelectOption) => {
+    onLogs(opt.id);  // id === container name
+  }, [onLogs]);
+
+  const handleHighlight = useCallback((opt: SelectOption) => {
+    const svc = DB_SERVICES.find((s) => s.container === opt.id) ?? null;
+    setHighlighted(svc);
+  }, []);
+
+  // [q/←] back, [b] backup, [c] copy — no conflict with SelectMenu (searchable=false).
   useInput((input, key) => {
-    if (key.upArrow || input === "k") {
-      setSelected((s) => Math.max(0, s - 1));
-    } else if (key.downArrow || input === "j") {
-      setSelected((s) => Math.min(DB_SERVICES.length - 1, s + 1));
-    } else if (input === "l") {
-      const svc = DB_SERVICES[selected];
-      if (svc) onLogs(svc.container);
-    } else if (input === "b") {
-      onBackup();
-    } else if (input === "c") {
-      onCopy(KONG_URL);
-    }
+    if (input === "q" || key.leftArrow) { onGoBack();        return; }
+    if (input === "b")                  { onBackup();         return; }
+    if (input === "c")                  { onCopy(KONG_URL);   return; }
   });
 
   return (
@@ -78,25 +92,12 @@ export function DbPanel({ onLogs, onBackup, onCopy }: DbPanelProps) {
 
       {/* ── Services section ────────────────────────────────────────────── */}
       <Pane title={`Supabase  ·  ${KONG_URL}`} color="cyan" gap={1}>
-        {DB_SERVICES.map((svc, i) => {
-          const focused = i === selected;
-          return (
-            <Box key={svc.container} paddingX={1} gap={2}>
-              <Text color={focused ? "cyan" : undefined} bold={focused}>
-                {focused ? "▶" : " "}
-              </Text>
-              <Box width={12}>
-                <Text color={focused ? "cyan" : undefined} bold={focused}>
-                  {svc.label}
-                </Text>
-              </Box>
-              <Box width={20}>
-                <Text dimColor>{svc.container}</Text>
-              </Box>
-              <Text dimColor={!focused}>{svc.desc}</Text>
-            </Box>
-          );
-        })}
+        <SelectMenu
+          options={DB_OPTIONS}
+          onSelect={handleSelect}
+          onHighlight={handleHighlight}
+          searchable={false}
+        />
       </Pane>
 
       <KeyHints hints={HINTS} />

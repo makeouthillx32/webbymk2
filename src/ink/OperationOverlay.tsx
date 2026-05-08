@@ -5,41 +5,65 @@
 //
 // Layout:
 //   ╭──────────────────────────────────────────────────────────────────────────╮
-//   │  Deploy  Blog · P0W3R            ● running          [q/esc] back        │
+//   │  Deploy  Blog                ● running  [↑↓ug] scroll  [esc] detach      │
 //   │──────────────────────────────────────────────────────────────────────────│
-//   │  Pulling layer 9d4c6b…                                                   │
-//   │  Layer 3f6f06: Waiting                                                   │
-//   │  ✓ done                                                                  │
+//   │  Pulling layer 9d4c6b...                                                  │
+//   │  Layer 3f6f06: Waiting                                                    │
+//   │  ✓ done                                                                   │
 //   ╰──────────────────────────────────────────────────────────────────────────╯
 //
-// mode="output"  — build/deploy: last 8 lines dimmed, newest full-bright
+// Height contract (mirrors AppShell's height={th} overflow="hidden"):
+//   The outer Box is pinned to exactly termHeight rows so Ink always repaints
+//   the full viewport when switching to/from this overlay.  Without this,
+//   shorter frames leave ghost rows from the previous AppShell render.
+//
+// Chrome rows consumed (excluded from LogViewer's height):
+//   1  top border
+//   1  header bar
+//   1  divider
+//   1  bottom border
+//   = 4 total  →  LogViewer height = termHeight - 4
+//
+// mode="output"  — build/deploy: last 8 lines full-bright, older lines dimmed
 // mode="logs"    — log tail: all lines equal weight, cursor blink while live
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React           from "react";
-import { Box, Text }   from "ink";
-import { LoadingState } from "./components/design-system/LoadingState.tsx";
-import { useWidths }    from "./hooks/useTermWidth.ts";
+import React              from "react";
+import { Box, Text }      from "ink";
+import { useWidths }      from "./hooks/useTermWidth.ts";
+import { useTermHeight }  from "./hooks/useTermWidth.ts";
+import { LogViewer }      from "./components/LogViewer.tsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type OpView = "output" | "logs";
 
 interface OperationOverlayProps {
-  title:     string;
-  lines:     string[];
-  busy:      boolean;
-  mode:      OpView;
+  title:    string;
+  lines:    string[];
+  busy:     boolean;
+  mode:     OpView;
   /** True for 1.5 s after a successful [c] copy — triggers inline flash */
-  didCopy?:  boolean;
+  didCopy?: boolean;
 }
+
+// ── Chrome constants ──────────────────────────────────────────────────────────
+
+/**
+ * Number of terminal rows consumed by the overlay's own chrome:
+ *   top border (1) + header bar (1) + divider (1) + bottom border (1)
+ * Subtracted from terminal height to get the usable LogViewer height.
+ */
+const CHROME_ROWS = 4;
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function OperationOverlay({ title, lines, busy, mode, didCopy }: OperationOverlayProps) {
-  const { tw, iw }  = useWidths();
-  const visible    = lines.slice(-30);
-  const DIM_CUTOFF = 8;   // for "output" mode: dim everything except last N lines
+  const { tw, iw } = useWidths();
+  const th         = useTermHeight();
+
+  // Rows available for scrollable log content.
+  const contentHeight = Math.max(4, th - CHROME_ROWS);
 
   return (
     <Box
@@ -48,18 +72,28 @@ export function OperationOverlay({ title, lines, busy, mode, didCopy }: Operatio
       borderColor={busy ? "yellow" : "green"}
       paddingX={1}
       width={tw}
+      height={th}
+      overflow="hidden"
     >
       {/* ── Header bar ───────────────────────────────────────────────────── */}
       <Box justifyContent="space-between">
         <Text bold color={busy ? "yellow" : "green"}>{title}</Text>
         <Box gap={2}>
-          {busy && mode === "output" && <Text color="yellow">● running</Text>}
-          {busy && mode === "logs"   && <Text color="blue">◉ streaming</Text>}
+          {/* Status badge */}
+          {busy  && mode === "output" && <Text color="yellow">● running</Text>}
+          {busy  && mode === "logs"   && <Text color="blue">◉ streaming</Text>}
           {!busy && mode === "output" && <Text color="green">✓ done</Text>}
           {!busy && mode === "logs"   && <Text color="gray">◎ stopped</Text>}
+
+          {/* Scroll hint */}
+          <Text dimColor>[↑↓/jk] scroll  [u/d] page  [g/G] top/btm</Text>
+
+          {/* Exit hint */}
           <Text dimColor>
             {busy && mode === "output" ? "[esc] detach  [q] home" : "[esc/q] close"}
           </Text>
+
+          {/* Copy feedback */}
           <Text dimColor>[c] copy</Text>
           {didCopy && <Text color="green">✓ copied</Text>}
         </Box>
@@ -68,28 +102,14 @@ export function OperationOverlay({ title, lines, busy, mode, didCopy }: Operatio
       {/* ── Divider ──────────────────────────────────────────────────────── */}
       <Text dimColor>{"─".repeat(iw - 2)}</Text>
 
-      {/* ── Output lines ─────────────────────────────────────────────────── */}
-      <Box flexDirection="column">
-        {visible.length === 0 ? (
-          <LoadingState message="starting…" dimColor />
-        ) : (
-          visible.map((line, i) => {
-            const isOk  = line.startsWith("✓") || line.startsWith("OK:");
-            const isErr = line.startsWith("✗") || line.startsWith("FAILED") || line.startsWith("⚠");
-            const isNew = mode === "output" && i >= visible.length - DIM_CUTOFF;
-            return (
-              <Text
-                key={i}
-                color={isErr ? "red" : isOk ? "green" : undefined}
-                dimColor={!isOk && !isErr && mode === "output" && !isNew}
-              >
-                {line}
-              </Text>
-            );
-          })
-        )}
-        {busy && <Text color="yellow">▌</Text>}
-      </Box>
+      {/* ── Scrollable log content ───────────────────────────────────────── */}
+      <LogViewer
+        lines={lines}
+        busy={busy}
+        mode={mode}
+        height={contentHeight}
+      />
+
     </Box>
   );
 }

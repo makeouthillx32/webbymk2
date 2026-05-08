@@ -1,78 +1,32 @@
 import type { ReactNode } from 'react'
-import { logForDebugging } from 'src/utils/debug.js'
+import { logForDebugging } from '../utils/debug.js'
 import { Stream } from 'stream'
 import type { FrameEvent } from './frame.js'
-import Ink, { type Options as InkOptions } from './ink.js'
+import Ink, { type Options as InkOptions } from './ink.tsx'
 import instances from './instances.js'
 
 export type RenderOptions = {
-  /**
-   * Output stream where app will be rendered.
-   *
-   * @default process.stdout
-   */
   stdout?: NodeJS.WriteStream
-  /**
-   * Input stream where app will listen for input.
-   *
-   * @default process.stdin
-   */
   stdin?: NodeJS.ReadStream
-  /**
-   * Error stream.
-   * @default process.stderr
-   */
   stderr?: NodeJS.WriteStream
-  /**
-   * Configure whether Ink should listen to Ctrl+C keyboard input and exit the app. This is needed in case `process.stdin` is in raw mode, because then Ctrl+C is ignored by default and process is expected to handle it manually.
-   *
-   * @default true
-   */
   exitOnCtrlC?: boolean
-
-  /**
-   * Patch console methods to ensure console output doesn't mix with Ink output.
-   *
-   * @default true
-   */
   patchConsole?: boolean
-
-  /**
-   * Called after each frame render with timing and flicker information.
-   */
   onFrame?: (event: FrameEvent) => void
 }
 
 export type Instance = {
-  /**
-   * Replace previous root node with a new one or update props of the current root node.
-   */
   rerender: Ink['render']
-  /**
-   * Manually unmount the whole Ink app.
-   */
   unmount: Ink['unmount']
-  /**
-   * Returns a promise, which resolves when app is unmounted.
-   */
   waitUntilExit: Ink['waitUntilExit']
   cleanup: () => void
 }
 
-/**
- * A managed Ink root, similar to react-dom's createRoot API.
- * Separates instance creation from rendering so the same root
- * can be reused for multiple sequential screens.
- */
 export type Root = {
   render: (node: ReactNode) => void
   unmount: () => void
   waitUntilExit: () => Promise<void>
 }
 
-/**
- * Mount a component and render the output.
- */
 export const renderSync = (
   node: ReactNode,
   options?: NodeJS.WriteStream | RenderOptions,
@@ -93,6 +47,12 @@ export const renderSync = (
   )
 
   instance.render(node)
+  
+  // FORCE FIRST RENDER: Standard Ink's onRender is throttled/deferred.
+  // We trigger it multiple times to ensure AlternateScreen and Layout effects apply.
+  instance.onRender();
+  instance.onRender();
+  instance.onRender();
 
   return {
     rerender: instance.render,
@@ -108,24 +68,13 @@ const wrappedRender = async (
   node: ReactNode,
   options?: NodeJS.WriteStream | RenderOptions,
 ): Promise<Instance> => {
-  // Preserve the microtask boundary that `await loadYoga()` used to provide.
-  // Without it, the first render fires synchronously before async startup work
-  // (e.g. useReplBridge notification state) settles, and the subsequent Static
-  // write overwrites scrollback instead of appending below the logo.
   await Promise.resolve()
   const instance = renderSync(node, options)
-  logForDebugging(
-    `[render] first ink render: ${Math.round(process.uptime() * 1000)}ms since process start`,
-  )
   return instance
 }
 
 export default wrappedRender
 
-/**
- * Create an Ink root without rendering anything yet.
- * Like react-dom's createRoot — call root.render() to mount a tree.
- */
 export async function createRoot({
   stdout = process.stdout,
   stdin = process.stdin,
@@ -134,7 +83,6 @@ export async function createRoot({
   patchConsole = true,
   onFrame,
 }: RenderOptions = {}): Promise<Root> {
-  // See wrappedRender — preserve microtask boundary from the old WASM await.
   await Promise.resolve()
   const instance = new Ink({
     stdout,
@@ -145,28 +93,30 @@ export async function createRoot({
     onFrame,
   })
 
-  // Register in the instances map so that code that looks up the Ink
-  // instance by stdout (e.g. external editor pause/resume) can find it.
   instances.set(stdout, instance)
 
   return {
-    render: node => instance.render(node),
+    render: node => {
+        instance.render(node);
+        instance.onRender(); 
+        instance.onRender();
+        instance.onRender();
+    },
     unmount: () => instance.unmount(),
     waitUntilExit: () => instance.waitUntilExit(),
   }
 }
 
-const getOptions = (
-  stdout: NodeJS.WriteStream | RenderOptions | undefined = {},
-): RenderOptions => {
-  if (stdout instanceof Stream) {
+function getOptions(
+  obj: NodeJS.WriteStream | RenderOptions | undefined = {},
+): RenderOptions {
+  if (obj instanceof Stream || (obj && (obj as any)._writableState)) {
     return {
-      stdout,
-      stdin: process.stdin,
+      stdout: obj as NodeJS.WriteStream,
     }
   }
 
-  return stdout
+  return obj as RenderOptions;
 }
 
 const getInstance = (
@@ -174,11 +124,9 @@ const getInstance = (
   createInstance: () => Ink,
 ): Ink => {
   let instance = instances.get(stdout)
-
   if (!instance) {
     instance = createInstance()
     instances.set(stdout, instance)
   }
-
   return instance
 }

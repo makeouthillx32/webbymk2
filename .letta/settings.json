@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo:*)",
+      "Bash([System.Environment]::GetEnvironmentVariable('MEMORY_DIR'))",
+      "Bash(if (Test-Path env:MEMORY_DIR) { $env:MEMORY_DIR } else { \"NOT SET\" })",
+      "Bash(ls \"Z:\\WEBSITES\\webbymk2\\zones\\blog\" 2>$null; ls \"Z:\\WEBSITES\\webbymk2\\zones\\shop\" 2>$null; ls \"Z:\\WEBSITES\\webbymk2\\zones\\mintest6\" 2>$null)",
+      "Bash(if (Test-Path \"Z:\\WEBSITES\\webbymk2\\zones\\blog\\docker-compose.yml\") { \"blog compose EXISTS\" } else { \"blog compose MISSING\" }; if (Test-Path \"Z:\\WEBSITES\\webbymk2\\zones\\shop\\docker-compose.yml\") { \"shop compose EXISTS\" } else { \"shop compose MISSING\" })",
+      "Bash(foreach ($z in @(\"minst2\",\"mintest2\",\"mintest3\",\"mintest4\",\"mintest5\",\"mintest6\",\"test3\")) { if (Test-Path \"Z:\\WEBSITES\\webbymk2\\zones\\$z\\docker-compose.yml\") { \"$z compose EXISTS\" } else { \"$z compose MISSING\" } })",
+      "Bash(if (Test-Path \"Z:\\WEBSITES\\webbymk2\\proxy-config\\routes.json\") { Get-Content \"Z:\\WEBSITES\\webbymk2\\proxy-config\\routes.json\" } else { \"FILE MISSING\" })"
+    ]
+  }
+}

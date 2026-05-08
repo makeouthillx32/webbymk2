@@ -29,25 +29,48 @@ interface ActionPanelProps {
   selected: number;
 }
 
-// ── Action builder ────────────────────────────────────────────────────────────
+// ── Action builders ───────────────────────────────────────────────────────────
 
+/** Actions available on a regular deployable zone. */
 export function buildActions(zone: Zone): Action[] {
   return [
-    { id: "deploy",  label: "Deploy",       desc: "git pull → docker compose up",              key: "d", disabled: false           },
-    { id: "pull",    label: "Pull + up",    desc: "docker compose pull + up (no build)",        key: "p", disabled: false           },
-    { id: "restart", label: "Restart",      desc: "docker compose restart",                     key: "r", disabled: false           },
-    { id: "build",   label: "Build + push", desc: "docker build + push to GHCR",               key: "b", disabled: !zone.dockerfile },
-    { id: "rebuild", label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)", key: "R", disabled: !zone.dockerfile },
-    { id: "logs",    label: "Logs",         desc: "tail -f container output",                   key: "l", disabled: false           },
-    { id: "npm",     label: "Register NPM", desc: "create proxy host + Let's Encrypt cert",     key: "n", disabled: false           },
-    { id: "doctor",  label: "Fix compose",  desc: "backfill image: field + recreate proxy (fix routing)", key: "f", disabled: false           },
-    { id: "delete",  label: "Delete zone",  desc: "remove all files, configs & docker service", key: "D", disabled: false           },
+    { id: "deploy",  label: "Deploy",             desc: "docker compose pull + up",                        key: "d", disabled: false           },
+    { id: "pull",    label: "Pull + up",          desc: "docker compose pull + up (no build)",             key: "p", disabled: false           },
+    { id: "restart", label: "Restart",            desc: "docker compose restart",                          key: "r", disabled: false           },
+    { id: "build",   label: "Build + push",       desc: "docker build + push to GHCR",                    key: "b", disabled: !zone.dockerfile },
+    { id: "rebuild", label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)",         key: "R", disabled: !zone.dockerfile },
+    { id: "logs",    label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
+    { id: "npm",     label: "Register NPM",       desc: "create proxy host + Let's Encrypt cert",         key: "n", disabled: false           },
+    { id: "sections", label: "Manage sections",    desc: "add / remove dynamic route sections",            key: "s", disabled: false           },
+    { id: "doctor",  label: "Fix routing",        desc: "sync proxy route + verify NPM forward target",   key: "f", disabled: false           },
+    { id: "delete",  label: "Delete zone",        desc: "remove all files, configs & docker service",     key: "D", disabled: false           },
   ];
+}
+
+/**
+ * Actions available on the core app (key="unenter").
+ * Core is permanent infrastructure — no delete, no NPM, no routing doctor.
+ */
+export function buildCoreActions(zone: Zone): Action[] {
+  return [
+    { id: "deploy",  label: "Deploy",             desc: "docker compose pull + up",                        key: "d", disabled: false           },
+    { id: "pull",    label: "Pull + up",          desc: "docker compose pull + up (no build)",             key: "p", disabled: false           },
+    { id: "restart", label: "Restart",            desc: "docker compose restart",                          key: "r", disabled: false           },
+    { id: "build",   label: "Build + push",       desc: "docker build + push to GHCR",                    key: "b", disabled: !zone.dockerfile },
+    { id: "rebuild", label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)",         key: "R", disabled: !zone.dockerfile },
+    { id: "logs",    label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
+  ];
+}
+
+/** True if this zone entry represents the core monolith, not a deployable zone. */
+export function isCoreZone(zone: Zone): boolean {
+  return zone.key === "unenter";
 }
 
 /** Index of the first non-disabled action — used to pre-select the cursor. */
 export function firstEnabled(zone: Zone): number {
-  return buildActions(zone).findIndex((a) => !a.disabled);
+  const actions = isCoreZone(zone) ? buildCoreActions(zone) : buildActions(zone);
+  return actions.findIndex((a) => !a.disabled);
 }
 
 // ── Hints ─────────────────────────────────────────────────────────────────────
@@ -61,7 +84,7 @@ const HINTS = [
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
-  const actions = buildActions(zone);
+  const actions = isCoreZone(zone) ? buildCoreActions(zone) : buildActions(zone);
 
   return (
     <Box flexDirection="column">

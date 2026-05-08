@@ -1,4 +1,18 @@
-// components/Layouts/routeClassifier.ts
+// src/components/Layouts/routeClassifier.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// Route classification for the multi-zone platform.
+//
+// Zone routing (NEXT_PUBLIC_ZONE set at Docker build time):
+//   Looks up the zone key in ZONE_LAYOUTS (zone-overrides.ts).
+//   If found, delegates to classifyZoneRoute() — a pure, layout-aware
+//   classifier with no zone-key literals.  Auth routes always fall through
+//   to the full classifier so every zone gets AuthLayout for /sign-in etc.
+//
+// Monolith routing (NEXT_PUBLIC_ZONE unset or unknown key):
+//   Full pathname-based heuristic at the bottom of this file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { ZONE_LAYOUTS } from "./zone-overrides";
 
 export interface RouteInfo {
   isHome: boolean;
@@ -15,12 +29,15 @@ export interface RouteInfo {
   useAppHeader: boolean;
   isLocalePage: boolean;
   isLandingPage: boolean;
+  isMinimalLayout: boolean;
+  /** True for zones scaffolded with layoutType="app". Routes to AppLayout
+   *  (AppHeader + selectable footer) instead of piggybacking on ShopLayout. */
+  isAppLayout: boolean;
 }
 
 export function classifyRoute(pathname: string): RouteInfo {
-  // usePathname() returns the browser URL which keeps the locale prefix
-  // (e.g. /en/about) even though middleware rewrites the content to /about.
-  // Strip it before classifying so isLandingPage etc. fire correctly.
+  // Strip locale prefix — usePathname() keeps /en/ or /de/ in the URL even
+  // though middleware rewrites the content, so we normalise before classifying.
   const isLocalePage = /^\/(en|de)(\/|$)/.test(pathname.toLowerCase());
   const cleanPathname = isLocalePage
     ? pathname.replace(/^\/(en|de)/, "") || "/"
@@ -34,119 +51,21 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/reset-password") ||
     lower.startsWith("/auth/");
 
-  // ── Blog zone override ─────────────────────────────────────────────────────
-  // When NEXT_PUBLIC_ZONE=blog is baked in at build time, every non-auth path
-  // is a blog page and must use the landing layout (LandingHeader + Footer).
-  // Without this, single-segment slugs like /my-post-slug trip isCategoryPage
-  // and render the shop layout instead.
-  if (process.env.NEXT_PUBLIC_ZONE === "blog" && !isAuthPage) {
-    return {
-      isHome:             cleanPathname === "/",
-      isToolsPage:        false,
-      isDashboardPage:    false,
-      isProductsPage:     false,
-      isCollectionsPage:  false,
-      isPagesRoute:       false,
-      isCheckoutRoute:    false,
-      isProfileMeRoute:   false,
-      isAuthPage:         false,
-      isCategoryPage:     false,
-      isShopRoute:        false,
-      useAppHeader:       false,
-      isLocalePage,
-      isLandingPage:      true,
-    };
+  // ── Zone override ─────────────────────────────────────────────────────────
+  // Auth pages skip the zone override so every zone gets AuthLayout for /sign-in.
+  // The zone key is a build-time constant — only one branch ever runs.
+  const zone = process.env.NEXT_PUBLIC_ZONE;
+  if (zone && !isAuthPage) {
+    const config = ZONE_LAYOUTS[zone];
+    if (config) {
+      return classifyZoneRoute(config, cleanPathname, lower, isLocalePage);
+    }
   }
 
-  // ── Shop zone override ────────────────────────────────────────────────────
-  // When NEXT_PUBLIC_ZONE=shop is baked in, every route uses the shop layout.
-  // This ensures / (shop home), /products, /collections, /[categorySlug] etc.
-  // all get ShopHeader instead of the landing shell.
-  if (process.env.NEXT_PUBLIC_ZONE === "shop") {
-    const isProductsPage    = lower.startsWith("/products");
-    const isCollectionsPage = lower.startsWith("/collections");
-    const isCheckoutRoute   = lower.startsWith("/checkout") || lower.startsWith("/cart");
-    const isProfileMeRoute  = lower.startsWith("/profile/me");
-    const shopCategoryPage  =
-      /^\/[^/]+$/.test(cleanPathname) &&
-      !isAuthPage &&
-      cleanPathname !== "/" &&
-      !lower.startsWith("/products") &&
-      !lower.startsWith("/collections") &&
-      !lower.startsWith("/checkout") &&
-      !lower.startsWith("/shop") &&
-      !lower.startsWith("/profile") &&
-      !lower.startsWith("/settings") &&
-      !lower.startsWith("/share") &&
-      !lower.startsWith("/api");
-    const isShopRoute =
-      cleanPathname === "/" ||
-      lower.startsWith("/shop") ||
-      isProductsPage ||
-      isCollectionsPage ||
-      shopCategoryPage ||
-      lower.startsWith("/pages");
-    const useAppHeader =
-      isCheckoutRoute ||
-      isProfileMeRoute ||
-      lower.startsWith("/legal") ||
-      lower.startsWith("/profile") ||
-      lower.startsWith("/settings") ||
-      lower.startsWith("/share");
-    return {
-      isHome:             cleanPathname === "/",
-      isToolsPage:        false,
-      isDashboardPage:    false,
-      isProductsPage,
-      isCollectionsPage,
-      isPagesRoute:       lower.startsWith("/pages"),
-      isCheckoutRoute,
-      isProfileMeRoute,
-      isAuthPage,
-      isCategoryPage:     shopCategoryPage,
-      isShopRoute,
-      useAppHeader,
-      isLocalePage,
-      isLandingPage:      false,  // shop zone never uses the landing shell
-    };
-  }
+  // ── Full monolith classifier ──────────────────────────────────────────────
+  // Used when NEXT_PUBLIC_ZONE is unset (monolith dev) or the zone key has no
+  // entry in ZONE_LAYOUTS. Also handles auth routes for every zone (see above).
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  // ── Test3 zone override ───────────────────────────────────────────────
-  // NEXT_PUBLIC_ZONE=test3 — layout: app
-  if (process.env.NEXT_PUBLIC_ZONE === "test3" && !isAuthPage) {
-    return {
-      isHome:             cleanPathname === "/",
-      isToolsPage:        false,
-      isDashboardPage:    false,
-      isProductsPage:     false,
-      isCollectionsPage:  false,
-      isPagesRoute:       false,
-      isCheckoutRoute:    false,
-      isProfileMeRoute:   false,
-      isAuthPage,
-      isCategoryPage:     false,
-      isShopRoute:        true,
-      useAppHeader:       true,
-      isLocalePage,
-      isLandingPage:      false,
-    };
-  }
   const isCategoryPage =
     /^\/[^/]+$/.test(cleanPathname) &&
     !isAuthPage &&
@@ -175,14 +94,14 @@ export function classifyRoute(pathname: string): RouteInfo {
     !lower.startsWith("/blog") &&
     cleanPathname !== "/";
 
-  const isHome = cleanPathname === "/";
-  const isToolsPage = lower.startsWith("/tools");
-  const isDashboardPage = lower.startsWith("/dashboard");
-  const isProductsPage = lower.startsWith("/products");
-  const isCollectionsPage = lower.startsWith("/collections");
-  const isPagesRoute = lower.startsWith("/pages");
-  const isCheckoutRoute = lower.startsWith("/checkout") || lower.startsWith("/cart");
-  const isProfileMeRoute = lower.startsWith("/profile/me");
+  const isHome             = cleanPathname === "/";
+  const isToolsPage        = lower.startsWith("/tools");
+  const isDashboardPage    = lower.startsWith("/dashboard");
+  const isProductsPage     = lower.startsWith("/products");
+  const isCollectionsPage  = lower.startsWith("/collections");
+  const isPagesRoute       = lower.startsWith("/pages");
+  const isCheckoutRoute    = lower.startsWith("/checkout") || lower.startsWith("/cart");
+  const isProfileMeRoute   = lower.startsWith("/profile/me");
 
   const isLandingPage =
     isHome ||
@@ -195,7 +114,6 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/blog") ||
     lower.startsWith("/error");
 
-  // /shop and all its sub-routes use the shop layout + ShopHeader
   const isShopRoute =
     isProductsPage ||
     isCollectionsPage ||
@@ -203,8 +121,6 @@ export function classifyRoute(pathname: string): RouteInfo {
     isPagesRoute ||
     lower.startsWith("/shop");
 
-  // Only routes that explicitly need the app-shell header (checkout, profile, legal, etc.)
-  // /shop is intentionally excluded so it gets the ShopHeader instead
   const useAppHeader =
     isCheckoutRoute ||
     isProfileMeRoute ||
@@ -228,5 +144,144 @@ export function classifyRoute(pathname: string): RouteInfo {
     useAppHeader,
     isLocalePage,
     isLandingPage,
+    isMinimalLayout: false,
+    isAppLayout:     false,
+  };
+}
+
+// ── Zone-specific classifier ──────────────────────────────────────────────────
+//
+// Called only when the zone key has a ZONE_LAYOUTS entry AND the route is not
+// an auth page. Returns the RouteInfo appropriate for the zone's layout type.
+// Auth pages are intentionally excluded — they fall through to the monolith
+// classifier which returns isAuthPage: true, and ClientLayout renders AuthLayout.
+
+function classifyZoneRoute(
+  config:        { layoutType: string; appFooter: string },
+  cleanPathname: string,
+  lower:         string,
+  isLocalePage:  boolean,
+): RouteInfo {
+  const isHome = cleanPathname === "/";
+
+  // ── Landing ────────────────────────────────────────────────────────────────
+  if (config.layoutType === "landing") {
+    return {
+      isHome,
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage:     false,
+      isCollectionsPage:  false,
+      isPagesRoute:       false,
+      isCheckoutRoute:    false,
+      isProfileMeRoute:   false,
+      isAuthPage:         false,
+      isCategoryPage:     false,
+      isShopRoute:        false,
+      useAppHeader:       false,
+      isLocalePage,
+      isLandingPage:      true,
+      isMinimalLayout:    false,
+      isAppLayout:        false,
+    };
+  }
+
+  // ── Shop ───────────────────────────────────────────────────────────────────
+  // Full pathname-based routing — shop zones need dynamic product/collection/
+  // category/checkout classification identical to the old hardcoded override.
+  if (config.layoutType === "shop") {
+    const isProductsPage    = lower.startsWith("/products");
+    const isCollectionsPage = lower.startsWith("/collections");
+    const isCheckoutRoute   = lower.startsWith("/checkout") || lower.startsWith("/cart");
+    const isProfileMeRoute  = lower.startsWith("/profile/me");
+    const shopCategoryPage  =
+      /^\/[^/]+$/.test(cleanPathname) &&
+      cleanPathname !== "/" &&
+      !lower.startsWith("/products") &&
+      !lower.startsWith("/collections") &&
+      !lower.startsWith("/checkout") &&
+      !lower.startsWith("/shop") &&
+      !lower.startsWith("/profile") &&
+      !lower.startsWith("/settings") &&
+      !lower.startsWith("/share") &&
+      !lower.startsWith("/api");
+    const isShopRoute =
+      isHome ||
+      lower.startsWith("/shop") ||
+      isProductsPage ||
+      isCollectionsPage ||
+      shopCategoryPage ||
+      lower.startsWith("/pages");
+    const useAppHeader =
+      isCheckoutRoute ||
+      isProfileMeRoute ||
+      lower.startsWith("/legal") ||
+      lower.startsWith("/profile") ||
+      lower.startsWith("/settings") ||
+      lower.startsWith("/share");
+    return {
+      isHome,
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage,
+      isCollectionsPage,
+      isPagesRoute:       lower.startsWith("/pages"),
+      isCheckoutRoute,
+      isProfileMeRoute,
+      isAuthPage:         false,
+      isCategoryPage:     shopCategoryPage,
+      isShopRoute,
+      useAppHeader,
+      isLocalePage,
+      isLandingPage:      false,
+      isMinimalLayout:    false,
+      isAppLayout:        false,
+    };
+  }
+
+  // ── App ────────────────────────────────────────────────────────────────────
+  // isShopRoute / isLandingPage encode the footer choice so ClientLayout can
+  // render the right footer (if any) inside AppLayout.
+  if (config.layoutType === "app") {
+    return {
+      isHome,
+      isToolsPage:        false,
+      isDashboardPage:    false,
+      isProductsPage:     false,
+      isCollectionsPage:  false,
+      isPagesRoute:       false,
+      isCheckoutRoute:    false,
+      isProfileMeRoute:   false,
+      isAuthPage:         false,
+      isCategoryPage:     false,
+      isShopRoute:        config.appFooter === "shop",
+      useAppHeader:       false,
+      isLocalePage,
+      isLandingPage:      config.appFooter === "landing",
+      isMinimalLayout:    false,
+      isAppLayout:        true,
+    };
+  }
+
+  // ── Minimal ────────────────────────────────────────────────────────────────
+  // No header, no footer, bare canvas. Theme providers and cookie consent still
+  // render via MinimalLayout (checked before isLandingPage in ClientLayout).
+  return {
+    isHome,
+    isToolsPage:        false,
+    isDashboardPage:    false,
+    isProductsPage:     false,
+    isCollectionsPage:  false,
+    isPagesRoute:       false,
+    isCheckoutRoute:    false,
+    isProfileMeRoute:   false,
+    isAuthPage:         false,
+    isCategoryPage:     false,
+    isShopRoute:        false,
+    useAppHeader:       false,
+    isLocalePage,
+    isLandingPage:      false,
+    isMinimalLayout:    true,
+    isAppLayout:        false,
   };
 }

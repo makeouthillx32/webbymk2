@@ -1,7 +1,22 @@
 // themes/default.ts
-import type { Theme } from '@/types/theme';
+import type { Theme, ThemeRadii, ThemeShadows } from '@/types/theme';
 import { defaultFonts } from './fonts';
-import { defaultRadii, defaultShadows, defaultTypography, getAllThemeVariables } from './utils';
+
+// Note: utils.ts intentionally exports no default values — they live here.
+const defaultRadii: ThemeRadii = {
+  radius: '0.5rem',
+};
+
+const defaultShadows: ThemeShadows = {
+  shadow2xs: '0 1px 3px 0px hsl(0 0% 0% / 0.05)',
+  shadowXs:  '0 1px 3px 0px hsl(0 0% 0% / 0.05)',
+  shadowSm:  '0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10)',
+  shadow:    '0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10)',
+  shadowMd:  '0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10)',
+  shadowLg:  '0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10)',
+  shadowXl:  '0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10)',
+  shadow2xl: '0 1px 3px 0px hsl(0 0% 0% / 0.25)',
+};
 
 const exactDefaultFonts = {
   sans: 'Plus Jakarta Sans, sans-serif',

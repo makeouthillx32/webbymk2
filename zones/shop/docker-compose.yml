@@ -1,0 +1,44 @@
+# zones/shop/docker-compose.yml
+# Auto-generated — do not edit manually.
+# Runtime wrapper: starts the shop zone on the shared unenter Docker network.
+#
+# Core infra (db, kong, proxy) is managed by the root docker-compose.yml.
+# The unenter network is external — both files share it automatically.
+#
+# Manual commands (run from the project root):
+#   docker compose -f zones/shop/docker-compose.yml pull
+#   docker compose -f zones/shop/docker-compose.yml up -d
+#   docker compose -f zones/shop/docker-compose.yml down
+
+services:
+  shop:
+    image: ghcr.io/makeouthillx32/unenter-shop:latest
+    build:
+      context: ../..
+      dockerfile: zones/shop/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL:
+        NEXT_PUBLIC_SUPABASE_URL_BROWSER:
+        NEXT_PUBLIC_SUPABASE_ANON_KEY:
+        NEXT_PUBLIC_APP_TITLE:
+        NEXT_PUBLIC_COMPANY_NAME:
+        NEXT_PUBLIC_OWNER_USERNAME:
+        NEXT_PUBLIC_OWNER_EMAIL:
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:
+    container_name: unt_shop
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      NEXT_PUBLIC_ZONE: "shop"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - unenter
+
+networks:
+  unenter:
+    external: true

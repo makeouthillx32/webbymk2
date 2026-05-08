@@ -6,7 +6,7 @@ import { useTheme, useAuth } from "@/app/provider";
 import { classifyRoute } from "@/components/Layouts/routeClassifier";
 import { useScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 import { useMetaThemeColor } from "@/components/Layouts/hooks/useMetaThemeColor";
-import { DashboardLayout, AuthLayout, ShopLayout, LandingLayout } from "@/components/Layouts/LayoutBranches";
+import { DashboardLayout, AuthLayout, ShopLayout, LandingLayout, MinimalLayout, AppLayout, type AppFooterType } from "@/components/Layouts/LayoutBranches";
 import PullToRefresh from "@/components/Layouts/shop/PullToRefresh";
 import { setCookie } from "@/lib/cookieUtils";
 import analytics from "@/lib/analytics";
@@ -87,6 +87,25 @@ export default function ClientLayout({
 
   if (route.isAuthPage) {
     return <AuthLayout>{children}</AuthLayout>;
+  }
+
+  // Minimal zones: no header, no footer — just theme + children.
+  // Must be checked before isLandingPage so minimal zones don't accidentally
+  // fall through to LandingLayout (which adds LandingHeader + LandingFooter).
+  if (route.isMinimalLayout) {
+    return <MinimalLayout screenSize={screenSize}>{children}</MinimalLayout>;
+  }
+
+  // App zones get their own layout with a configurable footer.
+  // isShopRoute=true  → ShopFooter,  isLandingPage=true → LandingFooter,
+  // both false → no footer.  These flags are set by genRouteOverride in
+  // zone-scaffold.ts based on the footer choice made in the wizard.
+  if (route.isAppLayout) {
+    const footer: AppFooterType =
+      route.isShopRoute  ? "shop"
+      : route.isLandingPage ? "landing"
+      : "none";
+    return <AppLayout screenSize={screenSize} footer={footer}>{children}</AppLayout>;
   }
 
   if (route.isLandingPage) {

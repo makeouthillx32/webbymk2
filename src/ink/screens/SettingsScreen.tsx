@@ -19,6 +19,7 @@ import type { Zone }                                   from "../../config/zones.
 import { GHCR_USER, PROJECT_DIR }                      from "../../config/zones.ts";
 import { Divider }                                     from "../components/Divider.tsx";
 import { KeyHints }                                    from "../components/KeyHint.tsx";
+import { TextInput }                                   from "../components/TextInput.tsx";
 import { useWidths }                                   from "../hooks/useTermWidth.ts";
 
 // ── Config file path ──────────────────────────────────────────────────────────
@@ -132,7 +133,6 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
   // ── Token state ─────────────────────────────────────────────────────────
   const [tokenCfg,  setTokenCfg]  = useState<TokenConfig>(() => readTokenConfig());
   const [editMode,  setEditMode]  = useState(false);
-  const [draft,     setDraft]     = useState("");
   const [saved,     setSaved]     = useState(false); // flash "saved!" for 1.5 s
 
   // Re-read from disk whenever we exit edit mode
@@ -140,48 +140,31 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (!editMode) setTokenCfg(readTokenConfig());
   }, [editMode]);
 
+  // ── Token editor callbacks (used by <TextInput>) ──────────────────────────
+  function handleSave(val: string) {
+    const trimmed = val.trim();
+    if (trimmed) {
+      writeToken(trimmed);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1_500);
+    }
+    setEditMode(false);
+    onTokenEditEnd();
+  }
+
+  function handleCancel() {
+    setEditMode(false);
+    onTokenEditEnd();
+  }
+
   // ── Keyboard ─────────────────────────────────────────────────────────────
-  useInput((input, key) => {
-    if (!editMode) {
-      // [t] → enter token edit mode
-      if (input === "t") {
-        setDraft("");
-        setEditMode(true);
-        onTokenEditStart();
-      }
-      // Other keys ([esc/q/e]) are handled by App.tsx's settings handler.
-      return;
+  // Edit mode input is fully handled by <TextInput> — only [t] needs wiring here.
+  useInput((input) => {
+    if (!editMode && input === "t") {
+      setEditMode(true);
+      onTokenEditStart();
     }
-
-    // ── Edit mode — App.tsx handler is suspended (isActive:false) ──────────
-
-    if (key.escape) {
-      setEditMode(false);
-      onTokenEditEnd();
-      return;
-    }
-
-    if (key.return) {
-      const trimmed = draft.trim();
-      if (trimmed) {
-        writeToken(trimmed);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 1_500);
-      }
-      setEditMode(false);
-      onTokenEditEnd();
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setDraft((d) => d.slice(0, -1));
-      return;
-    }
-
-    // Printable characters only
-    if (input && !key.ctrl && !key.meta && input.length === 1) {
-      setDraft((d) => d + input);
-    }
+    // All other keys ([esc/q/e]) are handled by App.tsx's settings handler.
   });
 
   // ── Derived timer values ──────────────────────────────────────────────────
@@ -243,19 +226,16 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
       {/* ── GHCR Token ──────────────────────────────────────────────────────── */}
       <Section title="GHCR Token  (GitHub Container Registry)">
         {editMode ? (
-          // ── Inline token editor ─────────────────────────────────────────
-          <Box flexDirection="column" gap={0}>
-            <Box gap={1}>
-              <Text dimColor>{"New token".padEnd(20)}</Text>
-              <Text color="cyan">[ </Text>
-              <Text color="white">{draft}</Text>
-              <Text color="cyan" bold>▌</Text>
-              <Text color="cyan"> ]</Text>
-            </Box>
-            <Box paddingLeft={21} gap={2} marginTop={0}>
-              <Text dimColor>[↵] save</Text>
-              <Text dimColor>[esc] cancel</Text>
-            </Box>
+          // ── Inline token editor — TextInput owns typing, cursor, Esc, Ctrl-C ─
+          <Box gap={1}>
+            <Text dimColor>{"New token".padEnd(20)}</Text>
+            <TextInput
+              active
+              width={42}
+              placeholder="paste token here…"
+              onSubmit={handleSave}
+              onCancel={handleCancel}
+            />
           </Box>
         ) : (
           // ── Token display ───────────────────────────────────────────────
@@ -297,7 +277,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
       <KeyHints
         hints={
           editMode
-            ? [{ k: "↵", label: "save token" }, { k: "esc", label: "cancel" }]
+            ? [{ k: "↵", label: "save token" }, { k: "esc/^C", label: "cancel" }]
             : [
                 { k: "t",       label: "edit GHCR token"       },
                 { k: "e",       label: "open config in editor"  },

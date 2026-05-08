@@ -3,7 +3,7 @@
 
 import React from "react";
 import { DropdownMenuItem } from "./dropdown-menu";
-import { signOutAction } from "@/actions/auth/actions";
+import { signOutAction } from "@/actions/auth";
 
 const LogoutButton: React.FC = () => {
   const handleLogout = async () => {

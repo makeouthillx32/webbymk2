@@ -1,30 +1,32 @@
 // src/ink/panels/Npm/index.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // NPM proxy-host panel — lists all Nginx Proxy Manager hosts with their
-// SSL and enabled state.  Hosts are loaded on mount and on [R] refresh.
+// SSL and enabled state.  Fully self-contained: owns its own fetch lifecycle,
+// polling, and cursor navigation via SelectMenu.
 //
-// Keyboard (active when rendered):
-//   [↑↓/j/k]  navigate
-//   [↵]        toggle enabled / disabled
-//   [c]        copy selected domain to clipboard
+// Keyboard:
+//   [↑↓/j/k]  navigate (SelectMenu)
+//   [↵]        toggle enabled / disabled (SelectMenu onSelect)
+//   [c]        copy highlighted domain to clipboard
 //   [R]        refresh host list
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput }                      from "ink";
+import React, { useState, useCallback, useMemo } from "react";
+import { Box, Text, useInput }                   from "ink";
 import {
   npmGetStatus, npmListHosts,
+  npmEnableHost, npmDisableHost,
   type NpmProxyHost, type NpmConnectStatus,
 } from "../../npm-api.ts";
-import { KeyHints } from "../../components/KeyHint.tsx";
+import { useResource }              from "../../hooks/useResource.ts";
+import { SelectMenu, type SelectOption } from "../../components/SelectMenu.tsx";
+import { KeyHints }                 from "../../components/KeyHint.tsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface NpmPanelProps {
-  selected: number;
-  onSelect: (n: number) => void;
-  onToggle: (host: NpmProxyHost) => void;
   onCopy:   (text: string) => void;
+  onGoBack: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,72 +57,90 @@ function certLabel(host: NpmProxyHost): string {
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
-  { k: "↑↓", label: "navigate"    },
-  { k: "↵",  label: "toggle"      },
-  { k: "c",  label: "copy domain" },
-  { k: "R",  label: "refresh"     },
+  { k: "↑↓/jk", label: "navigate"    },
+  { k: "↵",     label: "toggle"      },
+  { k: "c",     label: "copy domain" },
+  { k: "R",     label: "refresh"     },
 ];
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function NpmPanel({ selected, onSelect, onToggle, onCopy }: NpmPanelProps) {
-  const [hosts,       setHosts]       = useState<NpmProxyHost[]>([]);
-  const [loading,     setLoading]     = useState(true);
+export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
+
+  // Connection status display state — set as a side-effect inside fetchHosts.
   const [connectStat, setConnectStat] = useState<NpmConnectStatus>("connected");
-  const [error,       setError]       = useState<string | null>(null);
-  const [hostCount,   setHostCount]   = useState(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const status = await npmGetStatus();
-      setConnectStat(status.status);
-      setHostCount(status.hostCount);
-      if (status.status === "connected" && status.token) {
-        const h = await npmListHosts(status.token);
-        setHosts(h);
-        if (selected >= h.length) onSelect(Math.max(0, h.length - 1));
-      } else {
-        setError(status.error ?? "NPM unavailable");
-        setHosts([]);
-      }
-    } catch (e) {
-      setError(String(e));
-      setHosts([]);
-    } finally {
-      setLoading(false);
+  // Currently highlighted host — updated by SelectMenu's onHighlight.
+  // Used by the [c] copy shortcut without needing to own the cursor index.
+  const [highlighted, setHighlighted] = useState<NpmProxyHost | null>(null);
+
+  // ── Resource: hosts list ──────────────────────────────────────────────────
+  const fetchHosts = useCallback(async (): Promise<NpmProxyHost[]> => {
+    const status = await npmGetStatus();
+    setConnectStat(status.status);
+    if (status.status === "connected" && status.token) {
+      return npmListHosts(status.token);
     }
-  }, []);   // intentionally stable — only run on mount
+    throw new Error(status.error ?? "NPM unavailable");
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const {
+    data: hosts, setData: setHosts,
+    loading, error,
+    refresh,
+  } = useResource<NpmProxyHost>({
+    fetch:        fetchHosts,
+    pollInterval: 10_000,
+  });
 
-  // ── Keyboard: toggle + copy + refresh ──────────────────────────────────────
-  // index.tsx handles [↑↓/j/k] navigation; we own [↵], [c], [R].
+  // ── Map hosts → SelectOption ──────────────────────────────────────────────
+  // label:  domain name
+  // desc:   enabled indicator · forward target · SSL status
+  const hostOptions = useMemo<SelectOption[]>(() =>
+    hosts.map((h) => ({
+      id:    h.id.toString(),
+      label: h.domain_names[0] ?? "—",
+      desc:  `${h.enabled ? "●" : "○"}  ${h.forward_scheme}://${h.forward_host}:${h.forward_port}  ${certLabel(h)}`,
+    })),
+    [hosts],
+  );
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
+  /** SelectMenu onHighlight — keep `highlighted` in sync with the cursor. */
+  const handleHighlight = useCallback((opt: SelectOption) => {
+    const host = hosts.find((h) => h.id.toString() === opt.id) ?? null;
+    setHighlighted(host);
+  }, [hosts]);
+
+  /** SelectMenu onSelect (Enter) — optimistic enable/disable toggle. */
+  const handleSelect = useCallback((opt: SelectOption) => {
+    const host = hosts.find((h) => h.id.toString() === opt.id);
+    if (!host) return;
+    setHosts((prev) =>
+      prev.map((h) => h.id === host.id ? { ...h, enabled: h.enabled ? 0 : 1 } : h)
+    );
+    (host.enabled ? npmDisableHost(host.id) : npmEnableHost(host.id)).catch(() => {});
+  }, [hosts, setHosts]);
+
+  // ── Extra keyboard shortcuts not handled by SelectMenu ────────────────────
+  // [q/←] back, [c] copy highlighted domain, [R] force refresh.
+  // These fire alongside SelectMenu's useInput — no conflict since none of
+  // these keys are consumed by SelectMenu when searchable=false.
   useInput((input, key) => {
-    if (loading || hosts.length === 0) return;
-
-    if (key.return) {
-      const host = hosts[selected];
-      if (host) onToggle(host);
-      setHosts((prev) =>
-        prev.map((h, i) => i === selected ? { ...h, enabled: h.enabled ? 0 : 1 } : h)
-      );
-      return;
-    }
-
+    if (input === "q" || key.leftArrow) { onGoBack(); return; }
     if (input === "c") {
-      const domain = hosts[selected]?.domain_names[0];
+      const domain = highlighted?.domain_names[0];
       if (domain) onCopy(domain);
       return;
     }
-
     if (input === "R") {
-      load();
+      refresh();
       return;
     }
   });
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column">
 
@@ -132,7 +152,7 @@ export function NpmPanel({ selected, onSelect, onToggle, onCopy }: NpmPanelProps
         {!loading && connectStat === "connected" && (
           <>
             <Text dimColor>·</Text>
-            <Text dimColor>{hostCount} host{hostCount !== 1 ? "s" : ""}</Text>
+            <Text dimColor>{hosts.length} host{hosts.length !== 1 ? "s" : ""}</Text>
           </>
         )}
         {loading && <Text dimColor>  loading…</Text>}
@@ -150,37 +170,15 @@ export function NpmPanel({ selected, onSelect, onToggle, onCopy }: NpmPanelProps
         <Box paddingX={2}><Text dimColor>No proxy hosts found.</Text></Box>
       )}
 
-      {/* ── Host list ───────────────────────────────────────────────────── */}
-      {hosts.map((host, i) => {
-        const focused = i === selected;
-        const enabled = Boolean(host.enabled);
-        const domain  = host.domain_names[0] ?? "—";
-        const target  = `${host.forward_scheme}://${host.forward_host}:${host.forward_port}`;
-        const ssl     = certLabel(host);
-        return (
-          <Box key={host.id} paddingX={1} gap={2}>
-            <Text color={focused ? "cyan" : undefined} bold={focused}>
-              {focused ? "▶" : " "}
-            </Text>
-            <Box width={2}>
-              <Text color={enabled ? "green" : "gray"}>{enabled ? "●" : "○"}</Text>
-            </Box>
-            <Box width={30}>
-              <Text
-                color={focused ? "cyan" : undefined}
-                bold={focused}
-                dimColor={!enabled && !focused}
-              >
-                {domain}
-              </Text>
-            </Box>
-            <Box width={28}>
-              <Text dimColor>{target}</Text>
-            </Box>
-            <Text dimColor>{ssl}</Text>
-          </Box>
-        );
-      })}
+      {/* ── Host list via SelectMenu ─────────────────────────────────────── */}
+      {hosts.length > 0 && (
+        <SelectMenu
+          options={hostOptions}
+          onSelect={handleSelect}
+          onHighlight={handleHighlight}
+          searchable={false}
+        />
+      )}
 
       <KeyHints hints={HINTS} />
 

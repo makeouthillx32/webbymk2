@@ -193,3 +193,31 @@ export const forgotPasswordAction = async (formData: FormData) => {
   if (callbackUrl) return redirect(callbackUrl);
   return encodedRedirect("success", "/forgot-password", "Check your email for a link to reset your password.");
 };
+
+export const resetPasswordAction = async (formData: FormData) => {
+  const password        = formData.get("password")?.toString();
+  const confirmPassword = formData.get("confirmPassword")?.toString();
+
+  if (!password || !confirmPassword) {
+    return encodedRedirect("error", "/reset-password", "Password and confirm password are required");
+  }
+  if (password !== confirmPassword) {
+    return encodedRedirect("error", "/reset-password", "Passwords do not match");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.updateUser({ password });
+
+  if (error) {
+    return encodedRedirect("error", "/reset-password", error.message);
+  }
+
+  return encodedRedirect("success", "/sign-in", "Password updated — please sign in with your new password.");
+};
+
+export const signOutAction = async () => {
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  await clearAuthCookies();
+  return redirect("/");
+};

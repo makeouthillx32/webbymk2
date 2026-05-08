@@ -1,94 +1,93 @@
-import React from 'react';
-import { type ExitState, useExitOnCtrlCDWithKeybindings } from '../../hooks/useExitOnCtrlCDWithKeybindings.js';
-import { Box, Text } from 'ink';
-import { useKeybinding } from '../../../keybindings/useKeybinding.js';
-import type { Theme } from '../../utils/theme.js';
-import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
-import { Byline } from './Byline.js';
-import { KeyboardShortcutHint } from './KeyboardShortcutHint.js';
-import { Pane } from './Pane.js';
+// src/ink/components/design-system/Dialog.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// Clean, self-contained confirmation dialog for the Ink TUI.
+//
+// Replaces the old engine-dependent version which imported
+// useExitOnCtrlCDWithKeybindings / useKeybinding / ConfigurableShortcutHint —
+// none of which exist in this project.
+//
+// Keyboard:
+//   [y / Y / Enter]   → onConfirm()
+//   [n / N / Esc]     → onCancel()
+//
+// Usage:
+//   {confirmDelete && (
+//     <Dialog
+//       title="Delete zone"
+//       message={`Permanently delete "${zone.label}"? This cannot be undone.`}
+//       onConfirm={handleConfirm}
+//       onCancel={() => setConfirmDelete(null)}
+//     />
+//   )}
+// ─────────────────────────────────────────────────────────────────────────────
 
-type DialogProps = {
-  title: React.ReactNode;
-  subtitle?: React.ReactNode;
-  children: React.ReactNode;
-  onCancel: () => void;
-  color?: keyof Theme;
-  hideInputGuide?: boolean;
-  hideBorder?: boolean;
-  /** Custom input guide content. Receives exitState for Ctrl+C/D pending display. */
-  inputGuide?: (exitState: ExitState) => React.ReactNode;
+import React          from "react";
+import { Box, Text, useInput } from "ink";
+
+// ── Props ─────────────────────────────────────────────────────────────────────
+
+export interface DialogProps {
+  /** Bold heading at the top of the dialog (e.g. "Delete zone") */
+  title:     string;
+  /** Body line — describe what will happen */
+  message:   string;
+  /** Called when the user confirms with y / Y / Enter */
+  onConfirm: () => void;
+  /** Called when the user cancels with n / N / Esc */
+  onCancel:  () => void;
   /**
-   * Controls whether Dialog's built-in confirm:no (Esc/n) and app:exit/interrupt
-   * (Ctrl-C/D) keybindings are active. Set to `false` while an embedded text
-   * field is being edited so those keys reach the field instead of being
-   * consumed by Dialog. TextInput has its own ctrl+c/d handlers (cancel on
-   * press, delete-forward on ctrl+d with text). Defaults to `true`.
+   * Pass `false` to suppress key handling while another overlay is active.
+   * Default: true.
    */
-  isCancelActive?: boolean;
-};
+  isActive?: boolean;
+  /**
+   * Accent color for the border and title.
+   * Use "red" for destructive actions, "yellow" for warnings.
+   * Default: "red".
+   */
+  color?: string;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function Dialog({
   title,
-  subtitle,
-  children,
+  message,
+  onConfirm,
   onCancel,
-  color = 'permission',
-  hideInputGuide,
-  hideBorder,
-  inputGuide,
-  isCancelActive = true,
-}: DialogProps): React.ReactNode {
-  const exitState = useExitOnCtrlCDWithKeybindings(
-    undefined,
-    undefined,
-    isCancelActive,
-  );
+  isActive = true,
+  color    = "red",
+}: DialogProps) {
 
-  // Use configurable keybinding for ESC to cancel.
-  useKeybinding('confirm:no', onCancel, {
-    context: 'Confirmation',
-    isActive: isCancelActive,
-  });
+  useInput((input, key) => {
+    if (input === "y" || input === "Y" || key.return) { onConfirm(); return; }
+    if (input === "n" || input === "N" || key.escape) { onCancel();  return; }
+  }, { isActive });
 
-  const defaultInputGuide = exitState.pending ? (
-    <Text>Press {exitState.keyName} again to exit</Text>
-  ) : (
-    <Byline>
-      <KeyboardShortcutHint shortcut="Enter" action="confirm" />
-      <ConfigurableShortcutHint
-        action="confirm:no"
-        context="Confirmation"
-        fallback="Esc"
-        description="cancel"
-      />
-    </Byline>
-  );
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={color}
+      paddingX={2}
+      paddingY={1}
+      marginTop={1}
+    >
+      {/* ── Title ─────────────────────────────────────────────────────── */}
+      <Text bold color={color}>{title}</Text>
 
-  const content = (
-    <>
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="column">
-          <Text bold color={color}>
-            {title}
-          </Text>
-          {subtitle && <Text dimColor>{subtitle}</Text>}
-        </Box>
-        {children}
+      <Text> </Text>
+
+      {/* ── Message ───────────────────────────────────────────────────── */}
+      <Text>{message}</Text>
+
+      <Text> </Text>
+
+      {/* ── Key hints ─────────────────────────────────────────────────── */}
+      <Box gap={4}>
+        <Text color="green"><Text bold>[y]</Text>  confirm</Text>
+        <Text dimColor>[n / Esc]  cancel</Text>
       </Box>
-      {!hideInputGuide && (
-        <Box marginTop={1}>
-          <Text dimColor italic>
-            {inputGuide ? inputGuide(exitState) : defaultInputGuide}
-          </Text>
-        </Box>
-      )}
-    </>
+    </Box>
   );
-
-  if (hideBorder) {
-    return content;
-  }
-
-  return <Pane color={color}>{content}</Pane>;
 }

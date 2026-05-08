@@ -62,53 +62,50 @@ export class LogUpdate {
     this.state.previousOutput = ''
   }
 
-  private renderFullFrame(frame: Frame): Diff {
-    const { screen } = frame
-    const lines: string[] = []
-    let currentStyles: AnsiCode[] = []
-    let currentHyperlink: Hyperlink = undefined
+  public renderFullFrame(frame: Frame): Diff {
+    const { screen } = frame;
+    let buffer = '';
+    let currentStyleId = this.options.stylePool.none;
+    let currentHyperlink: Hyperlink = undefined;
+
     for (let y = 0; y < screen.height; y++) {
-      let line = ''
       for (let x = 0; x < screen.width; x++) {
-        const cell = cellAt(screen, x, y)
-        if (cell && cell.width !== CellWidth.SpacerTail) {
-          // Handle hyperlink transitions
-          if (cell.hyperlink !== currentHyperlink) {
-            if (currentHyperlink !== undefined) {
-              line += LINK_END
-            }
-            if (cell.hyperlink !== undefined) {
-              line += oscLink(cell.hyperlink)
-            }
-            currentHyperlink = cell.hyperlink
-          }
-          const cellStyles = this.options.stylePool.get(cell.styleId)
-          const styleDiff = diffAnsiCodes(currentStyles, cellStyles)
-          if (styleDiff.length > 0) {
-            line += ansiCodesToString(styleDiff)
-            currentStyles = cellStyles
-          }
-          line += cell.char
+        const cell = cellAt(screen, x, y);
+        if (!cell || cell.width === CellWidth.SpacerTail) continue;
+
+        // Hyperlink transition
+        if (cell.hyperlink !== currentHyperlink) {
+          if (currentHyperlink !== undefined) buffer += LINK_END;
+          if (cell.hyperlink !== undefined) buffer += oscLink(cell.hyperlink);
+          currentHyperlink = cell.hyperlink;
         }
+
+        // Style transition
+        if (cell.styleId !== currentStyleId) {
+          buffer += this.options.stylePool.transition(currentStyleId, cell.styleId);
+          currentStyleId = cell.styleId;
+        }
+
+        buffer += cell.char;
       }
-      // Close any open hyperlink before resetting styles
+
+      // End of line: Reset styles to prevent color bleed to next line
+      if (currentStyleId !== this.options.stylePool.none) {
+        buffer += this.options.stylePool.transition(currentStyleId, this.options.stylePool.none);
+        currentStyleId = this.options.stylePool.none;
+      }
       if (currentHyperlink !== undefined) {
-        line += LINK_END
-        currentHyperlink = undefined
+        buffer += LINK_END;
+        currentHyperlink = undefined;
       }
-      // Reset styles at end of line so trimEnd doesn't leave dangling codes
-      const resetCodes = diffAnsiCodes(currentStyles, [])
-      if (resetCodes.length > 0) {
-        line += ansiCodesToString(resetCodes)
-        currentStyles = []
+
+      // Explicit CRLF to ensure Windows PowerShell returns to column 1
+      if (y < screen.height - 1) {
+        buffer += '\r\n';
       }
-      lines.push(line.trimEnd())
     }
 
-    if (lines.length === 0) {
-      return []
-    }
-    return [{ type: 'stdout', content: lines.join('\n') }]
+    return [{ type: 'stdout', content: buffer }];
   }
 
   private getRenderOpsForDone(prev: Frame): Diff {

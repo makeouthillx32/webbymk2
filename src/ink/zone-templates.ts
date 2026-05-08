@@ -1,0 +1,516 @@
+// src/ink/zone-templates.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// Template factory for the zone scaffolding engine.
+//
+// Template model
+// ─────────────────────────────────────────────────────────────────────────────
+//  base page        genCorePageModule()   — src/zones/{key}/Page.tsx
+//                   Routed by layoutType; each variant has its own template
+//                   file under src/ink/templates/zone/pages/{type}.tsx.
+//
+//  layout shell     genLayoutTsx()        — zones/{key}/src/app/layout.tsx
+//                   Identical for all layout types: Providers → ClientLayout →
+//                   children.  The visual shell (header/footer) is chosen at
+//                   build time by the routeClassifier override in routeClassifier.ts.
+//
+//  wrapper (thin)   genPageTsx()          — zones/{key}/src/app/page.tsx
+//  wrapper (DS)     genDsWrappers()       — zones/{key}/src/app/{route}/page.tsx
+//                   Always thin re-exports; real content lives in src/zones/{key}/.
+//
+//  route starters   genDsCorePageTsx()    — src/zones/{key}/{route}/Page.tsx
+//                   One starter per dynamic section, layout-agnostic.
+//
+// Template selection
+// ─────────────────────────────────────────────────────────────────────────────
+//  landing    → templates/zone/pages/landing.tsx   (landing_sections + fallback hero)
+//  shop       → templates/zone/pages/shop.tsx      (shop home starter)
+//  dashboard  → templates/zone/pages/dashboard.tsx (dashboard home starter)
+//  app        → templates/zone/pages/app.tsx       (app-shell starter)
+//  minimal    → templates/zone/pages/minimal.tsx   (bare canvas starter)
+//
+// The fallback (no template file found) is an inline minimal page — never the
+// landing_sections template.  Landing is now an explicit opt-in, not a default.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { join } from "path";
+import { existsSync, readFileSync } from "fs";
+import { PROJECT_DIR } from "../config/stack.js";
+import type { DerivedZone, DynamicSection } from "./zone/types.ts";
+
+function genDsSection(z: DerivedZone): string {
+  if (z.dynamicSections.length === 0) return "";
+
+  const links = z.dynamicSections
+    .map((ds) => {
+      const href = "/" + ds.routePath.split("/").filter((s) => !s.startsWith("[")).join("/");
+      return `      <Link href="${href}" className="group flex flex-col gap-2 rounded-lg border border-stroke bg-white p-5 transition hover:border-primary hover:shadow-md dark:border-dark-3 dark:bg-dark">
+        <p className="font-semibold text-black transition group-hover:text-primary dark:text-white">${ds.label}</p>
+        <p className="text-sm text-body-color">${ds.desc}</p>
+      </Link>`;
+    })
+    .join("\n");
+
+  return `
+      {/* ── Dynamic sections ────────────────────────────────────────────────── */}
+      <section className="py-12 md:py-16">
+        <div className="container">
+          <h2 className="mb-8 text-2xl font-bold text-black dark:text-white">Sections</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+${links}
+          </div>
+        </div>
+      </section>`;
+}
+
+function toPascal(str: string): string {
+  return str
+    .replace(/[-/[\]]/g, " ")
+    .replace(/\.{3}/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("");
+}
+
+export function genDockerfile(z: DerivedZone): string {
+  // Layout-aware core directory list.
+  // shop    → include [categorySlug], products, collections, checkout (all hasCore:true)
+  // landing → api/actions/_components/pages only — NO [categorySlug]!
+  //           Landing zones use [slug] for posts; copying [categorySlug] would cause
+  //           Next.js to crash: "different slug names for the same dynamic path"
+  // app / minimal → api/actions/_components only (no e-commerce routes)
+  const coreDirs =
+    z.layoutType === "shop"
+      ? "api actions _components [categorySlug] products collections checkout pages"
+      : z.layoutType === "landing"
+      ? "api actions _components pages"
+      : "api actions _components";
+
+  return `# zones/${z.key}/Dockerfile
+# ─────────────────────────────────────────────────────────────────────────────
+# Build context: project root
+# Zone: ${z.label}  (${z.domain})
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── Stage 1: Dependencies ────────────────────────────────────────────────────
+FROM oven/bun:1.2 AS deps
+WORKDIR /app
+COPY package.json bun.lock* ./
+RUN bun install
+
+# ─── Stage 2: Build ───────────────────────────────────────────────────────────
+FROM oven/bun:1.2 AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+
+COPY package.json next.config.js tsconfig.json tailwind.config.ts postcss.config.js ./
+COPY src/ ./src/
+COPY public/ ./public/
+
+# Swap src/app/: keep core logic + provider.tsx + globals.css, overlay ${z.key} zone pages.
+# The directory list is LAYOUT-AWARE — landing zones use [slug] for blog posts,
+# so copying [categorySlug] from shop routes would cause Next.js to crash:
+#   "You cannot use different slug names for the same dynamic path"
+# shop    → api actions _components [categorySlug] products collections checkout pages
+# landing → api actions _components pages   (no shop dynamic segments)
+# app     → api actions _components         (pure web app, no e-commerce routes)
+# minimal → api actions _components         (bare canvas)
+RUN mkdir -p /tmp/core-app && \\
+    for dir in ${coreDirs}; do \\
+      if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \\
+    done && \\
+    if [ -f src/app/provider.tsx ]; then cp src/app/provider.tsx /tmp/core-app/; fi && \\
+    if [ -f src/app/globals.css ]; then cp src/app/globals.css /tmp/core-app/; fi && \\
+    rm -rf src/app && \\
+    mkdir -p src/app && \\
+    cp -r /tmp/core-app/* src/app/
+
+# Zone overlay: copy everything from zones/${z.key}/src/app/ so any future
+# loading.tsx / not-found.tsx / etc. gets picked up automatically.
+COPY zones/${z.key}/src/app/ ./src/app/
+
+# CRITICAL: restore core's globals.css on top of any zone copy.  The zone's
+# globals.css (if it exists) is self-contained and DOES NOT @import
+# layout-tokens.css, so it breaks AppHeader / ShopFooter theming.  Core's
+# globals.css is the only one that imports layout-tokens, so it must win.
+# This was the root cause of a white-header-and-footer bug on first scaffold.
+RUN cp /tmp/core-app/globals.css src/app/globals.css 2>/dev/null || true
+
+ENV NEXT_PUBLIC_ZONE=${z.key}
+ENV NEXT_TELEMETRY_DISABLED=1
+
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_SUPABASE_URL_BROWSER
+ARG NEXT_PUBLIC_APP_TITLE
+ARG NEXT_PUBLIC_COMPANY_NAME
+ARG NEXT_PUBLIC_OWNER_USERNAME
+ARG NEXT_PUBLIC_OWNER_EMAIL
+
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL_BROWSER=$NEXT_PUBLIC_SUPABASE_URL_BROWSER
+ENV NEXT_PUBLIC_APP_TITLE=$NEXT_PUBLIC_APP_TITLE
+ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
+ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
+ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
+
+RUN bun run build
+
+# ─── Stage 3: Runner ──────────────────────────────────────────────────────────
+FROM oven/bun:1.2-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_PUBLIC_ZONE=${z.key}
+ENV HOME=/tmp
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser  --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["bun", "server.js"]
+`;
+}
+
+export function genPackageJson(z: DerivedZone): string {
+  return JSON.stringify({
+    name: `@unenter/${z.key}`,
+    version: "0.0.0",
+    private: true,
+    scripts: {
+      dev: `next dev -p ${z.devPort}`,
+      build: "next build",
+      start: "next start",
+    },
+  }, null, 2) + "\n";
+}
+
+export function genPageTsx(z: DerivedZone): string {
+  return `// zones/${z.key}/src/app/page.tsx
+// ─── AUTO-GENERATED — do not edit ────────────────────────────────────────────
+// Zone content lives in  src/zones/${z.key}/Page.tsx  (core).
+// That file is included in the build via src/ COPY in the Dockerfile and
+// resolves as  @/zones/${z.key}/Page  inside the zone's Next.js app.
+//
+// To change what this zone displays, edit:
+//   src/zones/${z.key}/Page.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+export { default, metadata } from "@/zones/${z.key}/Page";
+`;
+}
+
+// ── Template token substitution ───────────────────────────────────────────────
+
+function applyTokens(src: string, z: DerivedZone): string {
+  return src
+    .replace(/__ZONE_KEY__/g,    z.key)
+    .replace(/__ZONE_LABEL__/g,  z.label)
+    .replace(/__ZONE_PASCAL__/g, z.label.replace(/\s+/g, ""))
+    .replace(/__ZONE_DOMAIN__/g, z.domain)
+    .replace(/__ZONE_DS_SECTION__/g, genDsSection(z));
+}
+
+// ── Core page module — routes by layoutType ───────────────────────────────────
+
+/**
+ * Generates src/zones/{key}/Page.tsx — the editable zone root page.
+ *
+ * All layout types share one unified starter (zone-starter.tsx).
+ * The layout SHELL (header, footer, sidebar, overlays) is controlled entirely
+ * by the routeClassifier.ts override — the page content is layout-agnostic.
+ * Zones inherit the core's CSS and theme system; no per-zone globals.css needed.
+ */
+export function genCorePageModule(z: DerivedZone): string {
+  const starterTmpl = join(
+    PROJECT_DIR, "src", "ink", "templates", "zone", "pages", "zone-starter.tsx"
+  );
+
+  if (existsSync(starterTmpl)) {
+    return applyTokens(readFileSync(starterTmpl, "utf-8"), z);
+  }
+
+  // Hard fallback — zone-starter.tsx missing from install
+  const pascal = z.label.replace(/\s+/g, "");
+  return `// src/zones/${z.key}/Page.tsx\n` +
+    `// ${z.label} zone — ${z.domain}\n` +
+    `// Edit this file to build out this zone's root page.\n\n` +
+    `import type { Metadata } from "next";\n\n` +
+    `export const metadata: Metadata = {\n` +
+    `  title:       "${z.label} | Unenter",\n` +
+    `  description: "${z.label} — ${z.domain}",\n` +
+    `};\n\n` +
+    `export default function ${pascal}Page() {\n` +
+    `  return (\n` +
+    `    <main className="py-16 md:py-20 lg:py-28">\n` +
+    `      <div className="container">\n` +
+    `        <h1 className="text-3xl font-bold">${z.label}</h1>\n` +
+    `        <p className="mt-4 text-body-color">${z.domain} is live.</p>\n` +
+    `      </div>\n` +
+    `    </main>\n` +
+    `  );\n` +
+    `}\n`;
+}
+
+export function genLayoutTsx(z: DerivedZone): string {
+  return `// zones/${z.key}/src/app/layout.tsx
+// Root layout for the ${z.key} zone (${z.domain}).
+
+import type { Metadata, Viewport } from "next";
+import { Titillium_Web } from "next/font/google";
+import type { ReactNode } from "react";
+import { cookies, headers } from "next/headers";
+import { Providers } from "@/app/provider";
+import ClientLayout from "@/components/Layouts/ClientLayout";
+import "./globals.css";
+
+const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "hsl(28, 25%, 65%)" },
+    { media: "(prefers-color-scheme: dark)", color: "hsl(24, 40%, 25%)" },
+  ],
+};
+
+export const metadata: Metadata = {
+  title: {
+    default: "${z.label} | Unenter",
+    template: "%s | ${z.label} – Unenter",
+  },
+  description: "Welcome to the ${z.label} zone.",
+};
+
+const VALID_LOCALES = ["en", "de"] as const;
+type Locale = (typeof VALID_LOCALES)[number];
+function isValidLocale(v: string | undefined | null): v is Locale {
+  return VALID_LOCALES.includes(v as Locale);
+}
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const [cookieStore, headersList] = await Promise.all([cookies(), headers()]);
+  const rawLocale =
+    headersList.get("X-Next-Locale") ??
+    cookieStore.get("Next-Locale")?.value;
+  const locale: Locale = isValidLocale(rawLocale) ? rawLocale : "en";
+
+  return (
+    <html lang={locale} suppressHydrationWarning>
+      <head />
+      <body className={titillium.className} suppressHydrationWarning>
+        <Providers>
+          <ClientLayout locale={locale}>{children}</ClientLayout>
+        </Providers>
+      </body>
+    </html>
+  );
+}
+`;
+}
+
+export function genZoneConfig(z: DerivedZone): string {
+  const sections = z.dynamicSections
+    .map((ds) => `  {
+    id: ${JSON.stringify(ds.id)},
+    routePath: ${JSON.stringify(ds.routePath)},
+    param: ${ds.param === null ? "null" : JSON.stringify(ds.param)},
+    label: ${JSON.stringify(ds.label)},
+    desc: ${JSON.stringify(ds.desc)},
+    defaultOn: ${ds.defaultOn},
+    hasCore: ${ds.hasCore === true},
+  }`)
+    .join(",\n");
+
+  return `// zones/${z.key}/src/app/zone.config.ts
+// AUTO-GENERATED — do not edit.
+
+const zoneConfig = {
+  key: ${JSON.stringify(z.key)},
+  label: ${JSON.stringify(z.label)},
+  domain: ${JSON.stringify(z.domain)},
+  layoutType: ${JSON.stringify(z.layoutType)},
+  dynamicSections: [
+${sections}
+  ],
+} as const;
+
+export default zoneConfig;
+export { zoneConfig };
+`;
+}
+
+export function genDsWrappers(z: DerivedZone, ds: DynamicSection): Record<string, string> {
+  const files: Record<string, string> = {};
+  const coreBase = ds.hasCore ? `@/app/${ds.routePath}/page` : `@/zones/${z.key}/${ds.routePath}/Page`;
+
+  files["page.tsx"] = `// zones/${z.key}/src/app/${ds.routePath}/page.tsx
+// ─── AUTO-GENERATED — do not edit ────────────────────────────────────────────
+export { default, generateMetadata, generateStaticParams } from "${coreBase}";
+`;
+
+  if (ds.hasCore) {
+    files["loading.tsx"]   = `export { default } from "@/app/${ds.routePath}/loading";`;
+    // error.tsx MUST be a Client Component — Next.js enforces this at build time.
+    files["error.tsx"]     = `"use client";\nexport { default } from "@/app/${ds.routePath}/error";`;
+    files["not-found.tsx"] = `export { default } from "@/app/${ds.routePath}/not-found";`;
+  }
+
+  return files;
+}
+
+export function genDsCorePageTsx(z: DerivedZone, ds: DynamicSection): string {
+  if (ds.hasCore) {
+    return `// src/zones/${z.key}/${ds.routePath}/Page.tsx
+// Re-export core implementation by default.
+// Edit this file if you want to override the core behavior for THIS zone.
+export { default, generateMetadata, generateStaticParams } from "@/app/${ds.routePath}/page";
+`;
+  }
+
+  const componentName = `${toPascal(ds.id)}Page`;
+
+  if (!ds.param) {
+    return `// src/zones/${z.key}/${ds.routePath}/Page.tsx
+// ${z.label} zone — ${ds.label}
+// Edit this file to build out the ${ds.label.toLowerCase()} page.
+// Import shared components from @/components/ (src/app/ is not available in zone builds).
+
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "${ds.label} | ${z.label}",
+};
+
+export default function ${componentName}() {
+  return (
+    <main className="py-16 md:py-20 lg:py-28">
+      <div className="container">
+        <h1 className="text-3xl font-bold">${ds.label}</h1>
+        <p className="mt-4 text-body-color text-sm">
+          Wire up your components in{" "}
+          <code>src/zones/${z.key}/${ds.routePath}/Page.tsx</code>
+        </p>
+      </div>
+    </main>
+  );
+}
+`;
+  }
+
+  const isCatchAll = ds.param.startsWith("...");
+  const paramName = isCatchAll ? ds.param.slice(3) : ds.param;
+  const paramsType = isCatchAll ? `{ ${paramName}: string[] }` : `{ ${paramName}: string }`;
+  const valueExpr = isCatchAll ? `${paramName}.join("/")` : paramName;
+
+  return `// src/zones/${z.key}/${ds.routePath}/Page.tsx
+// ${z.label} zone — ${ds.label}
+// Edit this file to build out the ${ds.label.toLowerCase()} page.
+// Import shared components from @/components/ (src/app/ is not available in zone builds).
+
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+
+interface PageProps {
+  params: Promise<${paramsType}>;
+}
+
+export async function generateStaticParams() {
+  // TODO: query Supabase and return all valid param values.
+  // import { createServerClient as createSupabaseClient } from "@supabase/ssr";
+  // const supabase = createSupabaseClient(url, key, { cookies: { getAll: () => [], setAll: () => {} } });
+  // const { data } = await supabase.from("...").select("${paramName}");
+  // return data?.map((r) => ({ ${paramName}: r.${paramName} })) ?? [];
+  return [];
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { ${paramName} } = await params;
+  const display = ${valueExpr};
+  return { title: \`${ds.label}: \${display} | ${z.label}\` };
+}
+
+export default async function ${componentName}({ params }: PageProps) {
+  const { ${paramName} } = await params;
+
+  // TODO: fetch data from Supabase and render your component.
+  // import { createServerClient } from "@/utils/supabase/server";
+  // const supabase = await createServerClient();
+  // const { data } = await supabase.from("...").select("*").eq("${paramName}", ${valueExpr}).single();
+  // if (!data) notFound();
+
+  return (
+    <main className="py-16 md:py-20 lg:py-28">
+      <div className="container">
+        <h1 className="text-3xl font-bold">${ds.label}</h1>
+        <p className="mt-2 text-body-color">${z.label} zone dynamic route: ${ds.routePath}</p>
+      </div>
+    </main>
+  );
+}
+`;
+}
+
+// ── Per-zone docker-compose.yml ───────────────────────────────────────────────
+//
+// Each zone gets its own compose file at zones/<key>/docker-compose.yml.
+// The TUI uses `docker compose -f zones/<key>/docker-compose.yml` for all
+// pull / up / down / restart operations.  The root docker-compose.yml is NOT
+// modified — no regex injection, no YAML mutation.
+
+export function genZoneCompose(z: DerivedZone): string {
+  return `# zones/${z.key}/docker-compose.yml
+# Auto-generated by unt.ink TUI — do not edit manually.
+# Runtime wrapper: starts the ${z.key} zone container on the shared unenter network.
+#
+# Core infra (db, kong, proxy) is managed by the root docker-compose.yml.
+# The unenter network is external — both files share it automatically.
+#
+# Manual commands (run from the project root):
+#   docker compose -f zones/${z.key}/docker-compose.yml pull
+#   docker compose -f zones/${z.key}/docker-compose.yml up -d
+#   docker compose -f zones/${z.key}/docker-compose.yml down
+
+services:
+  ${z.service}:
+    image: ${z.image}
+    build:
+      context: ../..
+      dockerfile: zones/${z.key}/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL:
+        NEXT_PUBLIC_SUPABASE_URL_BROWSER:
+        NEXT_PUBLIC_SUPABASE_ANON_KEY:
+        NEXT_PUBLIC_APP_TITLE:
+        NEXT_PUBLIC_COMPANY_NAME:
+        NEXT_PUBLIC_OWNER_USERNAME:
+        NEXT_PUBLIC_OWNER_EMAIL:
+    container_name: ${z.container}
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      NEXT_PUBLIC_ZONE: "${z.key}"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \\"require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - unenter
+
+networks:
+  unenter:
+    external: true
+`;
+}

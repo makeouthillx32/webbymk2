@@ -45,6 +45,7 @@
 , "tailwind.config.ts", "tailwind.config.ts"  ],
   "exclude": [
     "node_modules",
-    "src/ink"
+    "src/ink",
+    "zones"
   ]
 }

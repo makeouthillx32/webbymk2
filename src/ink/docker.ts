@@ -47,13 +47,34 @@ async function dockerRun(
   });
 }
 
-/** Run `docker compose <args>` from the project root, streaming lines. */
+// ── Zone-compose helpers ──────────────────────────────────────────────────────
+
+/** Absolute path to a zone's own compose file (zones/<key>/docker-compose.yml). */
+export function zoneComposePath(key: string): string {
+  return join(PROJECT_DIR, "zones", key, "docker-compose.yml");
+}
+
+/** True when the zone has its own per-zone compose file (new-style zone). */
+export function zoneComposeExists(key: string): boolean {
+  return existsSync(zoneComposePath(key));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run `docker compose <args>` from the project root, streaming lines.
+ *
+ * Pass `composeFile` to target a specific compose file instead of the
+ * default docker-compose.yml (e.g. a per-zone file).
+ */
 export async function composeRun(
   args: string[],
-  onLine?: (line: string) => void
+  onLine?: (line: string) => void,
+  composeFile?: string,
 ): Promise<number> {
-  const cb   = onLine ?? (() => {});
-  const proc = spawn("docker", ["compose", ...args], {
+  const cb       = onLine ?? (() => {});
+  const fileFlag = composeFile ? ["-f", composeFile] : [];
+  const proc = spawn("docker", ["compose", ...fileFlag, ...args], {
     cwd:   PROJECT_DIR,
     env:   DOCKER_ENV,
     stdio: ["ignore", "pipe", "pipe"],
@@ -112,26 +133,87 @@ export async function pollAll(
   return { zoneStatuses, proxyStatus };
 }
 
+// ── Network pre-flight ────────────────────────────────────────────────────────
+
+/**
+ * Ensure the shared Docker network "unenter" exists before attempting to
+ * start any zone container that declares it as external.
+ *
+ * The network is created by `docker compose up` on the root docker-compose.yml
+ * (which now carries `name: unenter`).  Two failure modes are handled:
+ *
+ *   A) Network never created (core stack not yet started).
+ *   B) Network exists but under the legacy project-prefixed name
+ *      (e.g. `webbymk2_unenter`) because core was started before the
+ *      `name: unenter` field was added to the root compose.
+ *
+ * For case B this function self-heals by running `docker compose up -d` on
+ * the root compose so Docker recreates the network with the correct name and
+ * reconnects all core containers.  The zone deploy can then proceed.
+ *
+ * Returns true when the network is ready; false (after logging) on failure.
+ */
+export async function ensureZoneNetwork(
+  onLine: (l: string) => void,
+): Promise<boolean> {
+  // Check for exact network name "unenter"
+  const { out, code } = await dockerRun([
+    "network", "ls",
+    "--filter", "name=^unenter$",
+    "--format", "{{.Name}}",
+  ]);
+  if (code === 0 && out.trim() === "unenter") return true;
+
+  // Not found — check for the legacy project-prefixed variant
+  const { out: listOut } = await dockerRun(["network", "ls", "--format", "{{.Name}}"]);
+  const prefixed = listOut.split("\n").map((n) => n.trim()).find((n) => n.endsWith("_unenter"));
+
+  if (prefixed) {
+    onLine(`⚠ Docker network 'unenter' not found — found '${prefixed}' (old project-prefix name).`);
+    onLine(`  Recreating network with correct name via: docker compose up -d …`);
+    const fixCode = await composeRun(["up", "-d", "--remove-orphans"], onLine);
+    if (fixCode !== 0) {
+      onLine(`✗ Failed to recreate core network. Start the core stack manually:`);
+      onLine(`    docker compose up -d`);
+      return false;
+    }
+    // Verify the fix worked
+    const { out: verify } = await dockerRun([
+      "network", "ls", "--filter", "name=^unenter$", "--format", "{{.Name}}",
+    ]);
+    if (verify.trim() === "unenter") {
+      onLine(`✓ Network 'unenter' is now ready`);
+      return true;
+    }
+    onLine(`✗ Network still not found after core restart — check docker compose logs`);
+    return false;
+  }
+
+  // No network at all
+  onLine(`✗ Docker network 'unenter' not found and no core stack detected.`);
+  onLine(`  Start the core stack first:  docker compose up -d`);
+  return false;
+}
+
 // ── Zone operations ───────────────────────────────────────────────────────────
 
-/** `docker compose restart <service>` */
+/** `docker compose restart <service>` — uses per-zone compose file if present. */
 export async function restartZone(
   zone: Zone,
   onLine?: (l: string) => void
 ): Promise<number> {
-  return composeRun(["restart", zone.service], onLine);
+  const file = zoneComposeExists(zone.key) ? zoneComposePath(zone.key) : undefined;
+  return composeRun(["restart", zone.service], onLine, file);
 }
 
 /**
- * Self-healing compose check — ensures the service block in docker-compose.yml
- * has an `image:` field pointing at zone.image.  Without this line:
- *   - `docker compose pull <svc>` is a no-op ("Skipped No image to be pulled")
- *   - `docker compose up` falls back to `{project}-{service}:latest` which
- *     doesn't match what our TUI build produces → "No such image" error
+ * @deprecated New zones use per-zone compose files (zones/<key>/docker-compose.yml)
+ * which always contain a correct `image:` field — no patching needed.
+ * This function is retained only for legacy zones whose service block still
+ * lives in the root docker-compose.yml.  It is a no-op for new-style zones.
  *
- * Safe to run on every deploy — it's idempotent (no-op when the line already
- * exists or when the service block isn't found).  Returns true if it made
- * changes so the caller can log it.
+ * Self-healing compose check — ensures the service block in docker-compose.yml
+ * has an `image:` field pointing at zone.image.
  */
 export function doctorComposeService(
   zone: Zone,
@@ -176,26 +258,34 @@ export function doctorComposeService(
   return true;
 }
 
-/** `docker compose pull <service> && docker compose up -d --force-recreate <service>`
+/**
+ * `docker compose pull <service> && docker compose up -d --force-recreate <service>`
  *
- * Auto-heals missing `image:` fields in docker-compose.yml before running
- * (eliminates "No such image: webbymk2-<svc>:latest" from incomplete scaffolds).
+ * For new-style zones (with their own zones/<key>/docker-compose.yml) the
+ * per-zone file is used directly — no doctorComposeService needed because the
+ * generated file always contains a correct `image:` field.
+ *
+ * For legacy zones (service block still in root docker-compose.yml) falls back
+ * to the root file and auto-heals a missing `image:` field first.
+ *
  * Uses --force-recreate so the running container is ALWAYS swapped for the
- * newly-pulled image — prevents "stale container" confusion where a deploy
- * appears to succeed but the previous container is still running.
+ * newly-pulled image — prevents "stale container" confusion.
  */
 export async function pullAndUp(
   zone: Zone,
   onLine?: (l: string) => void
 ): Promise<number> {
-  // Self-heal: ensure the compose service has an image: field before deploying.
-  doctorComposeService(zone, onLine);
+  const newStyle = zoneComposeExists(zone.key);
+  const file     = newStyle ? zoneComposePath(zone.key) : undefined;
+
+  // Legacy zones only: self-heal missing `image:` field in root compose.
+  if (!newStyle) doctorComposeService(zone, onLine);
 
   onLine?.(`Pulling ${zone.image}...`);
-  const pullCode = await composeRun(["pull", zone.service], onLine);
+  const pullCode = await composeRun(["pull", zone.service], onLine, file);
   if (pullCode !== 0) return pullCode;
   onLine?.(`Starting ${zone.service} (force-recreate)...`);
-  return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine);
+  return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file);
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
@@ -209,17 +299,71 @@ export async function pullAndUp(
  * never inject that new var, so requests for <key>.unenter.live fall through
  * to the default upstream (core's app) and serve the WRONG content.
  *
- * Using `up -d --no-build --force-recreate` rereads docker-compose.yml and
- * rebuilds the container with the current env, which is what we actually want.
- * This was the exact cause of "new zones show core's landing page instead of
- * the zone template" on first scaffold.
+ * Using `up -d --build --force-recreate` rebuilds the proxy image from
+ * proxy/server.js, then recreates the container with the current env.
+ *
+ * NOTE: --build (not --no-build) is intentional here.  The proxy is a local
+ * build (proxy/Dockerfile copies server.js) — NOT a GHCR-pulled image.
+ * --no-build would lock in a stale image every time, so any changes to
+ * proxy/server.js would never take effect until someone manually rebuilt.
+ * Docker's layer cache makes the rebuild nearly instant when server.js is
+ * unchanged, so --build is safe to use unconditionally.
  */
 export async function reloadProxy(onLine?: (l: string) => void): Promise<number> {
-  onLine?.("Recreating proxy (unt_proxy) to pick up new UPSTREAM_* env...");
+  onLine?.("Building + recreating proxy (unt_proxy)...");
   return composeRun(
-    ["up", "-d", "--no-build", "--force-recreate", PROXY.service],
+    ["up", "-d", "--build", "--force-recreate", PROXY.service],
     onLine,
   );
+}
+
+// ── Zone teardown ─────────────────────────────────────────────────────────────
+
+/**
+ * Stop + remove a zone's container and delete its local image.
+ *
+ * For new-style zones: targets zones/<key>/docker-compose.yml so teardown
+ * works even after the service block is no longer in the root compose.
+ * For legacy zones: falls back to root docker-compose.yml (which must still
+ * contain the service definition at the time this is called).
+ *
+ * Failures are non-fatal: a container that is already stopped/missing is the
+ * same end-state as one we just stopped — log and continue either way.
+ */
+export async function removeZoneDockerArtifacts(
+  service:   string,  // docker compose service name  (= zone key)
+  container: string,  // container_name value          (= unt_{key})
+  image:     string,  // full image tag                (= ghcr.io/…/unenter-{key}:latest)
+  onLine:    (l: string) => void,
+): Promise<void> {
+  const file = zoneComposeExists(service) ? zoneComposePath(service) : undefined;
+
+  // 1 — Stop + remove container via compose rm (graceful, respects depends_on)
+  onLine(`Stopping container  ${container}…`);
+  const rmCode = await composeRun(["rm", "-s", "-v", "-f", service], onLine, file);
+  if (rmCode === 0) {
+    onLine(`✓ Container stopped and removed  (${container})`);
+  } else {
+    // compose rm fails if the service was never started or already gone.
+    // Fall back to a direct docker rm so we're sure.
+    const { code: directCode } = await dockerRun(["rm", "-f", container]);
+    if (directCode === 0) {
+      onLine(`✓ Container removed  (docker rm -f ${container})`);
+    } else {
+      onLine(`  No running container to remove  (${container})`);
+    }
+  }
+
+  // 2 — Remove the local image to free disk space
+  onLine(`Removing image  ${image}…`);
+  const { code: rmiCode, err: rmiErr } = await dockerRun(["rmi", "-f", image]);
+  if (rmiCode === 0) {
+    onLine(`✓ Image removed  (${image})`);
+  } else if (rmiErr.toLowerCase().includes("no such image") || rmiErr.toLowerCase().includes("not found")) {
+    onLine(`  Image not present locally — nothing to remove`);
+  } else {
+    onLine(`⚠ docker rmi exited ${rmiCode} — ${rmiErr || "image may already be gone"}`);
+  }
 }
 
 // ── Log tailing ───────────────────────────────────────────────────────────────

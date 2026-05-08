@@ -381,9 +381,64 @@ export async function npmAddZone(
   }
 
   if (existing) {
-    const sslLabel = existing.certificate_id ? "SSL ✓" : "no cert";
+    const sslLabel     = existing.certificate_id ? "SSL ✓" : "no cert";
     const enabledLabel = existing.enabled ? "enabled" : "DISABLED";
-    onLine(`✓ Already registered (host #${existing.id})  ·  ${sslLabel}  ·  ${enabledLabel}`);
+    onLine(`Found (host #${existing.id})  ·  ${sslLabel}  ·  ${enabledLabel}`);
+    onLine(`  forward  →  ${existing.forward_host}:${existing.forward_port}`);
+
+    const correctHost = existing.forward_host === STACK_HOST.ip;
+    const correctPort = existing.forward_port === STACK_HOST.proxyPort;
+
+    if (correctHost && correctPort) {
+      onLine(`✓ Forward target is correct  (${STACK_HOST.ip}:${STACK_HOST.proxyPort})`);
+      onLine(`  Review: ${NPM_HOST.uiUrl}`);
+      return 0;
+    }
+
+    // Forward target is stale — update it so traffic reaches the right upstream.
+    onLine(`⚠ Forward target is WRONG — expected ${STACK_HOST.ip}:${STACK_HOST.proxyPort}`);
+    onLine(`  Updating proxy host #${existing.id}...`);
+
+    const updatePayload = {
+      domain_names:            [domain],
+      forward_scheme:          "http",
+      forward_host:            STACK_HOST.ip,
+      forward_port:            STACK_HOST.proxyPort,
+      // Keep the existing cert rather than requesting a new one.
+      certificate_id:          existing.certificate_id ?? 0,
+      ssl_forced:              true,
+      http2_support:           true,
+      allow_websocket_upgrade: true,
+      block_exploits:          true,
+      caching_enabled:         false,
+      hsts_enabled:            false,
+      hsts_subdomains:         false,
+      access_list_id:          0,
+      advanced_config:         "",
+      locations:               [],
+    };
+
+    let updateRes: Response;
+    try {
+      const base = await resolveProxyHostsBase(token);
+      updateRes = await npmFetch(`${base}/${existing.id}`, {
+        method: "PUT",
+        body:   JSON.stringify(updatePayload),
+      }, token, SLOW_TIMEOUT_MS);
+    } catch (e) {
+      onLine(`✗ Update failed: ${String(e)}`);
+      onLine(`  Fix manually: ${NPM_HOST.uiUrl}`);
+      return 1;
+    }
+
+    if (!updateRes.ok) {
+      const text = await updateRes.text().catch(() => "");
+      onLine(`✗ NPM update error (${updateRes.status}): ${text}`);
+      onLine(`  Fix manually: ${NPM_HOST.uiUrl}`);
+      return 1;
+    }
+
+    onLine(`✓ Proxy host updated  →  ${STACK_HOST.ip}:${STACK_HOST.proxyPort}`);
     onLine(`  Review: ${NPM_HOST.uiUrl}`);
     return 0;
   }

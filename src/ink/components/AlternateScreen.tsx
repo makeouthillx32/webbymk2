@@ -4,6 +4,7 @@ import { DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, ENTER_ALT_SCREEN, EXIT_A
 import { TerminalWriteContext } from '../useTerminalNotification.js';
 import Box from './Box.js';
 import { TerminalSizeContext } from './TerminalSizeContext.js';
+import { useTermHeight } from '../hooks/useTermWidth.js';
 
 type Props = PropsWithChildren<{
   /** Enable SGR mouse tracking (wheel + click/drag). Default true. */
@@ -34,8 +35,10 @@ export function AlternateScreen({
   children,
   mouseTracking = true,
 }: Props): React.ReactNode {
-  const size = useContext(TerminalSizeContext);
-  const writeRaw = useContext(TerminalWriteContext);
+  const size      = useContext(TerminalSizeContext);
+  const liveRows  = useTermHeight();           // updates on every resize via SIGWINCH
+  const rows      = liveRows || size?.rows || 24;
+  const writeRaw  = useContext(TerminalWriteContext);
 
   // useInsertionEffect (not useLayoutEffect): react-reconciler calls
   // resetAfterCommit between the mutation and layout commit phases, and
@@ -68,8 +71,9 @@ export function AlternateScreen({
   return (
     <Box
       flexDirection="column"
-      height={size?.rows ?? 24}
+      height={rows}
       width="100%"
+      overflow="hidden"
       flexShrink={0}
     >
       {children}

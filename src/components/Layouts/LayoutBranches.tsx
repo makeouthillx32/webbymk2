@@ -22,7 +22,34 @@ import {
 } from "@/components/Layouts/LayoutShells";
 import type { ScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 
-const ShopFooter = lazy(() => import("@/components/Layouts/shop/footer"));
+const ShopFooter    = lazy(() => import("@/components/Layouts/shop/footer"));
+const LandingFooterLazy = lazy(() => import("@/components/Layouts/Landing/Footer"));
+
+// Minimal Layout
+// No header, no footer, no navigation chrome — just theme + providers + children.
+// Used by zones that manage their own UI entirely (micro-apps, embeds, etc.).
+
+interface MinimalLayoutProps {
+  children: React.ReactNode;
+  screenSize: ScreenSize;
+}
+
+export function MinimalLayout({ children, screenSize }: MinimalLayoutProps) {
+  return (
+    <>
+      <main
+        className="min-h-screen"
+        style={{ backgroundColor: "hsl(var(--background))" }}
+        data-layout="minimal"
+      >
+        {children}
+      </main>
+      <AppAccessibility />
+      <AppCookieConsent screenSize={screenSize} />
+      <AppToaster />
+    </>
+  );
+}
 
 // Landing Layout
 
@@ -97,6 +124,46 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
       <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
       <AppAccessibility />
+      <AppToaster />
+    </CartProvider>
+  );
+}
+
+// App Layout
+// AppHeader + selectable footer (none | shop | landing).
+// Zones scaffolded with layoutType="app" land here — never ShopLayout.
+
+export type AppFooterType = "none" | "shop" | "landing";
+
+interface AppLayoutProps {
+  children:   React.ReactNode;
+  screenSize: ScreenSize;
+  footer:     AppFooterType;
+}
+
+export function AppLayout({ children, screenSize, footer }: AppLayoutProps) {
+  return (
+    <CartProvider>
+      <RegionBootstrap />
+      <div data-layout="app">
+        <AppHeader />
+        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>
+          {children}
+        </main>
+        {footer === "shop" && (
+          <Suspense fallback={<div className="h-96" />}>
+            <ShopFooter />
+          </Suspense>
+        )}
+        {footer === "landing" && (
+          <Suspense fallback={<div className="h-96" />}>
+            <LandingFooterLazy />
+          </Suspense>
+        )}
+      </div>
+      <AppAccessibility />
+      <AppCookieConsent screenSize={screenSize} />
+      <ConditionalOverlays />
       <AppToaster />
     </CartProvider>
   );

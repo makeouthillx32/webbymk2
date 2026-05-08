@@ -1,6 +1,6 @@
 import { lineWidth } from './line-width-cache.js'
 
-export default function widestLine(string: string): number {
+export function widestLine(string: string): number {
   let maxWidth = 0
   let start = 0
 
@@ -17,3 +17,5 @@ export default function widestLine(string: string): number {
 
   return maxWidth
 }
+
+export default widestLine

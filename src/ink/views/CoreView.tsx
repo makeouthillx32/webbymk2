@@ -1,0 +1,228 @@
+// src/ink/views/CoreView.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// The "core" tab — permanent infrastructure that is NOT a zone.
+//
+//   App     (unt_app)   — the core Next.js monolith at unenter.live
+//   Proxy   (unt_proxy) — the custom multi-zone reverse proxy
+//
+// Actions differ from zones:
+//   App   → deploy / pull+up / restart / build / rebuild / logs
+//   Proxy → restart / rebuild / logs / sync routes
+//
+// Neither can be deleted or NPM-registered from here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import React, { useState, useCallback } from "react";
+import { Box, Text, useInput }          from "ink";
+
+import type { Zone }   from "../../config/zones.ts";
+import type { Status } from "../docker.ts";
+
+import { StatusBadge }   from "../components/StatusBadge.tsx";
+import { KeyHints }      from "../components/KeyHint.tsx";
+import { ActionPanel, buildCoreActions, isCoreZone } from "../panels/Action/index.tsx";
+import type { Action }   from "../panels/Action/index.tsx";
+
+import { restartZone, pullAndUp, reloadProxy } from "../docker.ts";
+import { buildZone, deployZone }               from "../zone-build.ts";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type StatusMap = Record<string, Status>;
+
+interface CoreViewProps {
+  zones:           Zone[];
+  zoneStatuses:    StatusMap;
+  proxyStatus:     Status;
+  runOp:           (title: string, op: (o: (l: string) => void) => Promise<number>) => void;
+  openLogs:        (zone: Zone) => void;
+  addNotification: (msg: string, type?: "success" | "error" | "info") => void;
+  onGoBack:        () => void;
+  isActive:        boolean;
+}
+
+// ── Proxy pseudo-zone (not in DB — constructed locally) ───────────────────────
+
+const PROXY_ZONE: Zone = {
+  key:            "proxy",
+  label:          "Proxy",
+  domain:         "unt_proxy  ·  :3080",
+  service:        "proxy",
+  container:      "unt_proxy",
+  image:          "",
+  dockerfile:     "proxy/Dockerfile",
+  upstreamEnvKey: "UPSTREAM_PROXY",
+};
+
+const PROXY_ACTIONS: Action[] = [
+  { id: "restart", label: "Restart",            desc: "docker compose restart",              key: "r", disabled: false },
+  { id: "rebuild", label: "Rebuild (no cache)", desc: "rebuild proxy image (no cache)",      key: "R", disabled: false },
+  { id: "logs",    label: "Logs",               desc: "tail -f proxy container output",      key: "l", disabled: false },
+];
+
+// ── CoreView ──────────────────────────────────────────────────────────────────
+
+export function CoreView({
+  zones, zoneStatuses, proxyStatus,
+  runOp, openLogs, addNotification,
+  onGoBack, isActive,
+}: CoreViewProps) {
+
+  const coreApp = zones.find(isCoreZone) ?? null;
+
+  // Rows: 0 = App, 1 = Proxy
+  const [selected,       setSelected]       = useState(0);
+  const [actionOpen,     setActionOpen]     = useState(false);
+  const [actionSelected, setActionSelected] = useState(0);
+
+  const activeZone    = selected === 0 ? coreApp   : PROXY_ZONE;
+  const activeActions = selected === 0
+    ? (coreApp ? buildCoreActions(coreApp) : [])
+    : PROXY_ACTIONS;
+
+  // ── Action executor ──────────────────────────────────────────────────────
+  const executeAction = useCallback((actionId: string, zone: Zone) => {
+    switch (actionId) {
+      case "deploy":
+        runOp(`Deploy  ${zone.label}`, (o) => deployZone(zone, o));
+        break;
+      case "pull":
+        runOp(`Pull+up  ${zone.label}`, (o) => pullAndUp(zone, o));
+        break;
+      case "restart":
+        if (zone.key === "proxy") {
+          runOp("Restart proxy", (o) => reloadProxy(o));
+        } else {
+          runOp(`Restart  ${zone.label}`, (o) => restartZone(zone, o));
+        }
+        break;
+      case "build":
+        runOp(`Build+push  ${zone.label}`, async (o) => {
+          if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
+          return buildZone(zone, o);
+        });
+        break;
+      case "rebuild":
+        if (zone.key === "proxy") {
+          runOp("Rebuild proxy  (no cache)", (o) => reloadProxy(o));
+        } else {
+          runOp(`Rebuild  ${zone.label}  (no cache)`, async (o) => {
+            if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
+            return buildZone(zone, o, { noCache: true });
+          });
+        }
+        break;
+      case "logs":
+        openLogs(zone);
+        break;
+    }
+    setActionOpen(false);
+  }, [runOp, openLogs]);
+
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+  useInput((input, key) => {
+
+    if (actionOpen) {
+      if (key.escape || input === "q") { setActionOpen(false); return; }
+
+      if (key.upArrow || input === "k") {
+        setActionSelected((s) => {
+          let next = s - 1;
+          while (next >= 0 && activeActions[next]?.disabled) next--;
+          return next >= 0 ? next : s;
+        });
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setActionSelected((s) => {
+          let next = s + 1;
+          while (next < activeActions.length && activeActions[next]?.disabled) next++;
+          return next < activeActions.length ? next : s;
+        });
+        return;
+      }
+      if (key.return) {
+        const action = activeActions[actionSelected];
+        if (!action || action.disabled || !activeZone) return;
+        executeAction(action.id, activeZone);
+        return;
+      }
+      const matched = activeActions.find((a) => !a.disabled && a.key === input);
+      if (matched && activeZone) { executeAction(matched.id, activeZone); return; }
+      return;
+    }
+
+    if (key.upArrow   || input === "k") { setSelected((s) => Math.max(0, s - 1));    return; }
+    if (key.downArrow || input === "j") { setSelected((s) => Math.min(1, s + 1));    return; }
+
+    if (key.return) {
+      if (!activeZone) return;
+      const firstEnabled = activeActions.findIndex((a) => !a.disabled);
+      setActionSelected(firstEnabled >= 0 ? firstEnabled : 0);
+      setActionOpen(true);
+      return;
+    }
+
+    if (input === "l") { if (activeZone) openLogs(activeZone); return; }
+    if (input === "q" || key.escape) { onGoBack(); return; }
+
+  }, { isActive });
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (actionOpen && activeZone) {
+    return (
+      <ActionPanel
+        zone={activeZone}
+        status={selected === 1 ? proxyStatus : (zoneStatuses[activeZone.key] ?? "missing")}
+        selected={actionSelected}
+      />
+    );
+  }
+
+  const appStatus   = coreApp ? (zoneStatuses[coreApp.key] ?? "missing") : "missing";
+
+  return (
+    <Box flexDirection="column">
+
+      {/* ── App row ─────────────────────────────────────────────────────── */}
+      <Box paddingX={1} gap={2}>
+        <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
+          {selected === 0 ? "▶" : " "}
+        </Text>
+        <Box width={18}>
+          <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
+            {coreApp?.label ?? "App"}
+          </Text>
+        </Box>
+        <Box width={28}>
+          <Text dimColor={selected !== 0}>{coreApp?.domain ?? "unenter.live"}</Text>
+        </Box>
+        <StatusBadge status={appStatus} />
+      </Box>
+
+      {/* ── Proxy row ───────────────────────────────────────────────────── */}
+      <Box paddingX={1} gap={2}>
+        <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
+          {selected === 1 ? "▶" : " "}
+        </Text>
+        <Box width={18}>
+          <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
+            Proxy
+          </Text>
+        </Box>
+        <Box width={28}>
+          <Text dimColor={selected !== 1}>unt_proxy  ·  :3080</Text>
+        </Box>
+        <StatusBadge status={proxyStatus} />
+      </Box>
+
+      <KeyHints hints={[
+        { k: "↑↓", label: "navigate" },
+        { k: "↵",  label: "actions"  },
+        { k: "l",  label: "logs"     },
+      ]} />
+
+    </Box>
+  );
+}

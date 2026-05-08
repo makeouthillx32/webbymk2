@@ -1,17 +1,22 @@
 // src/ink/panels/Infra/index.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Infrastructure panel — three sub-views toggled with [1] [2] [3]:
+// Infrastructure panel — three sub-views toggled with [1] [2] [3].
 //
 //   [1] Hosts    — live reachability of all INFRA_SERVICES
 //   [2] DNS      — GoDaddy DNS record reference for unenter.live
 //   [3] Ports    — GT-BE98 Pro router port-forward reference
 //
-// Hosts sub-view is interactive — [↑↓] to navigate, [r] to re-check selected,
-// [R] to re-check all.  DNS and Ports are read-only reference tables.
+// All keyboard handling and sub-view/cursor state live here.
+// App.tsx only passes the async check results + the checkInfra callback.
+//
+//   [↑↓/jk]   navigate hosts (HostsView)
+//   [r]        re-check focused service
+//   [R]        re-check all services
+//   [1/2/3]    switch sub-view
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React              from "react";
-import { Box, Text }      from "ink";
+import React, { useState, useRef, useEffect } from "react";
+import { Box, Text, useInput }                from "ink";
 import {
   INFRA_SERVICES, DNS_RECORDS, PORT_FORWARDS, MACHINES,
   type ServiceResult,
@@ -27,10 +32,10 @@ export type InfraView = "hosts" | "dns" | "ports";
 type InfraMap = Record<number, ServiceResult>;
 
 interface InfraPanelProps {
-  view:     InfraView;
-  results:  InfraMap;
-  selected: number;
-  checking: boolean;
+  results:      InfraMap;
+  checking:     boolean;
+  onCheckInfra: (indices?: number[]) => void;
+  onGoBack:     () => void;
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -63,9 +68,9 @@ function msLabel(r?: ServiceResult): string {
 // ── Sub-views ─────────────────────────────────────────────────────────────────
 
 const HOSTS_HINTS = [
-  { k: "↑↓", label: "navigate"       },
-  { k: "r",  label: "check selected" },
-  { k: "R",  label: "check all"      },
+  { k: "↑↓/jk", label: "navigate"       },
+  { k: "r",     label: "check selected" },
+  { k: "R",     label: "check all"      },
 ];
 
 function HostsView({ results, selected, checking }: {
@@ -89,7 +94,6 @@ function HostsView({ results, selected, checking }: {
 
         return (
           <Pane key={machine} title={title} color="cyan" gap={1}>
-
             {services.map((svc) => {
               const idx     = INFRA_SERVICES.indexOf(svc);
               const focused = idx === selected;
@@ -163,7 +167,49 @@ function PortsView() {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function InfraPanel({ view, results, selected, checking }: InfraPanelProps) {
+export function InfraPanel({ results, checking, onCheckInfra, onGoBack }: InfraPanelProps) {
+
+  const [view,     setView]     = useState<InfraView>("hosts");
+  const [selected, setSelected] = useState(0);
+
+  // Run an initial check the first time this panel mounts.
+  const didInit = useRef(false);
+  useEffect(() => {
+    if (!didInit.current) {
+      didInit.current = true;
+      onCheckInfra();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Keyboard ────────────────────────────────────────────────────────────────
+  useInput((input, key) => {
+    // Back navigation — owned here so root App.tsx never hijacks a sub-menu q
+    if (input === "q" || key.leftArrow) { onGoBack(); return; }
+
+    // Sub-view switcher
+    if (input === "1") { setView("hosts");  return; }
+    if (input === "2") { setView("dns");    return; }
+    if (input === "3") { setView("ports");  return; }
+    if (input === "R") { onCheckInfra();    return; }
+
+    // Cursor navigation + single-service re-check (hosts only)
+    if (view === "hosts") {
+      if (key.upArrow   || input === "k") {
+        setSelected((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSelected((s) => Math.min(INFRA_SERVICES.length - 1, s + 1));
+        return;
+      }
+      if (input === "r") {
+        onCheckInfra([selected]);
+        return;
+      }
+    }
+  });
+
   return (
     <Box flexDirection="column">
 
