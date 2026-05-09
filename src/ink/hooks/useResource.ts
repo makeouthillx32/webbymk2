@@ -96,6 +96,7 @@ export function useResource<T>(
   // Reflect `enabled` in a ref so the interval closure sees the latest value.
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  const inFlightRef = useRef(false);
 
   // ── Core state ────────────────────────────────────────────────────────────
   const [data,    setData]    = useState<T[]>([]);
@@ -135,7 +136,8 @@ export function useResource<T>(
   // silent=true  → background poll tick  (no loading flash, no error wipe)
   // silent=false → initial or explicit refresh (sets loading, clears error)
   const doFetch = useCallback(async (silent: boolean) => {
-    if (!enabledRef.current) return;
+    if (!enabledRef.current || inFlightRef.current) return;
+    inFlightRef.current = true;
     if (!silent) {
       setLoading(true);
       setError(null);
@@ -151,6 +153,7 @@ export function useResource<T>(
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
+      inFlightRef.current = false;
       if (!silent) setLoading(false);
     }
   }, []);  // stable — all deps accessed via refs

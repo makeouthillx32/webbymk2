@@ -24,7 +24,7 @@
 // don't simultaneously move both the stack focus AND the zone cursor.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput }          from "ink";
 
 import type { Zone }    from "../../config/zones.ts";
@@ -35,6 +35,8 @@ import { ZonesPanel }                                              from "../pane
 import { ActionPanel, buildActions, firstEnabled, isCoreZone }    from "../panels/Action/index.tsx";
 import { Dialog }                                                  from "../components/design-system/Dialog.tsx";
 import { MultiSelectMenu }                                         from "../components/MultiSelectMenu.tsx";
+import { SearchInput }                                             from "../components/SearchBox.tsx";
+import { fuzzyFilter }                                             from "../utils/fuzzy.ts";
 
 import {
   restartZone, pullAndUp, reloadProxy,
@@ -54,6 +56,19 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type StatusMap = Record<string, Status>;
+
+function zoneSearchText(zone: Zone): string {
+  return [
+    zone.label,
+    zone.key,
+    zone.domain,
+    zone.service,
+    zone.container,
+    zone.image,
+    zone.dockerfile ?? "",
+    zone.upstreamEnvKey,
+  ].join(" ");
+}
 
 interface ZonesViewProps {
   zones:           Zone[];
@@ -79,9 +94,11 @@ export function ZonesView({
 }: ZonesViewProps) {
 
   // Strip core (key="unenter") — it's not a zone and doesn't belong here.
-  const realZones = zones.filter((z) => !isCoreZone(z));
+  const realZones = useMemo(() => zones.filter((z) => !isCoreZone(z)), [zones]);
 
   const [selected,       setSelected]       = useState(0);
+  const [searchQuery,    setSearchQuery]    = useState("");
+  const [searchActive,   setSearchActive]   = useState(false);
   const [actionOpen,     setActionOpen]     = useState(false);
   const [actionSelected, setActionSelected] = useState(0);
   /** Zone staged for deletion — shows confirmation dialog before running op. */
@@ -92,6 +109,28 @@ export function ZonesView({
     layout:    LayoutType;
     installed: Set<string>;
   } | null>(null);
+
+  const visibleZones = useMemo(
+    () => fuzzyFilter(realZones, searchQuery, zoneSearchText),
+    [realZones, searchQuery],
+  );
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query);
+    setSelected(0);
+  }, []);
+
+  const cancelSearch = useCallback(() => {
+    if (searchQuery) {
+      setSearchQuery("");
+      setSelected(0);
+    }
+    setSearchActive(false);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setSelected((s) => Math.min(s, Math.max(0, visibleZones.length - 1)));
+  }, [visibleZones.length]);
 
   // ── Action executor ──────────────────────────────────────────────────────
   const executeAction = useCallback((actionId: string, zone: Zone) => {
@@ -202,7 +241,7 @@ export function ZonesView({
 
     // ── Action panel open ───────────────────────────────────────────────────
     if (actionOpen) {
-      const zone    = realZones[selected];
+      const zone    = visibleZones[selected];
       const actions = zone ? buildActions(zone) : [];
 
       // Both Escape and q close the action panel (one virtual level back).
@@ -240,24 +279,56 @@ export function ZonesView({
     }
 
     // ── Zone list ───────────────────────────────────────────────────────────
+    if (searchActive) {
+      if (key.upArrow) {
+        setSelected((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSelected((s) => Math.min(Math.max(0, visibleZones.length - 1), s + 1));
+        return;
+      }
+      if (key.return) {
+        const zone = visibleZones[selected];
+        if (!zone) return;
+        setActionSelected(firstEnabled(zone));
+        setActionOpen(true);
+        setSearchActive(false);
+        return;
+      }
+      return;
+    }
+
+    if (key.escape) {
+      if (searchQuery) {
+        setSearchQuery("");
+        setSelected(0);
+        return;
+      }
+      onGoBack();
+      return;
+    }
+
+    if (input === "/") { setSearchActive(true); return; }
+
     if (key.upArrow   || input === "k") {
       setSelected((s) => Math.max(0, s - 1));
       return;
     }
     if (key.downArrow || input === "j") {
-      setSelected((s) => Math.min(realZones.length - 1, s + 1));
+      setSelected((s) => Math.min(Math.max(0, visibleZones.length - 1), s + 1));
       return;
     }
 
     if (key.return) {
-      const zone = realZones[selected];
+      const zone = visibleZones[selected];
       if (!zone) return;
       setActionSelected(firstEnabled(zone));
       setActionOpen(true);
       return;
     }
 
-    if (input === "l") { const z = realZones[selected]; if (z) openLogs(z); return; }
+    if (input === "l") { const z = visibleZones[selected]; if (z) openLogs(z); return; }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }
     if (input === "R") {
@@ -291,18 +362,39 @@ export function ZonesView({
 
       {/* Zone list — hidden while any overlay is open */}
       {!actionOpen && !confirmDelete && !manageSections && (
-        <ZonesPanel
-          zones={realZones}
-          zoneStatuses={zoneStatuses}
-          selected={selected}
-        />
+        <>
+          <Box paddingX={1} marginBottom={1} gap={2}>
+            <SearchInput
+              value={searchQuery}
+              onChange={handleSearchChange}
+              onCancel={cancelSearch}
+              placeholder="Search zones"
+              prefix="/"
+              width={42}
+              active={searchActive}
+            />
+            <Text dimColor>
+              {searchActive
+                ? "[esc] clear"
+                : searchQuery
+                  ? `${visibleZones.length}/${realZones.length} matches`
+                  : "[/] search"}
+            </Text>
+          </Box>
+          <ZonesPanel
+            zones={visibleZones}
+            zoneStatuses={zoneStatuses}
+            selected={selected}
+            emptyMessage={searchQuery ? `No zones match "${searchQuery}"` : undefined}
+          />
+        </>
       )}
 
       {/* Action panel — replaces zone list, not appended below it */}
-      {actionOpen && realZones[selected] && (
+      {actionOpen && visibleZones[selected] && (
         <ActionPanel
-          zone={realZones[selected]!}
-          status={zoneStatuses[realZones[selected]!.key] ?? "missing"}
+          zone={visibleZones[selected]!}
+          status={zoneStatuses[visibleZones[selected]!.key] ?? "missing"}
           selected={actionSelected}
         />
       )}

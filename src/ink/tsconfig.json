@@ -9,7 +9,10 @@
       "@/*": ["../*"],
       // Pin ink to tui/node_modules (React 18 build) — not the root React 19 copy
       "ink": ["./node_modules/ink/build/index.js"],
-      "ink/*": ["./node_modules/ink/build/*"]
+      "ink/*": ["./node_modules/ink/build/*"],
+      // Map project-root-relative src/* imports → ../*, relative to src/ink/
+      // Fixes: import '...' from 'src/native-ts/yoga-layout/index.js' in layout/yoga.ts
+      "src/*": ["../*"]
     },
     "allowJs": true,
     "skipLibCheck": true,
@@ -26,5 +29,5 @@
   // "../config/**" is relative to this tsconfig (src/ink/) → resolves to src/config/
   // Without it, Bun's --watch reports "not in project directory" for config imports.
   "include": ["**/*.ts", "**/*.tsx", "../config/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "_archive", "templates"]
 }

@@ -23,8 +23,10 @@ import { type Status }                from "../docker.ts";
 import { ContainerDot }               from "../components/ContainerDot.tsx";
 import { Divider }                    from "../components/Divider.tsx";
 import { KeyHints }                   from "../components/KeyHint.tsx";
-import { ProgressBar }                from "../components/design-system/ProgressBar.tsx";
 import { useWidths }                  from "../hooks/useTermWidth.ts";
+import { useHostMonitor }             from "../hooks/useHostMonitor.ts";
+import { MetricCard }                 from "../components/design-system/MetricCard.tsx";
+import { sparkline }                  from "../utils/sparkline.ts";
 
 // ── Color palette (terminal-safe) ─────────────────────────────────────────────
 const BRAND        = "#D4A27F";   // warm amber — unt.ink accent
@@ -59,6 +61,7 @@ export function WelcomeScreen({
   const [selected, setSelected] = useState(0);
   const [blink, setBlink] = useState(true);
   const { tw, dw, th } = useWidths();
+  const host = useHostMonitor();
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
   // Width tiers
@@ -101,6 +104,13 @@ export function WelcomeScreen({
   const statusColor  = allLive ? SUCCESS : anyUp ? WARNING : ERROR;
   const statusLabel  = allLive ? "● core is live" : anyUp ? "◑ starting" : "○ offline";
 
+  const formatBytes = (bytes: number) => {
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
   return (
     <Box
       flexDirection="column"
@@ -131,35 +141,39 @@ export function WelcomeScreen({
         </Box>
       )}
 
-      {/* ── Status + zone dots ───────────────────────────────────────────── */}
+      {/* ── Status + Performance NOC ───────────────────────────────────────── */}
       {showStatus && (
-        <>
-          {/* Status summary + container dots — wraps gracefully on narrow terms */}
-          <Box flexWrap="wrap" justifyContent="center" gap={1} marginBottom={1}>
-            <Text color={statusColor}>{statusLabel}</Text>
-            <Text dimColor>|</Text>
+        <Box flexDirection="column" alignItems="center" marginBottom={2}>
+          <Box flexDirection={narrow ? "column" : "row"} gap={1} marginBottom={1}>
+            <MetricCard 
+              label="System CPU" 
+              value={`${host.systemCpu.toFixed(1)}%`} 
+              note="host load" 
+              tone={host.systemCpu > 80 ? "error" : host.systemCpu > 50 ? "warning" : "success"}
+              trend={sparkline(host.cpuHistory)}
+            />
+            <MetricCard 
+              label="Host Memory" 
+              value={formatBytes(host.usedMemory)} 
+              note={`${formatBytes(host.freeMemory)} free`} 
+              tone={host.memoryPressure > 0.9 ? "error" : host.memoryPressure > 0.7 ? "warning" : "success"}
+              trend={sparkline(host.memHistory)}
+            />
+          </Box>
+
+          <Box flexWrap="wrap" justifyContent="center" gap={1}>
             <Box gap={1}>
               <Text dimColor>prox</Text>
               <ContainerDot status={proxyStatus} />
             </Box>
             {zones.map((z) => (
-              <Box key={z.key} gap={1}>
+              <Box key={z.key} gap={1} marginLeft={1}>
                 {!vnarrow && <Text dimColor>{z.key}</Text>}
                 <ContainerDot status={zoneStatuses[z.key] ?? "missing"} />
               </Box>
             ))}
           </Box>
-
-          {/* Health bar */}
-          <Box justifyContent="center" gap={2} marginBottom={compact ? 1 : 2}>
-            <ProgressBar
-              ratio={healthRatio}
-              width={Math.max(10, dw - 10)}
-              fillColor={statusColor}
-            />
-            <Text dimColor>{runningCount}/{totalCount}</Text>
-          </Box>
-        </>
+        </Box>
       )}
 
       {/* ── Routing diagram — wide + tall terminals only ──────────────────── */}

@@ -7,7 +7,7 @@
 // Press [t] to edit the GHCR token inline (writes config.json on save).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Box, Text, useInput }        from "ink";
 import { join, dirname }              from "path";
 import { homedir }                    from "os";
@@ -19,8 +19,13 @@ import type { Zone }                                   from "../../config/zones.
 import { GHCR_USER, PROJECT_DIR }                      from "../../config/zones.ts";
 import { Divider }                                     from "../components/Divider.tsx";
 import { KeyHints }                                    from "../components/KeyHint.tsx";
-import { TextInput }                                   from "../components/TextInput.tsx";
+import { SearchInput }                                 from "../components/SearchBox.tsx";
 import { useWidths }                                   from "../hooks/useTermWidth.ts";
+import { Tabs }                                        from "../components/Tabs.tsx";
+import { SectionFrame }                                from "../components/design-system/SectionFrame.tsx";
+import { MetricCard }                                  from "../components/design-system/MetricCard.tsx";
+import { ProgressLine }                                from "../components/design-system/ProgressLine.tsx";
+import { sparkline }                                   from "../utils/sparkline.ts";
 
 // ── Config file path ──────────────────────────────────────────────────────────
 
@@ -82,37 +87,26 @@ function daysLeft(setAt: string | undefined): number | null {
 
 function timerColor(days: number | null): string {
   if (days === null) return "gray";
-  if (days < 0)  return "red";
-  if (days < 7)  return "red";
-  if (days < 14) return "yellow";
-  return "green";
+  if (days < 0)  return "error";
+  if (days < 7)  return "error";
+  if (days < 14) return "warning";
+  return "success";
 }
 
 function timerLabel(days: number | null): string {
-  if (days === null) return "not set — press [t] to add";
-  if (days < 0)  return `expired ${Math.abs(days)}d ago — press [t] to renew`;
-  if (days === 0) return "expires today — press [t] to renew";
-  return `${days} / 30 days remaining`;
+  if (days === null) return "not configured";
+  if (days < 0)  return `expired ${Math.abs(days)}d ago`;
+  if (days === 0) return "expires today";
+  return `${days} days left`;
 }
 
-// ── Row / Section helpers ─────────────────────────────────────────────────────
+// ── Row helper ─────────────────────────────────────────────────────────────
 
 function Row({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <Box gap={1}>
-      <Text dimColor>{label.padEnd(20)}</Text>
+      <Text dimColor>{label.padEnd(16)}</Text>
       <Text color={accent ?? "white"}>{value}</Text>
-    </Box>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold color="cyan">{title}</Text>
-      <Box flexDirection="column" paddingLeft={2}>
-        {children}
-      </Box>
     </Box>
   );
 }
@@ -130,17 +124,17 @@ interface SettingsScreenProps {
 export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: SettingsScreenProps) {
   const { tw, dw } = useWidths();
 
-  // ── Token state ─────────────────────────────────────────────────────────
-  const [tokenCfg,  setTokenCfg]  = useState<TokenConfig>(() => readTokenConfig());
-  const [editMode,  setEditMode]  = useState(false);
-  const [saved,     setSaved]     = useState(false); // flash "saved!" for 1.5 s
+  const [activeTab, setTab]      = useState<"infra" | "identity" | "zones">("infra");
+  const [tokenCfg,  setTokenCfg] = useState<TokenConfig>(() => readTokenConfig());
+  const [editMode,  setEditMode] = useState(false);
+  const [saved,     setSaved]    = useState(false);
 
   // Re-read from disk whenever we exit edit mode
   useEffect(() => {
     if (!editMode) setTokenCfg(readTokenConfig());
   }, [editMode]);
 
-  // ── Token editor callbacks (used by <TextInput>) ──────────────────────────
+  // ── Handlers ────────────────────────────────────────────────────────────
   function handleSave(val: string) {
     const trimmed = val.trim();
     if (trimmed) {
@@ -157,20 +151,35 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     onTokenEditEnd();
   }
 
-  // ── Keyboard ─────────────────────────────────────────────────────────────
-  // Edit mode input is fully handled by <TextInput> — only [t] needs wiring here.
-  useInput((input) => {
-    if (!editMode && input === "t") {
+  useInput((input, key) => {
+    if (editMode) return;
+
+    if (key.tab) {
+      setTab((prev) => 
+        prev === "infra" ? "identity" : 
+        prev === "identity" ? "zones" : "infra"
+      );
+      return;
+    }
+
+    if (input === "1") { setTab("infra");    return; }
+    if (input === "2") { setTab("identity"); return; }
+    if (input === "3") { setTab("zones");    return; }
+
+    if (activeTab === "identity" && input === "t") {
       setEditMode(true);
       onTokenEditStart();
     }
-    // All other keys ([esc/q/e]) are handled by App.tsx's settings handler.
   });
 
-  // ── Derived timer values ──────────────────────────────────────────────────
-  const days   = daysLeft(tokenCfg.ghcrTokenSetAt);
-  const tColor = timerColor(days);
-  const tLabel = timerLabel(days);
+  // ── Metrics ─────────────────────────────────────────────────────────────
+  const days     = daysLeft(tokenCfg.ghcrTokenSetAt);
+  const tColor   = timerColor(days);
+  const tLabel   = timerLabel(days);
+  const tRatio   = days !== null ? Math.max(0, Math.min(1, days / 30)) : 0;
+  
+  // Dummy history for sparkline — could be populated from real rotation logs
+  const tokenHistory = useMemo(() => [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0].slice(-20), []);
 
   return (
     <Box
@@ -181,96 +190,127 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
       paddingY={1}
       width={tw}
     >
-
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <Box justifyContent="space-between" marginBottom={1}>
         <Text bold color="cyan">⚙  Settings</Text>
         <Text dimColor>unt.ink · local config</Text>
       </Box>
 
-      <Box marginBottom={1}>
-        <Text dimColor>Config file: </Text>
-        <Text color="gray">{CONFIG_PATH}</Text>
-      </Box>
+      <Tabs
+        tabs={["infrastructure", "identity", "zones"]}
+        active={
+          activeTab === "infra" ? "infrastructure" :
+          activeTab === "identity" ? "identity" : "zones"
+        }
+        marginBottom={1}
+      />
 
       <Divider width={dw} />
 
-      {/* ── Project root ────────────────────────────────────────────────────── */}
-      <Section title="Project">
-        <Row label="Root directory" value={PROJECT_DIR} accent="cyan" />
-      </Section>
-
-      {/* ── NPM host ────────────────────────────────────────────────────────── */}
-      <Section title="NPM  (L0VE — Nginx Proxy Manager)">
-        <Row label="IP"            value={NPM_HOST.ip} />
-        <Row label="Port"          value={String(NPM_HOST.port)} />
-        <Row label="UI"            value={NPM_HOST.uiUrl} accent="cyan" />
-        <Row label="API"           value={NPM_HOST.apiUrl} accent="cyan" />
-        <Row label="Admin email"   value={NPM_HOST.email} />
-        <Row label="Password"      value={"•".repeat(Math.min(NPM_HOST.password.length, 16))} accent="gray" />
-        <Row label="Let's Encrypt" value={NPM_HOST.letsencryptEmail} />
-      </Section>
-
-      {/* ── Stack host ──────────────────────────────────────────────────────── */}
-      <Section title="Stack  (P0W3R — docker-compose host)">
-        <Row label="IP"         value={STACK_HOST.ip} />
-        <Row label="Proxy port" value={String(STACK_HOST.proxyPort)} />
-      </Section>
-
-      {/* ── DNS / DDNS ──────────────────────────────────────────────────────── */}
-      <Section title="DNS / DDNS">
-        <Row label="Root domain"    value={DOMAIN} accent="cyan" />
-        <Row label="ASUS DDNS host" value={DDNS_PROVIDER.hostname} />
-      </Section>
-
-      {/* ── GHCR Token ──────────────────────────────────────────────────────── */}
-      <Section title="GHCR Token  (GitHub Container Registry)">
-        {editMode ? (
-          // ── Inline token editor — TextInput owns typing, cursor, Esc, Ctrl-C ─
+      {/* ── Infrastructure Tab ────────────────────────────────────────────── */}
+      {activeTab === "infra" && (
+        <Box flexDirection="column" gap={1} marginTop={1}>
           <Box gap={1}>
-            <Text dimColor>{"New token".padEnd(20)}</Text>
-            <TextInput
-              active
-              width={42}
-              placeholder="paste token here…"
-              onSubmit={handleSave}
-              onCancel={handleCancel}
+            <MetricCard 
+              label="NPM Port" 
+              value={String(NPM_HOST.port)} 
+              note={NPM_HOST.ip} 
+              tone="success" 
+            />
+            <MetricCard 
+              label="Stack Port" 
+              value={String(STACK_HOST.proxyPort)} 
+              note={STACK_HOST.ip} 
+              tone="accent" 
             />
           </Box>
-        ) : (
-          // ── Token display ───────────────────────────────────────────────
-          <>
-            <Box gap={1}>
-              <Text dimColor>{"Token".padEnd(20)}</Text>
-              {tokenCfg.ghcrToken
-                ? <Text color="white">{maskToken(tokenCfg.ghcrToken)}</Text>
-                : <Text dimColor color="red">not configured</Text>
-              }
-              {saved && <Text color="green">  ✓ saved</Text>}
-            </Box>
-            <Box gap={1}>
-              <Text dimColor>{"30-day timer".padEnd(20)}</Text>
-              <Text color={tColor}>{tLabel}</Text>
-            </Box>
-          </>
-        )}
-      </Section>
 
-      {/* ── Zones ───────────────────────────────────────────────────────────── */}
-      <Section title="Zones">
-        {zones.map((z) => (
-          <Box key={z.key} gap={1}>
-            <Text dimColor>{z.key.padEnd(8)}</Text>
-            <Text color="white">{z.domain.padEnd(28)}</Text>
-            <Text dimColor>{z.container}</Text>
-          </Box>
-        ))}
-        <Box marginTop={0} gap={1}>
-          <Text dimColor>{"GHCR user".padEnd(8)}</Text>
-          <Text color="gray">{GHCR_USER}</Text>
+          <SectionFrame title="Nginx Proxy Manager" tone="suggestion">
+            <Row label="UI URL" value={NPM_HOST.uiUrl} accent="cyan" />
+            <Row label="API URL" value={NPM_HOST.apiUrl} accent="cyan" />
+            <Row label="Admin Email" value={NPM_HOST.email} />
+            <Row label="Let's Encrypt" value={NPM_HOST.letsencryptEmail} />
+          </SectionFrame>
+
+          <SectionFrame title="Network & DNS" tone="suggestion">
+            <Row label="Root Domain" value={DOMAIN} accent="cyan" />
+            <Row label="DDNS Host" value={DDNS_PROVIDER.hostname} />
+            <Row label="Project Root" value={PROJECT_DIR} />
+          </SectionFrame>
         </Box>
-      </Section>
+      )}
 
+      {/* ── Identity Tab ─────────────────────────────────────────────────── */}
+      {activeTab === "identity" && (
+        <Box flexDirection="column" gap={1} marginTop={1}>
+          <Box gap={1}>
+            <MetricCard 
+              label="GHCR Token" 
+              value={tokenCfg.ghcrToken ? "Active" : "Missing"} 
+              note={tLabel} 
+              tone={tColor as any} 
+              trend={sparkline(tokenHistory)}
+            />
+            <MetricCard 
+              label="GitHub User" 
+              value={GHCR_USER} 
+              note="repository owner" 
+              tone="accent" 
+            />
+          </Box>
+
+          <SectionFrame title="Token Management" tone="suggestion">
+            {editMode ? (
+              <Box gap={1} paddingY={1}>
+                <Text color="yellow">Paste PAT: </Text>
+                <SearchInput
+                  active
+                  width={42}
+                  placeholder="ghp_..."
+                  onSubmit={handleSave}
+                  onCancel={handleCancel}
+                />
+              </Box>
+            ) : (
+              <Box flexDirection="column" gap={1}>
+                <Box gap={2}>
+                  <Text dimColor>{"Current PAT".padEnd(16)}</Text>
+                  <Text>{tokenCfg.ghcrToken ? maskToken(tokenCfg.ghcrToken) : "Not Configured"}</Text>
+                  {saved && <Text color="green">✓ saved</Text>}
+                </Box>
+                <ProgressLine 
+                  label="Token Validity" 
+                  ratio={tRatio} 
+                  meta={tLabel} 
+                  tone={tColor as any} 
+                  width={dw - 24} 
+                />
+              </Box>
+            )}
+          </SectionFrame>
+        </Box>
+      )}
+
+      {/* ── Zones Tab ────────────────────────────────────────────────────── */}
+      {activeTab === "zones" && (
+        <Box flexDirection="column" gap={1} marginTop={1}>
+          <SectionFrame title={`Managed Zones (${zones.length})`} tone="suggestion">
+            {zones.length === 0 ? (
+              <Text dimColor>No zones scaffolded yet.</Text>
+            ) : (
+              zones.map((z) => (
+                <Box key={z.key} gap={2}>
+                  <Text bold color="cyan">{z.key.padEnd(12)}</Text>
+                  <Text color="white">{z.domain.padEnd(24)}</Text>
+                  <Text dimColor>{z.container}</Text>
+                </Box>
+              ))
+            )}
+          </SectionFrame>
+        </Box>
+      )}
+
+      <Box flexGrow={1} />
       <Divider width={dw} />
 
       {/* ── Key hints ───────────────────────────────────────────────────────── */}
@@ -279,9 +319,11 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
           editMode
             ? [{ k: "↵", label: "save token" }, { k: "esc/^C", label: "cancel" }]
             : [
-                { k: "t",       label: "edit GHCR token"       },
-                { k: "e",       label: "open config in editor"  },
-                { k: "esc / q", label: "back"                   },
+                ...(activeTab === "identity" ? [{ k: "t", label: "edit token" }] : []),
+                { k: "1-3",     label: "switch tabs"           },
+                { k: "Tab",     label: "cycle tabs"            },
+                { k: "e",       label: "open file in editor"   },
+                { k: "esc / q", label: "back"                  },
               ]
         }
         marginTop={0}

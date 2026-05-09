@@ -60,7 +60,16 @@ import { OperationOverlay }                from "./OperationOverlay.tsx";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 import { linesToClipboard }                from "./utils.ts";
+import { popoutOpOutput, popoutLogTail } from "../utils/terminalPopout.ts";
 import { backupDatabase }                  from "./db-api.ts";
+import {
+  startCoreStack, stopCoreStack, restartCoreStack,
+  healCoreStack, verifyCoreStack, deleteRuntimeInstance,
+}                                          from "./db-api.ts";
+import { snapshotInstance, restoreInstance } from "./zone/snapshot.ts";
+import { loadRegistry }                     from "./zone/supabase-factory.ts";
+import type { RuntimeInstance }            from "./zone/supabase-factory.ts";
+import { InstanceWizardScreen }            from "./screens/InstanceWizardScreen.tsx";
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -76,13 +85,14 @@ export function App() {
     navigate, navigateReplace, goBack, goRoot,
     tokenEditing, setTokenEditing,
   } = useAppRouter();
+  const statusPollingActive = view === "welcome" || view === "core" || view === "zones";
 
   // ── Domain state ──────────────────────────────────────────────────────────
   const {
     zones, setZones, zonesLoading,
     zoneStatuses, proxyStatus, refreshZones,
     infraResults,  infraChecking, checkInfra,
-  } = useZoneManager({ addNotification });
+  } = useZoneManager({ addNotification, pollEnabled: statusPollingActive });
 
   // ── Background operations ──────────────────────────────────────────────────
   const {
@@ -93,6 +103,7 @@ export function App() {
     anyBusy,
     logProcRef,   logOpIdRef,
     runOp,        runCreateZone,   openLogs,
+    registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
 
   // ── goHome — overlay emergency exit: kills log, collapses to welcome ──────
@@ -148,6 +159,32 @@ export function App() {
       }
       if (key.return && !overlayOp?.busy) { setOverlayOpId(null); return; }
       if (input === "c" && overlayOp) { copy(linesToClipboard(overlayOp.lines)); return; }
+      // [O] — pop out to a new terminal window
+      if (input === "O" && overlayOp) {
+        if (overlayOp.isLog && overlayOp.lines.length > 0) {
+          // Log tail: kill the internal stream, pop out to a fresh docker logs.
+          const containerMatch = overlayOp.lines[0]?.match(/Streaming logs: (\S+)/);
+          const container = containerMatch?.[1];
+          if (logProcRef.current) {
+            logProcRef.current.kill();
+            logProcRef.current = null;
+          }
+          if (logOpIdRef.current !== null) {
+            setBgOps((prev) =>
+              prev.map((o) => o.id === logOpIdRef.current ? { ...o, busy: false } : o)
+            );
+            logOpIdRef.current = null;
+          }
+          if (container) popoutLogTail(container);
+        } else {
+          // Build/deploy op: write lines to a temp file and pop out a tail.
+          popoutOpOutput(overlayOp.id, overlayOp.title, overlayOp.lines);
+          registerPopout(overlayOp.id);
+        }
+        // Return to main TUI — the popped-out terminal handles the rest.
+        setOverlayOpId(null);
+        return;
+      }
       return;
     }
 
@@ -187,6 +224,7 @@ export function App() {
       if (input === "x") {
         const op = bgOps.find((o) => o.id === stackFocusId);
         if (op && !op.busy) {
+          dismissPopout(op.id);
           const remaining = bgOps.filter((o) => o.id !== stackFocusId);
           setBgOps(remaining);
           setStackFocusId(remaining[remaining.length - 1]?.id ?? null);
@@ -195,10 +233,38 @@ export function App() {
         return;
       }
       if (input === "X") {
+        const done = bgOps.filter((o) => !o.busy);
+        done.forEach((o) => dismissPopout(o.id));
         const running = bgOps.filter((o) => o.busy);
         setBgOps(running);
         setStackFocusId(running[running.length - 1]?.id ?? null);
         if (running.length === 0) setStackOpen(false);
+        return;
+      }
+      // [O] — pop out focused op to a new terminal
+      if (input === "O") {
+        const op = bgOps.find((o) => o.id === stackFocusId);
+        if (op) {
+          if (op.isLog) {
+            // Kill the internal log stream and hand off to external terminal.
+            const containerMatch = op.lines[0]?.match(/Streaming logs: (\S+)/);
+            const container = containerMatch?.[1];
+            if (logProcRef.current) {
+              logProcRef.current.kill();
+              logProcRef.current = null;
+            }
+            if (logOpIdRef.current !== null) {
+              setBgOps((prev) =>
+                prev.map((o) => o.id === logOpIdRef.current ? { ...o, busy: false } : o)
+              );
+              logOpIdRef.current = null;
+            }
+            if (container) popoutLogTail(container);
+          } else {
+            popoutOpOutput(op.id, op.title, op.lines);
+            registerPopout(op.id);
+          }
+        }
         return;
       }
       if (input === "c") {
@@ -343,6 +409,96 @@ export function App() {
               onBackup={() => runOp("DB backup", (o) => backupDatabase(o))}
               onCopy={copy}
               onGoBack={goBack}
+
+              // ── Core lifecycle controls ─────────────────────────────────
+              // These operate on the core unt_* stack (the shared runtime).
+              // For instances, per-instance controls go through onInstanceAction.
+              onStart={() => runOp("Start core stack", async (o) => {
+                const list = await loadRegistry();
+                const core = list[0];   // primary / only core instance
+                if (!core) { o("No registered core instance found in registry."); return 1; }
+                const ok = await startCoreStack(core, o);
+                return ok ? 0 : 1;
+              })}
+              onStop={() => runOp("Stop core stack", async (o) => {
+                const list = await loadRegistry();
+                const core = list[0];
+                if (!core) { o("No registered instance."); return 1; }
+                const ok = await stopCoreStack(core, o);
+                return ok ? 0 : 1;
+              })}
+              onRestart={() => runOp("Restart core stack", async (o) => {
+                const list = await loadRegistry();
+                const core = list[0];
+                if (!core) { o("No registered instance."); return 1; }
+                const ok = await restartCoreStack(core, o);
+                return ok ? 0 : 1;
+              })}
+              onHeal={() => runOp("Heal core stack", async (o) => {
+                const list = await loadRegistry();
+                const core = list[0];
+                if (!core) { o("No registered instance."); return 1; }
+                const ok = await healCoreStack(core, o);
+                return ok ? 0 : 1;
+              })}
+              onVerify={() => runOp("Verify core stack", async (o) => {
+                const list = await loadRegistry();
+                const core = list[0];
+                if (!core) { o("No registered instance."); return 1; }
+                const report = await verifyCoreStack(core, o);
+                o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
+                return report.overall === "down" ? 1 : 0;
+              })}
+
+              // ── Instance controls ─────────────────────────────────
+              onInstanceAction={(action, inst: RuntimeInstance) => {
+                if (action === "restart") {
+                  runOp(`Restart ${inst.name}`, async (o) => {
+                    const ok = await restartCoreStack(inst, o);
+                    return ok ? 0 : 1;
+                  });
+                } else if (action === "stop") {
+                  runOp(`Stop ${inst.name}`, async (o) => {
+                    const ok = await stopCoreStack(inst, o);
+                    return ok ? 0 : 1;
+                  });
+                } else if (action === "delete") {
+                  runOp(`Delete ${inst.name}`, async (o) => {
+                    const ok = await deleteRuntimeInstance(inst, o);
+                    return ok ? 0 : 1;
+                  });
+                } else if (action === "snapshot") {
+                  runOp(`Snapshot ${inst.name}`, async (o) => {
+                    await snapshotInstance(inst, o);
+                    return 0;
+                  });
+                } else if (action === "verify") {
+                  runOp(`Verify ${inst.name}`, async (o) => {
+                    const report = await verifyCoreStack(inst, o);
+                    o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
+                    return report.overall === "down" ? 1 : 0;
+                  });
+                }
+              }}
+
+              // ── Snapshot gallery restore ────────────────────────────────
+              onRestore={(bundle, inst) => runOp(
+                `Restore ${inst.name} ← ${bundle.id}`,
+                async (o) => {
+                  await restoreInstance(bundle.bundlePath, o);
+                  return 0;
+                },
+              )}
+
+              // ── New instance wizard ─────────────────────────────────────
+              onNewInstance={() => navigate("instance-wizard")}
+            />
+          )}
+
+          {view === "instance-wizard" && (
+            <InstanceWizardScreen
+              onDone={(_inst) => { goBack(); }}
+              onCancel={goBack}
             />
           )}
 

@@ -26,6 +26,12 @@ import type { Action }   from "../panels/Action/index.tsx";
 import { restartZone, pullAndUp, reloadProxy } from "../docker.ts";
 import { buildZone, deployZone }               from "../zone-build.ts";
 
+import { useHostMonitor }      from "../hooks/useHostMonitor.ts";
+import { sparkline }           from "../utils/sparkline.ts";
+import { MetricCard }          from "../components/design-system/MetricCard.tsx";
+import { SectionFrame }        from "../components/design-system/SectionFrame.tsx";
+import { Divider }             from "../components/Divider.tsx";
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type StatusMap = Record<string, Status>;
@@ -69,6 +75,7 @@ export function CoreView({
 }: CoreViewProps) {
 
   const coreApp = zones.find(isCoreZone) ?? null;
+  const host = useHostMonitor();
 
   // Rows: 0 = App, 1 = Proxy
   const [selected,       setSelected]       = useState(0);
@@ -168,6 +175,13 @@ export function CoreView({
 
   }, { isActive });
 
+  const formatBytes = (bytes: number) => {
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (actionOpen && activeZone) {
@@ -183,39 +197,61 @@ export function CoreView({
   const appStatus   = coreApp ? (zoneStatuses[coreApp.key] ?? "missing") : "missing";
 
   return (
-    <Box flexDirection="column">
-
-      {/* ── App row ─────────────────────────────────────────────────────── */}
-      <Box paddingX={1} gap={2}>
-        <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
-          {selected === 0 ? "▶" : " "}
-        </Text>
-        <Box width={18}>
-          <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
-            {coreApp?.label ?? "App"}
-          </Text>
-        </Box>
-        <Box width={28}>
-          <Text dimColor={selected !== 0}>{coreApp?.domain ?? "unenter.live"}</Text>
-        </Box>
-        <StatusBadge status={appStatus} />
+    <Box flexDirection="column" gap={1}>
+      
+      {/* Performance NOC */}
+      <Box gap={1} marginBottom={1}>
+        <MetricCard 
+          label="System CPU" 
+          value={`${host.systemCpu.toFixed(1)}%`} 
+          note="host load" 
+          tone={host.systemCpu > 80 ? "error" : host.systemCpu > 50 ? "warning" : "success"}
+          trend={sparkline(host.cpuHistory)}
+        />
+        <MetricCard 
+          label="Host Memory" 
+          value={formatBytes(host.usedMemory)} 
+          note={`${formatBytes(host.freeMemory)} free`} 
+          tone={host.memoryPressure > 0.9 ? "error" : host.memoryPressure > 0.7 ? "warning" : "success"}
+          trend={sparkline(host.memHistory)}
+        />
       </Box>
 
-      {/* ── Proxy row ───────────────────────────────────────────────────── */}
-      <Box paddingX={1} gap={2}>
-        <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
-          {selected === 1 ? "▶" : " "}
-        </Text>
-        <Box width={18}>
-          <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
-            Proxy
-          </Text>
+      <SectionFrame title="Platform Core" tone="suggestion">
+        <Box flexDirection="column">
+          {/* ── App row ─────────────────────────────────────────────────────── */}
+          <Box paddingX={1} gap={2}>
+            <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
+              {selected === 0 ? "▶" : " "}
+            </Text>
+            <Box width={18}>
+              <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
+                {coreApp?.label ?? "App"}
+              </Text>
+            </Box>
+            <Box width={28}>
+              <Text dimColor={selected !== 0}>{coreApp?.domain ?? "unenter.live"}</Text>
+            </Box>
+            <StatusBadge status={appStatus} />
+          </Box>
+
+          {/* ── Proxy row ───────────────────────────────────────────────────── */}
+          <Box paddingX={1} gap={2}>
+            <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
+              {selected === 1 ? "▶" : " "}
+            </Text>
+            <Box width={18}>
+              <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
+                Proxy
+              </Text>
+            </Box>
+            <Box width={28}>
+              <Text dimColor={selected !== 1}>unt_proxy  ·  :3080</Text>
+            </Box>
+            <StatusBadge status={proxyStatus} />
+          </Box>
         </Box>
-        <Box width={28}>
-          <Text dimColor={selected !== 1}>unt_proxy  ·  :3080</Text>
-        </Box>
-        <StatusBadge status={proxyStatus} />
-      </Box>
+      </SectionFrame>
 
       <KeyHints hints={[
         { k: "↑↓", label: "navigate" },

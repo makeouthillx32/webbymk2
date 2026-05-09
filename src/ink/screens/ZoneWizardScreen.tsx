@@ -27,7 +27,7 @@ import {
   type DerivedZone, type LayoutType, type AppFooterType, type DynamicSection,
 } from "../zone-scaffold.ts";
 import { Divider }          from "../components/Divider.tsx";
-import { TextInput }        from "../components/TextInput.tsx";
+import { SearchInput }      from "../components/SearchBox.tsx";
 import { SelectMenu }       from "../components/SelectMenu.tsx";
 import { MultiSelectMenu }  from "../components/MultiSelectMenu.tsx";
 import { useWidths }        from "../hooks/useTermWidth.ts";
@@ -102,13 +102,33 @@ function PipelinePreview() {
 }
 
 function formatZoneSummaryCopy(z: DerivedZone): string {
-  return [
-    `layout: ${z.layoutType}`,
-    `domain: ${z.domain}`,
-    `service: ${z.service}`,
-    `container: ${z.container}`,
-    `dev port: :${z.devPort}`,
-  ].join("\n");
+  const lines: string[] = [
+    "Zone Summary",
+    `  layout:    ${z.layoutType}${z.layoutType === "app" ? `  footer: ${z.appFooter}` : ""}`,
+    `  domain:    ${z.domain}`,
+    `  service:   ${z.service}`,
+    `  container: ${z.container}`,
+    `  image:     ${z.image}`,
+    `  dev port:  :${z.devPort}`,
+  ];
+
+  if (z.dynamicSections.length > 0) {
+    const routes = z.dynamicSections.map((ds) => ds.routePath).join("  ");
+    lines.push(`  routes:    ${routes}`);
+  }
+
+  lines.push(
+    "",
+    "Pipeline:",
+    "  -> scaffold        create files + compose + register in DB",
+    "  -> build & push    docker build -> push to GHCR",
+    "  -> deploy          docker compose pull + up",
+    "  -> reload proxy    force-recreate proxy with new UPSTREAM_*",
+    "  -> wait for live   poll container until healthy",
+    "  -> NPM cert        create proxy host + Let's Encrypt cert",
+  );
+
+  return lines.join("\n");
 }
 
 // ── Layout options shaped for SelectMenu ──────────────────────────────────────
@@ -224,7 +244,7 @@ export function ZoneWizardScreen({ onDone, onCancel, copy, didCopy }: ZoneWizard
         <Box flexDirection="column" marginBottom={1}>
           <Box gap={2}>
             <Text dimColor>Zone key  </Text>
-            <TextInput
+            <SearchInput
               active
               width={36}
               placeholder="e.g. shop"
@@ -248,7 +268,7 @@ export function ZoneWizardScreen({ onDone, onCancel, copy, didCopy }: ZoneWizard
         <Box flexDirection="column" marginBottom={1}>
           <Box gap={2}>
             <Text dimColor>Label     </Text>
-            <TextInput
+            <SearchInput
               active
               width={36}
               placeholder={keyVal.charAt(0).toUpperCase() + keyVal.slice(1)}

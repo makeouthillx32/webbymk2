@@ -48,3 +48,5 @@ yarn-error.log*
 errors.txt
 lastbuildlogs.ps
 
+# agents
+.agents/

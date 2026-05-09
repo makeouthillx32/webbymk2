@@ -16,7 +16,7 @@
 // handleNpmToggle has moved into NpmPanel (self-contained now).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 import type { Zone }          from "../../config/zones.ts";
 import type { Status }        from "../docker.ts";
@@ -34,11 +34,24 @@ type InfraMap  = Record<number, ServiceResult>;
 
 interface ZoneManagerParams {
   addNotification: (msg: string, type?: "success" | "error" | "info") => void;
+  pollEnabled?: boolean;
+}
+
+const STATUS_POLL_INTERVAL_MS = Number(process.env["POLL_INTERVAL_MS"]) || 10_000;
+
+function sameStatusMap(a: StatusMap, b: StatusMap): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return bKeys.every((key) => a[key] === b[key]);
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useZoneManager({ addNotification: _addNotification }: ZoneManagerParams) {
+export function useZoneManager({
+  addNotification: _addNotification,
+  pollEnabled = true,
+}: ZoneManagerParams) {
 
   // ── Zone definitions via useResource ──────────────────────────────────────
   const {
@@ -51,19 +64,26 @@ export function useZoneManager({ addNotification: _addNotification }: ZoneManage
   // ── Docker status polling ──────────────────────────────────────────────────
   const [zoneStatuses, setZoneStatuses] = useState<StatusMap>({});
   const [proxyStatus,  setProxyStatus]  = useState<Status>("missing");
+  const pollingRef = useRef(false);
 
   const refreshZones = useCallback(async () => {
-    if (zones.length === 0) return;
-    const { zoneStatuses: zs, proxyStatus: ps } = await pollAll(zones);
-    setZoneStatuses(zs);
-    setProxyStatus(ps);
-  }, [zones]);
+    if (!pollEnabled || zones.length === 0 || pollingRef.current) return;
+    pollingRef.current = true;
+    try {
+      const { zoneStatuses: zs, proxyStatus: ps } = await pollAll(zones);
+      setZoneStatuses((prev) => sameStatusMap(prev, zs) ? prev : zs);
+      setProxyStatus((prev) => prev === ps ? prev : ps);
+    } finally {
+      pollingRef.current = false;
+    }
+  }, [zones, pollEnabled]);
 
   useEffect(() => {
+    if (!pollEnabled) return;
     refreshZones();
-    const id = setInterval(refreshZones, 5_000);
+    const id = setInterval(refreshZones, STATUS_POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [refreshZones]);
+  }, [refreshZones, pollEnabled]);
 
   // ── Infra health checks ────────────────────────────────────────────────────
   const [infraResults,  setInfraResults]  = useState<InfraMap>({});

@@ -1,0 +1,15 @@
+{
+  "_comment": "SANDBOX CONFIG - FOR TESTING ONLY",
+  "domain": "sandbox.unenter.live",
+  "npm": {
+    "ip": "127.0.0.1",
+    "port": 81,
+    "email": "sandbox@unenter.live",
+    "password": "password",
+    "leEmail": "sandbox@unenter.live"
+  },
+  "stack": {
+    "ip": "127.0.0.1",
+    "proxyPort": 3080
+  }
+}

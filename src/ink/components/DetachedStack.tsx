@@ -101,7 +101,7 @@ export function DetachedStack({ ops, focusedId, didCopy }: DetachedStackProps) {
         </Box>
         <Box gap={2}>
           {rest.length > 0 && <Text dimColor>[↑↓] switch</Text>}
-          <Text dimColor>[o] hide  [↵] full</Text>
+          <Text dimColor>[o] hide  [O] pop out  [↵] full</Text>
         </Box>
       </Box>
 
@@ -143,6 +143,7 @@ export function DetachedStack({ ops, focusedId, didCopy }: DetachedStackProps) {
         {doneCount > 0 && <Text dimColor>[x] dismiss focused</Text>}
         {doneCount > 1  && <Text dimColor>[X] clear all done</Text>}
         <Text dimColor>[c] copy log</Text>
+        <Text dimColor>[O] pop out</Text>
         {didCopy && <Text color="green">✓ copied</Text>}
       </Box>
 

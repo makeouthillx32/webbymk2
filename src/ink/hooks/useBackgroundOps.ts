@@ -32,6 +32,7 @@ import { spawnLogTail }          from "../docker.ts";
 import { drainStream }           from "../utils.ts";
 import { loadZones }             from "../zone-store.ts";
 import { createZonePipeline }    from "../zone-pipeline.ts";
+import { appendPopoutLines, cleanupPopoutFile } from "../../utils/terminalPopout.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ export function useBackgroundOps({
   const opIdRef    = useRef(0);
   const logOpIdRef = useRef<number | null>(null);
   const logProcRef = useRef<ChildProcess | null>(null);
+  const popoutOps  = useRef(new Set<number>());  // ops popped out to external terminals
 
   const [bgOps,        setBgOps]        = useState<StackOp[]>([]);
   const [overlayOpId,  setOverlayOpId]  = useState<number | null>(null);
@@ -83,12 +85,17 @@ export function useBackgroundOps({
       }
     });
 
-    const addLine = (l: string) =>
+    const addLine = (l: string) => {
       setBgOps((prev) =>
         prev.map((o) =>
           o.id === id ? { ...o, lines: [...o.lines.slice(-300), l] } : o
         )
       );
+      // If this op has been popped out, also write to its external terminal file.
+      if (popoutOps.current.has(id)) {
+        appendPopoutLines(id, [l]);
+      }
+    };
 
     return { id, addLine };
   }, []);
@@ -171,6 +178,16 @@ export function useBackgroundOps({
     drainStream(proc.stderr!, addLine);
   }, [_startOp]);
 
+  // ── Pop-out terminal management ────────────────────────────────────────────
+  const registerPopout = useCallback((opId: number) => {
+    popoutOps.current.add(opId);
+  }, []);
+
+  const dismissPopout = useCallback((opId: number) => {
+    popoutOps.current.delete(opId);
+    cleanupPopoutFile(opId);
+  }, []);
+
   // ──────────────────────────────────────────────────────────────────────────
   return {
     bgOps,         setBgOps,
@@ -183,5 +200,6 @@ export function useBackgroundOps({
     runOp,
     runCreateZone,
     openLogs,
+    registerPopout, dismissPopout,
   };
 }

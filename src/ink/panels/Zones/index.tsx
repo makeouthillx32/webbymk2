@@ -20,12 +20,14 @@ interface ZonesPanelProps {
   zones:        Zone[];
   zoneStatuses: StatusMap;
   selected:     number;
+  emptyMessage?: string;
 }
 
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
   { k: "↑↓", label: "navigate"        },
+  { k: "/",  label: "search"          },
   { k: "↵",  label: "actions"         },
   { k: "l",  label: "logs"            },
   { k: "n",  label: "new zone"        },
@@ -38,7 +40,12 @@ const HINTS = [
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function ZonesPanel({ zones, zoneStatuses, selected }: ZonesPanelProps) {
+export function ZonesPanel({
+  zones,
+  zoneStatuses,
+  selected,
+  emptyMessage = "No zones yet — press [n] to create one",
+}: ZonesPanelProps) {
   return (
     <Box flexDirection="column">
 
@@ -65,7 +72,7 @@ export function ZonesPanel({ zones, zoneStatuses, selected }: ZonesPanelProps) {
           })
         : (
           <Box paddingX={2} marginTop={1}>
-            <Text dimColor>No zones yet — press [n] to create one</Text>
+            <Text dimColor>{emptyMessage}</Text>
           </Box>
         )
       }

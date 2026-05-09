@@ -48,6 +48,158 @@ export const SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ??
   process.env.SERVICE_ROLE_KEY ?? "";
 
+// ── Extended connection constants ─────────────────────────────────────────────
+
+/**
+ * Studio dashboard base URL.
+ * Uses STUDIO_URL env var if set; otherwise falls back to localhost:STUDIO_PORT.
+ * Uses `localhost` (not 127.0.0.1) — Supabase Studio binds to localhost and
+ * on Windows the two don't always resolve the same way.
+ * Default port is 3002 (defined in docker-compose, not shared with Kong).
+ */
+const STUDIO_PORT = process.env.STUDIO_PORT ?? "3002";
+const DEFAULT_STUDIO_URL = `http://localhost:${STUDIO_PORT}`;
+const STUDIO_URL_OVERRIDE = process.env.STUDIO_URL?.replace(/\/+$/, "");
+
+export const STUDIO_URL =
+  STUDIO_URL_OVERRIDE && !STUDIO_URL_OVERRIDE.includes(`:${KONG_PORT}`)
+    ? STUDIO_URL_OVERRIDE
+    : DEFAULT_STUDIO_URL;
+
+/** Studio project URL for the core runtime. */
+export const STUDIO_PROJECT_URL =
+  `${STUDIO_URL}/project/${process.env.STUDIO_PROJECT ?? "default"}`;
+
+export const STUDIO_MCP_URL =
+  `${STUDIO_PROJECT_URL}?showConnect=true&connectTab=mcp`;
+
+/**
+ * Build a Studio project URL for any instance's studio port.
+ * Uses localhost so the URL works on Windows regardless of IPv4/IPv6 loopback binding.
+ */
+export function instanceStudioUrl(studioPort: number | string): string {
+  return `http://localhost:${studioPort}/project/default`;
+}
+
+export function instanceStudioMcpUrl(studioPort: number | string): string {
+  return `${instanceStudioUrl(studioPort)}?showConnect=true&connectTab=mcp`;
+}
+
+/** Host-mapped Postgres port. Default 5432. */
+export const POSTGRES_PORT = process.env.POSTGRES_PORT ?? "5432";
+
+/** Postgres password from env (may be empty if the TUI process doesn't load docker .env). */
+export const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD ?? "";
+
+/** Direct Postgres connection string for the core unt_db container. */
+export function postgresConnStr(password?: string): string {
+  const pw = password ?? POSTGRES_PASSWORD;
+  const masked = pw ? pw : "***";
+  return `postgresql://postgres:${masked}@127.0.0.1:${POSTGRES_PORT}/postgres`;
+}
+
+// ── Rich copy text builders ───────────────────────────────────────────────────
+
+/**
+ * Build the full connection info sheet — suitable for pasting into docs,
+ * a README, or an AI tool context window.
+ *
+ * Truncates keys at 80 chars to keep the output readable in most editors.
+ */
+export function buildConnectionSheet(opts: {
+  label?:    string;
+  kongUrl?:  string;
+  studioUrl?: string;
+  studioMcpUrl?: string;
+  anonKey?:  string;
+  svcKey?:   string;
+  pgConn?:   string;
+} = {}): string {
+  const label     = opts.label     ?? "Supabase Core Runtime";
+  const kongUrl   = opts.kongUrl   ?? KONG_URL;
+  const studioUrl = opts.studioUrl ?? STUDIO_PROJECT_URL;
+  const studioMcpUrl = opts.studioMcpUrl ?? STUDIO_MCP_URL;
+  const anon      = opts.anonKey   ?? ANON_KEY;
+  const svc       = opts.svcKey    ?? SERVICE_KEY;
+  const pg        = opts.pgConn    ?? postgresConnStr();
+
+  const truncate = (s: string, n = 80) =>
+    s.length > n ? s.slice(0, n) + "..." : s;
+
+  return [
+    `== ${label} — Connection Info ==`,
+    "",
+    `Studio      ${studioUrl}`,
+    `Studio MCP  ${studioMcpUrl}`,
+    `API (Kong)  ${kongUrl}`,
+    `REST        ${kongUrl}/rest/v1/`,
+    `Auth        ${kongUrl}/auth/v1/`,
+    `Storage     ${kongUrl}/storage/v1/`,
+    "",
+    `Postgres    ${pg}`,
+    "",
+    `ANON_KEY`,
+    truncate(anon || "(not loaded — check .env)"),
+    "",
+    `SERVICE_ROLE_KEY`,
+    truncate(svc || "(not loaded — check .env)"),
+    "",
+    `== MCP Config (postgres direct) ==`,
+    JSON.stringify({
+      mcpServers: {
+        "supabase-local": {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-postgres", pg],
+        },
+      },
+    }, null, 2),
+    "",
+    `== MCP Config (Supabase API) ==`,
+    JSON.stringify({
+      mcpServers: {
+        "supabase-api": {
+          command: "npx",
+          args: ["-y", "@supabase/mcp-server-supabase@latest"],
+          env: {
+            SUPABASE_URL:              kongUrl,
+            SUPABASE_SERVICE_ROLE_KEY: svc || "(paste key here)",
+          },
+        },
+      },
+    }, null, 2),
+  ].join("\n");
+}
+
+/**
+ * Build just the MCP config block — for quick paste into claude_desktop_config.json.
+ */
+export function buildMcpConfig(opts: {
+  kongUrl?: string;
+  svcKey?:  string;
+  pgConn?:  string;
+} = {}): string {
+  const kongUrl = opts.kongUrl ?? KONG_URL;
+  const svc     = opts.svcKey  ?? SERVICE_KEY;
+  const pg      = opts.pgConn  ?? postgresConnStr();
+
+  return JSON.stringify({
+    mcpServers: {
+      "supabase-local": {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-postgres", pg],
+      },
+      "supabase-api": {
+        command: "npx",
+        args: ["-y", "@supabase/mcp-server-supabase@latest"],
+        env: {
+          SUPABASE_URL:              kongUrl,
+          SUPABASE_SERVICE_ROLE_KEY: svc || "(paste key here)",
+        },
+      },
+    },
+  }, null, 2);
+}
+
 export const ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
   process.env.ANON_KEY ?? "";
@@ -291,4 +443,326 @@ export async function listStorageBuckets(): Promise<BucketInfo[]> {
     clearTimeout(timer);
     throw e;
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Core Runtime Lifecycle Engine — Phase 2
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// These functions manage the full lifecycle of a RuntimeInstance:
+//
+//   startCoreStack()    — docker compose up -d --remove-orphans
+//   stopCoreStack()     — docker compose stop
+//   restartCoreStack()  — stop → start
+//   healCoreStack()     — detect + recover ghost/dead containers
+//   verifyCoreStack()   — check all containers and return health report
+//
+// Each accepts a RuntimeInstance (from supabase-factory.ts registry) so the
+// control plane always knows exactly which compose project it is talking to.
+// Progress is streamed via the OnLine callback (OperationOverlay compatible).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { RuntimeInstance, HealthState } from "./zone/supabase-factory.ts";
+import { updateInstanceStatus }              from "./zone/supabase-factory.ts";
+
+type OnLine = (line: string) => void;
+
+// ── Compose runner ────────────────────────────────────────────────────────────
+// Streams stdout + stderr to onLine; resolves with exit code.
+
+function composeStream(
+  args:   string[],
+  cwd:    string,
+  onLine: OnLine,
+  timeout = 300_000,
+): Promise<number> {
+  return new Promise((resolve) => {
+    const { spawn: spawnProc } = require("child_process") as typeof import("child_process");
+    const proc = spawnProc("docker", ["compose", ...args], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env:   DOCKER_ENV,
+    });
+
+    const timer = setTimeout(() => {
+      onLine("⏱ Timeout — killing compose process");
+      proc.kill();
+    }, timeout);
+
+    proc.stdout!.on("data", (d: Buffer) => {
+      d.toString().split("\n").filter(Boolean).forEach(onLine);
+    });
+    proc.stderr!.on("data", (d: Buffer) => {
+      d.toString().split("\n").filter(Boolean).forEach((l) => onLine(`  ${l}`));
+    });
+    proc.on("close",  (code) => { clearTimeout(timer); resolve(code ?? 1); });
+    proc.on("error",  ()     => { clearTimeout(timer); onLine("✗ docker compose not found"); resolve(1); });
+  });
+}
+
+// ── startCoreStack ────────────────────────────────────────────────────────────
+
+/**
+ * Start a runtime instance.
+ * Runs: docker compose up -d --remove-orphans
+ * Updates registry status to "active" on success, "error" on failure.
+ */
+export async function startCoreStack(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`▶ Starting  ${instance.name}  (${instance.slug})`);
+  onLine(`  compose dir: ${instance.dockerPath}`);
+
+  await updateInstanceStatus(instance.id, { status: "creating" });
+
+  const code = await composeStream(
+    ["up", "-d", "--remove-orphans"],
+    instance.dockerPath,
+    onLine,
+    300_000,
+  );
+
+  if (code !== 0) {
+    onLine(`✗ docker compose up failed (exit ${code})`);
+    await updateInstanceStatus(instance.id, { status: "error", healthState: "down" });
+    return false;
+  }
+
+  onLine(`✓ Stack started`);
+  await updateInstanceStatus(instance.id, { status: "active", healthState: "unknown" });
+  return true;
+}
+
+// ── stopCoreStack ─────────────────────────────────────────────────────────────
+
+/**
+ * Stop a runtime instance (containers stopped, volumes preserved).
+ * Runs: docker compose stop
+ */
+export async function stopCoreStack(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`■ Stopping  ${instance.name}  (${instance.slug})`);
+
+  const code = await composeStream(
+    ["stop"],
+    instance.dockerPath,
+    onLine,
+    120_000,
+  );
+
+  if (code !== 0) {
+    onLine(`⚠ docker compose stop returned exit ${code} — containers may already be stopped`);
+  } else {
+    onLine(`✓ Stack stopped`);
+  }
+
+  await updateInstanceStatus(instance.id, { status: "stopped", healthState: "down" });
+  return code === 0;
+}
+
+// ── restartCoreStack ──────────────────────────────────────────────────────────
+
+/** Stop then start a runtime instance. */
+export async function restartCoreStack(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`↺ Restarting  ${instance.name}`);
+  await stopCoreStack(instance, onLine);
+  return startCoreStack(instance, onLine);
+}
+
+// ── healCoreStack ─────────────────────────────────────────────────────────────
+
+/**
+ * Detect and recover a degraded runtime:
+ *   1. List all containers for the compose project
+ *   2. Identify ghost containers (exited / dead / missing networks)
+ *   3. Attempt docker compose up -d --remove-orphans to rehydrate
+ *
+ * Future extensions: volume integrity check, checksum validation, snapshot
+ * fallback recovery.
+ */
+export async function healCoreStack(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`⚕ Healing  ${instance.name}  (${instance.slug})`);
+
+  // Step 1 — audit current state
+  const { out: psOut } = await dockerRun([
+    "compose", "--project-name", instance.slug,
+    "ps", "--format", "json",
+  ]);
+
+  let ghosts = 0;
+  let missing = 0;
+
+  if (psOut) {
+    try {
+      // docker compose ps --format json can emit one JSON object per line
+      const rows = psOut
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(Boolean) as Array<{ State: string; Name: string }>;
+
+      for (const row of rows) {
+        if (row.State === "exited" || row.State === "dead") {
+          onLine(`  ⚠ Ghost container: ${row.Name}  (${row.State})`);
+          ghosts++;
+        }
+      }
+    } catch {
+      onLine(`  ⚠ Could not parse compose ps output`);
+    }
+  } else {
+    onLine(`  ⚠ No containers found for project ${instance.slug}`);
+    missing++;
+  }
+
+  if (ghosts === 0 && missing === 0) {
+    onLine(`  ✓ No ghost containers detected`);
+  }
+
+  // Step 2 — check for missing networks
+  const { out: netOut } = await dockerRun([
+    "network", "ls", "--filter", `name=${instance.slug}`, "--format", "{{.Name}}",
+  ]);
+  if (!netOut.includes(instance.slug)) {
+    onLine(`  ⚠ Compose network missing — will be recreated on up`);
+  }
+
+  // Step 3 — rehydrate
+  onLine(`  ↺ Running docker compose up -d --remove-orphans to rehydrate...`);
+  const code = await composeStream(
+    ["up", "-d", "--remove-orphans"],
+    instance.dockerPath,
+    onLine,
+    300_000,
+  );
+
+  if (code !== 0) {
+    onLine(`✗ Heal failed (exit ${code}) — manual intervention may be required`);
+    await updateInstanceStatus(instance.id, { status: "error", healthState: "down" });
+    return false;
+  }
+
+  onLine(`✓ Heal complete — stack rehydrated`);
+  await updateInstanceStatus(instance.id, { status: "active", healthState: "unknown" });
+  return true;
+}
+
+// ── verifyCoreStack ───────────────────────────────────────────────────────────
+
+export interface VerifyReport {
+  slug:       string;
+  overall:    HealthState;
+  containers: Array<{ name: string; state: string; health: string }>;
+  runningCount: number;
+  totalCount:   number;
+}
+
+/**
+ * Inspect all containers in a runtime instance and return a health report.
+ * Does not modify registry state — purely observational.
+ */
+export async function verifyCoreStack(
+  instance: RuntimeInstance,
+  onLine?:  OnLine,
+): Promise<VerifyReport> {
+  const log = onLine ?? (() => {});
+  log(`🔍 Verifying  ${instance.name}  (${instance.slug})`);
+
+  const { out: psOut, code } = await dockerRun([
+    "compose", "--project-name", instance.slug,
+    "ps", "--format", "json",
+  ]);
+
+  if (code !== 0 || !psOut) {
+    log(`  ✗ No containers found`);
+    const report: VerifyReport = {
+      slug: instance.slug, overall: "down",
+      containers: [], runningCount: 0, totalCount: 0,
+    };
+    await updateInstanceStatus(instance.id, { healthState: "down" });
+    return report;
+  }
+
+  const rows = psOut
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter(Boolean) as Array<{ Name: string; State: string; Health: string }>;
+
+  const containers = rows.map((r) => ({
+    name:   r.Name   ?? "unknown",
+    state:  r.State  ?? "unknown",
+    health: r.Health ?? "",
+  }));
+
+  const running = containers.filter((c) => c.state === "running").length;
+  const total   = containers.length;
+
+  containers.forEach((c) => {
+    const icon = c.state === "running" ? "✓" : "✗";
+    log(`  ${icon} ${c.name.padEnd(40)} ${c.state}${c.health ? ` (${c.health})` : ""}`);
+  });
+
+  const unhealthy = containers.some((c) => c.health === "unhealthy");
+  const allUp     = running === total && total > 0;
+  const overall: HealthState = allUp && !unhealthy ? "healthy"
+    : running > 0                                  ? "degraded"
+    : "down";
+
+  log(`  → ${running}/${total} running  —  ${overall}`);
+
+  await updateInstanceStatus(instance.id, { healthState: overall });
+
+  return { slug: instance.slug, overall, containers, runningCount: running, totalCount: total };
+}
+
+// ── deleteRuntimeInstance ─────────────────────────────────────────────────────
+
+/**
+ * Fully remove a runtime instance:
+ *   1. docker compose down --volumes --remove-orphans
+ *   2. Remove instance directory from filesystem
+ *   3. Remove from JSON registry
+ */
+export async function deleteRuntimeInstance(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`🗑 Deleting  ${instance.name}  (${instance.slug})`);
+
+  // Step 1 — tear down containers + volumes
+  onLine(`  ↓ docker compose down --volumes --remove-orphans`);
+  const code = await composeStream(
+    ["down", "--volumes", "--remove-orphans"],
+    instance.dockerPath,
+    onLine,
+    120_000,
+  );
+  if (code !== 0) {
+    onLine(`  ⚠ compose down returned ${code} — continuing with filesystem cleanup`);
+  }
+
+  // Step 2 — remove instance directory
+  try {
+    const { rm } = await import("fs/promises");
+    await rm(instance.runtimePath, { recursive: true, force: true });
+    onLine(`  ✓ Removed ${instance.runtimePath}`);
+  } catch (e) {
+    onLine(`  ⚠ Could not remove directory: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Step 3 — deregister
+  const { removeFromRegistry } = await import("./zone/supabase-factory.ts");
+  await removeFromRegistry(instance.id);
+  onLine(`✓ Instance deleted and removed from registry`);
+  return true;
 }

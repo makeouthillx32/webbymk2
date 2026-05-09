@@ -90,7 +90,7 @@ export function OperationOverlay({ title, lines, busy, mode, didCopy }: Operatio
 
           {/* Exit hint */}
           <Text dimColor>
-            {busy && mode === "output" ? "[esc] detach  [q] home" : "[esc/q] close"}
+            {busy && mode === "output" ? "[esc] detach  [O] pop out  [q] home" : "[esc/q] close  [O] pop out"}
           </Text>
 
           {/* Copy feedback */}

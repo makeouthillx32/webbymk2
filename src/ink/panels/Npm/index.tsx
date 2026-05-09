@@ -2,16 +2,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // NPM proxy-host panel — lists all Nginx Proxy Manager hosts with their
 // SSL and enabled state.  Fully self-contained: owns its own fetch lifecycle,
-// polling, and cursor navigation via SelectMenu.
+// polling, local search, and cursor navigation.
 //
 // Keyboard:
-//   [↑↓/j/k]  navigate (SelectMenu)
-//   [↵]        toggle enabled / disabled (SelectMenu onSelect)
-//   [c]        copy highlighted domain to clipboard
+//   [↑↓/j/k]  navigate
+//   [/]        search hosts
+//   [↵]        toggle enabled / disabled
+//   [c]        copy selected domain to clipboard
 //   [R]        refresh host list
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput }                   from "ink";
 import {
   npmGetStatus, npmListHosts,
@@ -19,8 +20,9 @@ import {
   type NpmProxyHost, type NpmConnectStatus,
 } from "../../npm-api.ts";
 import { useResource }              from "../../hooks/useResource.ts";
-import { SelectMenu, type SelectOption } from "../../components/SelectMenu.tsx";
 import { KeyHints }                 from "../../components/KeyHint.tsx";
+import { SearchInput }              from "../../components/SearchBox.tsx";
+import { fuzzyFilter }              from "../../utils/fuzzy.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,10 +56,25 @@ function certLabel(host: NpmProxyHost): string {
   return "SSL ✓";
 }
 
+function hostSearchText(host: NpmProxyHost): string {
+  return [
+    ...host.domain_names,
+    host.forward_scheme,
+    host.forward_host,
+    String(host.forward_port),
+    certLabel(host),
+    host.enabled ? "enabled active on" : "disabled inactive off",
+    host.certificate?.provider ?? "",
+    host.certificate?.nice_name ?? "",
+    ...(host.certificate?.domain_names ?? []),
+  ].join(" ");
+}
+
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
   { k: "↑↓/jk", label: "navigate"    },
+  { k: "/",     label: "search"      },
   { k: "↵",     label: "toggle"      },
   { k: "c",     label: "copy domain" },
   { k: "R",     label: "refresh"     },
@@ -70,9 +87,9 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   // Connection status display state — set as a side-effect inside fetchHosts.
   const [connectStat, setConnectStat] = useState<NpmConnectStatus>("connected");
 
-  // Currently highlighted host — updated by SelectMenu's onHighlight.
-  // Used by the [c] copy shortcut without needing to own the cursor index.
-  const [highlighted, setHighlighted] = useState<NpmProxyHost | null>(null);
+  const [selected,     setSelected]     = useState(0);
+  const [searchQuery,  setSearchQuery]  = useState("");
+  const [searchActive, setSearchActive] = useState(false);
 
   // ── Resource: hosts list ──────────────────────────────────────────────────
   const fetchHosts = useCallback(async (): Promise<NpmProxyHost[]> => {
@@ -93,44 +110,84 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
     pollInterval: 10_000,
   });
 
-  // ── Map hosts → SelectOption ──────────────────────────────────────────────
-  // label:  domain name
-  // desc:   enabled indicator · forward target · SSL status
-  const hostOptions = useMemo<SelectOption[]>(() =>
-    hosts.map((h) => ({
-      id:    h.id.toString(),
-      label: h.domain_names[0] ?? "—",
-      desc:  `${h.enabled ? "●" : "○"}  ${h.forward_scheme}://${h.forward_host}:${h.forward_port}  ${certLabel(h)}`,
-    })),
-    [hosts],
+  const visibleHosts = useMemo(
+    () => fuzzyFilter(hosts, searchQuery, hostSearchText),
+    [hosts, searchQuery],
   );
+  const selectedHost = visibleHosts[selected] ?? null;
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query);
+    setSelected(0);
+  }, []);
 
-  /** SelectMenu onHighlight — keep `highlighted` in sync with the cursor. */
-  const handleHighlight = useCallback((opt: SelectOption) => {
-    const host = hosts.find((h) => h.id.toString() === opt.id) ?? null;
-    setHighlighted(host);
-  }, [hosts]);
+  const cancelSearch = useCallback(() => {
+    if (searchQuery) {
+      setSearchQuery("");
+      setSelected(0);
+    }
+    setSearchActive(false);
+  }, [searchQuery]);
 
-  /** SelectMenu onSelect (Enter) — optimistic enable/disable toggle. */
-  const handleSelect = useCallback((opt: SelectOption) => {
-    const host = hosts.find((h) => h.id.toString() === opt.id);
+  useEffect(() => {
+    setSelected((s) => Math.min(s, Math.max(0, visibleHosts.length - 1)));
+  }, [visibleHosts.length]);
+
+  const toggleHost = useCallback((host: NpmProxyHost | null) => {
     if (!host) return;
     setHosts((prev) =>
       prev.map((h) => h.id === host.id ? { ...h, enabled: h.enabled ? 0 : 1 } : h)
     );
     (host.enabled ? npmDisableHost(host.id) : npmEnableHost(host.id)).catch(() => {});
-  }, [hosts, setHosts]);
+  }, [setHosts]);
 
-  // ── Extra keyboard shortcuts not handled by SelectMenu ────────────────────
-  // [q/←] back, [c] copy highlighted domain, [R] force refresh.
-  // These fire alongside SelectMenu's useInput — no conflict since none of
-  // these keys are consumed by SelectMenu when searchable=false.
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // Search focus lets SearchInput own printable characters while this panel
+  // keeps arrow navigation and Enter on the filtered result list.
   useInput((input, key) => {
+    if (searchActive) {
+      if (key.upArrow) {
+        setSelected((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSelected((s) => Math.min(Math.max(0, visibleHosts.length - 1), s + 1));
+        return;
+      }
+      if (key.return) {
+        toggleHost(selectedHost);
+        setSearchActive(false);
+        return;
+      }
+      return;
+    }
+
+    if (key.escape) {
+      if (searchQuery) {
+        setSearchQuery("");
+        setSelected(0);
+        return;
+      }
+      onGoBack();
+      return;
+    }
+
+    if (input === "/") { setSearchActive(true); return; }
+    if (key.upArrow || input === "k") {
+      setSelected((s) => Math.max(0, s - 1));
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      setSelected((s) => Math.min(Math.max(0, visibleHosts.length - 1), s + 1));
+      return;
+    }
+    if (key.return) {
+      toggleHost(selectedHost);
+      return;
+    }
     if (input === "q" || key.leftArrow) { onGoBack(); return; }
     if (input === "c") {
-      const domain = highlighted?.domain_names[0];
+      const domain = selectedHost?.domain_names[0];
       if (domain) onCopy(domain);
       return;
     }
@@ -152,11 +209,36 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
         {!loading && connectStat === "connected" && (
           <>
             <Text dimColor>·</Text>
-            <Text dimColor>{hosts.length} host{hosts.length !== 1 ? "s" : ""}</Text>
+            <Text dimColor>
+              {searchQuery
+                ? `${visibleHosts.length}/${hosts.length} host${hosts.length !== 1 ? "s" : ""}`
+                : `${hosts.length} host${hosts.length !== 1 ? "s" : ""}`}
+            </Text>
           </>
         )}
         {loading && <Text dimColor>  loading…</Text>}
       </Box>
+
+      {hosts.length > 0 && (
+        <Box paddingX={1} marginBottom={1} gap={2}>
+          <SearchInput
+            value={searchQuery}
+            onChange={handleSearchChange}
+            onCancel={cancelSearch}
+            placeholder="Search proxy hosts"
+            prefix="/"
+            width={42}
+            active={searchActive}
+          />
+          <Text dimColor>
+            {searchActive
+              ? "[esc] clear"
+              : searchQuery
+                ? `${visibleHosts.length}/${hosts.length} matches`
+                : "[/] search"}
+          </Text>
+        </Box>
+      )}
 
       {/* ── Error ───────────────────────────────────────────────────────── */}
       {error && (
@@ -170,14 +252,29 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
         <Box paddingX={2}><Text dimColor>No proxy hosts found.</Text></Box>
       )}
 
-      {/* ── Host list via SelectMenu ─────────────────────────────────────── */}
-      {hosts.length > 0 && (
-        <SelectMenu
-          options={hostOptions}
-          onSelect={handleSelect}
-          onHighlight={handleHighlight}
-          searchable={false}
-        />
+      {hosts.length > 0 && visibleHosts.length === 0 && (
+        <Box paddingX={2}><Text dimColor>{`No proxy hosts match "${searchQuery}"`}</Text></Box>
+      )}
+
+      {visibleHosts.length > 0 && (
+        visibleHosts.map((host, i) => {
+          const focused = i === selected;
+          return (
+            <Box key={host.id} gap={2} paddingX={1}>
+              <Text color={focused ? "cyan" : undefined} bold={focused}>
+                {focused ? "›" : " "}
+              </Text>
+              <Box width={28}>
+                <Text color={focused ? "cyan" : undefined} bold={focused}>
+                  {host.domain_names[0] ?? "—"}
+                </Text>
+              </Box>
+              <Text dimColor={!focused} color={focused ? "gray" : undefined}>
+                {host.enabled ? "●" : "○"}  {host.forward_scheme}://{host.forward_host}:{host.forward_port}  {certLabel(host)}
+              </Text>
+            </Box>
+          );
+        })
       )}
 
       <KeyHints hints={HINTS} />

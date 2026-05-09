@@ -186,3 +186,8 @@ const reconciler = createReconciler<
 });
 
 export default reconciler;
+
+// Scroll-bypass timing hook — called by ScrollBox before scheduleRenderFrom
+// so the reconciler can track commit-start timing for frame-gap diagnostics.
+// No-op in this build; present to satisfy the import in components/ScrollBox.tsx.
+export function markCommitStart(): void {}

@@ -13,6 +13,10 @@ export function flushInteractionTime(): void {
   lastInteractionTime = Date.now();
 }
 
+export function updateLastInteractionTime(): void {
+  flushInteractionTime();
+}
+
 /**
  * Gets the timestamp of the last keyboard/mouse interaction.
  */
@@ -33,6 +37,23 @@ export function addSlowOperation(_description: string, _duration: number): void 
 export function getOriginalCwd(): string {
   return process.cwd();
 }
+export function getCwdState(): string {
+  return process.cwd();
+}
 export function getSessionTrustAccepted(): boolean {
   return false;
+}
+export function getInlinePlugins(): string[] {
+  return [];
+}
+
+// Scroll activity suppression — signals background intervals (IDE poll, LSP
+// poll, GCS fetch, orphan check) to skip their next tick during scroll drain.
+// Prevents >100ms frame gaps when background work competes for the event loop.
+let scrollActiveUntil = 0;
+export function markScrollActivity(): void {
+  scrollActiveUntil = Date.now() + 150;
+}
+export function isScrollActive(): boolean {
+  return Date.now() < scrollActiveUntil;
 }

@@ -55,3 +55,5 @@ export function supportsHyperlinks(
 
   return false
 }
+
+export default supportsHyperlinks

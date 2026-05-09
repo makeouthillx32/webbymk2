@@ -99,17 +99,10 @@ export async function composeRun(
 // ── Status ────────────────────────────────────────────────────────────────────
 
 export async function getStatus(container: string): Promise<Status> {
-  // Read both container state and healthcheck status in one call.
-  // .State.Health.Status is empty string when no healthcheck is configured.
-  const { out, code } = await dockerRun([
-    "inspect",
-    "--format", "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}",
-    container,
-  ]);
-  if (code !== 0) return "missing";
+  return (await getStatuses([container]))[container] ?? "missing";
+}
 
-  const [state, health] = out.split("|");
-
+function statusFromInspect(state: string | undefined, health: string | undefined): Status {
   if (state !== "running") return "stopped";
 
   // If a healthcheck exists, surface its state
@@ -120,17 +113,42 @@ export async function getStatus(container: string): Promise<Status> {
   return "running";
 }
 
+export async function getStatuses(
+  containers: readonly string[],
+): Promise<Record<string, Status>> {
+  const statuses: Record<string, Status> = {};
+  for (const container of containers) statuses[container] = "missing";
+  if (containers.length === 0) return statuses;
+
+  try {
+    const { out } = await dockerRun([
+      "inspect",
+      "--format", "{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+      ...containers,
+    ]);
+
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [rawName, state, health] = line.split("|");
+      const name = rawName?.replace(/^\//, "");
+      if (!name || !(name in statuses)) continue;
+      statuses[name] = statusFromInspect(state, health);
+    }
+  } catch {
+    // Docker unavailable: leave all requested containers as "missing".
+  }
+
+  return statuses;
+}
+
 /** Poll all zones + proxy in parallel and return a status map. */
 export async function pollAll(
   zones: Zone[]
 ): Promise<{ zoneStatuses: Record<string, Status>; proxyStatus: Status }> {
-  const [proxyStatus, ...zoneResults] = await Promise.all([
-    getStatus(PROXY.container),
-    ...zones.map((z) => getStatus(z.container)),
-  ]);
+  const statuses = await getStatuses([PROXY.container, ...zones.map((z) => z.container)]);
   const zoneStatuses: Record<string, Status> = {};
-  zones.forEach((z, i) => { zoneStatuses[z.key] = zoneResults[i]; });
-  return { zoneStatuses, proxyStatus };
+  zones.forEach((z) => { zoneStatuses[z.key] = statuses[z.container] ?? "missing"; });
+  return { zoneStatuses, proxyStatus: statuses[PROXY.container] ?? "missing" };
 }
 
 // ── Network pre-flight ────────────────────────────────────────────────────────
