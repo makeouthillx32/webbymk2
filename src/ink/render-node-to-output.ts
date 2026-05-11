@@ -17,9 +17,9 @@ import { isXtermJs } from './terminal.js'
 import { widestLine } from './widest-line.js'
 import wrapText from './wrap-text.js'
 
-// Matches detectXtermJsWheel() in ScrollKeybindingHandler.tsx — the curve
-// and drain must agree on terminal detection. TERM_PROGRAM check is the sync
-// fallback; isXtermJs() is the authoritative XTVERSION-probe result.
+// Scroll acceleration and drain logic must agree on terminal detection.
+// TERM_PROGRAM check is the sync fallback; isXtermJs() is the authoritative
+// XTVERSION-probe result.
 function isXtermJsHost(): boolean {
   return process.env.TERM_PROGRAM === 'vscode' || isXtermJs()
 }

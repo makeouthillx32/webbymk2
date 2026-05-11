@@ -193,7 +193,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <Box justifyContent="space-between" marginBottom={1}>
         <Text bold color="cyan">⚙  Settings</Text>
-        <Text dimColor>unt.ink · local config</Text>
+        <Text dimColor>UNAXIS · local config</Text>
       </Box>
 
       <Tabs

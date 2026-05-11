@@ -29,7 +29,7 @@ import { Breadcrumbs }               from "./Breadcrumbs.tsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PANEL_TABS = ["core", "zones", "npm", "db", "infra"] as const;
+const PANEL_TABS = ["core", "zones", "npm", "db", "infra", "notes"] as const;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -38,6 +38,8 @@ interface AppShellProps {
   view:          string;
   /** Full navigation history — drives the breadcrumb trail */
   history:       readonly View[];
+  /** Internal panel sub-navigation crumbs (set by each panel) */
+  subCrumbs:     string[];
   /** All background operations (running + done) */
   bgOps:         StackOp[];
   /** Whether the DetachedStack pane is visible */
@@ -49,13 +51,27 @@ interface AppShellProps {
   /** True for 1.5 s after [c] copy — forwarded to DetachedStack for flash */
   didCopy:       boolean;
   children:      React.ReactNode;
+
+  // ── Stack keyboard callbacks ───────────────────────────────────────────────
+  // Threaded through to DetachedStack so it can own useInput while keeping
+  // state management co-located with the data in App.tsx.
+  onStackUp?:         () => void;
+  onStackDown?:       () => void;
+  onStackEnter?:      () => void;
+  onStackDismiss?:    () => void;
+  onStackDismissAll?: () => void;
+  onStackPopout?:     () => void;
+  onStackCopy?:       () => void;
+  onStackClose?:       () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function AppShell({
-  view, history, bgOps, stackOpen, stackFocusId,
+  view, history, subCrumbs, bgOps, stackOpen, stackFocusId,
   notifications, didCopy, children,
+  onStackUp, onStackDown, onStackEnter,
+  onStackDismiss, onStackDismissAll, onStackPopout, onStackCopy, onStackClose,
 }: AppShellProps) {
   const isPanelView = (PANEL_TABS as readonly string[]).includes(view);
   const th          = useTermHeight();
@@ -70,7 +86,7 @@ export function AppShell({
       <Header ops={bgOps} stackOpen={stackOpen} />
 
       {/* ── Breadcrumb trail (hidden at root / welcome) ──────────────────── */}
-      <Breadcrumbs history={history} />
+      <Breadcrumbs history={history} subCrumbs={subCrumbs} />
 
       {/* ── Panel tabs (hidden on welcome / settings / wizard) ──────────── */}
       {isPanelView && (
@@ -95,6 +111,14 @@ export function AppShell({
           ops={bgOps}
           focusedId={stackFocusId}
           didCopy={didCopy}
+          onUp={onStackUp}
+          onDown={onStackDown}
+          onEnter={onStackEnter}
+          onDismiss={onStackDismiss}
+          onDismissAll={onStackDismissAll}
+          onPopout={onStackPopout}
+          onCopy={onStackCopy}
+          onClose={onStackClose}
         />
       )}
 

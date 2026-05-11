@@ -17,14 +17,19 @@
 // creating the visual depth of papers stacked on top of each other.
 //
 // Key hints rendered at bottom:  [↑↓] switch  [↵] full  [x] dismiss  [X] clear done  [c] copy log
+//
+// Keyboard ownership: DetachedStack owns all Stack-context keys while mounted.
+// It only mounts when stackOpen && ops.length > 0, so its useInput is naturally
+// scoped — no keys fire when the stack pane is hidden.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React                          from "react";
-import { Box, Text }                  from "ink";
-import { Divider }                    from "./Divider.tsx";
-import { Spinner }                    from "./Spinner.tsx";
-import { LoadingState }               from "./design-system/LoadingState.tsx";
-import { useWidths }                  from "../hooks/useTermWidth.ts";
+import React                                   from "react";
+import { Box, Text, useInput }                 from "ink";
+import { Divider }                             from "./Divider.tsx";
+import { Spinner }                             from "./Spinner.tsx";
+import { LoadingState }                        from "./design-system/LoadingState.tsx";
+import { useWidths }                           from "../hooks/useTermWidth.ts";
+import { useRegisterKeybindingContext }        from "../KeybindingContext.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,10 +42,22 @@ export interface StackOp {
 }
 
 interface DetachedStackProps {
-  ops:       StackOp[];
-  focusedId: number | null;   // id of the op shown expanded
+  ops:           StackOp[];
+  focusedId:     number | null;   // id of the op shown expanded
   /** True for 1.5 s after a successful [c] copy — triggers inline flash */
-  didCopy?:  boolean;
+  didCopy?:      boolean;
+
+  // ── Keyboard callbacks ─────────────────────────────────────────────────────
+  // App.tsx holds all the state; these callbacks let DetachedStack own the
+  // useInput registration while keeping state changes co-located with their data.
+  onUp?:         () => void;   // j / ↑
+  onDown?:       () => void;   // k / ↓
+  onEnter?:      () => void;   // ↵  — open focused op as full-screen overlay
+  onDismiss?:    () => void;   // x  — dismiss focused done op
+  onDismissAll?: () => void;   // X  — clear all done ops
+  onPopout?:     () => void;   // O  — pop focused op to external terminal
+  onCopy?:       () => void;   // c  — copy focused op log to clipboard
+  onClose?:      () => void;   // q/esc — dismiss stack, return focus to panel
 }
 
 // ── Shadow strip — one collapsed op underneath the focused one ────────────────
@@ -62,8 +79,29 @@ function ShadowStrip({ op, depth }: { op: StackOp; depth: number }) {
 
 const LOG_LINES = 8;
 
-export function DetachedStack({ ops, focusedId, didCopy }: DetachedStackProps) {
+export function DetachedStack({
+  ops, focusedId, didCopy,
+  onUp, onDown, onEnter, onDismiss, onDismissAll, onPopout, onCopy, onClose,
+}: DetachedStackProps) {
   const { dw } = useWidths();
+
+  // Declare Stack as the active keybinding context while pane is mounted.
+  // DetachedStack only renders when stackOpen && ops.length > 0, so this
+  // context is only active while the pane is actually visible.
+  useRegisterKeybindingContext('Stack');
+
+  // Own all stack-pane keyboard input.  No chord keys here — all single-stroke.
+  useInput((input, key) => {
+    if (key.escape || input === "q") { onClose?.();    return; }
+    if (key.upArrow   || input === "k") { onUp?.();         return; }
+    if (key.downArrow || input === "j") { onDown?.();       return; }
+    if (key.return)                     { onEnter?.();      return; }
+    if (input === "x")                  { onDismiss?.();    return; }
+    if (input === "X")                  { onDismissAll?.(); return; }
+    if (input === "O")                  { onPopout?.();     return; }
+    if (input === "c")                  { onCopy?.();       return; }
+  });
+
   if (ops.length === 0) return null;
 
   // Focused op is shown expanded; all others are shadow strips below it.
@@ -118,8 +156,8 @@ export function DetachedStack({ ops, focusedId, didCopy }: DetachedStackProps) {
         ) : (
           visible.map((line, i) => {
             const isLast = i === visible.length - 1;
-            const isOk   = line.startsWith("✓") || line.startsWith("OK:");
-            const isErr  = line.startsWith("✗") || line.startsWith("FAILED") || line.startsWith("⚠");
+            const isOk   = line.startsWith("OK:");
+            const isErr  = line.startsWith("FAILED") || line.startsWith("ERR");
             return (
               <Text
                 key={i}
@@ -144,7 +182,7 @@ export function DetachedStack({ ops, focusedId, didCopy }: DetachedStackProps) {
         {doneCount > 1  && <Text dimColor>[X] clear all done</Text>}
         <Text dimColor>[c] copy log</Text>
         <Text dimColor>[O] pop out</Text>
-        {didCopy && <Text color="green">✓ copied</Text>}
+        {didCopy && <Text color="green">copied</Text>}
       </Box>
 
     </Box>

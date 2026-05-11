@@ -46,7 +46,7 @@ import { buildZone, buildAll, deployAll, deployZone, gitPush } from "../zone-bui
 import { npmAddZone }         from "../npm-api.ts";
 import { deleteZone, DS_CATALOG } from "../zone-scaffold.ts";
 import { addZoneRoute, getRoutes } from "../proxy-config.ts";
-import { invalidateZoneCache, loadZones } from "../zone-store.ts";
+import { invalidateZoneCache, loadZones, lastZoneError } from "../zone-store.ts";
 import {
   getZoneLayout, getInstalledSections,
   scaffoldDynamicSection, removeDynamicSection,
@@ -81,6 +81,8 @@ interface ZonesViewProps {
   /** Called when q is pressed on the zone list — pops one history level */
   onGoBack:        () => void;
   onNewZone:       () => void;
+  /** Syncs internal navigation depth to the breadcrumb trail. */
+  onSubCrumbs:     (crumbs: string[]) => void;
   /** false while the global stack pane is focused — suppresses zone cursor keys */
   isActive:        boolean;
 }
@@ -90,7 +92,7 @@ interface ZonesViewProps {
 export function ZonesView({
   zones, zoneStatuses, proxyStatus,
   setZones, runOp, openLogs, addNotification,
-  onGoBack, onNewZone, isActive,
+  onGoBack, onNewZone, onSubCrumbs, isActive,
 }: ZonesViewProps) {
 
   // Strip core (key="unenter") — it's not a zone and doesn't belong here.
@@ -131,6 +133,23 @@ export function ZonesView({
   useEffect(() => {
     setSelected((s) => Math.min(s, Math.max(0, visibleZones.length - 1)));
   }, [visibleZones.length]);
+
+  // ── Breadcrumb sync ──────────────────────────────────────────────────────
+  // Declaratively derives sub-crumbs from local state so the breadcrumb trail
+  // always reflects the current internal depth without manual push/pop calls.
+  useEffect(() => {
+    if (manageSections) {
+      onSubCrumbs([manageSections.zone.label, "manage sections"]);
+    } else if (confirmDelete) {
+      onSubCrumbs([confirmDelete.label, "delete?"]);
+    } else if (actionOpen && visibleZones[selected]) {
+      onSubCrumbs([visibleZones[selected]!.label]);
+    } else {
+      onSubCrumbs([]);
+    }
+  // onSubCrumbs is setSubCrumbs from useState — stable, safe to omit from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionOpen, manageSections, confirmDelete, visibleZones, selected]);
 
   // ── Action executor ──────────────────────────────────────────────────────
   const executeAction = useCallback((actionId: string, zone: Zone) => {
@@ -385,7 +404,13 @@ export function ZonesView({
             zones={visibleZones}
             zoneStatuses={zoneStatuses}
             selected={selected}
-            emptyMessage={searchQuery ? `No zones match "${searchQuery}"` : undefined}
+            emptyMessage={
+              searchQuery
+                ? `No zones match "${searchQuery}"`
+                : lastZoneError
+                  ? `Load failed: ${lastZoneError}`
+                  : undefined
+            }
           />
         </>
       )}

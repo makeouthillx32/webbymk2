@@ -8,6 +8,7 @@
     "dashboard": "http://unt_app:3000",
     "min": "http://min:3000",
     "apptest1": "http://apptest1:3000",
-    "yayy": "http://yayy:3000"
+    "yayy": "http://yayy:3000",
+    "running": "http://running:3000"
   }
 }

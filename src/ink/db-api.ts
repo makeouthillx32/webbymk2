@@ -26,27 +26,41 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawn } from "child_process";
+import {
+  ensureRuntimeEnv,
+  firstEnvValue,
+  getRuntimeAnonKey,
+  getRuntimeKongUrl,
+  getRuntimeServiceKey,
+} from "../utils/runtimeEnv.js";
 
 // ── Connection config ─────────────────────────────────────────────────────────
+
+function envValue(keys: string[], fallback = ""): string {
+  ensureRuntimeEnv(true);
+  return firstEnvValue(keys, fallback);
+}
 
 /**
  * Host-accessible Kong URL.
  * Translates the docker-internal `http://kong:8000` to `http://127.0.0.1:KONG_HTTP_PORT`.
  */
 export const KONG_URL = (() => {
-  const explicit = process.env.SUPABASE_URL;
+  const explicit = envValue(["SUPABASE_URL"]);
   if (explicit && !explicit.includes("kong") && !explicit.includes("localhost")) {
     return explicit;
   }
-  const port = process.env.KONG_HTTP_PORT ?? "8001";
+  const port = envValue(["KONG_HTTP_PORT"], "8001");
   return `http://127.0.0.1:${port}`;
 })();
 
-export const KONG_PORT = process.env.KONG_HTTP_PORT ?? "8001";
+export const KONG_PORT = envValue(["KONG_HTTP_PORT"], "8001");
 
-export const SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  process.env.SERVICE_ROLE_KEY ?? "";
+export const SERVICE_KEY = envValue([
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SERVICE_ROLE_KEY",
+  "SUPABASE_SERVICE_KEY",
+]);
 
 // ── Extended connection constants ─────────────────────────────────────────────
 
@@ -57,7 +71,7 @@ export const SERVICE_KEY =
  * on Windows the two don't always resolve the same way.
  * Default port is 3002 (defined in docker-compose, not shared with Kong).
  */
-const STUDIO_PORT = process.env.STUDIO_PORT ?? "3002";
+const STUDIO_PORT = envValue(["STUDIO_PORT"], "3002");
 const DEFAULT_STUDIO_URL = `http://localhost:${STUDIO_PORT}`;
 const STUDIO_URL_OVERRIDE = process.env.STUDIO_URL?.replace(/\/+$/, "");
 
@@ -86,10 +100,10 @@ export function instanceStudioMcpUrl(studioPort: number | string): string {
 }
 
 /** Host-mapped Postgres port. Default 5432. */
-export const POSTGRES_PORT = process.env.POSTGRES_PORT ?? "5432";
+export const POSTGRES_PORT = envValue(["POSTGRES_PORT"], "5432");
 
 /** Postgres password from env (may be empty if the TUI process doesn't load docker .env). */
-export const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD ?? "";
+export const POSTGRES_PASSWORD = envValue(["POSTGRES_PASSWORD"]);
 
 /** Direct Postgres connection string for the core unt_db container. */
 export function postgresConnStr(password?: string): string {
@@ -115,12 +129,13 @@ export function buildConnectionSheet(opts: {
   svcKey?:   string;
   pgConn?:   string;
 } = {}): string {
+  ensureRuntimeEnv(true);
   const label     = opts.label     ?? "Supabase Core Runtime";
-  const kongUrl   = opts.kongUrl   ?? KONG_URL;
+  const kongUrl   = opts.kongUrl   ?? getRuntimeKongUrl();
   const studioUrl = opts.studioUrl ?? STUDIO_PROJECT_URL;
   const studioMcpUrl = opts.studioMcpUrl ?? STUDIO_MCP_URL;
-  const anon      = opts.anonKey   ?? ANON_KEY;
-  const svc       = opts.svcKey    ?? SERVICE_KEY;
+  const anon      = opts.anonKey   ?? getRuntimeAnonKey();
+  const svc       = opts.svcKey    ?? getRuntimeServiceKey();
   const pg        = opts.pgConn    ?? postgresConnStr();
 
   const truncate = (s: string, n = 80) =>
@@ -178,8 +193,9 @@ export function buildMcpConfig(opts: {
   svcKey?:  string;
   pgConn?:  string;
 } = {}): string {
-  const kongUrl = opts.kongUrl ?? KONG_URL;
-  const svc     = opts.svcKey  ?? SERVICE_KEY;
+  ensureRuntimeEnv(true);
+  const kongUrl = opts.kongUrl ?? getRuntimeKongUrl();
+  const svc     = opts.svcKey  ?? getRuntimeServiceKey();
   const pg      = opts.pgConn  ?? postgresConnStr();
 
   return JSON.stringify({
@@ -200,9 +216,11 @@ export function buildMcpConfig(opts: {
   }, null, 2);
 }
 
-export const ANON_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  process.env.ANON_KEY ?? "";
+export const ANON_KEY = envValue([
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "SUPABASE_ANON_KEY",
+  "ANON_KEY",
+]);
 
 const COMPOSE_PROJECT = "webbymk2";
 
@@ -281,7 +299,9 @@ function dockerRun(args: string[]): Promise<{ out: string; code: number }> {
 
 /** HTTP health check — uses svc.baseUrl if set, otherwise falls back to KONG_URL. */
 async function checkHttp(svc: SupaService): Promise<SupaResult> {
-  const base  = svc.baseUrl ?? KONG_URL;
+  ensureRuntimeEnv(true);
+  const serviceKey = getRuntimeServiceKey();
+  const base  = svc.baseUrl ?? getRuntimeKongUrl();
   const url   = `${base}${svc.path}`;
   const start = Date.now();
   try {
@@ -289,9 +309,9 @@ async function checkHttp(svc: SupaService): Promise<SupaResult> {
     const timer = setTimeout(() => controller.abort(), 4_000);
     // Only send Kong auth headers when using the Kong base URL
     const headers: Record<string, string> = {};
-    if (!svc.baseUrl && SERVICE_KEY) {
-      headers["Authorization"] = `Bearer ${SERVICE_KEY}`;
-      headers["apikey"]        = SERVICE_KEY;
+    if (!svc.baseUrl && serviceKey) {
+      headers["Authorization"] = `Bearer ${serviceKey}`;
+      headers["apikey"]        = serviceKey;
     }
     const res = await fetch(url, {
       headers, signal: controller.signal, redirect: "manual" as RequestRedirect,
@@ -420,12 +440,15 @@ export interface BucketInfo {
 }
 
 export async function listStorageBuckets(): Promise<BucketInfo[]> {
-  if (!SERVICE_KEY) throw new Error("SERVICE_ROLE_KEY not set in .env");
+  ensureRuntimeEnv(true);
+  const serviceKey = getRuntimeServiceKey();
+  const kongUrl = getRuntimeKongUrl();
+  if (!serviceKey) throw new Error("SERVICE_ROLE_KEY not set in .env");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6_000);
   try {
-    const res = await fetch(`${KONG_URL}/storage/v1/bucket`, {
-      headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY },
+    const res = await fetch(`${kongUrl}/storage/v1/bucket`, {
+      headers: { "Authorization": `Bearer ${serviceKey}`, "apikey": serviceKey },
       signal: controller.signal,
     });
     clearTimeout(timer);

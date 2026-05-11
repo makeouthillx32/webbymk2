@@ -1,16 +1,24 @@
 {
-  "name": "@unenter/tui",
-  "private": true,
-  "description": "unt.ink zone manager TUI. Pins React 18 + ink v4 to avoid the React 19 / react-reconciler incompatibility in the main app.",
+  "name": "@untsystems/unaxis",
+  "version": "0.0.10",
+  "description": "UNAXIS — unenter infrastructure manager. Terminal UI for zone orchestration.",
+  "type": "module",
+  "bin": {
+    "unaxis": "dist/cli.js"
+  },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
-    "dev": "bun --watch App.tsx",
+    "dev": "bun --tsconfig-override tsconfig.json --watch ../main.tsx",
     "build": "bun build.ts",
-    "start": "node dist/cli.mjs"
+    "start": "node dist/cli.js"
   },
   "dependencies": {
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "ink": "4.4.1"
+    "ink": "4.4.1",
+    "yoga-wasm-web": "0.3.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

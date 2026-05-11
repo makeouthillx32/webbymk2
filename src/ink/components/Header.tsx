@@ -2,13 +2,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // App header bar — live clock + background-op summary.
 //
-//   left:   unt.ink  ·  unenter infrastructure manager
+//   left:   UNAXIS  ·  unenter infrastructure manager
 //   right:  [spinner + op title]  ·  HH:MM:SS
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
 import { Box, Text }                  from "ink";
 import type { StackOp }               from "./DetachedStack.tsx";
+
+declare const UNAXIS_VERSION: string | undefined;
+const VERSION = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION : "0.0.5";
 
 // ── useClock ──────────────────────────────────────────────────────────────────
 
@@ -59,7 +62,8 @@ export function Header({ ops, stackOpen }: HeaderProps) {
   return (
     <Box justifyContent="space-between" marginBottom={0}>
       <Box gap={2}>
-        <Text bold color="cyan">unt.ink</Text>
+        <Text bold color="cyan">UNAXIS</Text>
+        <Text dimColor color="cyan">v{VERSION}</Text>
         <Text dimColor>·</Text>
         <Text dimColor>unenter infrastructure manager</Text>
       </Box>

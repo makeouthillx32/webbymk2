@@ -279,7 +279,7 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
             'meta+down': 'messageActions:bottom' as const,
             'super+up': 'messageActions:top' as const,
             'super+down': 'messageActions:bottom' as const,
-            // Mouse selection extends on shift+arrow (ScrollKeybindingHandler:573) when present —
+            // Mouse selection extends on shift+arrow when a scroll handler is present —
             // correct layered UX: esc clears selection, then shift+↑ jumps.
             'shift+up': 'messageActions:prevUser' as const,
             'shift+down': 'messageActions:nextUser' as const,

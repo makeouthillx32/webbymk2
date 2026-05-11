@@ -57,3 +57,33 @@ export function markScrollActivity(): void {
 export function isScrollActive(): boolean {
   return Date.now() < scrollActiveUntil;
 }
+
+// ── UNAXIS runtime identity ──────────────────────────────────────────────────
+// Populated once by src/main.tsx before render(). Never mutated by React.
+// Any module can call getRuntime() without prop threading.
+
+export type RuntimeState = {
+  originalCwd:  string         // cwd at process start, before any chdir
+  projectRoot:  string         // validated UNAXIS project root
+  rootValid:    boolean        // false triggers WrongRootScreen
+  detectedRoot: string | null  // nearest valid root if rootValid=false
+  startedAt:    number         // Date.now() at bootstrap
+}
+
+let _runtime: RuntimeState | null = null
+
+export function initRuntimeState(state: RuntimeState): void {
+  if (_runtime !== null) return  // idempotent — only first caller wins
+  _runtime = state
+}
+
+export function getRuntimeState(): RuntimeState | null {
+  return _runtime
+}
+
+export function getRuntime(): RuntimeState {
+  if (_runtime === null) {
+    throw new Error('[unaxis] Runtime not initialized. Call initRuntimeState() before getRuntime().')
+  }
+  return _runtime
+}

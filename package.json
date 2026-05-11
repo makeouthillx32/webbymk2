@@ -10,10 +10,10 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:types": "supabase gen types typescript --local > types/supabase.ts",
-    "tui:dev":   "powershell -File ./src/ink/run.ps1 -Dev",
+    "tui:dev": "powershell -File ./src/ink/run.ps1 -Dev",
     "tui:build": "bun --cwd src/ink build.ts",
-    "tui:start": "node ./src/ink/dist/cli.mjs",
-    "tui:run":   "bun run tui:build && bun run tui:start"
+    "tui:start": "node ./src/ink/dist/cli.js",
+    "tui:run": "bun run tui:build && bun run tui:start"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.27.0",

@@ -1,63 +1,83 @@
 #!/usr/bin/env bun
-// src/tui/build.ts — bundle the TUI into a single Node-compatible dist/cli.mjs
+// src/ink/build.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Uses Bun's built-in esbuild-powered bundler.
+// Bundles UNAXIS into a single Node-compatible dist/cli.js.
 //
-// Output is ESM (.mjs) because yoga-wasm-web (used by ink internally) uses
-// top-level await at module scope — valid ESM, invalid CJS.  Node.js handles
-// .mjs files as ES modules natively, so no extra flags needed.
+// Entry:   src/entrypoints/cli.tsx   (fast-path flags + TUI boot)
+//   via:   src/main.tsx              (runtime bootstrap / rootGuard)
+//   via:   src/ink/App.tsx           (Ink render layer)
 //
-//   Build:  bun build.ts          (from src/tui/)
-//   Run:    node src/tui/dist/cli.mjs   (from project root)
-//   Exe:    bun build --compile index.tsx --outfile dist/unt
+// Output:  src/ink/dist/cli.js       (shebang-prefixed, ESM)
+//
+// yoga-wasm-web is kept external so it resolves from node_modules at
+// runtime — avoids inlining raw WASM bytes into the bundle.
+//
+// Build:   bun build.ts              (from src/ink/)
+// Run:     node src/ink/dist/cli.js  (from project root)
+// Global:  npm install -g @untsystems/unaxis
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rmSync, mkdirSync, readFileSync } from "fs";
-import { join } from "path";
+import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { join }                                           from 'path'
 
-const outdir = join(import.meta.dir, "dist");
-const outfile = join(outdir, "cli.mjs");
+// ── Version ────────────────────────────────────────────────────────────────────
+
+const pkgJson  = JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf-8'))
+const version  = pkgJson.version as string
+
+// ── Paths ──────────────────────────────────────────────────────────────────────
+
+const outdir   = join(import.meta.dir, 'dist')
+const outfile  = join(outdir, 'cli.js')
+const entry    = join(import.meta.dir, '../entrypoints/cli.tsx')
 
 // ── Clean ──────────────────────────────────────────────────────────────────────
-try { rmSync(outdir, { recursive: true }); } catch { }
-mkdirSync(outdir, { recursive: true });
 
-console.log("⚙  Bundling TUI…");
+try { rmSync(outdir, { recursive: true }) } catch {}
+mkdirSync(outdir, { recursive: true })
+
+console.log('\u2699  Bundling UNAXIS v' + version + '...')
 
 // ── Bundle ─────────────────────────────────────────────────────────────────────
+
 const result = await Bun.build({
-  entrypoints: [join(import.meta.dir, "App.tsx")],
+  entrypoints: [entry],
   outdir,
-  naming: "cli.mjs",
-  target: "node",   // plain Node-compatible output
-  format: "esm",    // ESM: supports top-level await (required by yoga-wasm-web)
-  bundle: true,
-  minify: false,
-  sourcemap: "none",
-  external: ["yoga-wasm-web"],
-  // Define NODE_ENV=production so Bun eliminates ink's devtools import at
-  // bundle time.  ink's reconciler guards the import with
-  // `process.env.NODE_ENV !== 'production'`, so this makes it dead code and
-  // it never appears in the output — no react-devtools-core needed at runtime.
+  naming:      'cli.js',
+  target:      'node',
+  format:      'esm',
+  bundle:      true,
+  minify:      false,
+  sourcemap:   'none',
+  external:    ['yoga-wasm-web'],
   define: {
-    "process.env.NODE_ENV": '"production"',
+    'process.env.NODE_ENV': '"production"',
+    'UNAXIS_VERSION':       '"' + version + '"',
   },
-});
+})
 
 if (!result.success) {
-  console.error("✗  Build failed:");
-  for (const log of result.logs) console.error(" ", log);
-  process.exit(1);
+  console.error('\u2717  Build failed:')
+  for (const log of result.logs) console.error('  ', log)
+  process.exit(1)
 }
 
-// ── Verify output exists ────────────────────────────────────────────────────────
-const bytes = readFileSync(outfile).length;
-const kb = (bytes / 1024).toFixed(0);
+// ── Inject shebang ─────────────────────────────────────────────────────────────
+// npm creates platform wrappers on install, but the shebang ensures the file
+// is directly executable on Unix and works with `node dist/cli.js` on Windows.
 
-console.log(`✓  dist/cli.mjs  (${kb} KB)`);
-console.log("");
-console.log("   Run it:");
-console.log("     node ./src/ink/dist/cli.mjs");
-console.log("");
-console.log("   Or compile to a standalone exe:");
-console.log("     bun build --compile src/ink/App.tsx --outfile src/ink/dist/unt.exe");
+const bundled = readFileSync(outfile, 'utf-8')
+if (!bundled.startsWith('#!')) {
+  writeFileSync(outfile, '#!/usr/bin/env node\n' + bundled)
+}
+
+// ── Report ─────────────────────────────────────────────────────────────────────
+
+const bytes = readFileSync(outfile).length
+const kb    = (bytes / 1024).toFixed(0)
+
+console.log('\u2713  dist/cli.js  (' + kb + ' KB)  UNAXIS v' + version)
+console.log('')
+console.log('   Run locally:   node ./src/ink/dist/cli.js')
+console.log('   Publish:       npm publish --access public  (from src/ink/)')
+console.log('')

@@ -22,9 +22,9 @@
 
 import { useState, useCallback } from "react";
 
-export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "wizard";
+export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "notes" | "wizard" | "instance-wizard";
 
-export const PANEL_TABS = ["core", "zones", "npm", "db", "infra"] as const;
+export const PANEL_TABS = ["core", "zones", "npm", "db", "infra", "notes"] as const;
 export type PanelTab    = typeof PANEL_TABS[number];
 
 export function useAppRouter() {
@@ -33,19 +33,27 @@ export function useAppRouter() {
 
   const [tokenEditing, setTokenEditing] = useState(false);
 
+  // Sub-crumbs: internal navigation depth within a panel (e.g. zone name,
+  // action panel, gallery).  Panels set these via onSubCrumbs().
+  // Auto-cleared whenever the top-level view changes.
+  const [subCrumbs, setSubCrumbs] = useState<string[]>([]);
+
   // Push: go deeper (welcome → zones, zones → wizard, etc.)
   const navigate = useCallback((v: View) => {
+    setSubCrumbs([]);
     setHistory((prev) => [...prev, v]);
   }, []);
 
   // Replace current level in-place: used for Tab cycling between sibling panels.
   // Keeps the "came from welcome" entry intact without adding depth.
   const navigateReplace = useCallback((v: View) => {
+    setSubCrumbs([]);
     setHistory((prev) => [...prev.slice(0, -1), v]);
   }, []);
 
   // Pop one level — the standard back gesture.
   const goBack = useCallback(() => {
+    setSubCrumbs([]);
     setHistory((prev) => prev.length > 1 ? prev.slice(0, -1) : prev);
   }, []);
 
@@ -53,6 +61,7 @@ export function useAppRouter() {
   // watching an operation).  Clears the entire history so any dangling state
   // in intermediate views is abandoned cleanly.
   const goRoot = useCallback(() => {
+    setSubCrumbs([]);
     setHistory(["welcome"]);
   }, []);
 
@@ -60,5 +69,6 @@ export function useAppRouter() {
     view, history,
     navigate, navigateReplace, goBack, goRoot,
     tokenEditing, setTokenEditing,
+    subCrumbs, setSubCrumbs,
   };
 }

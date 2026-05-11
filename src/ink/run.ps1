@@ -1,13 +1,13 @@
 #!/usr/bin/env pwsh
-# src/ink/run.ps1 - launch the unt.ink TUI
+# src/ink/run.ps1 - launch the UNAXIS TUI
 #
 # Modes:
-#   .\src\ink\run.ps1        - build dist/cli.mjs, run with node (stable)
+#   .\src\ink\run.ps1        - build dist/cli.js, run with node (stable)
 #   .\src\ink\run.ps1 -Dev   - run from source with --watch (instant reload on save)
 #
 # Dev mode is the fastest way to iterate: save a file, TUI restarts in ~1s.
-# Build mode produces dist/cli.mjs. To compile a standalone exe:
-#   bun build --compile src\ink\App.tsx --outfile src\ink\dist\unt.exe
+# Build mode produces dist/cli.js. To compile a standalone exe:
+#   bun build --compile src\ink\App.tsx --outfile src\ink\dist\unaxis.exe
 
 param(
     [switch]$Dev
@@ -60,7 +60,13 @@ if (Test-Path $envFile) {
     if ($anonKey -and -not [System.Environment]::GetEnvironmentVariable("SUPABASE_ANON_KEY", "Process")) {
         [System.Environment]::SetEnvironmentVariable("SUPABASE_ANON_KEY", $anonKey, "Process")
     }
+    if ($anonKey -and -not [System.Environment]::GetEnvironmentVariable("NEXT_PUBLIC_SUPABASE_ANON_KEY", "Process")) {
+        [System.Environment]::SetEnvironmentVariable("NEXT_PUBLIC_SUPABASE_ANON_KEY", $anonKey, "Process")
+    }
     $svcKey = [System.Environment]::GetEnvironmentVariable("SERVICE_ROLE_KEY", "Process")
+    if ($svcKey -and -not [System.Environment]::GetEnvironmentVariable("SUPABASE_SERVICE_ROLE_KEY", "Process")) {
+        [System.Environment]::SetEnvironmentVariable("SUPABASE_SERVICE_ROLE_KEY", $svcKey, "Process")
+    }
     if ($svcKey -and -not [System.Environment]::GetEnvironmentVariable("SUPABASE_SERVICE_KEY", "Process")) {
         [System.Environment]::SetEnvironmentVariable("SUPABASE_SERVICE_KEY", $svcKey, "Process")
     }
@@ -98,15 +104,20 @@ if ($Dev) {
     Write-Host "  Ctrl-C to quit." -ForegroundColor Gray
     Write-Host ""
 
+    # Entry point is now src/main.tsx — the real runtime bootstrap.
+    # main.tsx owns: rootGuard → initRuntimeState → dynamic import src/ink/App.tsx
+    # App.tsx reads runtime state and renders WrongRootScreen or the full TUI.
+    #
     # Run from project root so Bun's "project directory" covers src/config/
-    # (otherwise imports outside src/ink/ are silently not watched).
-    # --tsconfig-override keeps the React 18 + ink 4 isolation in src/ink/tsconfig.json.
+    # and src/utils/ — all files outside src/ink/ are watched correctly.
+    # --tsconfig-override keeps the React 18 + ink 4 isolation in src/ink/tsconfig.json
+    # so the dynamic import of App.tsx still resolves ink to the correct React 18 copy.
     #
     # Use absolute paths — relative paths trigger a bun file-watcher bug on Windows
     # where tsconfig.json is registered as a watched directory instead of a file,
     # producing "Internal error: directory mismatch" and a resolver crash.
     Push-Location $PROJECT_DIR
-    bun --tsconfig-override "$TUI_DIR\tsconfig.json" --watch "$TUI_DIR\App.tsx"
+    bun --tsconfig-override "$TUI_DIR\tsconfig.json" --watch "$PROJECT_DIR\src\main.tsx"
     Pop-Location
     exit $LASTEXITCODE
 }
@@ -120,7 +131,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 
 # --- Build --------------------------------------------------------------------
 
-Write-Host "Building dist/cli.mjs..." -ForegroundColor Gray
+Write-Host "Building dist/cli.js..." -ForegroundColor Gray
 bun build.ts 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     # Re-run without silencing so the error is visible
@@ -138,5 +149,5 @@ Pop-Location
 [Console]::Clear()
 
 Push-Location $PROJECT_DIR
-node .\src\ink\dist\cli.mjs
+node .\src\ink\dist\cli.js
 Pop-Location

@@ -28,11 +28,12 @@
 // mode="logs"    — log tail: all lines equal weight, cursor blink while live
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React              from "react";
-import { Box, Text }      from "ink";
-import { useWidths }      from "./hooks/useTermWidth.ts";
-import { useTermHeight }  from "./hooks/useTermWidth.ts";
-import { LogViewer }      from "./components/LogViewer.tsx";
+import React                from "react";
+import { Box, Text, useInput } from "ink";
+import { useWidths }        from "./hooks/useTermWidth.ts";
+import { useTermHeight }    from "./hooks/useTermWidth.ts";
+import { LogViewer }        from "./components/LogViewer.tsx";
+import { useRegisterKeybindingContext } from "./KeybindingContext.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,16 @@ interface OperationOverlayProps {
   mode:     OpView;
   /** True for 1.5 s after a successful [c] copy — triggers inline flash */
   didCopy?: boolean;
+  /** Called when user presses [q] */
+  onQ?:     () => void;
+  /** Called when user presses [esc] */
+  onEsc?:   () => void;
+  /** Called when user presses [enter] (only fires when !busy) */
+  onEnter?: () => void;
+  /** Called when user presses [c] (copy lines) */
+  onCopy?:  () => void;
+  /** Called when user presses [O] (pop out to terminal) */
+  onPopout?: () => void;
 }
 
 // ── Chrome constants ──────────────────────────────────────────────────────────
@@ -58,9 +69,25 @@ const CHROME_ROWS = 4;
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function OperationOverlay({ title, lines, busy, mode, didCopy }: OperationOverlayProps) {
+export function OperationOverlay({
+  title, lines, busy, mode, didCopy,
+  onQ, onEsc, onEnter, onCopy, onPopout,
+}: OperationOverlayProps) {
   const { tw, iw } = useWidths();
   const th         = useTermHeight();
+
+  // Register as active context so the keybinding system knows we own input.
+  useRegisterKeybindingContext('Overlay');
+
+  // Own all overlay keyboard input — LogViewer's scroll keys (up/down/jk/u/d/g/G)
+  // are handled inside LogViewer and don't conflict with these control keys.
+  useInput((input, key) => {
+    if (input === "q")        { onQ?.();      return; }
+    if (key.escape)           { onEsc?.();    return; }
+    if (key.return && !busy)  { onEnter?.();  return; }
+    if (input === "c")        { onCopy?.();   return; }
+    if (input === "O")        { onPopout?.(); return; }
+  });
 
   // Rows available for scrollable log content.
   const contentHeight = Math.max(4, th - CHROME_ROWS);
@@ -80,22 +107,24 @@ export function OperationOverlay({ title, lines, busy, mode, didCopy }: Operatio
         <Text bold color={busy ? "yellow" : "green"}>{title}</Text>
         <Box gap={2}>
           {/* Status badge */}
-          {busy  && mode === "output" && <Text color="yellow">● running</Text>}
-          {busy  && mode === "logs"   && <Text color="blue">◉ streaming</Text>}
-          {!busy && mode === "output" && <Text color="green">✓ done</Text>}
-          {!busy && mode === "logs"   && <Text color="gray">◎ stopped</Text>}
+          {busy  && mode === "output" && <Text color="yellow">running</Text>}
+          {busy  && mode === "logs"   && <Text color="blue">streaming</Text>}
+          {!busy && mode === "output" && <Text color="green">done</Text>}
+          {!busy && mode === "logs"   && <Text color="gray">stopped</Text>}
 
           {/* Scroll hint */}
-          <Text dimColor>[↑↓/jk] scroll  [u/d] page  [g/G] top/btm</Text>
+          <Text dimColor>[up/dn/jk] scroll  [u/d] page  [g/G] top/btm</Text>
 
           {/* Exit hint */}
           <Text dimColor>
-            {busy && mode === "output" ? "[esc] detach  [O] pop out  [q] home" : "[esc/q] close  [O] pop out"}
+            {busy && mode === "output"
+              ? "[esc] detach  [O] pop out  [q] home"
+              : "[esc/q] close  [O] pop out"}
           </Text>
 
           {/* Copy feedback */}
           <Text dimColor>[c] copy</Text>
-          {didCopy && <Text color="green">✓ copied</Text>}
+          {didCopy && <Text color="green">copied</Text>}
         </Box>
       </Box>
 

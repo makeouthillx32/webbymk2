@@ -28,7 +28,7 @@ if (Test-Path $configFile) {
 # ── Collect values ─────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "  unt.ink local config setup" -ForegroundColor Cyan
+Write-Host "  UNAXIS local config setup" -ForegroundColor Cyan
 Write-Host "  ─────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host "  Values are stored in $configFile" -ForegroundColor Gray
 Write-Host "  (never committed to git)" -ForegroundColor Gray

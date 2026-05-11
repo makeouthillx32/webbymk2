@@ -1,19 +1,43 @@
-// src/entrypoints/cli.tsx — unt.ink TUI entrypoint
-// ─────────────────────────────────────────────────────────────────────────────
-// Thin delegator to the self-contained TUI package at src/ink/.
-//
-// render() is intentionally NOT called here. The ink package (v4.4.1) and
-// React 18 live in src/ink/node_modules/ — isolated from the main app which
-// uses React 19. Keeping the render() call inside src/ink/ ensures Bun and
-// Node resolve the correct versions.
-//
-// Import chain:
-//   src/cli.ts
-//     → src/entrypoints/cli.tsx       (this file — routing layer)
-//       → src/ink/App.tsx             (React state machine / UI + render())
-//
-// Dev:    bun --tsconfig-override ./src/ink/tsconfig.json --watch ./src/cli.ts
-// Build:  cd src/ink && bun build.ts
-// ─────────────────────────────────────────────────────────────────────────────
+// src/entrypoints/cli.tsx
+// UNAXIS CLI fast-path entry.
+// Handles --version and --help synchronously before any Ink/React import.
+// Loads .env synchronously before booting the TUI so all process.env values
+// are available when db-api and other modules initialize.
 
-import "../ink/App.tsx";
+export {}
+
+// Injected by build.ts via Bun.build define
+declare const UNAXIS_VERSION: string
+
+import { ensureRuntimeEnv } from '../utils/runtimeEnv.js'
+
+const args = process.argv.slice(2)
+
+// Fast-path flags
+
+if (args.includes('--version') || args.includes('-v')) {
+  process.stdout.write(UNAXIS_VERSION + '\n')
+  process.exit(0)
+}
+
+if (args.includes('--help') || args.includes('-h')) {
+  process.stdout.write(
+    '\n' +
+    '  UNAXIS — unenter infrastructure manager\n' +
+    '\n' +
+    '  Usage:\n' +
+    '    unaxis              launch the TUI\n' +
+    '    unaxis --version    print version\n' +
+    '    unaxis --help       show this message\n' +
+    '\n'
+  )
+  process.exit(0)
+}
+
+// Early .env load before any bundled TUI modules can initialize their config.
+ensureRuntimeEnv(true)
+
+// Boot TUI
+// Dynamic import: Ink/React/yoga-wasm-web only initialize when this line
+// executes. Fast-path exits above never trigger the TUI load.
+await import('../main.js')

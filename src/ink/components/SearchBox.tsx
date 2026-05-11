@@ -22,7 +22,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput }        from '../../ink.js';
+import { Box, Text }                  from '../../ink.js';
+import { useInput }                   from 'ink';
 
 type Props = {
   query: string;

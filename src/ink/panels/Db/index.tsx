@@ -119,6 +119,8 @@ export interface DbPanelProps {
     instance: RuntimeInstance,
   ) => void;
   onGoBack:         () => void;
+  /** Syncs internal navigation depth to the breadcrumb trail. */
+  onSubCrumbs:      (crumbs: string[]) => void;
 }
 
 // ── Key truncation helper ─────────────────────────────────────────────────────
@@ -238,7 +240,7 @@ const CORE_HINTS = [
   { k: "g",   label: "gallery"     },
   { k: "c",   label: "copy conn."  },
   { k: "m",   label: "copy MCP"    },
-  { k: "Tab", label: "→ instances" },
+  { k: "2",   label: "→ instances" },
 ];
 
 import { HostSnapshot } from "../../hooks/useHostMonitor.ts";
@@ -350,7 +352,7 @@ const INSTANCE_HINTS = [
   { k: "c",   label: "copy conn."   },
   { k: "m",   label: "copy MCP"     },
   { k: "n",   label: "new instance" },
-  { k: "Tab", label: "→ core"       },
+  { k: "1",   label: "→ core"       },
 ];
 
 interface InstancesSectionProps {
@@ -484,7 +486,7 @@ function InstancesSection({
 
 export function DbPanel({
   onLogs, onBackup, onCopy, onStart, onStop, onRestart, onHeal, onVerify,
-  onNewInstance, onRestore, onInstanceAction, onGoBack,
+  onNewInstance, onRestore, onInstanceAction, onGoBack, onSubCrumbs,
 }: DbPanelProps) {
 
   const [section,         setSection]         = useState<"core" | "instances">("core");
@@ -504,11 +506,28 @@ export function DbPanel({
     loadRegistry().then(setInstances);
   }, []);
 
-  // Tab / q / ← only active when gallery is NOT open (gallery handles its own Esc/q)
+  // ── Breadcrumb sync ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (galleryInstance) {
+      if (galleryInstance.id === "core") {
+        onSubCrumbs(["gallery"]);
+      } else {
+        onSubCrumbs(["instances", `${galleryInstance.name} · gallery`]);
+      }
+    } else if (section === "instances") {
+      onSubCrumbs(["instances"]);
+    } else {
+      onSubCrumbs([]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [galleryInstance, section]);
+
+  // Section switch / q / ← only active when gallery is NOT open (gallery handles its own Esc/q)
   useInput((input, key) => {
     if (galleryInstance !== null) return; // gallery owns the keyboard
-    if (key.tab)                        { setSection((s) => s === "core" ? "instances" : "core"); return; }
-    if (input === "q" || key.leftArrow) { onGoBack(); return; }
+    if (input === "1")                  { setSection("core");      return; }
+    if (input === "2")                  { setSection("instances"); return; }
+    if (input === "q" || key.leftArrow) { onGoBack();              return; }
   });
 
   // ── Gallery overlay takes over the whole panel ────────────────────────────

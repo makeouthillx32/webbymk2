@@ -8,16 +8,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { DerivedZone, OnLine } from "./types.ts";
-import { KONG_URL, SERVICE_KEY } from "../db-api.ts";
 import { invalidateZoneCache } from "../zone-store.ts";
+import { ensureRuntimeEnv, getRuntimeKongUrl, getRuntimeServiceKey } from "../../utils/runtimeEnv.js";
 
 // ── Insert zone into Supabase zones table ────────────────────────────────────
 
+function authHeaders(): Record<string, string> {
+  ensureRuntimeEnv(true);
+  const serviceKey = getRuntimeServiceKey();
+  return {
+    "Authorization": "Bearer " + serviceKey,
+    "apikey": serviceKey,
+  };
+}
+
 export async function insertZoneToDb(z: DerivedZone, onLine: OnLine): Promise<void> {
+  const envState = ensureRuntimeEnv(true);
+  const kongUrl = getRuntimeKongUrl();
+  const headers = authHeaders();
+  if (!headers.apikey) {
+    onLine("x SERVICE_ROLE_KEY not loaded from .env"
+      + (envState.projectRoot ? ` (root: ${envState.projectRoot})` : " (project root not found)"));
+    throw new Error("SERVICE_ROLE_KEY not loaded from .env");
+  }
+
   // Append after the current highest sort_order
   const maxRes = await fetch(
-    `${KONG_URL}/rest/v1/zones?select=sort_order&order=sort_order.desc&limit=1`,
-    { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
+    `${kongUrl}/rest/v1/zones?select=sort_order&order=sort_order.desc&limit=1`,
+    { headers }
   );
   const maxRows = (await maxRes.json()) as Array<{ sort_order: number }>;
   const sortOrder = (maxRows[0]?.sort_order ?? -1) + 1;
@@ -35,11 +53,10 @@ export async function insertZoneToDb(z: DerivedZone, onLine: OnLine): Promise<vo
     enabled: true,
   };
 
-  const res = await fetch(`${KONG_URL}/rest/v1/zones`, {
+  const res = await fetch(`${kongUrl}/rest/v1/zones`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${SERVICE_KEY}`,
-      "apikey": SERVICE_KEY,
+      ...headers,
       "Content-Type": "application/json",
       "Prefer": "return=minimal",
     },
@@ -59,14 +76,20 @@ export async function insertZoneToDb(z: DerivedZone, onLine: OnLine): Promise<vo
 // ── Delete zone from Supabase zones table ─────────────────────────────────────
 
 export async function deleteZoneFromDb(key: string, onLine: OnLine): Promise<void> {
+  const envState = ensureRuntimeEnv(true);
+  const kongUrl = getRuntimeKongUrl();
+  const headers = authHeaders();
+  if (!headers.apikey) {
+    onLine("x SERVICE_ROLE_KEY not loaded from .env"
+      + (envState.projectRoot ? ` (root: ${envState.projectRoot})` : " (project root not found)"));
+    return;
+  }
+
   const res = await fetch(
-    `${KONG_URL}/rest/v1/zones?key=eq.${encodeURIComponent(key)}`,
+    `${kongUrl}/rest/v1/zones?key=eq.${encodeURIComponent(key)}`,
     {
       method: "DELETE",
-      headers: {
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-        "apikey": SERVICE_KEY,
-      },
+      headers,
     }
   );
 

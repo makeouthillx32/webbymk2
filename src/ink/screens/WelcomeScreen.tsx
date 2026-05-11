@@ -4,14 +4,15 @@
 //
 // Adaptive layout tiers (checked in order — first match wins):
 //
-//   tw  ≥ 60 AND th ≥ 24   →  full:    routing diagram + all sections
-//   tw  ≥ 60               →  no-diagram: diagram hidden, rest visible
-//   tw  < 60               →  narrow: diagram hidden, zones wrap to rows
-//   th  < 16               →  compact: hide status section entirely
-//   th  < 10               →  minimal: title + menu + hints only
+//   tw  >= 60 AND th >= 24   ->  full:    routing diagram + all sections
+//   tw  >= 60               ->  no-diagram: diagram hidden, rest visible
+//   tw  < 60               ->  narrow: diagram hidden, zones wrap to rows
+//   th  < 16               ->  compact: hide status section entirely
+//   th  < 10               ->  minimal: title + menu + hints only
 //
-// On resize: Ink's diff engine emits a fullResetSequence (clear + repaint)
-// automatically — the layout adapts to the new dimensions in one flash.
+// DEV MODE extras (process.env.NODE_ENV !== "production"):
+//   Extra menu items + hotkeys appear below the standard menu.
+//   Dead code in the production bundle (NODE_ENV define eliminates them).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
@@ -29,14 +30,32 @@ import { MetricCard }                 from "../components/design-system/MetricCa
 import { sparkline }                  from "../utils/sparkline.ts";
 
 // ── Color palette (terminal-safe) ─────────────────────────────────────────────
-const BRAND        = "#D4A27F";   // warm amber — unt.ink accent
+const BRAND        = "#D4A27F";
 const BRAND_SEC    = "cyan";
 const SUCCESS      = "green";
 const WARNING      = "yellow";
-const ERROR        = "red";
 const INACTIVE     = "gray";
+const DEV_COLOR    = "magenta";
 
 type StatusMap = Record<string, Status>;
+
+// ── Menu definitions ──────────────────────────────────────────────────────────
+
+const MENU_BASE = [
+  { icon: "▶", label: "Manage",   desc: "zones · npm · db · infrastructure", action: "manage"   },
+  { icon: "⚙", label: "Settings", desc: "view & edit local config",           action: "settings" },
+] as const;
+
+const MENU_DEV = [
+  { icon: "⚡", label: "Release",  desc: "build + bump + publish to npm",     action: "release"  },
+  { icon: "⬡", label: "Build",    desc: "local build only (no publish)",      action: "build"    },
+] as const;
+
+type MenuAction = "manage" | "settings" | "release" | "build";
+
+const isDev = process.env.NODE_ENV !== "production";
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface WelcomeScreenProps {
   zones:        Zone[];
@@ -46,49 +65,51 @@ export interface WelcomeScreenProps {
   onManage:     () => void;
   onSettings:   () => void;
   onQuit:       () => void;
+  onRelease?:   () => void;
+  onBuild?:     () => void;
   isActive:     boolean;
 }
 
-const MENU = [
-  { icon: "▶", label: "Manage",   desc: "zones · npm · db · infrastructure" },
-  { icon: "⚙", label: "Settings", desc: "view & edit local config"           },
-];
-
 export function WelcomeScreen({
   zones, zoneStatuses, proxyStatus, busy,
-  onManage, onSettings, onQuit, isActive,
+  onManage, onSettings, onQuit, onRelease, onBuild, isActive,
 }: WelcomeScreenProps) {
+  const MENU = isDev ? [...MENU_BASE, ...MENU_DEV] : [...MENU_BASE];
+
   const [selected, setSelected] = useState(0);
-  const [blink, setBlink] = useState(true);
-  const { tw, dw, th } = useWidths();
-  const host = useHostMonitor();
+  const [blink, setBlink]       = useState(true);
+  const { tw, dw, th }          = useWidths();
+  const host                    = useHostMonitor();
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
-  // Width tiers
-  const narrow  = tw < 60;   // hide routing diagram, let zone dots wrap
-  const vnarrow = tw < 40;   // hide zone labels, show dots only
+  const narrow  = tw < 60;
+  const vnarrow = tw < 40;
+  const compact = th < 26;
+  const short   = th < 20;
+  const minimal = th < 14;
 
-  // Height tiers — each tier hides progressively more content
-  const compact  = th < 26;  // hide routing diagram even if wide enough
-  const short    = th < 20;  // hide directory + status section
-  const minimal  = th < 14;  // hide everything except title + menu + hints
+  const showDiagram = !narrow && !compact;
+  const showStatus  = !minimal;
+  const showDir     = !short && !minimal;
+  const showBusy    = busy && !minimal;
 
-  const showDiagram  = !narrow && !compact;
-  const showStatus   = !minimal;
-  const showDir      = !short && !minimal;
-  const showBusy     = busy && !minimal;
-
-  // ── Self-contained keyboard handler ──────────────────────────────────────
+  // ── Keyboard handler ──────────────────────────────────────────────────────
   useInput((input, key) => {
-    if (input === "q")                      { onQuit();     return; }
-    if (key.upArrow   || input === "k")     { setSelected((s) => Math.max(0, s - 1)); return; }
-    if (key.downArrow || input === "j")     { setSelected((s) => Math.min(MENU.length - 1, s + 1)); return; }
+    if (input === "q")                   { onQuit();   return; }
+    if (key.upArrow   || input === "k")  { setSelected((s) => Math.max(0, s - 1)); return; }
+    if (key.downArrow || input === "j")  { setSelected((s) => Math.min(MENU.length - 1, s + 1)); return; }
     if (key.return || key.rightArrow) {
-      if (selected === 0) onManage();
-      else                onSettings();
+      const action = MENU[selected]?.action as MenuAction;
+      if (action === "manage")   { onManage();    return; }
+      if (action === "settings") { onSettings();  return; }
+      if (action === "release")  { onRelease?.(); return; }
+      if (action === "build")    { onBuild?.();   return; }
       return;
     }
     if (input === "s") { onSettings(); return; }
+    // Dev-only hotkeys
+    if (isDev && input === "r") { onRelease?.(); return; }
+    if (isDev && input === "b") { onBuild?.();   return; }
   }, { isActive });
 
   useEffect(() => {
@@ -96,13 +117,8 @@ export function WelcomeScreen({
     return () => clearInterval(id);
   }, []);
 
-  const allLive      = proxyStatus === "running" && zones.every((z) => zoneStatuses[z.key] === "running");
-  const anyUp        = proxyStatus === "running" || zones.some((z) => (zoneStatuses[z.key] ?? "missing") !== "missing");
-  const runningCount = zones.filter((z) => zoneStatuses[z.key] === "running").length + (proxyStatus === "running" ? 1 : 0);
-  const totalCount   = zones.length + 1;
-  const healthRatio  = runningCount / totalCount;
-  const statusColor  = allLive ? SUCCESS : anyUp ? WARNING : ERROR;
-  const statusLabel  = allLive ? "● core is live" : anyUp ? "◑ starting" : "○ offline";
+  const allLive = proxyStatus === "running" && zones.every((z) => zoneStatuses[z.key] === "running");
+  const anyUp   = proxyStatus === "running" || zones.some((z) => (zoneStatuses[z.key] ?? "missing") !== "missing");
 
   const formatBytes = (bytes: number) => {
     const k = 1024;
@@ -115,7 +131,7 @@ export function WelcomeScreen({
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor={BRAND}
+      borderColor={isDev ? DEV_COLOR : BRAND}
       paddingX={2}
       paddingY={minimal ? 0 : 1}
       width={tw}
@@ -123,7 +139,11 @@ export function WelcomeScreen({
     >
       {/* ── Title ─────────────────────────────────────────────────────────── */}
       <Box flexDirection="column" alignItems="center" marginBottom={minimal ? 0 : 1}>
-        <Text bold color={BRAND}>{"◈   u n t · i n k"}</Text>
+        <Box gap={2} alignItems="center">
+          <Text bold color={BRAND}>{"◈  UNAXIS"}</Text>
+          <Text dimColor color={BRAND}>v{typeof UNAXIS_VERSION !== "undefined" ? UNAXIS_VERSION : "dev"}</Text>
+          {isDev && <Text bold color={DEV_COLOR}> DEV </Text>}
+        </Box>
       </Box>
 
       {!minimal && (
@@ -133,10 +153,10 @@ export function WelcomeScreen({
         </Box>
       )}
 
-      {/* ── Active project directory ──────────────────────────────────────── */}
+      {/* ── Project directory ─────────────────────────────────────────────── */}
       {showDir && (
         <Box justifyContent="center" marginBottom={1}>
-          <Text dimColor>⌂  </Text>
+          <Text dimColor>{"⌂  "}</Text>
           <Text color="cyan">{PROJECT_DIR}</Text>
         </Box>
       )}
@@ -145,22 +165,21 @@ export function WelcomeScreen({
       {showStatus && (
         <Box flexDirection="column" alignItems="center" marginBottom={2}>
           <Box flexDirection={narrow ? "column" : "row"} gap={1} marginBottom={1}>
-            <MetricCard 
-              label="System CPU" 
-              value={`${host.systemCpu.toFixed(1)}%`} 
-              note="host load" 
+            <MetricCard
+              label="System CPU"
+              value={`${host.systemCpu.toFixed(1)}%`}
+              note="host load"
               tone={host.systemCpu > 80 ? "error" : host.systemCpu > 50 ? "warning" : "success"}
               trend={sparkline(host.cpuHistory)}
             />
-            <MetricCard 
-              label="Host Memory" 
-              value={formatBytes(host.usedMemory)} 
-              note={`${formatBytes(host.freeMemory)} free`} 
+            <MetricCard
+              label="Host Memory"
+              value={formatBytes(host.usedMemory)}
+              note={`${formatBytes(host.freeMemory)} free`}
               tone={host.memoryPressure > 0.9 ? "error" : host.memoryPressure > 0.7 ? "warning" : "success"}
               trend={sparkline(host.memHistory)}
             />
           </Box>
-
           <Box flexWrap="wrap" justifyContent="center" gap={1}>
             <Box gap={1}>
               <Text dimColor>prox</Text>
@@ -188,37 +207,28 @@ export function WelcomeScreen({
           overflow="hidden"
         >
           <Box marginTop={0}>
-            <Text dimColor>  how a request reaches your app</Text>
+            <Text dimColor>{"  how a request reaches your app"}</Text>
           </Box>
           <Text> </Text>
-
           <Box>
-            <Text color="blue">  internet</Text>
-            <Text color="gray"> ──▶ </Text>
-            <Text bold color={BRAND_SEC}>◈ NPM</Text>
-            <Text dimColor>
-              {" · " + NPM_HOST.label + " · " + NPM_HOST.ip + ":" + NPM_HOST.port}
-            </Text>
+            <Text color="blue">{"  internet"}</Text>
+            <Text color="gray">{" ──▶ "}</Text>
+            <Text bold color={BRAND_SEC}>{"◈ NPM"}</Text>
+            <Text dimColor>{" · " + NPM_HOST.label + " · " + NPM_HOST.ip + ":" + NPM_HOST.port}</Text>
             <Text color={SUCCESS}>{"  · SSL ✓ · Let's Encrypt"}</Text>
           </Box>
-
           <Box>
             <Text dimColor>{"           "}</Text>
             <Text color="gray">{"      │"}</Text>
             <Text dimColor>{"  terminates TLS, forwards to stack"}</Text>
           </Box>
-
           <Box>
             <Text dimColor>{"           "}</Text>
             <Text color="gray">{"      ▼  "}</Text>
-            <Text bold color={BRAND_SEC}>◈ proxy</Text>
-            <Text dimColor>
-              {" · " + STACK_HOST.label + " · :" + STACK_HOST.proxyPort}
-            </Text>
+            <Text bold color={BRAND_SEC}>{"◈ proxy"}</Text>
+            <Text dimColor>{" · " + STACK_HOST.label + " · :" + STACK_HOST.proxyPort}</Text>
             <Text color={WARNING}>{"  · Host-header routing"}</Text>
           </Box>
-
-          {/* Zone tree — wraps for large zone counts */}
           <Box flexWrap="wrap" marginLeft={22}>
             {zones.map((z) => {
               const s = zoneStatuses[z.key] ?? "missing";
@@ -230,12 +240,9 @@ export function WelcomeScreen({
               );
             })}
           </Box>
-
           <Text> </Text>
           <Box>
-            <Text dimColor>
-              {"  Next.js 15 multi-zone · independent deploys · shared domain"}
-            </Text>
+            <Text dimColor>{"  Next.js 15 multi-zone · independent deploys · shared domain"}</Text>
           </Box>
           <Text> </Text>
         </Box>
@@ -243,22 +250,40 @@ export function WelcomeScreen({
 
       {/* ── Menu ─────────────────────────────────────────────────────────── */}
       <Box flexDirection="column" gap={0} marginBottom={minimal ? 0 : 1}>
-        {MENU.map((item, i) => {
+        {MENU_BASE.map((item, i) => {
           const active = selected === i;
           return (
             <Box key={item.label} paddingX={1} gap={2}>
               <Text color={active ? BRAND_SEC : INACTIVE}>
                 {active ? (blink ? item.icon : " ") : " "}
               </Text>
-              <Text bold={active} color={active ? BRAND_SEC : INACTIVE}>
-                {item.label}
-              </Text>
-              {!narrow && (
-                <Text dimColor>{item.desc}</Text>
-              )}
+              <Text bold={active} color={active ? BRAND_SEC : INACTIVE}>{item.label}</Text>
+              {!narrow && <Text dimColor>{item.desc}</Text>}
             </Box>
           );
         })}
+
+        {/* Dev-only section — dead code in prod bundle */}
+        {isDev && (
+          <>
+            <Box paddingX={1} marginTop={0}>
+              <Text dimColor>{"  ─── dev ──────────────────────────"}</Text>
+            </Box>
+            {MENU_DEV.map((item, i) => {
+              const idx    = MENU_BASE.length + i;
+              const active = selected === idx;
+              return (
+                <Box key={item.label} paddingX={1} gap={2}>
+                  <Text color={active ? DEV_COLOR : INACTIVE}>
+                    {active ? (blink ? item.icon : " ") : " "}
+                  </Text>
+                  <Text bold={active} color={active ? DEV_COLOR : INACTIVE}>{item.label}</Text>
+                  {!narrow && <Text dimColor>{item.desc}</Text>}
+                </Box>
+              );
+            })}
+          </>
+        )}
       </Box>
 
       {!minimal && <Divider width={Math.max(4, dw)} />}
@@ -266,8 +291,8 @@ export function WelcomeScreen({
       {/* ── Background job banner ────────────────────────────────────────── */}
       {showBusy && (
         <Box justifyContent="center" gap={3} marginBottom={1}>
-          <Text color="yellow">⚙  operation running in background</Text>
-          <Text dimColor>[o] view output</Text>
+          <Text color="yellow">{"⚙  operation running in background"}</Text>
+          <Text dimColor>{"[o] view output"}</Text>
         </Box>
       )}
 
@@ -277,6 +302,10 @@ export function WelcomeScreen({
           { k: "↑↓", label: "navigate" },
           { k: "↵",  label: "select"   },
           { k: "q",  label: "quit"     },
+          ...(isDev ? [
+            { k: "r", label: "release" },
+            { k: "b", label: "build"   },
+          ] : []),
         ]}
         marginTop={0}
       />

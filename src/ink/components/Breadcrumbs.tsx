@@ -19,39 +19,48 @@ import type { View } from "../hooks/useAppRouter.ts";
 // ── Label map ─────────────────────────────────────────────────────────────────
 
 const LABELS: Record<View, string> = {
-  welcome:  "home",
-  zones:    "zones",
-  npm:      "npm",
-  db:       "db",
-  infra:    "infra",
-  settings: "settings",
-  wizard:   "new zone",
+  welcome:          "home",
+  zones:            "zones",
+  npm:              "npm",
+  db:               "db",
+  infra:            "infra",
+  settings:         "settings",
+  wizard:           "new zone",
+  "instance-wizard": "new instance",
+  core:             "core",
+  notes:            "notes",
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface BreadcrumbsProps {
-  history: readonly View[];
+  history:   readonly View[];
+  /** Internal panel sub-navigation — set by each panel via onSubCrumbs(). */
+  subCrumbs: string[];
 }
 
-export function Breadcrumbs({ history }: BreadcrumbsProps) {
-  // Nothing to show at root (welcome only).
-  if (history.length <= 1) return null;
+export function Breadcrumbs({ history, subCrumbs }: BreadcrumbsProps) {
+  // Flatten router history labels + panel sub-crumbs into one trail.
+  const all = [
+    ...history.map((v) => LABELS[v] ?? v),
+    ...subCrumbs,
+  ];
+
+  // Nothing to show at root (welcome only, no sub-crumbs).
+  if (all.length <= 1) return null;
 
   return (
     <Box paddingX={1} marginBottom={0}>
-      {history.map((v, i) => {
-        const isLast = i === history.length - 1;
+      {all.map((label, i) => {
+        const isLast = i === all.length - 1;
         return (
           <React.Fragment key={i}>
-            {i > 0 && (
-              <Text dimColor>  ›  </Text>
-            )}
+            {i > 0 && <Text dimColor>  ›  </Text>}
             <Text
               color={isLast ? "white" : undefined}
               dimColor={!isLast}
             >
-              {LABELS[v] ?? v}
+              {label}
             </Text>
           </React.Fragment>
         );

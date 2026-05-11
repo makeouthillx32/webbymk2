@@ -27,4 +27,5 @@ export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   apptest1: { layoutType: "app",     appFooter: "none" },
   min:      { layoutType: "minimal", appFooter: "none" },
   yayy:     { layoutType: "landing", appFooter: "none" },
+  running:  { layoutType: "minimal", appFooter: "none" },
 };
