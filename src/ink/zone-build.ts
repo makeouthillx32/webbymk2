@@ -23,34 +23,77 @@
 // base64 token.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
 import { composeRun, pullAndUp }             from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
+import { getCredential }                     from "../utils/secureStorage/index.js";
+
+declare const UNAXIS_VERSION: string | undefined;
 
 // ── Build args ────────────────────────────────────────────────────────────────
+//
+// Build arg resolution: two-pass approach.
+//
+//   Pass 1 — key list from zones/{key}/build.env (explicit manifest).
+//             Lists exactly which NEXT_PUBLIC_* vars this zone needs at build
+//             time.  Safe to commit.  Created by genBuildEnv() at scaffold.
+//
+//   Pass 2 — values from process.env (loaded from .env by ensureRuntimeEnv
+//             before the TUI boots).  Only the keys declared in build.env
+//             are ever passed as --build-arg — secrets never leak into layers.
+//
+//   Fallback — if build.env is absent (zone scaffolded before this feature),
+//             fall back to parsing .env for NEXT_PUBLIC_* keys directly.
+//             This matches the old behaviour so nothing breaks for old zones.
 
-/** Parse NEXT_PUBLIC_* vars from .env → flat --build-arg pairs for docker build. */
-function loadBuildArgs(): string[] {
-  const args: string[] = [];
+function loadBuildEnvKeys(zone: Zone): string[] | null {
+  // zone.dockerfile is "zones/{key}/Dockerfile" — derive the zone dir from it
+  const zoneDir   = join(PROJECT_DIR, "zones", zone.key ?? "");
+  const buildEnv  = join(zoneDir, "build.env");
+  if (!existsSync(buildEnv)) return null;
+
   try {
-    const content = readFileSync(`${PROJECT_DIR}/.env`, "utf-8");
-    // .env may be saved with CRLF on Windows — split on both LF and CRLF so the
-    // regex below (which uses $ without the /s flag, so . doesn't match \r and
-    // $ won't anchor before \r) matches cleanly.  Without this, every CRLF line
-    // fails to match and NO build-args get passed — Next.js then builds with
-    // empty process.env.NEXT_PUBLIC_* and supabase.createClient("") throws
-    // "Failed to collect page data" for any API route that inits at module load.
+    return readFileSync(buildEnv, "utf-8")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#") && /^[A-Z_][A-Z0-9_]*$/.test(l));
+  } catch {
+    return null;
+  }
+}
+
+function loadBuildArgs(zone: Zone): string[] {
+  const args: string[] = [];
+
+  // ── Pass 1: build.env manifest (preferred) ──────────────────────────────────
+  const manifestKeys = loadBuildEnvKeys(zone);
+  if (manifestKeys !== null) {
+    for (const key of manifestKeys) {
+      const value = process.env[key];
+      if (typeof value === "string" && value.length > 0) {
+        args.push("--build-arg", `${key}=${value}`);
+      }
+      // Missing keys are silently skipped — docker build will error clearly
+      // if an ARG without a default isn't supplied.
+    }
+    return args;
+  }
+
+  // ── Fallback: parse .env directly for NEXT_PUBLIC_* (old-zone compat) ───────
+  // .env may be CRLF on Windows — split on both line endings.
+  try {
+    const content = readFileSync(join(PROJECT_DIR, ".env"), "utf-8");
     for (const rawLine of content.split(/\r?\n/)) {
       const line = rawLine.replace(/\r$/, "");
       const m = line.match(/^(NEXT_PUBLIC_[^=\s]+)=(.*)$/);
       if (m) args.push("--build-arg", `${m[1]}=${m[2]}`);
     }
   } catch {
-    // No .env present — proceed without NEXT_PUBLIC vars
+    // No .env — proceed without NEXT_PUBLIC vars
   }
   return args;
 }
@@ -66,16 +109,41 @@ interface BuildDockerConfig {
   cleanup: () => void;
 }
 
-function resolveGhcrToken(): string | null {
-  // ── Priority 1: PAT stored in our own config.json ──────────────────────────
-  //
-  // Add  "ghcrToken": "ghp_xxxxxxxxxxxx"  to %APPDATA%\unenter\config.json.
-  // This completely bypasses Windows Credential Manager and works from any
-  // child-process context.  Recommended on Windows where wincred fails.
-  //
-  // The value may be:
-  //   • a raw PAT  (ghp_…)         → we encode as base64(GHCR_USER:PAT)
-  //   • already base64-encoded      → we use it directly (contains ':' decoded)
+/**
+ * Encode a raw GHCR PAT as the base64 auth string Docker expects.
+ * If the string is already base64-encoded (decoded form contains ":"),
+ * it is returned as-is.
+ */
+function encodeGhcrAuth(pat: string): string {
+  try {
+    const decoded = Buffer.from(pat, "base64").toString("utf8");
+    if (decoded.includes(":")) return pat; // already encoded
+  } catch {}
+  return Buffer.from(`${GHCR_USER}:${pat}`).toString("base64");
+}
+
+/**
+ * Resolve a GHCR auth token (base64 username:PAT) for use in a temp
+ * Docker config.  Resolution order (first hit wins):
+ *
+ *   1. ~/.unaxis/.credentials.json  ghcr_token  (secureStorage — preferred)
+ *   2. Legacy %APPDATA%\unenter\config.json  ghcrToken  (backwards compat)
+ *   3. ~/.docker/config.json inline base64 auth  (docker login --username)
+ *   4. Docker credential helper  (may fail on Windows with wincred)
+ *
+ * Must be called from the interactive TUI process (not a spawned child)
+ * so Windows Credential Manager access works for path 4.
+ */
+async function resolveGhcrToken(): Promise<string | null> {
+  // ── Priority 1: secureStorage credential store ───────────────────────────
+  //   Set via: unaxis credentials set ghcr_token ghp_xxxx
+  try {
+    const stored = await getCredential("ghcr_token");
+    if (stored?.trim()) return encodeGhcrAuth(stored.trim());
+  } catch {}
+
+  // ── Priority 2: legacy %APPDATA%\unenter\config.json ────────────────────
+  //   Backwards compat for installs that haven't migrated to secureStorage yet.
   const unenterCfgPath = join(
     process.env["APPDATA"] ?? homedir(),
     "unenter", "config.json",
@@ -83,15 +151,7 @@ function resolveGhcrToken(): string | null {
   try {
     const uc = JSON.parse(readFileSync(unenterCfgPath, "utf8")) as Record<string, unknown>;
     const pat = (uc["ghcrToken"] as string | undefined)?.trim();
-    if (pat) {
-      // Detect if already base64-encoded (decoded form contains ":")
-      try {
-        const decoded = Buffer.from(pat, "base64").toString("utf8");
-        if (decoded.includes(":")) return pat;
-      } catch {}
-      // Raw PAT → encode with the GHCR username from config
-      return Buffer.from(`${GHCR_USER}:${pat}`).toString("base64");
-    }
+    if (pat) return encodeGhcrAuth(pat);
   } catch {}
 
   // ── Priority 2: base64 auth already in Docker's config ────────────────────
@@ -161,8 +221,8 @@ function resolveGhcrToken(): string | null {
  *
  * Must be called from the interactive TUI process, not from a child process.
  */
-function createBuildDockerConfig(): BuildDockerConfig {
-  const ghcrToken = resolveGhcrToken();
+async function createBuildDockerConfig(): Promise<BuildDockerConfig> {
+  const ghcrToken = await resolveGhcrToken();
 
   const config: Record<string, unknown> = {
     auths: {} as Record<string, unknown>,
@@ -220,6 +280,72 @@ async function spawnDocker(
   return code;
 }
 
+// ── Versioned image tag helpers ───────────────────────────────────────────────
+//
+// Every successful push produces three tags:
+//   :latest          — always the most recent build (mutable)
+//   :YYYY-MM-DD-HHmm — date+time snapshot (immutable, good for rollback)
+//   :v{semver}       — UNAXIS version at build time (immutable)
+//
+// The base image path is derived from zone.image by stripping the tag.
+// e.g.  ghcr.io/makeouthillx32/unenter-rappers:latest
+//    →  ghcr.io/makeouthillx32/unenter-rappers
+
+function imageBase(image: string): string {
+  const colonIdx = image.lastIndexOf(":");
+  return colonIdx > 0 ? image.slice(0, colonIdx) : image;
+}
+
+function deploymentDateTag(): string {
+  const now = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return (
+    `${now.getFullYear()}-` +
+    `${pad(now.getMonth() + 1)}-` +
+    `${pad(now.getDate())}-` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}`
+  );
+}
+
+function unaxisVersionTag(): string {
+  const definedVersion =
+    typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION.trim() : "";
+  if (definedVersion && definedVersion !== "dev") {
+    return `v${definedVersion}`;
+  }
+
+  try {
+    const pkgUrl = new URL("./package.json", import.meta.url);
+    const pkg = JSON.parse(readFileSync(pkgUrl, "utf-8")) as { version?: string };
+    if (typeof pkg.version === "string" && pkg.version) {
+      if (pkg.version !== "dev") {
+        return `v${pkg.version}`;
+      }
+    }
+  } catch {}
+  return "";
+}
+
+async function tagAndPush(
+  sourceImage: string,
+  targetTag:   string,
+  onLine:      (l: string) => void,
+  dockerEnv:   Record<string, string>,
+): Promise<void> {
+  const target = `${imageBase(sourceImage)}:${targetTag}`;
+  const tagCode = await spawnDocker(["tag", sourceImage, target], onLine, dockerEnv);
+  if (tagCode !== 0) {
+    onLine(`  Could not tag ${target} — skipping`);
+    return;
+  }
+  const pushCode = await spawnDocker(["push", target], onLine, dockerEnv);
+  if (pushCode === 0) {
+    onLine(`  Tagged + pushed  ${target}`);
+  } else {
+    onLine(`  Push failed for  ${target} — skipping`);
+  }
+}
+
 // ── Single zone build + push ──────────────────────────────────────────────────
 
 /**
@@ -233,10 +359,10 @@ export async function buildZone(
   opts:   { noCache?: boolean } = {},
 ): Promise<number> {
   const dockerfile = zone.dockerfile ?? "Dockerfile";
-  const dockerCfg  = createBuildDockerConfig();
+  const dockerCfg  = await createBuildDockerConfig();
 
   try {
-    const buildArgs = loadBuildArgs();
+    const buildArgs = loadBuildArgs(zone);
     const buildCmd  = [
       "build",
       // --cache-from omitted: BuildKit resolves it inside buildkitd which
@@ -273,15 +399,25 @@ export async function buildZone(
     onLine(`OK: build complete`);
 
     onLine(`--- push: ${zone.image} ---`);
-    const pushCode = await spawnDocker(["push", zone.image], onLine, {
-      DOCKER_CONFIG: dockerCfg.tmpDir,
-    });
+    const dockerEnv = { DOCKER_CONFIG: dockerCfg.tmpDir };
+    const pushCode = await spawnDocker(["push", zone.image], onLine, dockerEnv);
     if (pushCode !== 0) {
-      onLine(`FAILED: push — set GHCR token in Settings [s] → [t]`);
-    } else {
-      onLine(`OK: pushed ${zone.image}`);
+      onLine("FAILED: push - set GHCR token in Settings [s] -> [t]");
+      return pushCode;
     }
-    return pushCode;
+    onLine(`OK: pushed ${zone.image}`);
+
+    // ── Versioned tags — non-fatal, best-effort ──────────────────────────────
+    // Push date+time and version tags alongside :latest so rollbacks are
+    // always possible.  Failures here are logged but don't fail the build.
+    onLine(`--- versioned tags ---`);
+    const dateTag    = deploymentDateTag();
+    const versionTag = unaxisVersionTag();
+    await tagAndPush(zone.image, dateTag, onLine, dockerEnv);
+    if (versionTag) await tagAndPush(zone.image, versionTag, onLine, dockerEnv);
+    onLine(`OK: versioned tags pushed`);
+
+    return 0;
 
   } finally {
     dockerCfg.cleanup();

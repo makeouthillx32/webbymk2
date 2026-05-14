@@ -26,8 +26,11 @@ import { Divider }                    from "../components/Divider.tsx";
 import { KeyHints }                   from "../components/KeyHint.tsx";
 import { useWidths }                  from "../hooks/useTermWidth.ts";
 import { useHostMonitor }             from "../hooks/useHostMonitor.ts";
+import { useUpdateCheck }             from "../hooks/useUpdateCheck.ts";
 import { MetricCard }                 from "../components/design-system/MetricCard.tsx";
 import { sparkline }                  from "../utils/sparkline.ts";
+
+declare const UNAXIS_VERSION: string | undefined;
 
 // ── Color palette (terminal-safe) ─────────────────────────────────────────────
 const BRAND        = "#D4A27F";
@@ -81,6 +84,13 @@ export function WelcomeScreen({
   const { tw, dw, th }          = useWidths();
   const host                    = useHostMonitor();
 
+  const devUpdateCheckVersion = process.env.UNAXIS_UPDATE_CHECK_VERSION?.trim();
+  const currentVersion =
+    typeof UNAXIS_VERSION !== "undefined"
+      ? UNAXIS_VERSION
+      : devUpdateCheckVersion || "dev";
+  const { updateAvailable, latestVersion } = useUpdateCheck(currentVersion);
+
   // ── Responsive breakpoints ────────────────────────────────────────────────
   const narrow  = tw < 60;
   const vnarrow = tw < 40;
@@ -107,6 +117,13 @@ export function WelcomeScreen({
       return;
     }
     if (input === "s") { onSettings(); return; }
+    if (input === "u" && updateAvailable) {
+      process.stdout.write(
+        "\n  Update available: v" + latestVersion + "\n" +
+        "  Run:  npm update -g @untsystems/unaxis\n\n"
+      );
+      return;
+    }
     // Dev-only hotkeys
     if (isDev && input === "r") { onRelease?.(); return; }
     if (isDev && input === "b") { onBuild?.();   return; }
@@ -141,10 +158,21 @@ export function WelcomeScreen({
       <Box flexDirection="column" alignItems="center" marginBottom={minimal ? 0 : 1}>
         <Box gap={2} alignItems="center">
           <Text bold color={BRAND}>{"◈  UNAXIS"}</Text>
-          <Text dimColor color={BRAND}>v{typeof UNAXIS_VERSION !== "undefined" ? UNAXIS_VERSION : "dev"}</Text>
+          {typeof UNAXIS_VERSION !== "undefined" && (
+            <Text dimColor color={BRAND}>v{UNAXIS_VERSION}</Text>
+          )}
           {isDev && <Text bold color={DEV_COLOR}> DEV </Text>}
         </Box>
       </Box>
+
+      {/* ── Update banner ──────────────────────────────────────────────────── */}
+      {updateAvailable && !minimal && (
+        <Box justifyContent="center" marginBottom={0}>
+          <Text color="yellow">{"⬆  update available: v"}</Text>
+          <Text bold color="yellow">{latestVersion}</Text>
+          <Text dimColor>{"  [u] to see instructions"}</Text>
+        </Box>
+      )}
 
       {!minimal && (
         <Box justifyContent="center" marginBottom={0}>
@@ -302,6 +330,7 @@ export function WelcomeScreen({
           { k: "↑↓", label: "navigate" },
           { k: "↵",  label: "select"   },
           { k: "q",  label: "quit"     },
+          ...(updateAvailable ? [{ k: "u", label: "update" }] : []),
           ...(isDev ? [
             { k: "r", label: "release" },
             { k: "b", label: "build"   },

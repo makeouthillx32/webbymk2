@@ -51,12 +51,8 @@ export {
 // ── DB registry ───────────────────────────────────────────────────────────────
 export { insertZoneToDb, deleteZoneFromDb } from "./registry.ts";
 
-// ── Legacy docker-compose patching (old zones only) ───────────────────────────
-export {
-  genComposeService,
-  patchDockerCompose,
-  removeFromDockerCompose,
-} from "./docker-compose.ts";
+// ── Legacy docker-compose (removal only — add path is deprecated) ────────────
+export { removeFromDockerCompose } from "./docker-compose.ts";
 
 // ── NPM cleanup ───────────────────────────────────────────────────────────────
 export { deleteZoneNpmHost } from "./npm-cleanup.ts";

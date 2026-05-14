@@ -9,6 +9,8 @@
     "min": "http://min:3000",
     "apptest1": "http://apptest1:3000",
     "yayy": "http://yayy:3000",
-    "running": "http://running:3000"
+    "running": "http://running:3000",
+    "rappers": "http://rappers:3000",
+    "onemore": "http://onemore:3000"
   }
 }

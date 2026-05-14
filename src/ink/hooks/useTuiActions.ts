@@ -94,7 +94,7 @@ export function useTuiActions(
       case "delete": {
         const { label: zLabel, key: zKey } = zone;
         runOp(`Delete zone  ${zKey}`, (o) =>
-          deleteZone(zKey, o).then((r) => {
+          deleteZone(zone, o).then((r) => {
             if (r.exitCode === 0) {
               addNotification(`"${zLabel}" zone deleted`, "success");
               invalidateZoneCache();

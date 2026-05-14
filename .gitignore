@@ -50,3 +50,32 @@ lastbuildlogs.ps
 
 # agents
 .agents/
+
+# AI tool local configs
+.gemini/
+.letta/
+
+# logs & debug output
+tui_debug.log
+tuibuildlogs.md
+*.log
+
+# scratch / temp / runtime state
+scratch/
+state/
+sandbox/
+
+# backup & generated files
+*.bak
+snapshopts.txt
+RUNTIME_PRIMITIVES_PREP_REPORT.md
+
+# binary blobs that don't belong in source control
+rclone.zip
+*.zip
+
+# skills lock (machine-local)
+skills-lock.json
+
+# local infrastructure config (IPs, sensitive data — never commit)
+config.json

@@ -18,13 +18,20 @@ import { homedir } from "os";
 // ── Project root ──────────────────────────────────────────────────────────────
 
 function deriveProjectDir(): string {
-  if (process.env["PROJECT_ROOT"]) return process.env["PROJECT_ROOT"];
-  
-  // Use import.meta.dir if available (Bun), or fallback to process.cwd()
-  // which is typically the project root when run via run.ps1.
-  const dir = (import.meta as any).dir;
-  if (dir) return resolve(dir, "../..");
-  
+  // Explicit override always wins (CI, run.ps1, UNAXIS_PROJECT_ROOT, etc.)
+  if (process.env["PROJECT_ROOT"])        return process.env["PROJECT_ROOT"];
+  if (process.env["UNAXIS_PROJECT_ROOT"]) return process.env["UNAXIS_PROJECT_ROOT"];
+
+  // In dev mode (bun --watch) import.meta.dir correctly reflects the source
+  // file location. In the prod bundle, Bun inlines it as the *build-machine*
+  // path, which doesn't exist on installed machines. So in prod we skip it
+  // and rely on process.cwd() — main.tsx has already chdir'd to the project
+  // root before this module is dynamically imported.
+  if (process.env.NODE_ENV !== "production") {
+    const dir = (import.meta as any).dir as string | undefined;
+    if (dir) return resolve(dir, "../..");
+  }
+
   return process.cwd();
 }
 

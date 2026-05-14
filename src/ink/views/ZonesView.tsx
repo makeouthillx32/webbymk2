@@ -496,10 +496,11 @@ export function ZonesView({
           title="Delete zone"
           message={`Permanently delete "${confirmDelete.label}"? This cannot be undone.`}
           onConfirm={() => {
-            const { label: zLabel, key: zKey } = confirmDelete;
+            const zoneToDelete = confirmDelete;
+            const { label: zLabel, key: zKey } = zoneToDelete;
             setConfirmDelete(null);
             runOp(`Delete zone  ${zKey}`, (o) =>
-              deleteZone(zKey, o).then((r) => {
+              deleteZone(zoneToDelete, o).then((r) => {
                 if (r.exitCode === 0) {
                   addNotification(`"${zLabel}" zone deleted`, "success");
                   invalidateZoneCache();

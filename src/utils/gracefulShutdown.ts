@@ -12,6 +12,22 @@ import {
   SHOW_CURSOR,
 } from '../ink/termio/dec.js'
 
+// ── Goodbye messages ─────────────────────────────────────────────────────────
+const GOODBYE_MESSAGES = [
+  'Goodbye!',
+  'See ya!',
+  'Bye!',
+  'Catch you later!',
+  'Later!',
+  'Take care!',
+  'Until next time!',
+] as const
+
+function getGoodbyeMessage(): string {
+  const idx = Math.floor(Math.random() * GOODBYE_MESSAGES.length)
+  return GOODBYE_MESSAGES[idx] ?? 'Goodbye!'
+}
+
 type Timer = ReturnType<typeof setTimeout>
 
 export type ShutdownSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP' | 'manual'
@@ -69,20 +85,33 @@ function getFailsafeTimeoutMs(options?: GracefulShutdownOptions): number {
 function writeFinalMessage(message: string | undefined): void {
   if (!message) return
   try {
+    // Write to stderr (fd 2) — avoids racing with Bun's --watch watcher output
+    // which goes to stdout and can visually clobber the goodbye message.
+    // stderr still lands in the terminal after EXIT_ALT_SCREEN restores the
+    // main buffer, so the user sees it in their shell history.
     writeSync(2, `${message}\n`)
   } catch {
-    // stderr may already be closed during terminal teardown.
+    // stderr may already be closed (e.g. SIGHUP). Ignore.
   }
 }
 
 /**
  * Reset terminal modes synchronously before process exit.
  *
- * This intentionally avoids app/session hooks: it only writes terminal reset
- * sequences that are safe no-ops when unsupported by the current terminal.
+ * Sequence:
+ *   1. Disable mouse tracking (stops click events immediately)
+ *   2. Exit alt-screen (restores shell history / main buffer)
+ *   3. Disable extended keyboard protocols (Kitty + xterm modify-other-keys)
+ *   4. Disable focus reporting (DFE)
+ *   5. Disable bracketed paste (DBP)
+ *   6. Show cursor (prevents invisible-cursor bug)
+ *   7. Clear terminal title (removes stale tab label)
+ *
+ * Each sequence is a no-op on terminals that don't support it, so we send
+ * all of them unconditionally rather than probing terminal capabilities.
  */
 export function cleanupTerminalModes(): void {
-  if (terminalCleaned || !process.stdout.isTTY) {
+  if (terminalCleaned) {
     return
   }
 
@@ -192,6 +221,7 @@ export function gracefulShutdownSync(
 
   pendingShutdown = gracefulShutdown(exitCode, signal, options).catch(() => {
     cleanupTerminalModes()
+    // On error path, only print a custom message — no random goodbye.
     writeFinalMessage(options?.finalMessage)
     forceExit(exitCode)
   })
@@ -212,7 +242,15 @@ export async function gracefulShutdown(
   armFailsafe(exitCode, options)
   runShutdownHooks()
   cleanupTerminalModes()
-  writeFinalMessage(options?.finalMessage)
+
+  // Auto-pick a goodbye for user-initiated exits.
+  // Signal-triggered exits (SIGINT/SIGTERM/SIGHUP) stay silent — those
+  // are likely scripted or force-closed, not a voluntary quit.
+  const farewell =
+    options?.finalMessage ??
+    (_signal === 'manual' ? getGoodbyeMessage() : undefined)
+  writeFinalMessage(farewell)
+
   forceExit(exitCode)
 }
 

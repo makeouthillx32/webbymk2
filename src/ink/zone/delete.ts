@@ -28,21 +28,24 @@ import { deleteZoneFromDb }            from "./registry.ts";
 import { removeFromRouteClassifier }   from "./route-classifier.ts";
 import { removeZoneRoute }             from "../proxy-config.ts";
 import { deleteZoneNpmHost }           from "./npm-cleanup.ts";
+import type { Zone }                   from "../../config/zones.ts";
 import type { OnLine }                 from "./types.ts";
 
 export type { OnLine };
 
+type DeleteZoneTarget = Pick<Zone, "key" | "container" | "image">;
+
 export async function deleteZone(
-  key:    string,
+  zone:   DeleteZoneTarget,
   onLine: OnLine,
 ): Promise<{ exitCode: number }> {
+  const { key, container, image } = zone;
+
   onLine(`Deleting zone: ${key}`);
   onLine("");
 
   const zoneDir   = join(PROJECT_DIR, "zones", key);
   const coreDir   = join(PROJECT_DIR, "src", "zones", key);
-  const container = `unt_${key}`;
-  const image     = `ghcr.io/makeouthillx32/unenter-${key}:latest`;
 
   // 1. Stop container + remove local image.
   //    Must run BEFORE filesystem cleanup (step 2) so:

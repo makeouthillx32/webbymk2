@@ -19,7 +19,7 @@ import { useTermHeight }             from "../hooks/useTermWidth.ts";
 
 import type { StackOp }              from "./DetachedStack.tsx";
 import type { Notification }         from "./Notifications.tsx";
-import type { View }                 from "../hooks/useAppRouter.ts";
+import { PANEL_TABS, type View }     from "../hooks/useAppRouter.ts";
 
 import { Header }                    from "./Header.tsx";
 import { Tabs }                      from "./Tabs.tsx";
@@ -28,8 +28,6 @@ import { DetachedStack }             from "./DetachedStack.tsx";
 import { Breadcrumbs }               from "./Breadcrumbs.tsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-const PANEL_TABS = ["core", "zones", "npm", "db", "infra", "notes"] as const;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 

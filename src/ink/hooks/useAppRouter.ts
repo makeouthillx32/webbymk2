@@ -22,9 +22,9 @@
 
 import { useState, useCallback } from "react";
 
-export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "notes" | "wizard" | "instance-wizard";
+export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "wizard" | "instance-wizard";
 
-export const PANEL_TABS = ["core", "zones", "npm", "db", "infra", "notes"] as const;
+export const PANEL_TABS = ["core", "zones", "npm", "db", "infra"] as const;
 export type PanelTab    = typeof PANEL_TABS[number];
 
 export function useAppRouter() {

@@ -23,7 +23,7 @@ import {
   genDockerfile, genPackageJson, genPageTsx,
   genLayoutTsx, genCorePageModule,
   genDsWrappers, genDsCorePageTsx,
-  genZoneCompose,
+  genZoneCompose, genBuildEnv,
 }                              from "../zone-templates.ts";
 import { insertZoneToDb }      from "./registry.ts";
 import { patchRouteClassifier } from "./route-classifier.ts";
@@ -83,6 +83,9 @@ export async function scaffoldZone(
 
   await writeFileAtomic(join(zoneDir, "package.json"), genPackageJson(z));
   onLine(`✓ package.json  (dev port :${z.devPort})`);
+
+  await writeFileAtomic(join(zoneDir, "build.env"),    genBuildEnv(z));
+  onLine(`✓ build.env  (build-time NEXT_PUBLIC_* manifest — safe to commit)`);
 
   await writeFileAtomic(join(appDir, "page.tsx"),      genPageTsx(z));
   onLine(`✓ zones/${z.key}/src/app/page.tsx  (re-export wrapper)`);

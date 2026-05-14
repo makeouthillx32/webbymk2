@@ -28,7 +28,6 @@ const LABELS: Record<View, string> = {
   wizard:           "new zone",
   "instance-wizard": "new instance",
   core:             "core",
-  notes:            "notes",
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────

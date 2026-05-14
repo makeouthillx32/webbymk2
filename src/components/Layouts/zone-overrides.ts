@@ -28,4 +28,6 @@ export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   min:      { layoutType: "minimal", appFooter: "none" },
   yayy:     { layoutType: "landing", appFooter: "none" },
   running:  { layoutType: "minimal", appFooter: "none" },
+  rappers:  { layoutType: "minimal", appFooter: "none" },
+  onemore:  { layoutType: "app", appFooter: "none" },
 };

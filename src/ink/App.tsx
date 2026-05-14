@@ -25,7 +25,7 @@
 //   src/cli.ts → src/entrypoints/cli.tsx → src/ink/App.tsx (render entry)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import { useInput, useApp, render }              from "ink";
 import { unstable_batchedUpdates }               from "react-dom";
 
@@ -59,6 +59,7 @@ import { NotesScreen }                     from "./screens/NotesScreen.tsx";
 // ── Overlays ──────────────────────────────────────────────────────────────────
 import { OperationOverlay }                from "./OperationOverlay.tsx";
 import { KeybindingWire }                  from "./KeybindingWire.tsx";
+import { StartupScreen }                   from "./components/StartupScreen.tsx";
 
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -80,8 +81,17 @@ import { InstanceWizardScreen }            from "./screens/InstanceWizardScreen.
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
+// Skip splash only when explicitly opted out or running in CI.
+// noSplash is module-level so it evaluates once at startup.
+const noSplash = process.env.UNAXIS_NO_SPLASH === "1" || !!process.env.CI;
+
 export function App() {
   const { exit } = useApp();
+
+  // ── Startup animation gate ───────────────────────────────────────────────
+  // Runs inside <AlternateScreen> so the animation shares the same terminal
+  // buffer as the main TUI — no alt-screen clear races with the animation.
+  const [splashDone, setSplashDone] = useState(noSplash);
 
   // ── Cross-cutting utilities ────────────────────────────────────────────────
   const { copy, didCopy }          = useCopyOnSelect();
@@ -170,7 +180,7 @@ export function App() {
     // pressing q inside a sub-menu (e.g. ActionPanel) doesn't also fire goBack
     // at the root level.  See NpmPanel, DbPanel, InfraPanel, ZonesView.
 
-  }, { isActive: !tokenEditing });
+  }, { isActive: !tokenEditing && splashDone });
 
   // ── Overlay keyboard callbacks ─────────────────────────────────────────────
   // These used to live inline inside the global useInput overlay-guard block.
@@ -362,8 +372,13 @@ export function App() {
   return (
     <AlternateScreen>
 
+      {/* ── Startup animation — exclusive gate ────────────────────────── */}
+      {!splashDone && (
+        <StartupScreen instant={noSplash} onDone={() => setSplashDone(true)} />
+      )}
+
       {/* ── Full-screen overlay: operation output ─────────────────────── */}
-      {overlayOpId !== null && (
+      {splashDone && overlayOpId !== null && (
         <OperationOverlay
           title={overlayOp?.title ?? ""}
           lines={overlayOp?.lines ?? []}
@@ -379,7 +394,7 @@ export function App() {
       )}
 
       {/* ── Zone creation wizard — full-screen, no chrome ─────────────── */}
-      {overlayOpId === null && view === "wizard" && (
+      {splashDone && overlayOpId === null && view === "wizard" && (
         <ZoneWizardScreen
           onDone={(derived) => {
             goBack();           // wizard → zones
@@ -392,7 +407,7 @@ export function App() {
       )}
 
       {/* ── Main layout ───────────────────────────────────────────────── */}
-      {overlayOpId === null && view !== "wizard" && (
+      {splashDone && overlayOpId === null && view !== "wizard" && (
         <AppShell
           view={view}
           history={history}

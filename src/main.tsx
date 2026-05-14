@@ -32,8 +32,8 @@ if (rootState.valid === true) {
   if (!detected) {
     process.stderr.write(
       '\n  UNAXIS: no project root found.\n' +
-      '  Run from the project directory, or add "projectRoot" to\n' +
-      '  %APPDATA%\\unenter\\config.json\n\n'
+      '  Run from the project directory, or set a default project:\n' +
+      '    unaxis config set default_project <path>\n\n'
     )
     process.exit(1)
   }

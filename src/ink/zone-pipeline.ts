@@ -72,7 +72,7 @@ async function rollbackZone(
   onLine(`\n── rollback ──`);
   onLine(`  Cleaning up "${zone.key}" scaffold artifacts…`);
   try {
-    await deleteZone(zone.key, onLine);
+    await deleteZone(zone, onLine);
     onLine(`✓ Rollback complete — zone "${zone.key}" removed cleanly`);
   } catch (err) {
     onLine(`⚠ Rollback hit an error: ${err}`);
