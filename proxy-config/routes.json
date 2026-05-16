@@ -2,15 +2,7 @@
   "coreDomain": "unenter.live",
   "coreUpstream": "http://unt_app:3000",
   "zones": {
-    "blog": "http://blog:3000",
-    "shop": "http://shop:3000",
-    "auth": "http://authzone:3000",
-    "dashboard": "http://unt_app:3000",
-    "min": "http://min:3000",
-    "apptest1": "http://apptest1:3000",
-    "yayy": "http://yayy:3000",
-    "running": "http://running:3000",
-    "rappers": "http://rappers:3000",
-    "onemore": "http://onemore:3000"
+    "dev.blog": "http://dev-blog:3000",
+    "dev": "http://dev-core:3000"
   }
 }

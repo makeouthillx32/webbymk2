@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X, Upload, Trash2, ImageIcon } from "lucide-react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 
 const BUCKET = "category-covers";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;

@@ -21,10 +21,16 @@
 // terminal_height - chrome_rows so we never need to know our own position).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect } from "react";
-import { Box, Text, useInput }        from "ink";
-import { LoadingState }               from "./design-system/LoadingState.tsx";
-import type { OpView }                from "../OperationOverlay.tsx";
+import React, { useState, useEffect, useRef } from "react";
+import { Box, Text, useInput }               from "ink";
+import { LoadingState }                       from "./design-system/LoadingState.tsx";
+import type { OpView }                        from "../OperationOverlay.tsx";
+import { initWheelAccel, computeWheelStep }  from "../utils/wheelAccel.ts";
+import { useSelection }                       from "../hooks/use-selection.ts";
+import {
+  shouldClearSelectionOnKey,
+  selectionFocusMoveForKey,
+}                                             from "../utils/selectionKeys.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +59,13 @@ export function LogViewer({ lines, busy, mode, height }: LogViewerProps) {
   //   N = scrolled back N lines from the bottom
   const [scrollOffset, setScrollOffset] = useState(0);
 
+  // Wheel acceleration state — persists between events, reset on unmount.
+  const wheelAccel  = useRef(initWheelAccel());
+  const termProgram = process.env['TERM_PROGRAM'];
+
+  // Selection API — clear on non-selection keypresses, extend on shift+arrow.
+  const selection = useSelection();
+
   const total   = lines.length;
   const pinned  = scrollOffset === 0;
   // One row is always reserved for the cursor / live-paused banner.
@@ -67,10 +80,35 @@ export function LogViewer({ lines, busy, mode, height }: LogViewerProps) {
 
   const clamp = (n: number) => Math.max(0, Math.min(Math.max(0, total - viewRows), n));
 
-  // ── Keyboard ────────────────────────────────────────────────────────────────
+  // ── Keyboard + wheel ────────────────────────────────────────────────────────
   useInput((input, key) => {
-    if (key.upArrow   || input === "k") { setScrollOffset((s) => clamp(s + 1));                       return; }
-    if (key.downArrow || input === "j") { setScrollOffset((s) => clamp(s - 1));                       return; }
+
+    // ── Wheel scroll (adaptive acceleration) ──────────────────────────────
+    if (key.wheelUp || key.wheelDown) {
+      const dir = key.wheelUp ? 'up' : 'down';
+      const { step, next } = computeWheelStep(wheelAccel.current, dir, termProgram);
+      wheelAccel.current = next;
+      if (step > 0) {
+        setScrollOffset((s) => clamp(key.wheelUp ? s + step : s - step));
+      }
+      return;
+    }
+
+    // ── Shift+arrow — extend text selection ───────────────────────────────
+    const focusMove = selectionFocusMoveForKey(key);
+    if (focusMove !== null) {
+      selection.moveFocus(focusMove);
+      return;
+    }
+
+    // ── Any non-selection key clears an active selection ──────────────────
+    if (selection.hasSelection() && shouldClearSelectionOnKey(key)) {
+      selection.clearSelection();
+    }
+
+    // ── Standard scroll keys ──────────────────────────────────────────────
+    if (key.upArrow   || input === "k") { setScrollOffset((s) => clamp(s + 1));                        return; }
+    if (key.downArrow || input === "j") { setScrollOffset((s) => clamp(s - 1));                        return; }
     if (input === "u" || key.pageUp)    { setScrollOffset((s) => clamp(s + Math.floor(viewRows / 2))); return; }
     if (input === "d" || key.pageDown)  { setScrollOffset((s) => clamp(s - Math.floor(viewRows / 2))); return; }
     if (input === "g")                  { setScrollOffset(clamp(maxOff));                               return; }

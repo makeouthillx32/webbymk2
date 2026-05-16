@@ -89,7 +89,7 @@ export function WelcomeScreen({
     typeof UNAXIS_VERSION !== "undefined"
       ? UNAXIS_VERSION
       : devUpdateCheckVersion || "dev";
-  const { updateAvailable, latestVersion } = useUpdateCheck(currentVersion);
+  const { updateAvailable, latestVersion, isChecking } = useUpdateCheck(currentVersion);
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
   const narrow  = tw < 60;
@@ -171,6 +171,11 @@ export function WelcomeScreen({
           <Text color="yellow">{"⬆  update available: v"}</Text>
           <Text bold color="yellow">{latestVersion}</Text>
           <Text dimColor>{"  [u] to see instructions"}</Text>
+        </Box>
+      )}
+      {isChecking && !updateAvailable && !minimal && (
+        <Box justifyContent="center" marginBottom={0}>
+          <Text dimColor>{"checking for updates…"}</Text>
         </Box>
       )}
 

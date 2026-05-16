@@ -25,12 +25,12 @@
 //   src/cli.ts → src/entrypoints/cli.tsx → src/ink/App.tsx (render entry)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import { useInput, useApp, render }              from "ink";
 import { unstable_batchedUpdates }               from "react-dom";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
-import { useNotifications }                from "./hooks/useNotifications.ts";
+import { useNotifications, NotificationsProvider } from "./components/Notifications.tsx";
 import { useAppRouter, PANEL_TABS }        from "./hooks/useAppRouter.ts";
 import type { PanelTab }                   from "./hooks/useAppRouter.ts";
 import { useZoneManager }                  from "./hooks/useZoneManager.ts";
@@ -78,6 +78,10 @@ import { snapshotInstance, restoreInstance } from "./zone/snapshot.ts";
 import { loadRegistry }                     from "./zone/supabase-factory.ts";
 import type { RuntimeInstance }            from "./zone/supabase-factory.ts";
 import { InstanceWizardScreen }            from "./screens/InstanceWizardScreen.tsx";
+import { StackManagerScreen }              from "./screens/StackManagerScreen.tsx";
+import { devContainerName, startDevContainer, stopDevContainer } from "./dev-container.ts";
+import type { Zone }                       from "../config/zones.ts";
+import { TerminalWriteProvider }           from "./useTerminalNotification.ts";
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -109,6 +113,7 @@ export function App() {
   const {
     zones, setZones, zonesLoading,
     zoneStatuses, proxyStatus, refreshZones,
+    forceRefreshZoneList,
     infraResults,  infraChecking, checkInfra,
   } = useZoneManager({ addNotification, pollEnabled: statusPollingActive });
 
@@ -121,8 +126,41 @@ export function App() {
     anyBusy,
     logProcRef,   logOpIdRef,
     runOp,        runOpQueued,     runCreateZone,   openLogs,
+    runDevModeOp, triggerDismissHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
+
+  // ── Dev mode — zone-aware wrapper around runDevModeOp ────────────────────
+  // Passes start/stop functions bound to the zone so the generic hook stays
+  // decoupled from dev-container.ts.  Views call runDevMode(zone) only.
+  const runDevMode = useCallback((zone: Zone) => {
+    runDevModeOp(
+      zone.label,
+      devContainerName(zone),
+      (o) => startDevContainer(zone, o),
+      (o) => stopDevContainer(zone, o),
+    );
+  }, [runDevModeOp]);
+
+  // ── Stack focus — separate from visibility ────────────────────────────────
+  // stackOpen        = strip is rendered (auto-set when ops start)
+  // stackFocused     = strip owns keyboard; panels stay active when this is false
+  // stackManagerOpen = full-screen op manager overlay (shows ALL ops + preview)
+  const [stackFocused,     setStackFocused]     = useState(false);
+  const [stackManagerOpen, setStackManagerOpen] = useState(false);
+
+  // ── Auto-exit focus when all ops drain away ───────────────────────────────
+  // If bgOps empties while stackFocused is true (e.g. all ops finish or are
+  // dismissed externally), no component owns useInput and the TUI locks up.
+  // This effect is the safety net — it resets focus state whenever the ops
+  // list hits zero so the main panel always regains keyboard control.
+  useEffect(() => {
+    if (bgOps.length === 0) {
+      setStackFocused(false);
+      setStackOpen(false);
+      setStackManagerOpen(false);
+    }
+  }, [bgOps.length, setStackOpen]);
 
   // ── goHome — overlay emergency exit: kills log, collapses to welcome ──────
   // goRoot() clears the entire history stack so any dangling view state is
@@ -153,9 +191,25 @@ export function App() {
     if (key.ctrl && input === "c") { gracefulShutdownSync(0); return; }
     if (input === "q" && view === "welcome") { gracefulShutdownSync(0); return; }
 
-    // ── [o] — toggle background stack pane (available on every view) ────────
+    // ── [o] — toggle stack focus (available on every view) ──────────────────
+    // Stack strip auto-shows when ops start (stackOpen managed by useBackgroundOps).
+    // [o] shifts keyboard focus to/from the strip so the user can either
+    // interact with running ops OR keep working in the main panel.
     if (input === "o" && bgOps.length > 0) {
-      setStackOpen((s) => !s);
+      if (!stackOpen) setStackOpen(true);   // ensure strip is visible first
+      setStackFocused((f) => !f);
+      return;
+    }
+
+    // ── [O] — open/close full-screen stack manager ───────────────────────────
+    // Capital O opens the StackManagerScreen which shows ALL ops (including any
+    // that are behind a hidden strip) with an inline output preview per op.
+    if (input === "O" && bgOps.length > 0) {
+      setStackManagerOpen((v) => !v);
+      if (!stackManagerOpen) {
+        // Entering manager: unfocus the strip so its useInput doesn't compete
+        setStackFocused(false);
+      }
       return;
     }
 
@@ -187,10 +241,25 @@ export function App() {
   // Now OperationOverlay owns its input and calls these when keys fire.
 
   const handleOverlayQ = useCallback(() => {
+    // Q detaches back to the strip just like Esc — it no longer calls goHome()
+    // (which was goRoot() → navigate-to-welcome, losing the user's view).
+    // Ctrl-C is the escape hatch for a true full-quit.
     const isLog = overlayOp?.isLog ?? false;
-    if (!isLog && overlayOp?.busy) setStackOpen(true);
-    goHome();
-  }, [overlayOp, setStackOpen, goHome]);
+    if (isLog) {
+      logProcRef.current?.kill();
+      logProcRef.current = null;
+      if (logOpIdRef.current !== null) {
+        setBgOps((prev) =>
+          prev.map((o) => o.id === logOpIdRef.current ? { ...o, busy: false } : o)
+        );
+        logOpIdRef.current = null;
+      }
+    }
+    unstable_batchedUpdates(() => {
+      if (bgOps.length > 0) setStackOpen(true);
+      setOverlayOpId(null);
+    });
+  }, [overlayOp, bgOps, logProcRef, logOpIdRef, setBgOps, setStackOpen, setOverlayOpId]);
 
   const handleOverlayEsc = useCallback(() => {
     const isLog = overlayOp?.isLog ?? false;
@@ -205,10 +274,28 @@ export function App() {
       }
     }
     unstable_batchedUpdates(() => {
-      if (!isLog && overlayOp?.busy) setStackOpen(true);
+      // Always show the strip on detach if any ops remain — covers busy ops,
+      // done ops, and dev-mode ops that are dismissable (busy:false) but still live.
+      if (bgOps.length > 0) setStackOpen(true);
       setOverlayOpId(null);
     });
-  }, [overlayOp, logProcRef, logOpIdRef, setBgOps, setStackOpen, setOverlayOpId]);
+  }, [overlayOp, bgOps, logProcRef, logOpIdRef, setBgOps, setStackOpen, setOverlayOpId]);
+
+  // ── Overlay [esc] on a dismissable op (dev mode) ─────────────────────────────
+  // Fires the dismiss hook (kills log proc + runs stopDevContainer cleanup),
+  // then closes the overlay and shows the strip so the user can watch cleanup.
+  // This is the "hard stop" path — the container is actually removed.
+  // Contrast with handleOverlayQ (below) which just detaches without stopping.
+  const handleOverlayKill = useCallback(() => {
+    if (!overlayOp) return;
+    triggerDismissHook(overlayOp.id);
+    unstable_batchedUpdates(() => {
+      setOverlayOpId(null);
+      // Always show the strip — cleanup messages will appear there while
+      // stopDevContainer removes the container + NPM host + proxy route.
+      setStackOpen(true);
+    });
+  }, [overlayOp, triggerDismissHook, setOverlayOpId, setStackOpen]);
 
   const handleOverlayEnter = useCallback(() => {
     setOverlayOpId(null);
@@ -217,6 +304,10 @@ export function App() {
   const handleOverlayCopy = useCallback(() => {
     if (overlayOp) copy(linesToClipboard(overlayOp.lines));
   }, [overlayOp, copy]);
+
+  const handleOverlayCopyTail = useCallback((tailLines: string[]) => {
+    copy(linesToClipboard(tailLines));
+  }, [copy]);
 
   const handleOverlayPopout = useCallback(() => {
     if (!overlayOp) return;
@@ -273,23 +364,27 @@ export function App() {
 
   const handleStackDismiss = useCallback(() => {
     const op = bgOps.find((o) => o.id === stackFocusId);
-    if (op && !op.busy) {
+    // Allow dismiss when done OR when the op explicitly opted into dismissable
+    // (e.g. dev-mode ops that are streaming logs but can be stopped on demand).
+    if (op && (op.dismissable ?? !op.busy)) {
+      triggerDismissHook(op.id);
       dismissPopout(op.id);
       const remaining = bgOps.filter((o) => o.id !== stackFocusId);
       setBgOps(remaining);
       setStackFocusId(remaining[remaining.length - 1]?.id ?? null);
-      if (remaining.length === 0) setStackOpen(false);
+      if (remaining.length === 0) { setStackOpen(false); setStackFocused(false); }
     }
-  }, [bgOps, stackFocusId, dismissPopout, setBgOps, setStackFocusId, setStackOpen]);
+  }, [bgOps, stackFocusId, triggerDismissHook, dismissPopout, setBgOps, setStackFocusId, setStackOpen]);
 
   const handleStackDismissAll = useCallback(() => {
-    const done = bgOps.filter((o) => !o.busy);
-    done.forEach((o) => dismissPopout(o.id));
-    const running = bgOps.filter((o) => o.busy);
+    // Dismiss done ops + any explicitly dismissable ones (e.g. active dev logs)
+    const dismissible = bgOps.filter((o) => o.dismissable ?? !o.busy);
+    dismissible.forEach((o) => { triggerDismissHook(o.id); dismissPopout(o.id); });
+    const running = bgOps.filter((o) => o.busy && !o.dismissable);
     setBgOps(running);
     setStackFocusId(running[running.length - 1]?.id ?? null);
-    if (running.length === 0) setStackOpen(false);
-  }, [bgOps, dismissPopout, setBgOps, setStackFocusId, setStackOpen]);
+    if (running.length === 0) { setStackOpen(false); setStackFocused(false); }
+  }, [bgOps, triggerDismissHook, dismissPopout, setBgOps, setStackFocusId, setStackOpen]);
 
   const handleStackPopout = useCallback(() => {
     const op = bgOps.find((o) => o.id === stackFocusId);
@@ -319,9 +414,32 @@ export function App() {
     if (op) copy(linesToClipboard(op.lines));
   }, [bgOps, stackFocusId, copy]);
 
+  /** Copy only the visible tail lines (what's shown in the log box). */
+  const LOG_TAIL = 8;
+  const handleStackCopyTail = useCallback(() => {
+    const op = bgOps.find((o) => o.id === stackFocusId);
+    if (op) copy(linesToClipboard(op.lines.slice(-LOG_TAIL)));
+  }, [bgOps, stackFocusId, copy]);
+
   const handleStackClose = useCallback(() => {
-    setStackOpen(false);
-  }, [setStackOpen]);
+    // Give keyboard control back to the main panel — strip stays visible so
+    // running ops are still tracked.  The strip disappears on its own when all
+    // ops are dismissed.
+    setStackFocused(false);
+  }, [setStackFocused]);
+
+  const handleStackHide = useCallback(() => {
+    // Collapse the strip without dismissing any ops.  [o] or a new op start
+    // will bring it back.  Distinct from dismiss — ops survive, just not visible.
+    unstable_batchedUpdates(() => {
+      setStackOpen(false);
+      setStackFocused(false);
+    });
+  }, [setStackOpen, setStackFocused]);
+
+  const handleStackManagerClose = useCallback(() => {
+    setStackManagerOpen(false);
+  }, [setStackManagerOpen]);
 
   // ── Dev-only ops (dead code in prod bundle via NODE_ENV define) ──────────
   const handleRelease = useCallback(() => {
@@ -330,15 +448,19 @@ export function App() {
     const inkDir     = join(root, "src", "ink");
     const scriptPath = join(inkDir, "release.ts");
     runOpQueued("Release UNAXIS", (onLine) => new Promise((resolve) => {
-      const child = spawn("bun", [scriptPath, "--publish"], {
+      // process.execPath = absolute path to the currently-running Bun binary.
+      // Never rely on "bun" string + PATH lookup — on Windows, shell: false
+      // uses uv_spawn which can't find bun.exe via PATH in all launch contexts.
+      const child = spawn(process.execPath, [scriptPath, "--publish"], {
         cwd:   inkDir,
-        env:   process.env,
+        env:   { ...process.env, FORCE_COLOR: "0" },
         shell: false,
       });
       const pipe = (data: Buffer) =>
         data.toString().split("\n").forEach((l) => l.trim() && onLine(l));
       child.stdout.on("data", pipe);
       child.stderr.on("data", pipe);
+      child.on("error", (err) => { onLine("✗ spawn error: " + err.message); resolve(1); });
       child.on("close", (code) => resolve(code ?? 0));
     }), "next");
   }, [runOpQueued, addNotification]);
@@ -349,15 +471,16 @@ export function App() {
     const inkDir     = join(root, "src", "ink");
     const scriptPath = join(inkDir, "build.ts");
     runOpQueued("Build UNAXIS (local)", (onLine) => new Promise((resolve) => {
-      const child = spawn("bun", [scriptPath], {
+      const child = spawn(process.execPath, [scriptPath], {
         cwd:   inkDir,
-        env:   process.env,
+        env:   { ...process.env, FORCE_COLOR: "0" },
         shell: false,
       });
       const pipe = (data: Buffer) =>
         data.toString().split("\n").forEach((l) => l.trim() && onLine(l));
       child.stdout.on("data", pipe);
       child.stderr.on("data", pipe);
+      child.on("error", (err) => { onLine("✗ spawn error: " + err.message); resolve(1); });
       child.on("close", (code) => resolve(code ?? 0));
     }), "next");
   }, [runOpQueued, addNotification]);
@@ -384,17 +507,41 @@ export function App() {
           lines={overlayOp?.lines ?? []}
           busy={overlayOp?.busy ?? false}
           mode={overlayOp?.isLog ? "logs" : "output"}
+          dismissable={overlayOp?.dismissable}
           didCopy={didCopy}
           onQ={handleOverlayQ}
           onEsc={handleOverlayEsc}
+          onKill={handleOverlayKill}
           onEnter={handleOverlayEnter}
           onCopy={handleOverlayCopy}
+          onCopyTail={handleOverlayCopyTail}
           onPopout={handleOverlayPopout}
         />
       )}
 
+      {/* ── Stack manager — full-screen op list (O from anywhere) ───────── */}
+      {splashDone && overlayOpId === null && stackManagerOpen && (
+        <StackManagerScreen
+          ops={bgOps}
+          focusedId={stackFocusId}
+          didCopy={didCopy}
+          onUp={handleStackUp}
+          onDown={handleStackDown}
+          onEnter={() => {
+            // Open focused op in overlay and close the manager
+            handleStackEnter();
+            setStackManagerOpen(false);
+          }}
+          onDismiss={handleStackDismiss}
+          onDismissAll={handleStackDismissAll}
+          onPopout={handleStackPopout}
+          onCopy={handleStackCopy}
+          onClose={handleStackManagerClose}
+        />
+      )}
+
       {/* ── Zone creation wizard — full-screen, no chrome ─────────────── */}
-      {splashDone && overlayOpId === null && view === "wizard" && (
+      {splashDone && overlayOpId === null && !stackManagerOpen && view === "wizard" && (
         <ZoneWizardScreen
           onDone={(derived) => {
             goBack();           // wizard → zones
@@ -407,13 +554,14 @@ export function App() {
       )}
 
       {/* ── Main layout ───────────────────────────────────────────────── */}
-      {splashDone && overlayOpId === null && view !== "wizard" && (
+      {splashDone && overlayOpId === null && !stackManagerOpen && view !== "wizard" && (
         <AppShell
           view={view}
           history={history}
           subCrumbs={subCrumbs}
           bgOps={bgOps}
           stackOpen={stackOpen}
+          stackFocused={stackFocused}
           stackFocusId={stackFocusId}
           notifications={notifications}
           didCopy={didCopy}
@@ -424,7 +572,9 @@ export function App() {
           onStackDismissAll={handleStackDismissAll}
           onStackPopout={handleStackPopout}
           onStackCopy={handleStackCopy}
+          onStackCopyTail={handleStackCopyTail}
           onStackClose={handleStackClose}
+          onStackHide={handleStackHide}
         >
 
           {view === "welcome" && (
@@ -438,7 +588,7 @@ export function App() {
               onQuit={() => gracefulShutdownSync(0)}
               onRelease={handleRelease}
               onBuild={handleBuild}
-              isActive={!stackOpen}
+              isActive={!stackFocused}
             />
           )}
 
@@ -457,9 +607,11 @@ export function App() {
               proxyStatus={proxyStatus}
               runOp={runOpQueued}
               openLogs={openLogs}
+              runDevMode={runDevMode}
               addNotification={addNotification}
               onGoBack={goBack}
-              isActive={!stackOpen}
+              isActive={!stackFocused}
+              onEnter={forceRefreshZoneList}
             />
           )}
 
@@ -471,11 +623,12 @@ export function App() {
               setZones={setZones}
               runOp={runOpQueued}
               openLogs={openLogs}
+              runDevMode={runDevMode}
               addNotification={addNotification}
               onGoBack={goBack}
               onNewZone={() => navigate("wizard")}
               onSubCrumbs={setSubCrumbs}
-              isActive={!stackOpen}
+              isActive={!stackFocused}
             />
           )}
 
@@ -619,7 +772,7 @@ export function App() {
 
 setupGracefulShutdown();
 
-render(<KeybindingWire><App /></KeybindingWire>, {
+render(<KeybindingWire><NotificationsProvider><App /></NotificationsProvider></KeybindingWire>, {
   patchConsole: false,   // don't hijack console.log (use onLine callbacks)
   exitOnCtrlC:  false,   // App handles Ctrl-C / q itself via useApp().exit()
 })

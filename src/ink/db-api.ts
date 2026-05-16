@@ -33,6 +33,7 @@ import {
   getRuntimeKongUrl,
   getRuntimeServiceKey,
 } from "../utils/runtimeEnv.js";
+import { checkInternetConnectivity, classifyDockerError } from "./docker.ts";
 
 // ── Connection config ─────────────────────────────────────────────────────────
 
@@ -512,14 +513,34 @@ function composeStream(
       proc.kill();
     }, timeout);
 
+    let output = "";
+
     proc.stdout!.on("data", (d: Buffer) => {
-      d.toString().split("\n").filter(Boolean).forEach(onLine);
+      const chunk = d.toString();
+      output += chunk;
+      chunk.split("\n").filter(Boolean).forEach(onLine);
     });
     proc.stderr!.on("data", (d: Buffer) => {
-      d.toString().split("\n").filter(Boolean).forEach((l) => onLine(`  ${l}`));
+      const chunk = d.toString();
+      output += chunk;
+      chunk.split("\n").filter(Boolean).forEach((l) => onLine(`  ${l}`));
     });
-    proc.on("close",  (code) => { clearTimeout(timer); resolve(code ?? 1); });
-    proc.on("error",  ()     => { clearTimeout(timer); onLine("✗ docker compose not found"); resolve(1); });
+    proc.on("close",  (code) => {
+      clearTimeout(timer);
+      const exitCode = code ?? 1;
+      if (exitCode !== 0) {
+        const hint = classifyDockerError(output);
+        if (hint) onLine(`Hint: ${hint}`);
+      }
+      resolve(exitCode);
+    });
+    proc.on("error",  ()     => {
+      clearTimeout(timer);
+      onLine("✗ docker compose not found");
+      const hint = classifyDockerError("docker compose not found");
+      if (hint) onLine(`Hint: ${hint}`);
+      resolve(1);
+    });
   });
 }
 
@@ -536,6 +557,14 @@ export async function startCoreStack(
 ): Promise<boolean> {
   onLine(`▶ Starting  ${instance.name}  (${instance.slug})`);
   onLine(`  compose dir: ${instance.dockerPath}`);
+
+  const internet = await checkInternetConnectivity();
+  if (internet.online) {
+    onLine(`  Internet check passed (${internet.method})`);
+  } else {
+    onLine("  No internet connectivity detected; continuing with cached Docker images.");
+    onLine("  If required images are missing locally, Docker startup will fail.");
+  }
 
   await updateInstanceStatus(instance.id, { status: "creating" });
 

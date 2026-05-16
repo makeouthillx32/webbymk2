@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import NewChatModal from './NewChatModal';
 import ChatSidebarHeader from './ChatSidebarHeader';
 import ChatSidebarSearch from './ChatSidebarSearch';

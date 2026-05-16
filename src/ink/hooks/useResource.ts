@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isScrollActive } from "../../bootstrap/state.js";
 import type { Dispatch, SetStateAction }             from "react";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ export function useResource<T>(
   // ── Background polling ────────────────────────────────────────────────────
   useEffect(() => {
     if (!pollInterval) return;
-    const id = setInterval(() => doFetch(true), pollInterval);
+    const id = setInterval(() => { if (!isScrollActive()) doFetch(true); }, pollInterval);
     return () => clearInterval(id);
   }, [pollInterval, doFetch]);
 

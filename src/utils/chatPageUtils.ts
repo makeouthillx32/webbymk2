@@ -1,5 +1,5 @@
 // utils/chatPageUtils.ts (FIXED - Handle empty messages gracefully)
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 
 const supabase = createBrowserClient(

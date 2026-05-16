@@ -1,6 +1,6 @@
 // hooks/useConversationManager.ts - Comprehensive conversation management
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { useRealtimeInsert } from '@/hooks/useRealtimeInsert';
 import { useCacheManager, useConversationFetcher } from '@/hooks/useChatDebugActions';
 import { storage, CACHE_KEYS, CACHE_EXPIRY } from '@/lib/cookieUtils';

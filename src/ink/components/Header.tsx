@@ -46,14 +46,24 @@ function useSpinner(active: boolean): string {
   return FRAMES[frame];
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Build the "[o] …" hint text based on current stack state. */
+function buildOHint(focused: boolean, open: boolean, count: number): string {
+  if (focused) return "[o] back";
+  if (open) return "[o] interact  [O] stack view";
+  return "[o] show " + count + " op" + (count === 1 ? "" : "s");
+}
+
 // ── Header component ──────────────────────────────────────────────────────────
 
 interface HeaderProps {
-  ops:       StackOp[];
-  stackOpen: boolean;
+  ops:          StackOp[];
+  stackOpen:    boolean;
+  stackFocused: boolean;
 }
 
-export function Header({ ops, stackOpen }: HeaderProps) {
+export function Header({ ops, stackOpen, stackFocused }: HeaderProps) {
   const time    = useClock();
   const spinner = useSpinner(ops.some((o) => o.busy));
 
@@ -61,6 +71,9 @@ export function Header({ ops, stackOpen }: HeaderProps) {
   const doneCount = ops.filter((o) => !o.busy).length;
   const topOp     = ops.find((o) => o.busy) ?? ops[ops.length - 1] ?? null;
   const hasOps    = ops.length > 0;
+
+  // [o] hint reflects the real toggle state so the user knows what pressing it does.
+  const oHint = buildOHint(stackFocused, stackOpen, ops.length);
 
   return (
     <Box justifyContent="space-between" marginBottom={0}>

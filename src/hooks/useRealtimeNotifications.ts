@@ -1,6 +1,6 @@
 // hooks/useRealtimeNotifications.ts
 import { useEffect, useState } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 
 interface NotificationItem {
   id: string;

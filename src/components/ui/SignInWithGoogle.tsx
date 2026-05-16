@@ -1,6 +1,6 @@
 "use client";
 
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 import type { Provider } from "@supabase/supabase-js";
 
 type OAuthButton = {

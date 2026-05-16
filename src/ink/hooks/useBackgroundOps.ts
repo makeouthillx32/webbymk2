@@ -64,10 +64,13 @@ export function useBackgroundOps({
   setZones,
 }: BackgroundOpsParams) {
   // Op stack state
-  const opIdRef    = useRef(0);
-  const logOpIdRef = useRef<number | null>(null);
-  const logProcRef = useRef<ChildProcess | null>(null);
-  const popoutOps  = useRef(new Set<number>());
+  const opIdRef       = useRef(0);
+  const logOpIdRef    = useRef<number | null>(null);
+  const logProcRef    = useRef<ChildProcess | null>(null);
+  const popoutOps     = useRef(new Set<number>());
+  /** Per-op dismiss callbacks — fired by App.tsx handleStackDismiss when the op
+   *  is removed.  Dev-mode ops register here so cleanup runs on dismiss. */
+  const dismissHooks  = useRef(new Map<number, () => void>());
 
   // Stable QueryGuard for the op queue -- lazy-initialized so the class
   // constructor only runs once across the component's lifetime.
@@ -275,6 +278,107 @@ export function useBackgroundOps({
     drainStream(proc.stderr!, addLine);
   }, [_startOp]);
 
+  /**
+   * Called by App.tsx `handleStackDismiss` (and DismissAll) for every op being
+   * removed.  If the op registered a dismiss hook, runs it and clears the entry.
+   */
+  const triggerDismissHook = useCallback((opId: number) => {
+    const hook = dismissHooks.current.get(opId);
+    if (hook) {
+      dismissHooks.current.delete(opId);
+      hook();
+    }
+  }, []);
+
+  /**
+   * Start (or stop) a dev-mode container as a background op.
+   *
+   *   - If container is already running  → run stopFn, op finishes when done
+   *   - If container is not running      → run startFn; op stays dismissable
+   *     in the stack while the container lives.  Dismissing it calls stopFn.
+   *
+   * The op is marked dismissable=true so the user can [x]-dismiss it from the
+   * stack even while the container is running — the dismiss hook fires stopFn.
+   */
+  const runDevModeOp = useCallback((
+    label:     string,
+    container: string,
+    startFn:   (onLine: (l: string) => void) => Promise<number>,
+    stopFn:    (onLine: (l: string) => void) => Promise<number>,
+  ) => {
+    const { id, addLine } = _startOp(`Dev  ${label}`, false, true);
+
+    // Mark op as dismissable immediately — shown in the stack strip with [x]
+    setBgOps((prev) =>
+      prev.map((o) => o.id === id ? { ...o, dismissable: true } : o)
+    );
+
+    // Determine current state then start or stop
+    import("../docker.ts").then(({ getStatus }) => getStatus(container)).then((status) => {
+      const running = status === "running" || status === "starting";
+
+      if (running) {
+        // Container is live — stop it
+        addLine(`Dev container "${container}" is running — stopping…`);
+        return stopFn(addLine).then((code) => {
+          addLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+          setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+        });
+      }
+
+      // Container is not running — start it
+      return startFn(addLine).then((code) => {
+        if (code !== 0) {
+          addLine(`✗ start failed (exit ${code})`);
+          setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          return;
+        }
+
+        // Start succeeded — immediately stream container logs so the user
+        // sees Next.js startup output without having to press [l].
+        addLine(`─── streaming dev logs (Next.js starting…) ───`);
+
+        const logProc = spawnLogTail(container, 50);
+
+        // Keep op alive while logs stream; isLog=true so it doesn't block
+        // zone builds from running concurrently.
+        setBgOps((prev) => prev.map((o) =>
+          o.id === id ? { ...o, busy: true, isLog: true, dismissable: true } : o
+        ));
+
+        drainStream(logProc.stdout!, addLine);
+        drainStream(logProc.stderr!, addLine);
+
+        logProc.on("close", () => {
+          // Log stream ended (container stopped externally)
+          setBgOps((prev) => prev.map((o) =>
+            o.id === id ? { ...o, busy: false } : o
+          ));
+        });
+
+        // Dismiss hook: kill log stream then stop the container
+        dismissHooks.current.set(id, () => {
+          logProc.kill();
+          const { id: stopId, addLine: stopLine } = _startOp(`Stop Dev  ${label}`, false, false);
+          stopFn(stopLine).then((code) => {
+            stopLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+            setBgOps((prev) => prev.map((o) =>
+              o.id === stopId ? { ...o, busy: false } : o
+            ));
+          }).catch((err) => {
+            stopLine(`✗ stop error: ${String(err)}`);
+            setBgOps((prev) => prev.map((o) =>
+              o.id === stopId ? { ...o, busy: false } : o
+            ));
+          });
+        });
+      });
+    }).catch((err) => {
+      addLine(`✗ docker status error: ${String(err)}`);
+      setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+    });
+  }, [_startOp, setBgOps]);
+
   // Pop-out terminal management
   const registerPopout = useCallback((opId: number) => {
     popoutOps.current.add(opId);
@@ -296,6 +400,8 @@ export function useBackgroundOps({
     runOp,         runOpQueued,
     runCreateZone,
     openLogs,
+    runDevModeOp,
+    triggerDismissHook,
     registerPopout, dismissPopout,
   };
 }

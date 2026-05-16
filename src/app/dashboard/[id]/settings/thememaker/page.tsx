@@ -3,7 +3,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { Eye, ArrowLeft } from 'lucide-react';
 import Breadcrumb from "@/components/Breadcrumbs/dashboard";
 

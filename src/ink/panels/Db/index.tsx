@@ -1,24 +1,32 @@
 // src/ink/panels/Db/index.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Database panel — Dual-Layer Infrastructure Dashboard + Connection Hub.
+// Database panel — Core Supabase mothership + Runtime Instances (branches/labs).
 //
-// Architecture: One database · Many zones · Portable core runtime
+// Philosophy:
+//   Core Supabase is the primary control-plane database that the entire
+//   platform runs on — website, zones, TUI, MCP, storage, auth.  It is the
+//   source of truth and is treated as sacred.
 //
-// ┌─ [Tab] section switch ────────────────────────────────────────────────────┐
-// │  core runtime                      instances                              │
-// ├───────────────────────────────────────────────────────────────────────────┤
-// │  Section 1 — Core Runtime                                                 │
-// │    • Service list (unt_* containers)                                      │
-// │    • Connection Hub — always-visible Studio URL, API, PG conn, keys       │
-// │    [s] Start  [x] Stop  [r] Restart  [h] Heal  [b] Backup  [v] Verify    │
-// │    [g] Gallery  [u] Open Studio  [c] Copy connection sheet  [m] Copy MCP  │
-// │                                                                           │
-// │  Section 2 — Runtime Instances                                            │
-// │    • Instance list from JSON registry                                     │
-// │    • Per-instance connection detail on highlight                          │
-// │    [r] Restart  [x] Stop  [d] Delete  [s] Snapshot  [g] Gallery          │
-// │    [v] Verify  [n] New  [u] Open Studio  [c] Copy conn  [m] Copy MCP     │
-// └───────────────────────────────────────────────────────────────────────────┘
+//   Runtime Instances are branches: clones, blank runtimes, or seeded envs
+//   spun off for staging, testing, experiments, or side projects.  These are
+//   where you experiment — not Core.
+//
+// Layout (Core tab):
+//   Identity block     — name, role, status badges
+//   Quick-access URLs  — Studio · API · Postgres on one compact row
+//   Metrics row        — CPU + memory sparklines
+//   Action groups      — Operate · Protect · Connect · Branch (visual sections)
+//   Core Services      — compact status list (supporting detail, not main event)
+//   Keys               — anon + svc_role with copy shortcuts
+//
+// Layout (Runtime Instances tab):
+//   Instance list      — name · mode · status columns
+//   Detail panel       — URLs, mode, ports, last snapshot for selected instance
+//   Action bar         — per-instance operations
+//
+// ┌─ [Tab] section switch ─────────────────────────────────────────────────────┐
+// │  Core Supabase                     Runtime Instances                       │
+// └────────────────────────────────────────────────────────────────────────────┘
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -34,7 +42,6 @@ import type { RuntimeInstance, HealthState }        from "../../zone/supabase-fa
 import { PROJECT_DIR }                              from "../../../config/stack.ts";
 import type { SnapshotBundle }                      from "../../zone/snapshot.ts";
 import { KeyHints }                                 from "../../components/KeyHint.tsx";
-import { Pane }                                     from "../../components/Pane.tsx";
 import { Tabs }                                     from "../../components/Tabs.tsx";
 import { Divider }                                  from "../../components/Divider.tsx";
 import { SelectMenu, type SelectOption }            from "../../components/SelectMenu.tsx";
@@ -42,20 +49,19 @@ import { SnapshotGalleryScreen }                    from "../../screens/Snapshot
 import { useHostMonitor }                           from "../../hooks/useHostMonitor.ts";
 import { sparkline }                                from "../../utils/sparkline.ts";
 import { MetricCard }                               from "../../components/design-system/MetricCard.tsx";
-import { SectionFrame }                             from "../../components/design-system/SectionFrame.tsx";
-import { ProgressLine }                             from "../../components/design-system/ProgressLine.tsx";
+import type { HostSnapshot }                        from "../../hooks/useHostMonitor.ts";
 
-
-// ── Core runtime service manifest ─────────────────────────────────────────────
+// ── Core service manifest ──────────────────────────────────────────────────────
+// Ordered: primary services first, infrastructure support last.
 
 const CORE_SERVICES = [
   { label: "Postgres",  container: "unt_db",       desc: "primary database (pg 15)"  },
-  { label: "Kong",      container: "unt_kong",      desc: "API gateway :8001"         },
+  { label: "Kong",      container: "unt_kong",      desc: "API gateway  :8001"        },
   { label: "Auth",      container: "unt_auth",      desc: "GoTrue authentication"     },
-  { label: "PostgREST", container: "unt_rest",      desc: "auto REST API"             },
   { label: "Storage",   container: "unt_storage",   desc: "object / file storage"     },
   { label: "Realtime",  container: "unt_realtime",  desc: "WebSocket broadcast"       },
-  { label: "Studio",    container: "unt_studio",    desc: "dashboard UI  :3002"       },
+  { label: "Studio",    container: "unt_studio",    desc: "dashboard  :3002"          },
+  { label: "PostgREST", container: "unt_rest",      desc: "auto REST API"             },
   { label: "Meta",      container: "unt_meta",      desc: "postgres-meta"             },
   { label: "Imgproxy",  container: "unt_imgproxy",  desc: "image processing"          },
 ] as const;
@@ -63,19 +69,14 @@ const CORE_SERVICES = [
 const CORE_OPTIONS: SelectOption[] = CORE_SERVICES.map((s) => ({
   id:    s.container,
   label: s.label,
-  desc:  `${s.container}  ·  ${s.desc}`,
+  desc:  s.desc,
 }));
 
-// ── Virtual RuntimeInstance for the core stack ─────────────────────────────────
-//
-// The core stack (unt_db, unt_kong, etc.) runs from the root docker-compose.yml
-// and isn't registered in instances.json.  We define a virtual RuntimeInstance
-// so the SnapshotGalleryScreen can find core snapshots at
-//   backups/supabase-core/core/
+// ── Virtual RuntimeInstance for core (not in instances.json) ──────────────────
 
 const CORE_INSTANCE: RuntimeInstance = {
   id:            "core",
-  name:          "Core Runtime",
+  name:          "Core Supabase",
   slug:          "core",
   status:        "active",
   createdAt:     "",
@@ -119,18 +120,15 @@ export interface DbPanelProps {
     instance: RuntimeInstance,
   ) => void;
   onGoBack:         () => void;
-  /** Syncs internal navigation depth to the breadcrumb trail. */
   onSubCrumbs:      (crumbs: string[]) => void;
 }
 
-// ── Key truncation helper ─────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function truncKey(key: string, n = 38): string {
+function truncKey(key: string, n = 42): string {
   if (!key) return "(not set)";
   return key.length > n ? key.slice(0, n) + "…" : key;
 }
-
-// ── Health / status colors ────────────────────────────────────────────────────
 
 function healthColor(h: HealthState): string {
   switch (h) {
@@ -151,34 +149,80 @@ function statusColor(s: RuntimeInstance["status"]): string {
   }
 }
 
-// ── ConnectionHub — always-visible connection info pane ───────────────────────
-//
-// Shown below the service list in the Core section (and per-instance in Instances).
-// Displays the key endpoints and a truncated preview of API keys so you always
-// know what's running without having to copy anything first.
-
-interface ConnectionHubProps {
-  label:      string;
-  studioUrl:  string;
-  apiUrl:     string;
-  pgConn:     string;
-  anonKey:    string;
-  svcKey:     string;
-  didCopy?:   boolean;
+function statusDot(s: RuntimeInstance["status"]): string {
+  switch (s) {
+    case "active":   return "●";
+    case "creating": return "◌";
+    case "stopped":  return "○";
+    case "paused":   return "◎";
+    case "error":    return "✗";
+  }
 }
 
-function ConnectionHub({
-  label, studioUrl, apiUrl, pgConn, anonKey, svcKey, didCopy,
-}: ConnectionHubProps) {
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+// ── ActionGroup ────────────────────────────────────────────────────────────────
+// Visual label + row of styled key hints.  Pure display — no interaction.
+
+interface ActionGroupProps {
+  label: string;
+  hints: Array<{ k: string; label: string }>;
+}
+
+function ActionGroup({ label, hints }: ActionGroupProps) {
+  return (
+    <Box gap={2}>
+      <Text bold color="cyan">{label.padEnd(8)}</Text>
+      <Box gap={2} flexWrap="wrap">
+        {hints.map(({ k, label: l }) => (
+          <Box key={k} gap={0}>
+            <Text color="cyan">[</Text>
+            <Text bold color="white">{k}</Text>
+            <Text color="cyan">]</Text>
+            <Text dimColor> {l}</Text>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+// ── InstanceDetail ─────────────────────────────────────────────────────────────
+// Compact per-instance connection + metadata pane shown below the list.
+
+interface InstanceDetailProps {
+  inst:    RuntimeInstance;
+  didCopy: boolean;
+}
+
+function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
+  const studioUrl = instanceStudioUrl(inst.ports.studio);
+  const apiUrl    = `http://localhost:${inst.ports.kong}`;
+  const pgConn    = postgresConnStr(inst.secrets.postgresPassword);
+
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
 
-      <Box gap={1} marginBottom={0}>
-        <Text bold color="cyan">── {label} ─</Text>
+      {/* Instance identity row */}
+      <Box gap={2} marginBottom={0}>
+        <Text bold>{inst.name}</Text>
+        <Text color={statusColor(inst.status)}>
+          {statusDot(inst.status)} {inst.status}
+        </Text>
+        <Text color={healthColor(inst.healthState)}>{inst.healthState}</Text>
+        {inst.lastSnapshot && (
+          <Text dimColor>snap {new Date(inst.lastSnapshot).toLocaleDateString()}</Text>
+        )}
       </Box>
 
-      {/* URLs */}
-      <Box flexDirection="column" paddingLeft={1} marginTop={0}>
+      {/* Connection URLs */}
+      <Box flexDirection="column" marginTop={1}>
         <Box gap={1}>
           <Text dimColor>{"Studio  "}</Text>
           <Text color="green">{studioUrl}</Text>
@@ -189,29 +233,25 @@ function ConnectionHub({
           <Text>{apiUrl}</Text>
         </Box>
         <Box gap={1}>
-          <Text dimColor>{"REST    "}</Text>
-          <Text dimColor>{apiUrl}/rest/v1/</Text>
-        </Box>
-        <Box gap={1}>
           <Text dimColor>{"Postgres"}</Text>
-          <Text>{pgConn}</Text>
+          <Text dimColor>{pgConn}</Text>
         </Box>
       </Box>
 
       {/* Keys */}
-      <Box flexDirection="column" paddingLeft={1} marginTop={1}>
+      <Box flexDirection="column" marginTop={1}>
         <Box gap={1}>
-          <Text dimColor>{"anon     "}</Text>
-          <Text color="yellow">{truncKey(anonKey)}</Text>
+          <Text dimColor>{"anon    "}</Text>
+          <Text color="yellow" dimColor>{truncKey(inst.secrets.anonKey)}</Text>
         </Box>
         <Box gap={1}>
-          <Text dimColor>{"svc_role "}</Text>
-          <Text color="yellow">{truncKey(svcKey)}</Text>
+          <Text dimColor>{"svc     "}</Text>
+          <Text color="yellow" dimColor>{truncKey(inst.secrets.serviceRoleKey)}</Text>
         </Box>
       </Box>
 
-      {/* Copy hint */}
-      <Box paddingLeft={1} marginTop={1} gap={2}>
+      {/* Copy feedback */}
+      <Box marginTop={1} gap={3}>
         {didCopy
           ? <Text color="green">✓ copied to clipboard</Text>
           : <>
@@ -225,41 +265,31 @@ function ConnectionHub({
   );
 }
 
-// ── Section 1 — Core Runtime ──────────────────────────────────────────────────
+// ── Section 1 — Core Supabase ──────────────────────────────────────────────────
 
-const CORE_HINTS = [
-  { k: "↑↓",  label: "navigate"    },
-  { k: "↵",   label: "logs"        },
-  { k: "u",   label: "open Studio" },
-  { k: "s",   label: "start"       },
-  { k: "x",   label: "stop"        },
-  { k: "r",   label: "restart"     },
-  { k: "h",   label: "heal"        },
-  { k: "b",   label: "backup"      },
-  { k: "v",   label: "verify"      },
-  { k: "g",   label: "gallery"     },
-  { k: "c",   label: "copy conn."  },
-  { k: "m",   label: "copy MCP"    },
-  { k: "2",   label: "→ instances" },
+const CORE_KEY_HINTS = [
+  { k: "↑↓", label: "services" },
+  { k: "↵",  label: "logs"     },
+  { k: "2",  label: "→ instances" },
 ];
 
-import { HostSnapshot } from "../../hooks/useHostMonitor.ts";
-
 interface CoreSectionProps {
-  onLogs:       (container: string) => void;
-  onStart:      () => void;
-  onStop:       () => void;
-  onRestart:    () => void;
-  onHeal:       () => void;
-  onBackup:     () => void;
-  onVerify:     () => void;
-  onCopy:       (text: string) => void;
+  onLogs:        (container: string) => void;
+  onStart:       () => void;
+  onStop:        () => void;
+  onRestart:     () => void;
+  onHeal:        () => void;
+  onBackup:      () => void;
+  onVerify:      () => void;
+  onCopy:        (text: string) => void;
   onOpenGallery: () => void;
-  hostSnapshot: HostSnapshot;
+  onNewInstance: () => void;
+  hostSnapshot:  HostSnapshot;
 }
 
 function CoreSection({
-  onLogs, onStart, onStop, onRestart, onHeal, onBackup, onVerify, onCopy, onOpenGallery, hostSnapshot,
+  onLogs, onStart, onStop, onRestart, onHeal, onBackup, onVerify,
+  onCopy, onOpenGallery, onNewInstance, hostSnapshot,
 }: CoreSectionProps) {
   const [didCopy, setDidCopy] = useState(false);
 
@@ -269,90 +299,150 @@ function CoreSection({
     setTimeout(() => setDidCopy(false), 1500);
   }, [onCopy]);
 
-  const handleSelect = useCallback((opt: SelectOption) => { onLogs(opt.id); }, [onLogs]);
+  const handleSelect = useCallback((opt: SelectOption) => {
+    onLogs(opt.id);
+  }, [onLogs]);
 
   useInput((input) => {
-    if (input === "u") { void openBrowser(STUDIO_PROJECT_URL);                     return; }
-    if (input === "s") { onStart();                                              return; }
-    if (input === "x") { onStop();                                               return; }
-    if (input === "r") { onRestart();                                            return; }
-    if (input === "h") { onHeal();                                               return; }
-    if (input === "b") { onBackup();                                             return; }
-    if (input === "v") { onVerify();                                             return; }
-    if (input === "g") { onOpenGallery();                                        return; }
-    if (input === "c") { doCopy(buildConnectionSheet());                         return; }
-    if (input === "m") { doCopy(buildMcpConfig());                               return; }
+    if (input === "u") { void openBrowser(STUDIO_PROJECT_URL); return; }
+    if (input === "s") { onStart();                            return; }
+    if (input === "x") { onStop();                             return; }
+    if (input === "r") { onRestart();                          return; }
+    if (input === "h") { onHeal();                             return; }
+    if (input === "b") { onBackup();                           return; }
+    if (input === "v") { onVerify();                           return; }
+    if (input === "g") { onOpenGallery();                      return; }
+    if (input === "c") { doCopy(buildConnectionSheet());       return; }
+    if (input === "m") { doCopy(buildMcpConfig());             return; }
+    if (input === "n") { onNewInstance();                      return; }
   });
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  };
 
   return (
     <Box flexDirection="column">
-      <Pane title={`Core Runtime  ·  ${STUDIO_PROJECT_URL}`} color="cyan" gap={1}>
-        
-        {/* Live Performance Row */}
-        <Box gap={1} marginBottom={1}>
-          <MetricCard
-            label="System CPU"
-            value={`${hostSnapshot.systemCpu.toFixed(1)}%`}
-            note="active time"
-            tone={hostSnapshot.systemCpu > 80 ? "error" : hostSnapshot.systemCpu > 50 ? "warning" : "success"}
-            trend={sparkline(hostSnapshot.cpuHistory)}
-          />
-          <MetricCard
-            label="Host Memory"
-            value={formatBytes(hostSnapshot.usedMemory)}
-            note={`${formatBytes(hostSnapshot.freeMemory)} free`}
-            tone={hostSnapshot.memoryPressure > 0.9 ? "error" : hostSnapshot.memoryPressure > 0.7 ? "warning" : "success"}
-            trend={sparkline(hostSnapshot.memHistory)}
-          />
+
+      {/* ── Identity ──────────────────────────────────────────────────────── */}
+      <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
+        <Text bold color="cyan">◈  Core Supabase</Text>
+        <Text dimColor>primary control-plane DB</Text>
+        <Text dimColor>·  zones attached  ·  MCP ready</Text>
+      </Box>
+
+      {/* ── Quick-access URLs ─────────────────────────────────────────────── */}
+      <Box flexDirection="column" paddingX={1} paddingBottom={1}>
+        <Box gap={1}>
+          <Text dimColor>{"Studio  "}</Text>
+          <Text color="green">{STUDIO_PROJECT_URL}</Text>
+          <Text dimColor>  [u]</Text>
         </Box>
+        <Box gap={1}>
+          <Text dimColor>{"API     "}</Text>
+          <Text>{KONG_URL}</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"Postgres"}</Text>
+          <Text dimColor>{postgresConnStr()}</Text>
+        </Box>
+      </Box>
 
-        <SectionFrame title="Core Services" tone="suggestion">
-          <SelectMenu
-            options={CORE_OPTIONS}
-            onSelect={handleSelect}
-            searchable={false}
-          />
-        </SectionFrame>
-
-        <ConnectionHub
-          label="Connection Info"
-          studioUrl={STUDIO_PROJECT_URL}
-          apiUrl={KONG_URL}
-          pgConn={postgresConnStr()}
-          anonKey={ANON_KEY}
-          svcKey={SERVICE_KEY}
-          didCopy={didCopy}
+      {/* ── Live metrics ──────────────────────────────────────────────────── */}
+      <Box gap={1} paddingX={1} paddingBottom={1}>
+        <MetricCard
+          label="System CPU"
+          value={`${hostSnapshot.systemCpu.toFixed(1)}%`}
+          note="active time"
+          tone={hostSnapshot.systemCpu > 80 ? "error" : hostSnapshot.systemCpu > 50 ? "warning" : "success"}
+          trend={sparkline(hostSnapshot.cpuHistory)}
         />
+        <MetricCard
+          label="Host Memory"
+          value={formatBytes(hostSnapshot.usedMemory)}
+          note={`${formatBytes(hostSnapshot.freeMemory)} free`}
+          tone={hostSnapshot.memoryPressure > 0.9 ? "error" : hostSnapshot.memoryPressure > 0.7 ? "warning" : "success"}
+          trend={sparkline(hostSnapshot.memHistory)}
+        />
+      </Box>
 
-      </Pane>
-      <KeyHints hints={CORE_HINTS} />
+      <Divider />
+
+      {/* ── Action groups ─────────────────────────────────────────────────── */}
+      <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
+        <ActionGroup label="Operate" hints={[
+          { k: "s", label: "start"   },
+          { k: "x", label: "stop"    },
+          { k: "r", label: "restart" },
+          { k: "h", label: "heal"    },
+          { k: "v", label: "verify"  },
+        ]} />
+        <ActionGroup label="Protect" hints={[
+          { k: "b", label: "backup"  },
+          { k: "g", label: "gallery" },
+        ]} />
+        <ActionGroup label="Connect" hints={[
+          { k: "u", label: "Studio"           },
+          { k: "c", label: "copy conn. sheet" },
+          { k: "m", label: "copy MCP config"  },
+        ]} />
+        <ActionGroup label="Branch" hints={[
+          { k: "n", label: "new runtime instance" },
+          { k: "2", label: "→ Runtime Instances"  },
+        ]} />
+      </Box>
+
+      <Divider title="Core Services" />
+
+      {/* ── Services — compact, selectable for logs ───────────────────────── */}
+      <Box paddingX={1} paddingBottom={0}>
+        <SelectMenu
+          options={CORE_OPTIONS}
+          onSelect={handleSelect}
+          searchable={false}
+        />
+      </Box>
+
+      <Divider />
+
+      {/* ── API keys ──────────────────────────────────────────────────────── */}
+      <Box flexDirection="column" paddingX={1} paddingTop={1}>
+        <Box gap={1}>
+          <Text dimColor>{"anon    "}</Text>
+          <Text color="yellow" dimColor>{truncKey(ANON_KEY)}</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"svc     "}</Text>
+          <Text color="yellow" dimColor>{truncKey(SERVICE_KEY)}</Text>
+        </Box>
+      </Box>
+      <Box paddingX={1} paddingTop={1} gap={3}>
+        {didCopy
+          ? <Text color="green">✓ copied to clipboard</Text>
+          : <>
+              <Text dimColor>[c] copy connection sheet</Text>
+              <Text dimColor>[m] copy MCP config</Text>
+            </>
+        }
+      </Box>
+
+      <KeyHints hints={CORE_KEY_HINTS} />
+
     </Box>
   );
 }
 
-// ── Section 2 — Runtime Instances ─────────────────────────────────────────────────
+// ── Section 2 — Runtime Instances ─────────────────────────────────────────────
 
-const INSTANCE_HINTS = [
-  { k: "↑↓",  label: "navigate"     },
-  { k: "u",   label: "open Studio"  },
-  { k: "r",   label: "restart"      },
-  { k: "x",   label: "stop"         },
-  { k: "d",   label: "delete"       },
-  { k: "s",   label: "snapshot"     },
-  { k: "g",   label: "gallery"      },
-  { k: "v",   label: "verify"       },
-  { k: "c",   label: "copy conn."   },
-  { k: "m",   label: "copy MCP"     },
-  { k: "n",   label: "new instance" },
-  { k: "1",   label: "→ core"       },
+const INSTANCE_KEY_HINTS = [
+  { k: "↑↓", label: "navigate"     },
+  { k: "u",  label: "open Studio"  },
+  { k: "r",  label: "restart"      },
+  { k: "x",  label: "stop"         },
+  { k: "d",  label: "delete"       },
+  { k: "s",  label: "snapshot"     },
+  { k: "g",  label: "gallery"      },
+  { k: "v",  label: "verify"       },
+  { k: "c",  label: "copy conn."   },
+  { k: "m",  label: "copy MCP"     },
+  { k: "n",  label: "new instance" },
+  { k: "1",  label: "→ Core"       },
 ];
 
 interface InstancesSectionProps {
@@ -382,32 +472,40 @@ function InstancesSection({
     setTimeout(() => setDidCopy(false), 1500);
   }, [onCopy]);
 
-  const instanceOptions: SelectOption[] = instances.map((inst) => ({
-    id:    inst.id,
-    label: inst.name,
-    desc:  `${inst.slug}  ·  Kong:${inst.ports.kong}  Studio:${inst.ports.studio}  [${inst.status}]`,
-  }));
+  // Build instance list options — show mode inferred from name/slug heuristic
+  const instanceOptions: SelectOption[] = instances.map((inst) => {
+    const age = inst.createdAt
+      ? new Date(inst.createdAt).toLocaleDateString()
+      : "—";
+    return {
+      id:    inst.id,
+      label: inst.name,
+      desc:  `${statusDot(inst.status)} ${inst.status.padEnd(8)}  ports Kong:${inst.ports.kong} Studio:${inst.ports.studio}  created ${age}`,
+    };
+  });
 
   const handleHighlight = useCallback((opt: SelectOption) => {
     setHighlighted(instances.find((i) => i.id === opt.id) ?? null);
   }, [instances]);
 
   useInput((input) => {
-    if (!highlighted) { if (input === "n") { onNewInstance(); } return; }
-
+    if (!highlighted) {
+      if (input === "n") onNewInstance();
+      return;
+    }
     if (input === "u") {
       void openBrowser(instanceStudioUrl(highlighted.ports.studio));
       return;
     }
     if (input === "c") {
       doCopy(buildConnectionSheet({
-        label:     highlighted.name,
-        kongUrl:   `http://localhost:${highlighted.ports.kong}`,
-        studioUrl: instanceStudioUrl(highlighted.ports.studio),
+        label:        highlighted.name,
+        kongUrl:      `http://localhost:${highlighted.ports.kong}`,
+        studioUrl:    instanceStudioUrl(highlighted.ports.studio),
         studioMcpUrl: instanceStudioMcpUrl(highlighted.ports.studio),
-        anonKey:   highlighted.secrets.anonKey,
-        svcKey:    highlighted.secrets.serviceRoleKey,
-        pgConn:    postgresConnStr(highlighted.secrets.postgresPassword),
+        anonKey:      highlighted.secrets.anonKey,
+        svcKey:       highlighted.secrets.serviceRoleKey,
+        pgConn:       postgresConnStr(highlighted.secrets.postgresPassword),
       }));
       return;
     }
@@ -431,53 +529,80 @@ function InstancesSection({
 
   return (
     <Box flexDirection="column">
-      <Pane
-        title={`Instances  ·  ${instances.length} database${instances.length !== 1 ? "s" : ""}`}
-        color="magenta"
-        gap={1}
-      >
 
-        {instances.length === 0 ? (
-          <Box paddingX={1} flexDirection="column" gap={1}>
-            <Text dimColor>No instances yet.</Text>
-            <Text dimColor>Press [n] to scaffold a new database instance.</Text>
+      {/* ── Section identity ────────────────────────────────────────────────── */}
+      <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
+        <Text bold color="magenta">⬡  Runtime Instances</Text>
+        <Text dimColor>branches · labs · side-project runtimes</Text>
+      </Box>
+
+      {instances.length === 0 ? (
+
+        /* ── Empty state ────────────────────────────────────────────────────── */
+        <Box flexDirection="column" paddingX={2} gap={1}>
+          <Text dimColor>No runtime instances yet.</Text>
+          <Text dimColor>Create one from Core Supabase with [n] → New Instance.</Text>
+          <Box flexDirection="column" paddingTop={1} gap={0}>
+            <Text dimColor bold>Available templates:</Text>
+            <Text dimColor>  [1] Clone Core Supabase   — copy schema + data for staging/testing</Text>
+            <Text dimColor>  [2] Blank Standalone       — fresh runtime for a side project</Text>
+            <Text dimColor>  [3] Clone Existing Runtime — branch a test/staging DB forward</Text>
+            <Text dimColor>  [4] Fresh + SQL Seed       — blank runtime with migrations/fixtures</Text>
           </Box>
-        ) : (
-          <SelectMenu
-            options={instanceOptions}
-            onSelect={(opt) => onInstanceAction("verify", instances.find((i) => i.id === opt.id)!)}
-            onHighlight={handleHighlight}
-            searchable={false}
-          />
-        )}
+          <Box paddingTop={1}>
+            <Text color="magenta">[n] new instance</Text>
+            <Text dimColor>  ·  </Text>
+            <Text dimColor>[1] → Core Supabase</Text>
+          </Box>
+        </Box>
 
-        {/* ── Per-instance connection hub ──────────────────────────────────── */}
-        {highlighted && (
-          <>
-            {/* Status bar */}
-            <Box paddingX={1} marginTop={1} gap={3}>
-              <Text bold>{highlighted.name}</Text>
-              <Text color={statusColor(highlighted.status)}>{highlighted.status}</Text>
-              <Text color={healthColor(highlighted.healthState)}>{highlighted.healthState}</Text>
-              {highlighted.lastSnapshot && (
-                <Text dimColor>snap {new Date(highlighted.lastSnapshot).toLocaleDateString()}</Text>
-              )}
-            </Box>
-
-            <ConnectionHub
-              label={`${highlighted.slug} · connection`}
-              studioUrl={instanceStudioUrl(highlighted.ports.studio)}
-              apiUrl={`http://localhost:${highlighted.ports.kong}`}
-              pgConn={postgresConnStr(highlighted.secrets.postgresPassword)}
-              anonKey={highlighted.secrets.anonKey}
-              svcKey={highlighted.secrets.serviceRoleKey}
-              didCopy={didCopy}
+      ) : (
+        <>
+          {/* ── Instance list ───────────────────────────────────────────────── */}
+          <Box paddingX={1}>
+            <SelectMenu
+              options={instanceOptions}
+              onSelect={(opt) =>
+                onInstanceAction("verify", instances.find((i) => i.id === opt.id)!)
+              }
+              onHighlight={handleHighlight}
+              searchable={false}
             />
-          </>
-        )}
+          </Box>
 
-      </Pane>
-      <KeyHints hints={INSTANCE_HINTS} />
+          <Divider />
+
+          {/* ── Selected instance detail ─────────────────────────────────────── */}
+          {highlighted && (
+            <InstanceDetail inst={highlighted} didCopy={didCopy} />
+          )}
+
+          {/* ── Instance action groups ───────────────────────────────────────── */}
+          <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
+            <ActionGroup label="Operate" hints={[
+              { k: "r", label: "restart"  },
+              { k: "x", label: "stop"     },
+              { k: "v", label: "verify"   },
+              { k: "d", label: "delete"   },
+            ]} />
+            <ActionGroup label="Protect" hints={[
+              { k: "s", label: "snapshot" },
+              { k: "g", label: "gallery"  },
+            ]} />
+            <ActionGroup label="Connect" hints={[
+              { k: "u", label: "open Studio"       },
+              { k: "c", label: "copy conn. sheet"  },
+              { k: "m", label: "copy MCP config"   },
+            ]} />
+            <ActionGroup label="New" hints={[
+              { k: "n", label: "new runtime instance" },
+            ]} />
+          </Box>
+        </>
+      )}
+
+      <KeyHints hints={INSTANCE_KEY_HINTS} />
+
     </Box>
   );
 }
@@ -506,7 +631,7 @@ export function DbPanel({
     loadRegistry().then(setInstances);
   }, []);
 
-  // ── Breadcrumb sync ──────────────────────────────────────────────────────
+  // ── Breadcrumb sync ────────────────────────────────────────────────────────
   useEffect(() => {
     if (galleryInstance) {
       if (galleryInstance.id === "core") {
@@ -522,35 +647,35 @@ export function DbPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryInstance, section]);
 
-  // Section switch / q / ← only active when gallery is NOT open (gallery handles its own Esc/q)
+  // Section switch + back nav (gallery owns its own keyboard)
   useInput((input, key) => {
-    if (galleryInstance !== null) return; // gallery owns the keyboard
+    if (galleryInstance !== null) return;
     if (input === "1")                  { setSection("core");      return; }
     if (input === "2")                  { setSection("instances"); return; }
     if (input === "q" || key.leftArrow) { onGoBack();              return; }
   });
 
-  // ── Gallery overlay takes over the whole panel ────────────────────────────
+  // ── Gallery overlay ────────────────────────────────────────────────────────
   if (galleryInstance !== null) {
     return (
       <SnapshotGalleryScreen
         instance={galleryInstance}
         onRestore={(bundle) => {
-          setGalleryInstance(null);               // close gallery
-          onRestore(bundle, galleryInstance);     // fire background restore op
+          setGalleryInstance(null);
+          onRestore(bundle, galleryInstance);
         }}
         onBack={() => setGalleryInstance(null)}
       />
     );
   }
 
-  // ── Normal panel layout ───────────────────────────────────────────────────
+  // ── Normal layout ──────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column">
 
       <Tabs
-        tabs={["core runtime", "instances"]}
-        active={section === "core" ? "core runtime" : "instances"}
+        tabs={["Core Supabase", "Runtime Instances"]}
+        active={section === "core" ? "Core Supabase" : "Runtime Instances"}
         marginBottom={1}
       />
 
@@ -565,6 +690,7 @@ export function DbPanel({
           onVerify={onVerify}
           onCopy={onCopy}
           onOpenGallery={() => setGalleryInstance(CORE_INSTANCE)}
+          onNewInstance={() => { setSection("instances"); onNewInstance(); }}
           hostSnapshot={hostSnapshot}
         />
       ) : (

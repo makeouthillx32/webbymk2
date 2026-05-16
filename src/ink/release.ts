@@ -23,11 +23,20 @@
 //   bun release.ts --dry       # preview only, no writes
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rmSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdtempSync } from 'fs'
+import { rmSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdtempSync, writeSync } from 'fs'
 import { join }                                                        from 'path'
 import { tmpdir }                                                      from 'os'
 import { spawnSync }                                                   from 'child_process'
 import { resolveNpmToken }                                             from '../utils/secureStorage/index.js'
+
+// ── I/O helpers ────────────────────────────────────────────────────────────────
+// Bun buffers process.stdout when running as a piped child process (non-TTY).
+// Buffered output never arrives in the TUI's onLine handler until the process
+// exits — which it never does if npm publish blocks on stdin.  Using writeSync
+// on the raw file descriptor bypasses Bun's FileSink buffer entirely.
+
+const print = (msg: string) => writeSync(1, msg + '\n')
+const printerr = (msg: string) => writeSync(2, msg + '\n')
 
 // ── Args ───────────────────────────────────────────────────────────────────────
 
@@ -65,25 +74,25 @@ const current = pkg.version as string
 const kind    = major ? 'major' : minor ? 'minor' : 'patch'
 const next    = bumpVersion(current, kind)
 
-console.log('')
-console.log('  UNAXIS release')
-console.log('  ──────────────────────────────────────────────────')
-console.log('  Releasing:  v' + current)
-console.log('  Next dev:   v' + next)
-console.log('  Publish:    ' + (publish ? 'YES — npm publish --access public' : 'no  (local only)'))
-console.log('  Mode:       ' + (dry ? 'DRY RUN — no writes' : 'live'))
-console.log('')
+print('')
+print('  UNAXIS release')
+print('  ──────────────────────────────────────────────────')
+print('  Releasing:  v' + current)
+print('  Next dev:   v' + next)
+print('  Publish:    ' + (publish ? 'YES — npm publish --access public' : 'no  (local only)'))
+print('  Mode:       ' + (dry ? 'DRY RUN — no writes' : 'live'))
+print('')
 
 if (dry) {
-  console.log('  [dry] would build dist/cli.js  UNAXIS_VERSION=' + current)
-  console.log('  [dry] would bump package.json to v' + next)
+  print('  [dry] would build dist/cli.js  UNAXIS_VERSION=' + current)
+  print('  [dry] would bump package.json to v' + next)
   if (publish) {
-    console.log('  [dry] would run: npm publish --access public')
+    print('  [dry] would run: npm publish --access public')
   }
-  console.log('')
-  console.log('  Install anywhere after publish:')
-  console.log('    npm install -g @untsystems/unaxis')
-  console.log('')
+  print('')
+  print('  Install anywhere after publish:')
+  print('    npm install -g @untsystems/unaxis')
+  print('')
   process.exit(0)
 }
 
@@ -92,7 +101,7 @@ if (dry) {
 try { rmSync(outdir, { recursive: true }) } catch {}
 mkdirSync(outdir, { recursive: true })
 
-console.log('  Bundling...')
+print('  Bundling...')
 
 const result = await Bun.build({
   entrypoints: [entry],
@@ -111,8 +120,8 @@ const result = await Bun.build({
 })
 
 if (!result.success) {
-  console.error('  Build failed:')
-  for (const log of result.logs) console.error('    ', log)
+  printerr('  Build failed:')
+  for (const log of result.logs) printerr('    ' + String(log))
   process.exit(1)
 }
 
@@ -123,19 +132,19 @@ if (!bundled.startsWith('#!')) {
 }
 
 const kb = (readFileSync(outfile).length / 1024).toFixed(0)
-console.log('  Built:      dist/cli.js (' + kb + ' KB)')
+print('  Built:      dist/cli.js (' + kb + ' KB)')
 
 // ── Bump package.json ──────────────────────────────────────────────────────────
 
 pkg.version = next
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-console.log('  Bumped:     package.json → v' + next)
+print('  Bumped:     package.json → v' + next)
 
 // ── Publish to npm ─────────────────────────────────────────────────────────────
 
 if (publish) {
-  console.log('')
-  console.log('  Publishing v' + current + ' to npm...')
+  print('')
+  print('  Publishing v' + current + ' to npm...')
 
   // Resolve npm token: env var override -> credential store.
   // Priority: NPM_TOKEN / NPM_AUTH_TOKEN env → ~/.unaxis/.credentials.json
@@ -144,24 +153,25 @@ if (publish) {
   if (!npmToken) {
     // Check if npm global config has a token already (user may have `npm login`'d)
     // If not, fail fast with clear guidance rather than letting npm error cryptically.
-    const whoami = spawnSync('npm', ['whoami'], { stdio: 'pipe', shell: true })
-    const loggedIn = whoami.status === 0
+    const whoami = spawnSync('npm', ['whoami'], { stdio: 'pipe', shell: true, timeout: 8000 })
+    const loggedIn = whoami.status === 0 && !whoami.error
     if (!loggedIn) {
-      console.error('')
-      console.error('  No npm token found and not logged in to npm.')
-      console.error('')
-      console.error('  To fix, do one of:')
-      console.error('    1. Store a token (recommended):')
-      console.error('         unaxis credentials set npm_token <your-npm-token>')
-      console.error('       Get a token at: https://www.npmjs.com/settings/<user>/tokens')
-      console.error('       Use a Classic token with "Automation" type to bypass 2FA.')
-      console.error('')
-      console.error('    2. Set an env var for this session:')
-      console.error('         NPM_TOKEN=<token> bun release.ts --publish')
-      console.error('')
-      console.error('    3. Log in globally (prompts for credentials):')
-      console.error('         npm login')
-      console.error('')
+      printerr('')
+      printerr('  ✗ No npm token found and not logged in to npm.')
+      if (whoami.error) printerr('  (npm whoami timed out or failed: ' + whoami.error.message + ')')
+      printerr('')
+      printerr('  To fix, do one of:')
+      printerr('    1. Store a token (recommended):')
+      printerr('         Open settings → identity tab → press [n] to paste npm token')
+      printerr('       Get a token at: https://www.npmjs.com/settings/<user>/tokens')
+      printerr('       Use a Classic token with "Automation" type to bypass 2FA.')
+      printerr('')
+      printerr('    2. Set an env var for this session:')
+      printerr('         NPM_TOKEN=<token> bun release.ts --publish')
+      printerr('')
+      printerr('    3. Log in globally (prompts for credentials):')
+      printerr('         npm login')
+      printerr('')
       process.exit(1)
     }
   }
@@ -179,19 +189,31 @@ if (publish) {
     tmpNpmrc = join(tmpNpmDir, '.npmrc')
     writeFileSync(tmpNpmrc, `//registry.npmjs.org/:_authToken=${npmToken}\n`, { mode: 0o600 })
     try { chmodSync(tmpNpmrc, 0o600) } catch {}
-    console.log('  Auth:       npm token resolved')
+    print('  Auth:       npm token resolved')
   } else {
-    console.log('  Auth:       using npm global config (~/.npmrc)')
+    print('  Auth:       using npm global config (~/.npmrc)')
   }
 
   const npmArgs = ['publish', '--access', 'public']
   if (tmpNpmrc) npmArgs.push('--userconfig', tmpNpmrc)
 
+  print('  Running:    npm publish...')
+
+  // npm publish must NOT inherit piped stdio — it would block forever waiting
+  // for stdin (OTP prompt, TTY detection) that never arrives through a pipe.
+  // Instead: ignore stdin, capture stdout+stderr, then print them ourselves.
+  // CI=1 tells npm this is a non-interactive environment (no spinners/prompts).
   const npmResult = spawnSync('npm', npmArgs, {
-    cwd:   import.meta.dir,
-    stdio: 'inherit',
-    shell: true,
+    cwd:     import.meta.dir,
+    stdio:   ['ignore', 'pipe', 'pipe'],
+    shell:   true,
+    timeout: 120_000,
+    env:     { ...process.env, CI: '1', NO_UPDATE_NOTIFIER: '1', npm_config_yes: 'true' },
   })
+
+  // Forward captured npm output through our unbuffered fd so onLine picks it up
+  if (npmResult.stdout?.length) writeSync(1, npmResult.stdout)
+  if (npmResult.stderr?.length) writeSync(2, npmResult.stderr)
 
   if (tmpNpmrc) { try { unlinkSync(tmpNpmrc) } catch {} }
   if (tmpNpmDir) { try { rmSync(tmpNpmDir, { recursive: true, force: true }) } catch {} }
@@ -200,40 +222,44 @@ if (publish) {
   pkg.version = next
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
 
-  if (npmResult.status !== 0) {
-    console.error('')
-    console.error('  npm publish failed (see above).')
-    console.error('  dist/cli.js and package.json are still updated locally.')
-    console.error('')
-    console.error('  To retry publish manually:')
-    console.error('    cd src/ink')
-    console.error('    npm version ' + current + ' --no-git-tag-version')
-    console.error('    npm publish --access public')
-    console.error('    npm version ' + next + ' --no-git-tag-version')
+  if (npmResult.error || npmResult.status !== 0) {
+    printerr('')
+    if (npmResult.error?.code === 'ETIMEDOUT') {
+      printerr('  ✗ npm publish timed out after 2 minutes.')
+    } else {
+      printerr('  ✗ npm publish failed (exit ' + (npmResult.status ?? '?') + ').')
+    }
+    printerr('  dist/cli.js and package.json are still updated locally.')
+    printerr('')
+    printerr('  To retry publish manually:')
+    printerr('    cd src/ink')
+    printerr('    npm version ' + current + ' --no-git-tag-version')
+    printerr('    npm publish --access public')
+    printerr('    npm version ' + next + ' --no-git-tag-version')
     process.exit(1)
   }
 
-  console.log('')
-  console.log('  Published:  @untsystems/unaxis@' + current + ' on npm')
+  print('')
+  print('  Published:  @untsystems/unaxis@' + current + ' on npm')
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────────
 
-console.log('')
-console.log('  Done.')
-console.log('  Released:   UNAXIS v' + current)
-console.log('  Dev now:    v' + next + '  (package.json bumped)')
-console.log('')
+print('')
+print('  Done.')
+print('  Released:   UNAXIS v' + current)
+print('  Dev now:    v' + next + '  (package.json bumped)')
+print('')
 
 if (publish) {
-  console.log('  Install on any machine:')
-  console.log('    npm install -g @untsystems/unaxis')
-  console.log('')
-  console.log('  Update on any machine:')
-  console.log('    npm update -g @untsystems/unaxis')
+  print('  Install on any machine:')
+  print('    npm install -g @untsystems/unaxis')
+  print('')
+  print('  Update on any machine:')
+  print('    npm update -g @untsystems/unaxis')
 } else {
-  console.log('  To push to npm next time:')
-  console.log('    bun release.ts --publish')
+  print('  To push to npm next time:')
+  print('    bun release.ts --publish')
 }
 
-console.log('')
+print('')

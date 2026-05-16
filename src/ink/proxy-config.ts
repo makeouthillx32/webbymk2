@@ -26,7 +26,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { PROJECT_DIR } from "../config/zones.ts";
 
-const PROXY_ADMIN_URL = process.env.PROXY_ADMIN_URL ?? "http://127.0.0.1:3081";
+export const PROXY_ADMIN_URL = process.env.PROXY_ADMIN_URL ?? "http://127.0.0.1:3081";
 
 // ── Admin signal ──────────────────────────────────────────────────────────────
 

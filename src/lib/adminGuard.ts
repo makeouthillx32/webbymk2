@@ -11,10 +11,12 @@ import { authLogger } from "./authLogger";
 export async function requireAdmin() {
   const supabase = await createClient();
   
-  // Get current session
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-  
-  if (sessionError || !session) {
+  // Use getUser() — Supabase recommends this over getSession() in server
+  // components because it re-validates the JWT against the auth server instead
+  // of just reading the (potentially stale) cookie value.
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+  if (userError || !user) {
     authLogger.securityEvent('Admin access attempt without session');
     redirect('/sign-in?error=auth_required&message=Please sign in to continue');
   }
@@ -23,13 +25,13 @@ export async function requireAdmin() {
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('role, display_name')
-    .eq('id', session.user.id)
+    .eq('id', user.id)
     .single();
 
   if (profileError || !profile) {
-    authLogger.authError('Failed to fetch user profile', { 
-      userId: session.user.id,
-      error: profileError?.message 
+    authLogger.authError('Failed to fetch user profile', {
+      userId: user.id,
+      error: profileError?.message
     });
     redirect('/sign-in?error=profile_error&message=Could not verify permissions');
   }
@@ -37,19 +39,19 @@ export async function requireAdmin() {
   // Check if user is admin
   if (profile.role !== 'admin') {
     authLogger.adminAccessDenied(
-      session.user.id,
-      session.user.email || '',
+      user.id,
+      user.email || '',
       'admin dashboard'
     );
-    
+
     redirect('/?error=access_denied&message=You do not have permission to access this area');
   }
 
   // Access granted
-  authLogger.adminSignIn(session.user.id, session.user.email || '');
-  
+  authLogger.adminSignIn(user.id, user.email || '');
+
   return {
-    user: session.user,
+    user,
     profile
   };
 }

@@ -5,12 +5,9 @@
 // Renders (top → bottom):
 //   Header           — app title · running op summary · clock
 //   Tabs             — [zones] npm  db  infra  (only on panel views)
-//   {children}       — the active view (WelcomeScreen / ZonesView / NpmPanel …)
+//   {children}       — the active view
 //   NotificationsPane — auto-expiring toast messages
 //   DetachedStack    — background op stack (shown when stackOpen && ops exist)
-//
-// Full-screen views (OperationOverlay, ZoneWizardScreen) bypass AppShell
-// entirely — they are rendered directly by App.tsx before this component.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React                         from "react";
@@ -27,32 +24,20 @@ import { NotificationsPane }         from "./Notifications.tsx";
 import { DetachedStack }             from "./DetachedStack.tsx";
 import { Breadcrumbs }               from "./Breadcrumbs.tsx";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface AppShellProps {
-  /** Current active view name — used to decide whether to show Tabs */
   view:          string;
-  /** Full navigation history — drives the breadcrumb trail */
   history:       readonly View[];
-  /** Internal panel sub-navigation crumbs (set by each panel) */
   subCrumbs:     string[];
-  /** All background operations (running + done) */
   bgOps:         StackOp[];
-  /** Whether the DetachedStack pane is visible */
   stackOpen:     boolean;
-  /** Id of the op currently expanded in the stack */
+  stackFocused:  boolean;
   stackFocusId:  number | null;
-  /** Active toast notifications */
   notifications: Notification[];
-  /** True for 1.5 s after [c] copy — forwarded to DetachedStack for flash */
   didCopy:       boolean;
   children:      React.ReactNode;
 
-  // ── Stack keyboard callbacks ───────────────────────────────────────────────
-  // Threaded through to DetachedStack so it can own useInput while keeping
-  // state management co-located with the data in App.tsx.
   onStackUp?:         () => void;
   onStackDown?:       () => void;
   onStackEnter?:      () => void;
@@ -60,28 +45,28 @@ interface AppShellProps {
   onStackDismissAll?: () => void;
   onStackPopout?:     () => void;
   onStackCopy?:       () => void;
-  onStackClose?:       () => void;
+  onStackCopyTail?:   () => void;
+  onStackClose?:      () => void;
+  onStackHide?:       () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function AppShell({
-  view, history, subCrumbs, bgOps, stackOpen, stackFocusId,
+  view, history, subCrumbs, bgOps, stackOpen, stackFocused, stackFocusId,
   notifications, didCopy, children,
   onStackUp, onStackDown, onStackEnter,
-  onStackDismiss, onStackDismissAll, onStackPopout, onStackCopy, onStackClose,
+  onStackDismiss, onStackDismissAll, onStackPopout,
+  onStackCopy, onStackCopyTail, onStackClose, onStackHide,
 }: AppShellProps) {
   const isPanelView = (PANEL_TABS as readonly string[]).includes(view);
   const th          = useTermHeight();
 
-  // height={th} + overflow="hidden" clamp the whole TUI to the visible viewport.
-  // Without this, content taller than the terminal spills into the scrollback
-  // buffer and Ink's "cursor-up + rewrite" repaints leave ghost frames behind.
   return (
     <Box flexDirection="column" height={th} overflow="hidden">
 
       {/* ── App header ──────────────────────────────────────────────────── */}
-      <Header ops={bgOps} stackOpen={stackOpen} />
+      <Header ops={bgOps} stackOpen={stackOpen} stackFocused={stackFocused} />
 
       {/* ── Breadcrumb trail (hidden at root / welcome) ──────────────────── */}
       <Breadcrumbs history={history} subCrumbs={subCrumbs} />
@@ -103,12 +88,13 @@ export function AppShell({
       {/* ── Toast notifications ─────────────────────────────────────────── */}
       <NotificationsPane notifications={notifications} />
 
-      {/* ── Background op stack ─────────────────────────────────────────── */}
+      {/* ── Background op stack — only when open and ops exist ──────────── */}
       {stackOpen && bgOps.length > 0 && (
         <DetachedStack
           ops={bgOps}
           focusedId={stackFocusId}
           didCopy={didCopy}
+          isActive={stackFocused}
           onUp={onStackUp}
           onDown={onStackDown}
           onEnter={onStackEnter}
@@ -116,10 +102,11 @@ export function AppShell({
           onDismissAll={onStackDismissAll}
           onPopout={onStackPopout}
           onCopy={onStackCopy}
+          onCopyTail={onStackCopyTail}
           onClose={onStackClose}
+          onHide={onStackHide}
         />
       )}
-
     </Box>
   );
 }

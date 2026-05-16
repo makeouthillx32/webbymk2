@@ -199,7 +199,11 @@ export function isLocalDevelopmentHost(host: string): boolean {
   return (
     host === "localhost"    ||
     host === "127.0.0.1"   ||
-    host === "0.0.0.0"
+    host === "0.0.0.0"     ||
+    // dev.* subdomains are preview containers — treat as local so they use
+    // path-based zone detection and don't get redirected to the canonical host.
+    host === `dev.${CORE_DOMAIN}` ||
+    host.endsWith(`.dev.${CORE_DOMAIN}`)
   );
 }
 

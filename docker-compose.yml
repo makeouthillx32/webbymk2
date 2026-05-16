@@ -275,6 +275,17 @@ services:
 
   app:
     image: ghcr.io/makeouthillx32/unenter:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_URL_BROWSER: ${NEXT_PUBLIC_SUPABASE_URL_BROWSER}
+        NEXT_PUBLIC_APP_TITLE: ${NEXT_PUBLIC_APP_TITLE}
+        NEXT_PUBLIC_COMPANY_NAME: ${NEXT_PUBLIC_COMPANY_NAME}
+        NEXT_PUBLIC_OWNER_USERNAME: ${NEXT_PUBLIC_OWNER_USERNAME}
+        NEXT_PUBLIC_OWNER_EMAIL: ${NEXT_PUBLIC_OWNER_EMAIL}
     container_name: unt_app
     restart: unless-stopped
     ports:

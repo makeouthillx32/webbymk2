@@ -213,12 +213,19 @@ export function SearchInput({
       return;
     }
 
-    // Insertion — ignore control/meta combos and multi-byte special keys
+    // Insertion — ignore control/meta combos and special key names.
+    // Multi-char input (input.length > 1) is a bracketed paste arriving
+    // atomically; insert it all at once rather than dropping it.
     if (!input || key.ctrl || key.meta) return;
-    if (input.length > 1)              return;   // arrow/page/fn key names
-    if (validate && !validate(input))  return;
+    // Reject key names emitted as multi-char strings (e.g. "return", "escape")
+    // by checking whether every codepoint is non-printable.
+    if (input.length > 1 && [...input].every(c => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return;
+    if (validate) {
+      for (const ch of input) { if (!validate(ch)) return; }
+    }
 
-    mutate(value.slice(0, cursor) + input + value.slice(cursor), cursor + 1);
+    mutate(value.slice(0, cursor) + input + value.slice(cursor), cursor + input.length);
+
   });
 
   // ── Render ────────────────────────────────────────────────────────────────

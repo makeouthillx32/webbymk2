@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/money";
 import { ChevronRight } from "lucide-react";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 
 interface ProductImage {
   id: string;
@@ -58,10 +59,10 @@ export default function CategoryPageClient({
   const [sortBy, setSortBy] = useState<SortOption>("featured");
 
   // Get image URL from Supabase Storage
-  const getImageUrl = (image: ProductImage) => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return `${supabaseUrl}/storage/v1/object/public/${image.bucket_name}/${image.object_path}`;
-  };
+  // Uses NEXT_PUBLIC_SUPABASE_URL_BROWSER so the URL matches next.config.js
+  // remotePatterns and works in the browser (not the Docker-internal kong URL).
+  const getImageUrl = (image: ProductImage) =>
+    supabasePublicUrlFromImage(image) ?? "";
 
   // Get primary image for a product
   const getPrimaryImage = (product: Product) => {

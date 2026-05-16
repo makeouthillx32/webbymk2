@@ -22,10 +22,11 @@ import type { Zone }          from "../../config/zones.ts";
 import type { Status }        from "../docker.ts";
 import type { ServiceResult } from "../infra.ts";
 
-import { loadZones }                    from "../zone-store.ts";
+import { loadZones, invalidateZoneCache } from "../zone-store.ts";
 import { pollAll }                      from "../docker.ts";
 import { INFRA_SERVICES, checkService } from "../infra.ts";
 import { useResource }                  from "./useResource.ts";
+import { isScrollActive }               from "../../bootstrap/state.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ export function useZoneManager({
   useEffect(() => {
     if (!pollEnabled) return;
     refreshZones();
-    const id = setInterval(refreshZones, STATUS_POLL_INTERVAL_MS);
+    const id = setInterval(() => { if (!isScrollActive()) refreshZones(); }, STATUS_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [refreshZones, pollEnabled]);
 
@@ -109,6 +110,14 @@ export function useZoneManager({
 
     setInfraChecking(false);
   }, [infraChecking]);
+
+  // ── Force-refresh zone definitions — busts the module-level cache first ───
+  // Use this when you know the DB has changed (e.g. after a settings update)
+  // and don't want to wait out the 60-second TTL.
+  const forceRefreshZoneList = useCallback(() => {
+    invalidateZoneCache();
+    refreshZoneList();
+  }, [refreshZoneList]);
 
   // ──────────────────────────────────────────────────────────────────────────
   return {

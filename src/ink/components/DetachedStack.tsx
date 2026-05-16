@@ -13,10 +13,10 @@
 //    └─ ✓  Deploy Blog · done  [x] dismiss
 //     └─ ⣾  Reload proxy · running
 //
-// The focused op is expanded; others peek out as indented shadow strips,
-// creating the visual depth of papers stacked on top of each other.
-//
-// Key hints rendered at bottom:  [↑↓] switch  [↵] full  [x] dismiss  [X] clear done  [c] copy log
+// Keys (focused):
+//   [↑↓/jk] switch   [↵] full overlay   [x] dismiss   [X] clear done
+//   [c] copy full log   [v] copy visible tail   [O] pop out   [h] hide
+//   [q]/[esc] unfocus / kill dismissable
 //
 // Keyboard ownership: DetachedStack owns all Stack-context keys while mounted.
 // It only mounts when stackOpen && ops.length > 0, so its useInput is naturally
@@ -34,35 +34,40 @@ import { useRegisterKeybindingContext }        from "../KeybindingContext.js";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface StackOp {
-  id:    number;
-  title: string;
-  lines: string[];
-  busy:  boolean;
-  isLog: boolean;   // log-tail ops need special kill handling
+  id:          number;
+  title:       string;
+  lines:       string[];
+  busy:        boolean;
+  isLog:       boolean;
+  /** When true, [x] dismiss is allowed even while busy (used by dev-mode ops). */
+  dismissable?: boolean;
 }
 
 interface DetachedStackProps {
   ops:           StackOp[];
-  focusedId:     number | null;   // id of the op shown expanded
-  /** True for 1.5 s after a successful [c] copy — triggers inline flash */
+  focusedId:     number | null;
+  /** True for 1.5 s after a successful [c]/[v] copy — triggers inline flash */
   didCopy?:      boolean;
 
-  // ── Keyboard callbacks ─────────────────────────────────────────────────────
-  // App.tsx holds all the state; these callbacks let DetachedStack own the
-  // useInput registration while keeping state changes co-located with their data.
-  onUp?:         () => void;   // j / ↑
-  onDown?:       () => void;   // k / ↓
+  onUp?:         () => void;   // k / ↑
+  onDown?:       () => void;   // j / ↓
   onEnter?:      () => void;   // ↵  — open focused op as full-screen overlay
   onDismiss?:    () => void;   // x  — dismiss focused done op
   onDismissAll?: () => void;   // X  — clear all done ops
   onPopout?:     () => void;   // O  — pop focused op to external terminal
-  onCopy?:       () => void;   // c  — copy focused op log to clipboard
-  onClose?:      () => void;   // q/esc — dismiss stack, return focus to panel
+  onCopy?:       () => void;   // c  — copy full log to clipboard
+  onCopyTail?:   () => void;   // v  — copy only the visible tail lines
+  onClose?:      () => void;   // q/esc — unfocus strip, return focus to panel
+  onHide?:       () => void;   // h  — collapse strip without dismissing ops
+  /** When false the stack pane is visible but yields keyboard control back to
+   *  the main panel so multiple ops can be started without closing the strip. */
+  isActive?:     boolean;
 }
 
 // ── Shadow strip — one collapsed op underneath the focused one ────────────────
 
 function ShadowStrip({ op, depth }: { op: StackOp; depth: number }) {
+  const canDismiss = op.dismissable ?? !op.busy;
   return (
     <Box paddingLeft={depth + 1} gap={1}>
       <Text dimColor>{"└─"}</Text>
@@ -70,29 +75,35 @@ function ShadowStrip({ op, depth }: { op: StackOp; depth: number }) {
       <Text color={op.busy ? "yellow" : undefined} dimColor={!op.busy}>
         {op.title}
       </Text>
-      {!op.busy && <Text dimColor>  [x] dismiss</Text>}
+      {canDismiss && <Text dimColor>  [x] dismiss</Text>}
     </Box>
   );
 }
 
 // ── Main stack component ──────────────────────────────────────────────────────
 
-const LOG_LINES = 8;
+const LOG_LINES    = 8;
+/** Max shadow strip rows rendered below the focused op before collapsing to a summary line. */
+const MAX_SHADOWS  = 7;
 
 export function DetachedStack({
   ops, focusedId, didCopy,
-  onUp, onDown, onEnter, onDismiss, onDismissAll, onPopout, onCopy, onClose,
+  onUp, onDown, onEnter, onDismiss, onDismissAll, onPopout, onCopy, onCopyTail, onClose, onHide,
+  isActive = true,
 }: DetachedStackProps) {
   const { dw } = useWidths();
 
-  // Declare Stack as the active keybinding context while pane is mounted.
-  // DetachedStack only renders when stackOpen && ops.length > 0, so this
-  // context is only active while the pane is actually visible.
   useRegisterKeybindingContext('Stack');
 
-  // Own all stack-pane keyboard input.  No chord keys here — all single-stroke.
+  const focused = ops.find((o) => o.id === focusedId) ?? ops[ops.length - 1] ?? null;
+
   useInput((input, key) => {
-    if (key.escape || input === "q") { onClose?.();    return; }
+    if (key.escape) {
+      if (focused?.dismissable) { onDismiss?.(); } else { onClose?.(); }
+      return;
+    }
+    if (input === "q") { onClose?.();     return; }
+    if (input === "h") { onHide?.();      return; }
     if (key.upArrow   || input === "k") { onUp?.();         return; }
     if (key.downArrow || input === "j") { onDown?.();       return; }
     if (key.return)                     { onEnter?.();      return; }
@@ -100,17 +111,19 @@ export function DetachedStack({
     if (input === "X")                  { onDismissAll?.(); return; }
     if (input === "O")                  { onPopout?.();     return; }
     if (input === "c")                  { onCopy?.();       return; }
-  });
+    if (input === "v")                  { onCopyTail?.();   return; }
+  }, { isActive });
 
-  if (ops.length === 0) return null;
+  if (ops.length === 0 || !focused) return null;
 
-  // Focused op is shown expanded; all others are shadow strips below it.
-  const focused  = ops.find((o) => o.id === focusedId) ?? ops[ops.length - 1]!;
-  const rest     = ops.filter((o) => o.id !== focused.id);
-  const visible  = focused.lines.slice(-LOG_LINES);
+  const rest        = ops.filter((o) => o.id !== focused.id);
+  const visibleRest = rest.slice(0, MAX_SHADOWS);
+  const hiddenCount = rest.length - visibleRest.length;
+  const visible     = focused.lines.slice(-LOG_LINES);
 
-  const runCount  = ops.filter((o) =>  o.busy).length;
-  const doneCount = ops.filter((o) => !o.busy).length;
+  const runCount          = ops.filter((o) =>  o.busy && !(o.dismissable)).length;
+  const doneCount         = ops.filter((o) => !o.busy || o.dismissable).length;
+  const canDismissFocused = focused.dismissable ?? !focused.busy;
 
   const statusTag = ops.length > 1
     ? [
@@ -122,8 +135,14 @@ export function DetachedStack({
   return (
     <Box flexDirection="column" marginTop={1}>
 
-      {/* ── Divider ────────────────────────────────────────────────────────── */}
-      <Divider width={dw} />
+      {/* ── Divider — doubles as passive call-to-action when not focused ──── */}
+      {isActive
+        ? <Divider width={dw} />
+        : <Divider
+            width={dw}
+            title={`${runCount > 0 ? `${runCount} running` : ""}${runCount > 0 && doneCount > 0 ? " · " : ""}${doneCount > 0 ? `${doneCount} done` : ""}  ·  [o] interact  [O] stack view`}
+          />
+      }
 
       {/* ── Focused op header ──────────────────────────────────────────────── */}
       <Box justifyContent="space-between" paddingX={1} marginBottom={0}>
@@ -137,54 +156,52 @@ export function DetachedStack({
             <Text dimColor>  ·  {statusTag}</Text>
           )}
         </Box>
-        <Box gap={2}>
-          {rest.length > 0 && <Text dimColor>[↑↓] switch</Text>}
-          <Text dimColor>[o] hide  [O] pop out  [↵] full</Text>
-        </Box>
-      </Box>
-
-      {/* ── Focused op output ──────────────────────────────────────────────── */}
-      <Box
-        flexDirection="column"
-        borderStyle="single"
-        borderColor={focused.busy ? "yellow" : "green"}
-        paddingX={1}
-        width={dw}
-      >
-        {visible.length === 0 ? (
-          <LoadingState message="starting…" dimColor />
-        ) : (
-          visible.map((line, i) => {
-            const isLast = i === visible.length - 1;
-            const isOk   = line.startsWith("OK:");
-            const isErr  = line.startsWith("FAILED") || line.startsWith("ERR");
-            return (
-              <Text
-                key={i}
-                color={isErr ? "red" : isOk ? "green" : undefined}
-                dimColor={!isOk && !isErr && !isLast}
-              >
-                {line}
-              </Text>
-            );
-          })
+        {isActive && (
+          <Box gap={2}>
+            {rest.length > 0 && <Text dimColor>[↑↓] switch</Text>}
+            {focused.dismissable && <Text color="red" dimColor>[esc] kill</Text>}
+            <Text dimColor>[o] unfocus  [h] hide  [O] pop out  [↵] full</Text>
+          </Box>
         )}
       </Box>
 
-      {/* ── Shadow strips — stacked-paper depth effect ─────────────────────── */}
-      {rest.map((op, depth) => (
-        <ShadowStrip key={op.id} op={op} depth={depth} />
-      ))}
-
-      {/* ── Hints bar ──────────────────────────────────────────────────────── */}
-      <Box gap={3} paddingX={1} marginTop={0}>
-        {doneCount > 0 && <Text dimColor>[x] dismiss focused</Text>}
-        {doneCount > 1  && <Text dimColor>[X] clear all done</Text>}
-        <Text dimColor>[c] copy log</Text>
-        <Text dimColor>[O] pop out</Text>
-        {didCopy && <Text color="green">copied</Text>}
+      {/* ── Log tail ──────────────────────────────────────────────────────── */}
+      <Box
+        borderStyle="single"
+        borderColor={focused.busy ? "yellow" : "green"}
+        flexDirection="column"
+        paddingX={1}
+        marginX={1}
+      >
+        {visible.length === 0
+          ? <LoadingState label="Waiting for output…" />
+          : visible.map((line, i) => (
+              <Text key={i} wrap="truncate-end">{line}</Text>
+            ))
+        }
       </Box>
 
+      {/* ── Bottom key hints ───────────────────────────────────────────────── */}
+      {isActive && (
+        <Box paddingX={2} gap={2} marginTop={0}>
+          {canDismissFocused
+            ? <Text dimColor>[x] dismiss</Text>
+            : <Text dimColor color="gray">[x] dismiss</Text>
+          }
+          {doneCount > 0 && <Text dimColor>[X] clear done</Text>}
+          <Text dimColor>{didCopy ? "✓ copied!" : "[c] copy all  [v] copy visible"}</Text>
+        </Box>
+      )}
+
+      {/* ── Shadow strips — other ops peeking underneath ───────────────────── */}
+      {visibleRest.map((op, i) => (
+        <ShadowStrip key={op.id} op={op} depth={i} />
+      ))}
+      {hiddenCount > 0 && (
+        <Box paddingLeft={visibleRest.length + 2}>
+          <Text dimColor>+ {hiddenCount} more  [O] see all</Text>
+        </Box>
+      )}
     </Box>
   );
 }

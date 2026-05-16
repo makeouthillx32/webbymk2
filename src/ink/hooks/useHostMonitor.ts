@@ -7,6 +7,7 @@
 
 import os from "os";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { isScrollActive } from "../../bootstrap/state.js";
 
 const HISTORY_LENGTH = 20;
 const SAMPLE_INTERVAL_MS = 2000;
@@ -86,7 +87,7 @@ export function useHostMonitor(): HostSnapshot {
       });
     };
 
-    const timer = setInterval(sample, SAMPLE_INTERVAL_MS);
+    const timer = setInterval(() => { if (!isScrollActive()) sample(); }, SAMPLE_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [totalMemory]);
 

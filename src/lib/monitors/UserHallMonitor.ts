@@ -1,5 +1,5 @@
 // lib/monitors/UserHallMonitor.ts - FIXED VERSION
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import type {
   HallMonitor,
   AccessResult,

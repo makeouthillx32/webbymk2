@@ -3,7 +3,7 @@
 
 import { Image, Pencil } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { useRealtime } from '@/hooks/useRealtimeInsert';
 import { useSharedMedia } from '@/hooks/useSharedMedia';
 import { toast } from 'react-hot-toast';

@@ -9,7 +9,6 @@ import type { ChildProcess } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join }         from "path";
 import { PROJECT_DIR, PROXY, type Zone } from "../config/zones.ts";
-import { drainStream } from "./utils.ts";
 
 export type Status =
   | "running"    // up and healthy (or no healthcheck configured)
@@ -47,6 +46,196 @@ async function dockerRun(
   });
 }
 
+export interface InternetConnectivityResult {
+  online: boolean;
+  method?: "curl" | "nslookup" | "ping" | "docker-pull";
+  detail?: string;
+  checkedAt: number;
+}
+
+let internetConnectivityCache: InternetConnectivityResult | null = null;
+const INTERNET_CONNECTIVITY_CACHE_MS = 30_000;
+
+function runConnectivityCommand(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn(command, args, {
+      env: DOCKER_ENV,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+
+    timer = setTimeout(() => {
+      proc.kill();
+      finish(false);
+    }, timeoutMs);
+
+    proc.on("close", (code) => finish(code === 0));
+    proc.on("error", () => finish(false));
+  });
+}
+
+export async function checkInternetConnectivity(
+  force = false,
+): Promise<InternetConnectivityResult> {
+  const now = Date.now();
+  if (
+    !force &&
+    internetConnectivityCache &&
+    now - internetConnectivityCache.checkedAt < INTERNET_CONNECTIVITY_CACHE_MS
+  ) {
+    return internetConnectivityCache;
+  }
+
+  const pingArgs = process.platform === "win32"
+    ? ["-n", "1", "-w", "2500", "1.1.1.1"]
+    : ["-c", "1", "-W", "3", "1.1.1.1"];
+
+  const checks: Array<{
+    method: NonNullable<InternetConnectivityResult["method"]>;
+    command: string;
+    args: string[];
+    timeoutMs: number;
+  }> = [
+    {
+      method: "curl",
+      command: "curl",
+      args: ["--head", "--silent", "--max-time", "4", "https://registry-1.docker.io/v2/"],
+      timeoutMs: 5_000,
+    },
+    {
+      method: "nslookup",
+      command: "nslookup",
+      args: ["registry-1.docker.io"],
+      timeoutMs: 5_000,
+    },
+    {
+      method: "ping",
+      command: "ping",
+      args: pingArgs,
+      timeoutMs: 5_000,
+    },
+    {
+      method: "docker-pull",
+      command: "docker",
+      args: ["pull", "hello-world:latest"],
+      timeoutMs: 20_000,
+    },
+  ];
+
+  for (const check of checks) {
+    if (await runConnectivityCommand(check.command, check.args, check.timeoutMs)) {
+      internetConnectivityCache = { online: true, method: check.method, checkedAt: now };
+      return internetConnectivityCache;
+    }
+  }
+
+  internetConnectivityCache = {
+    online: false,
+    detail: "curl, nslookup, ping, and docker pull checks all failed",
+    checkedAt: now,
+  };
+  return internetConnectivityCache;
+}
+
+export function classifyDockerError(message: string): string {
+  const text = message.trim();
+  if (!text) return "";
+
+  const msg = text.toLowerCase();
+
+  if (
+    msg.includes("docker compose not found") ||
+    msg.includes("executable file not found") ||
+    msg.includes("command not found")
+  ) {
+    return "Docker CLI or Compose is not installed or not on PATH. Install Docker Desktop and restart the terminal.";
+  }
+
+  if (
+    msg.includes("cannot connect to the docker daemon") ||
+    msg.includes("is the docker daemon running") ||
+    msg.includes("docker daemon is not running") ||
+    msg.includes("error during connect")
+  ) {
+    return "Docker is not reachable. Start Docker Desktop or the Docker daemon, then retry.";
+  }
+
+  if (
+    msg.includes("permission denied") &&
+    (msg.includes("docker.sock") || msg.includes("docker daemon") || msg.includes("/var/run/docker"))
+  ) {
+    return "Docker permission denied. Give this user Docker access or run the terminal with Docker permissions.";
+  }
+
+  if (
+    msg.includes("address already in use") ||
+    msg.includes("port is already allocated") ||
+    msg.includes("ports are not available") ||
+    (msg.includes("bind") && msg.includes("listen tcp"))
+  ) {
+    return "A required host port is already in use. Stop the conflicting service or choose another runtime port range.";
+  }
+
+  if (
+    msg.includes("temporary failure in name resolution") ||
+    msg.includes("no such host") ||
+    msg.includes("server misbehaving") ||
+    (msg.includes("lookup") && msg.includes("dns"))
+  ) {
+    return "DNS lookup failed while contacting the Docker registry. Check internet and DNS, then retry.";
+  }
+
+  if (
+    msg.includes("network is unreachable") ||
+    msg.includes("connection timed out") ||
+    msg.includes("i/o timeout") ||
+    msg.includes("context deadline exceeded") ||
+    msg.includes("tls handshake timeout") ||
+    msg.includes("client.timeout exceeded")
+  ) {
+    return "Network connectivity failed while Docker contacted the registry. Cached images may still start offline.";
+  }
+
+  if (
+    msg.includes("pull access denied") ||
+    msg.includes("denied: requested access") ||
+    msg.includes("authentication required") ||
+    msg.includes("unauthorized")
+  ) {
+    return "Docker registry authentication failed. Check the GHCR token or run docker login.";
+  }
+
+  if (
+    msg.includes("manifest unknown") ||
+    msg.includes("manifest for") ||
+    (msg.includes("not found") && msg.includes("image"))
+  ) {
+    return "Docker image or tag was not found in the registry. Check the generated image name and version tag.";
+  }
+
+  if (msg.includes("no space left on device")) {
+    return "Docker is out of disk space. Free disk space or prune unused Docker images and volumes.";
+  }
+
+  if (msg.includes("invalid reference format")) {
+    return "Docker image reference is invalid. Check the generated image name and tag.";
+  }
+
+  return "";
+}
+
 // ── Zone-compose helpers ──────────────────────────────────────────────────────
 
 /** Absolute path to a zone's own compose file (zones/<key>/docker-compose.yml). */
@@ -81,18 +270,34 @@ export async function composeRun(
   });
 
   let code = 1;
-  const exited = new Promise<void>((resolve, reject) => {
+  let output = "";
+  const exited = new Promise<void>((resolve) => {
     proc.on("close", (c) => { code = c ?? 1; resolve(); });
-    proc.on("error", reject);
+    proc.on("error", (error) => {
+      output += error.message;
+      cb(`docker compose failed to start: ${error.message}`);
+      resolve();
+    });
   });
 
   // Docker/compose writes user-facing progress to stderr when piped (no TTY).
   // stdout is either empty or machine-readable JSON — draining both causes
   // every line to appear twice in the overlay.
-  await Promise.all([
-    drainStream(proc.stderr, cb),
-    exited,
-  ]);
+  proc.stderr!.on("data", (data: Buffer) => {
+    const chunk = data.toString();
+    output += chunk;
+    chunk.split("\n").filter(Boolean).forEach(cb);
+  });
+  proc.stdout!.on("data", (data: Buffer) => {
+    output += data.toString();
+  });
+
+  await exited;
+
+  if (code !== 0) {
+    const hint = classifyDockerError(output);
+    if (hint) cb(`Hint: ${hint}`);
+  }
   return code;
 }
 
@@ -141,14 +346,45 @@ export async function getStatuses(
   return statuses;
 }
 
+// ── Proxy admin health ────────────────────────────────────────────────────────
+
+import { PROXY_ADMIN_URL } from "./proxy-config.ts";
+
+/**
+ * Ping the proxy's internal admin API (/health).
+ * Returns true when reachable — false if the proxy process has crashed or
+ * restarted but the container itself is still "running".
+ * Timeout: 2 s (fast — this runs on every poll cycle).
+ */
+async function checkProxyAdmin(): Promise<boolean> {
+  try {
+    const res = await fetch(`${PROXY_ADMIN_URL}/health`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Poll all zones + proxy in parallel and return a status map. */
 export async function pollAll(
   zones: Zone[]
 ): Promise<{ zoneStatuses: Record<string, Status>; proxyStatus: Status }> {
-  const statuses = await getStatuses([PROXY.container, ...zones.map((z) => z.container)]);
+  const [statuses, adminOk] = await Promise.all([
+    getStatuses([PROXY.container, ...zones.map((z) => z.container)]),
+    checkProxyAdmin(),
+  ]);
+
   const zoneStatuses: Record<string, Status> = {};
   zones.forEach((z) => { zoneStatuses[z.key] = statuses[z.container] ?? "missing"; });
-  return { zoneStatuses, proxyStatus: statuses[PROXY.container] ?? "missing" };
+
+  let proxyStatus: Status = statuses[PROXY.container] ?? "missing";
+  // Container "running" but admin API dark → process crashed / restarting.
+  // Surface as "unhealthy" so the TUI dot goes red instead of green.
+  if (proxyStatus === "running" && !adminOk) proxyStatus = "unhealthy";
+
+  return { zoneStatuses, proxyStatus };
 }
 
 // ── Network pre-flight ────────────────────────────────────────────────────────
@@ -299,9 +535,16 @@ export async function pullAndUp(
   // Legacy zones only: self-heal missing `image:` field in root compose.
   if (!newStyle) doctorComposeService(zone, onLine);
 
-  onLine?.(`Pulling ${zone.image}...`);
-  const pullCode = await composeRun(["pull", zone.service], onLine, file);
-  if (pullCode !== 0) return pullCode;
+  const internet = await checkInternetConnectivity();
+  if (internet.online) {
+    onLine?.(`Pulling ${zone.image}...`);
+    const pullCode = await composeRun(["pull", zone.service], onLine, file);
+    if (pullCode !== 0) return pullCode;
+  } else {
+    onLine?.("No internet connectivity detected; skipping pull and using cached image if available.");
+    onLine?.("If the image is not cached locally, Docker will fail during startup.");
+  }
+
   onLine?.(`Starting ${zone.service} (force-recreate)...`);
   return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file);
 }

@@ -1,6 +1,6 @@
 // themes/index.ts
 import type { Theme } from '@/types/theme';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import defaultTheme from './default';
 import monochromeTheme from './monochrome';
 import vintageTheme from './vintage';

@@ -8,7 +8,7 @@ import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";

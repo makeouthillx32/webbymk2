@@ -43,7 +43,7 @@ import {
   doctorComposeService,
 }                             from "../docker.ts";
 import { buildZone, buildAll, deployAll, deployZone, gitPush } from "../zone-build.ts";
-import { npmAddZone }         from "../npm-api.ts";
+import { npmAddZone }         from "../npm/index.ts";
 import { deleteZone, DS_CATALOG } from "../zone-scaffold.ts";
 import { addZoneRoute, getRoutes } from "../proxy-config.ts";
 import { invalidateZoneCache, loadZones, lastZoneError } from "../zone-store.ts";

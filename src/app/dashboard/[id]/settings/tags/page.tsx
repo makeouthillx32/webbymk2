@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 
 import "./_components/tags.scss";
 

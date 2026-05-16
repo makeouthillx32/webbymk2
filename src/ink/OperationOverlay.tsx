@@ -46,14 +46,27 @@ interface OperationOverlayProps {
   mode:     OpView;
   /** True for 1.5 s after a successful [c] copy — triggers inline flash */
   didCopy?: boolean;
-  /** Called when user presses [q] */
+  /**
+   * True when this op is a live dev-mode container (dismissable=true).
+   * Changes esc behaviour: esc triggers onKill (stop+close) instead of onEsc (detach).
+   * Also changes the hint text shown in the header.
+   */
+  dismissable?: boolean;
+  /** Called when user presses [q] — always detaches back to the strip */
   onQ?:     () => void;
-  /** Called when user presses [esc] */
+  /** Called when user presses [esc] on a non-dismissable op — detach */
   onEsc?:   () => void;
+  /**
+   * Called when user presses [esc] on a dismissable op (dev-mode).
+   * Should trigger the dismiss hook (stop container) then close the overlay.
+   */
+  onKill?:  () => void;
   /** Called when user presses [enter] (only fires when !busy) */
   onEnter?: () => void;
-  /** Called when user presses [c] (copy lines) */
-  onCopy?:  () => void;
+  /** Called when user presses [c] (copy all buffered lines) */
+  onCopy?:     () => void;
+  /** Called when user presses [C] (copy only visible tail lines) */
+  onCopyTail?: (lines: string[]) => void;
   /** Called when user presses [O] (pop out to terminal) */
   onPopout?: () => void;
 }
@@ -70,8 +83,8 @@ const CHROME_ROWS = 4;
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function OperationOverlay({
-  title, lines, busy, mode, didCopy,
-  onQ, onEsc, onEnter, onCopy, onPopout,
+  title, lines, busy, mode, didCopy, dismissable,
+  onQ, onEsc, onKill, onEnter, onCopy, onCopyTail, onPopout,
 }: OperationOverlayProps) {
   const { tw, iw } = useWidths();
   const th         = useTermHeight();
@@ -79,18 +92,20 @@ export function OperationOverlay({
   // Register as active context so the keybinding system knows we own input.
   useRegisterKeybindingContext('Overlay');
 
+  // Rows available for scrollable log content — computed before useInput so
+  // the [C] copy-tail handler can close over the correct value.
+  const contentHeight = Math.max(4, th - CHROME_ROWS);
+
   // Own all overlay keyboard input — LogViewer's scroll keys (up/down/jk/u/d/g/G)
   // are handled inside LogViewer and don't conflict with these control keys.
   useInput((input, key) => {
-    if (input === "q")        { onQ?.();      return; }
-    if (key.escape)           { onEsc?.();    return; }
-    if (key.return && !busy)  { onEnter?.();  return; }
-    if (input === "c")        { onCopy?.();   return; }
-    if (input === "O")        { onPopout?.(); return; }
+    if (input === "q")       { onQ?.();                                          return; }
+    if (key.escape)          { dismissable ? onKill?.() : onEsc?.();            return; }
+    if (key.return && !busy) { onEnter?.();                                      return; }
+    if (input === "c")       { onCopy?.();                                       return; }
+    if (input === "C")       { onCopyTail?.(lines.slice(-contentHeight));        return; }
+    if (input === "O")       { onPopout?.();                                      return; }
   });
-
-  // Rows available for scrollable log content.
-  const contentHeight = Math.max(4, th - CHROME_ROWS);
 
   return (
     <Box
@@ -115,15 +130,17 @@ export function OperationOverlay({
           {/* Scroll hint */}
           <Text dimColor>[up/dn/jk] scroll  [u/d] page  [g/G] top/btm</Text>
 
-          {/* Exit hint */}
+          {/* Exit hint — esc and q do different things depending on op type */}
           <Text dimColor>
-            {busy && mode === "output"
-              ? "[esc] detach  [O] pop out  [q] home"
-              : "[esc/q] close  [O] pop out"}
+            {dismissable
+              ? "[esc] stop · close  [q] back"
+              : busy && mode === "output"
+                ? "[esc] detach  [q] back"
+                : "[esc/q] close"}
           </Text>
 
           {/* Copy feedback */}
-          <Text dimColor>[c] copy</Text>
+          <Text dimColor>[c] copy  [C] copy tail</Text>
           {didCopy && <Text color="green">copied</Text>}
         </Box>
       </Box>

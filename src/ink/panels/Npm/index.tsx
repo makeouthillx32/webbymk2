@@ -18,7 +18,7 @@ import {
   npmGetStatus, npmListHosts,
   npmEnableHost, npmDisableHost,
   type NpmProxyHost, type NpmConnectStatus,
-} from "../../npm-api.ts";
+} from "../../npm/index.ts";
 import { useResource }              from "../../hooks/useResource.ts";
 import { KeyHints }                 from "../../components/KeyHint.tsx";
 import { SearchInput }              from "../../components/SearchBox.tsx";

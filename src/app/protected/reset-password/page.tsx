@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 import { Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import Link from "next/link";
 

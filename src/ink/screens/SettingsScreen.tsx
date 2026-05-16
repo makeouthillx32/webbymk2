@@ -38,6 +38,8 @@ import { MetricCard }                                  from "../components/desig
 import { ProgressLine }                                from "../components/design-system/ProgressLine.tsx";
 import { sparkline }                                   from "../utils/sparkline.ts";
 
+import { useNotifications }                           from "../components/Notifications.tsx";
+
 import {
   getCredential, setCredential,
   getSetting,    setSetting,
@@ -140,7 +142,11 @@ interface SettingsScreenProps {
 }
 
 export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: SettingsScreenProps) {
-  const { tw, dw } = useWidths();
+  const { addNotification } = useNotifications();
+  const { tw, dw, iw } = useWidths();
+  // Input width: fill available inner width, minus label text (~18 chars) and
+  // box borders (4 cols). Floor at 20 so it's usable even on very narrow terms.
+  const inputW = Math.max(20, iw - 20);
 
   const [activeTab,  setTab]       = useState<"infra" | "identity" | "zones">("infra");
   const [editField,  setEditField] = useState<EditField>(null);
@@ -177,14 +183,17 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
         await setCredential("ghcr_token", trimmed);
         await setCredential("ghcr_token_set_at", new Date().toISOString());
         setSaved("ghcr");
+        addNotification("GHCR token saved", "success");
       } else if (editField === "npm_token") {
         await setCredential("npm_token", trimmed);
         await setCredential("npm_token_set_at", new Date().toISOString());
         setSaved("npm");
+        addNotification("npm token saved", "success");
       } else if (editField === "default_project") {
         const resolved = resolve(trimmed);
         if (!isProjectRootPath(resolved)) {
           setSaved("project-error");
+          addNotification("Path not a valid project root", "error");
           setTimeout(() => setSaved(null), 2_000);
           setEditField(null);
           onTokenEditEnd();
@@ -192,6 +201,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
         }
         await setSetting("default_project", resolved);
         setSaved("project");
+        addNotification("Project path saved", "success");
       }
       setTimeout(() => setSaved(null), 2_000);
       await reload();
@@ -328,7 +338,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
                 <Text color="yellow">{editLabel}</Text>
                 <SearchInput
                   active
-                  width={42}
+                  width={inputW}
                   placeholder={editPlaceholder}
                   onSubmit={handleSave}
                   onCancel={handleCancel}
@@ -387,7 +397,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
                 <Text color="yellow">{editLabel}</Text>
                 <SearchInput
                   active
-                  width={42}
+                  width={inputW}
                   placeholder={editPlaceholder}
                   onSubmit={handleSave}
                   onCancel={handleCancel}
@@ -418,7 +428,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
                 <Text color="yellow">{editLabel}</Text>
                 <SearchInput
                   active
-                  width={42}
+                  width={inputW}
                   placeholder={editPlaceholder}
                   onSubmit={handleSave}
                   onCancel={handleCancel}

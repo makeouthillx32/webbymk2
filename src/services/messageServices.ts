@@ -1,5 +1,5 @@
 // services/messageServices.ts
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 import { type Message, type UserProfile } from './chatPageUtils';
 

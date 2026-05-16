@@ -26,6 +26,7 @@ import { existsSync }      from "fs";
 import { join, resolve }   from "path";
 import { homedir }         from "os";
 import { randomBytes }     from "crypto";
+import { createServer }    from "net";
 import { spawn }           from "child_process";
 import { PROJECT_DIR }     from "../../config/stack.ts";
 import type { OnLine }     from "./types.ts";
@@ -237,8 +238,7 @@ export async function initializeSupabaseCore(
 
 // ── Port allocation ───────────────────────────────────────────────────────────
 
-function derivePorts(timestamp: number): RuntimePorts {
-  const base = 8000 + (timestamp % 1000);   // 8000–8999 range
+function derivePortsFromBase(base: number): RuntimePorts {
   return {
     kong:      base,
     kongSSL:   base + 443,
@@ -247,6 +247,96 @@ function derivePorts(timestamp: number): RuntimePorts {
     analytics: base + 1000,
     studio:    base + 100,
   };
+}
+
+type RuntimePortKey = keyof RuntimePorts;
+
+const PORT_LABELS: Record<RuntimePortKey, string> = {
+  kong: "Kong",
+  kongSSL: "Kong SSL",
+  postgres: "Postgres",
+  pooler: "Pooler",
+  analytics: "Analytics",
+  studio: "Studio",
+};
+
+function portEntries(ports: RuntimePorts): Array<[RuntimePortKey, number]> {
+  return Object.entries(ports) as Array<[RuntimePortKey, number]>;
+}
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolveAvailable) => {
+    const server = createServer();
+    let settled = false;
+
+    const finish = (available: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolveAvailable(available);
+    };
+
+    server.once("error", () => finish(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => finish(true));
+    });
+  });
+}
+
+async function registeredPorts(): Promise<Set<number>> {
+  const used = new Set<number>();
+  const instances = await loadRegistry();
+  for (const instance of instances) {
+    if (!instance.ports) continue;
+    for (const port of Object.values(instance.ports)) {
+      if (typeof port === "number") used.add(port);
+    }
+  }
+  return used;
+}
+
+async function unavailablePorts(
+  ports: RuntimePorts,
+  alreadyRegistered: Set<number>,
+): Promise<Array<{ key: RuntimePortKey; port: number; reason: "registered" | "busy" }>> {
+  const unavailable: Array<{ key: RuntimePortKey; port: number; reason: "registered" | "busy" }> = [];
+
+  for (const [key, port] of portEntries(ports)) {
+    if (alreadyRegistered.has(port)) {
+      unavailable.push({ key, port, reason: "registered" });
+      continue;
+    }
+    if (!(await isPortAvailable(port))) {
+      unavailable.push({ key, port, reason: "busy" });
+    }
+  }
+
+  return unavailable;
+}
+
+async function allocateAvailablePorts(timestamp: number, onLine: OnLine): Promise<RuntimePorts> {
+  const alreadyRegistered = await registeredPorts();
+
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const base = 8000 + ((timestamp + attempt) % 1000);
+    const ports = derivePortsFromBase(base);
+    const conflicts = await unavailablePorts(ports, alreadyRegistered);
+
+    if (conflicts.length === 0) {
+      if (attempt > 0) {
+        onLine(`Port conflict avoided; using alternate base ${base}`);
+      }
+      return ports;
+    }
+
+    if (attempt === 0) {
+      const details = conflicts
+        .map((conflict) => `${PORT_LABELS[conflict.key]}:${conflict.port} ${conflict.reason}`)
+        .join(", ");
+      onLine(`Port conflict detected (${details}); searching for a free range...`);
+    }
+  }
+
+  throw new Error("No free runtime port block found in the 8000-11999 range.");
 }
 
 // ── Container name rewriting ──────────────────────────────────────────────────
@@ -336,7 +426,7 @@ export async function createRuntimeInstance(
   onLine(`✓ Container names rewritten  (prefix: ${slug}-)`);
 
   // Ports + secrets
-  const ports: RuntimePorts = derivePorts(timestamp);
+  const ports: RuntimePorts = await allocateAvailablePorts(timestamp, onLine);
   const secrets: RuntimeSecrets = {
     postgresPassword:  generateRandomString(32),
     jwtSecret:         generateRandomString(64),

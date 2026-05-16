@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 
 const supabase = createBrowserClient(

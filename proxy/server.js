@@ -196,9 +196,13 @@ const proxy = httpProxy.createProxyServer({
 
 proxy.on("error", (err, req, res) => {
   console.error(`[proxy] error ${req.method} ${req.url} →`, err.message);
-  if (res && !res.headersSent) {
+  // res is http.ServerResponse for HTTP but a net.Socket for WebSocket/HMR
+  // upgrades — guard before calling HTTP-only methods.
+  if (res && typeof res.writeHead === "function" && !res.headersSent) {
     res.writeHead(502, { "Content-Type": "text/plain" });
     res.end("Bad Gateway");
+  } else if (res && typeof res.destroy === "function") {
+    res.destroy();
   }
 });
 
@@ -240,7 +244,12 @@ const server = http.createServer((req, res) => {
 
 // WebSocket (Next.js HMR + Supabase Realtime)
 server.on("upgrade", (req, socket, head) => {
-  proxy.ws(req, socket, head, { target: resolveTarget(req) });
+  proxy.ws(req, socket, head, { target: resolveTarget(req) }, (err) => {
+    if (err) {
+      console.error(`[proxy] ws error ${req.url} →`, err.message);
+      socket.destroy();
+    }
+  });
 });
 
 server.listen(PROXY_PORT, PROXY_HOST, () => {

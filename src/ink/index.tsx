@@ -17,7 +17,7 @@ import { BackgroundStackProvider, useBackgroundStack } from "./components/Detach
 import { NotificationsProvider, useNotifications } from "./components/Notifications.js";
 import { useCopyOnSelect } from "./hooks/useCopyOnSelect.js";
 import { useWidths } from "./hooks/useTermWidth.js";
-import { npmEnableHost, npmDisableHost } from "./npm-api.js";
+import { npmEnableHost, npmDisableHost } from "./npm/index.ts";
 import { TerminalSizeProvider } from "./components/TerminalSizeContext.js";
 import { ThemeProvider } from "./components/design-system/ThemeProvider.js";
 import { TerminalWriteProvider } from "./useTerminalNotification.js";

@@ -1,8 +1,6 @@
 // components/Auth/SigninWithPassword.tsx
-// ✅ Client-side sign-in: calls supabase.auth.signInWithPassword() directly in the browser
-// so onAuthStateChange fires SIGNED_IN natively — exactly like logout fires SIGNED_OUT.
-// This means MobileDrawer, Header, and all auth-aware components update instantly
-// without any ?refresh=true hack or race conditions.
+// Client-side sign-in: calls supabase.auth.signInWithPassword() directly in the browser
+// so onAuthStateChange fires SIGNED_IN natively.
 "use client";
 
 import { EmailIcon, PasswordIcon } from "@/assets/icons";
@@ -12,8 +10,8 @@ import InputGroup from "../FormElements/InputGroup";
 import { Checkbox } from "../FormElements/checkbox";
 import { useTheme } from "@/app/provider";
 import { Loader2 } from "lucide-react";
-import { createBrowserClient } from "@supabase/ssr";
-import { useRouter } from "next/navigation";
+import { createBrowserClient } from "@/utils/supabase/client";
+import { useRouter, useSearchParams } from "next/navigation";
 import { populateCookiesAction } from "@/actions/auth/actions";
 import { getLastPageForRedirect } from "@/lib/cookieUtils";
 
@@ -21,6 +19,7 @@ export default function SigninWithPassword() {
   const { themeType } = useTheme();
   const isDark = themeType === "dark";
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [data, setData] = useState({
     email: process.env.NEXT_PUBLIC_DEMO_USER_MAIL || "",
@@ -31,14 +30,7 @@ export default function SigninWithPassword() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const supabase = React.useMemo(
-    () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  const supabase = React.useMemo(() => createBrowserClient(), []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setData({ ...data, [e.target.name]: e.target.value });
@@ -54,9 +46,6 @@ export default function SigninWithPassword() {
     setError(null);
 
     try {
-      // ✅ Sign in from the browser — this fires onAuthStateChange("SIGNED_IN")
-      // which propagates through the entire Provider → MobileDrawer → Header chain
-      // identically to how signOut fires SIGNED_OUT. No page reload needed.
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
@@ -72,19 +61,16 @@ export default function SigninWithPassword() {
         return;
       }
 
-      console.log("[SignIn] ✅ Browser sign-in succeeded, SIGNED_IN will fire via onAuthStateChange");
-
-      // ✅ Populate server-side profile cookies (userRole, userDisplayName, etc.)
-      // This runs in the background — it's not blocking the auth state update.
       populateCookiesAction(authData.user.id, data.remember).catch((err) => {
-        console.warn("[SignIn] ⚠️ Cookie population failed (non-critical):", err);
+        console.warn("[SignIn] cookie population failed (non-critical):", err);
       });
 
-      // ✅ Redirect to lastPage or home — no ?refresh=true needed
-      const redirectTo = getLastPageForRedirect();
+      // Prefer ?next= param set by middleware, fall back to lastPage cookie, then home
+      const nextParam = searchParams.get("next");
+      const redirectTo = nextParam || getLastPageForRedirect();
       router.push(redirectTo);
     } catch (err) {
-      console.error("[SignIn] ❌ Unexpected error:", err);
+      console.error("[SignIn] unexpected error:", err);
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
@@ -130,8 +116,6 @@ export default function SigninWithPassword() {
           onChange={handleRememberChange}
           disabled={loading}
         />
-
-        {/* ✅ Fixed: was /auth/forgot-password (404), now points to /forgot-password */}
         <Link
           href="/forgot-password"
           className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200"

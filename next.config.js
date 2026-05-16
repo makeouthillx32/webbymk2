@@ -30,6 +30,13 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  // ── Dev origins ────────────────────────────────────────────────────────────
+  // Suppresses the "Cross origin request detected" warning when accessing the
+  // app via dev.unenter.live (the Docker dev proxy host) instead of localhost.
+  allowedDevOrigins: [
+    `dev.${CORE_DOMAIN}`,
+    `*.dev.${CORE_DOMAIN}`,
+  ],
 
   // ── Multi-zone ─────────────────────────────────────────────────────────────
   assetPrefix,

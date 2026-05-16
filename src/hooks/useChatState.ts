@@ -1,6 +1,6 @@
 // hooks/useChatState.ts - Main chat state management hook
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 import { useRealtimeInsert } from '@/hooks/useRealtimeInsert';
 import { useMessages } from '@/hooks/useMessages';

@@ -1,4 +1,4 @@
-// tui/npm-api.ts
+// tui/npm-api.ts Legacy (Dont use)
 // ─────────────────────────────────────────────────────────────────────────────
 // Nginx Proxy Manager REST API client.
 //
@@ -27,50 +27,50 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { STACK_HOST, NPM_HOST } from "../config/stack.ts";
-import type { Zone }            from "../config/zones.ts";
+import type { Zone } from "../config/zones.ts";
 
 export type OnLine = (line: string) => void;
 
 // ── API response types ────────────────────────────────────────────────────────
 
 export interface NpmTokenResponse {
-  token:   string;
+  token: string;
   expires: string;  // ISO-8601
 }
 
 export interface NpmProxyHost {
-  id:                     number;
-  created_on:             string;
-  modified_on:            string;
-  domain_names:           string[];
-  forward_scheme:         "http" | "https";
-  forward_host:           string;
-  forward_port:           number;
-  forward_path:           string;
-  enabled:                number;   // 1 | 0
-  ssl_forced:             number;
-  http2_support:          number;
-  hsts_enabled:           number;
-  allow_websocket_upgrade:number;
-  block_exploits:         number;
-  caching_enabled:        number;
-  certificate_id:         number | string | null;
-  certificate?:           NpmCertificate | null;
-  access_list_id:         number | string;
-  advanced_config:        string;
-  meta:                   Record<string, unknown>;
-  locations:              unknown[];
+  id: number;
+  created_on: string;
+  modified_on: string;
+  domain_names: string[];
+  forward_scheme: "http" | "https";
+  forward_host: string;
+  forward_port: number;
+  forward_path: string;
+  enabled: number;   // 1 | 0
+  ssl_forced: number;
+  http2_support: number;
+  hsts_enabled: number;
+  allow_websocket_upgrade: number;
+  block_exploits: number;
+  caching_enabled: number;
+  certificate_id: number | string | null;
+  certificate?: NpmCertificate | null;
+  access_list_id: number | string;
+  advanced_config: string;
+  meta: Record<string, unknown>;
+  locations: unknown[];
 }
 
 export interface NpmCertificate {
-  id:         number;
+  id: number;
   created_on: string;
-  modified_on:string;
-  provider:   "letsencrypt" | "other";
-  nice_name:  string;
+  modified_on: string;
+  provider: "letsencrypt" | "other";
+  nice_name: string;
   domain_names: string[];
   expires_on: string | null;
-  meta:       Record<string, unknown>;
+  meta: Record<string, unknown>;
 }
 
 export type NpmConnectStatus =
@@ -81,16 +81,16 @@ export type NpmConnectStatus =
   | "no_credentials";
 
 export interface NpmStatus {
-  status:     NpmConnectStatus;
-  hostCount:  number;
-  token:      string | null;
-  error?:     string;
+  status: NpmConnectStatus;
+  hostCount: number;
+  token: string | null;
+  error?: string;
 }
 
 // ── In-memory token cache ─────────────────────────────────────────────────────
 
-let _cachedToken:  string | null = null;
-let _tokenExpires: Date   | null = null;
+let _cachedToken: string | null = null;
+let _tokenExpires: Date | null = null;
 
 function tokenValid(): boolean {
   if (!_cachedToken || !_tokenExpires) return false;
@@ -99,7 +99,7 @@ function tokenValid(): boolean {
 }
 
 function clearTokenCache() {
-  _cachedToken  = null;
+  _cachedToken = null;
   _tokenExpires = null;
 }
 
@@ -115,13 +115,13 @@ const TIMEOUT_MS = 6_000;
 const SLOW_TIMEOUT_MS = 90_000;
 
 async function npmFetch(
-  path:    string,
-  init:    RequestInit = {},
-  token?:  string,
+  path: string,
+  init: RequestInit = {},
+  token?: string,
   timeoutMs: number = TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer      = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -162,7 +162,7 @@ export async function npmGetToken(): Promise<string> {
 
   const res = await npmFetch("/tokens", {
     method: "POST",
-    body:   JSON.stringify({ identity: NPM_HOST.email, secret: NPM_HOST.password }),
+    body: JSON.stringify({ identity: NPM_HOST.email, secret: NPM_HOST.password }),
   });
 
   if (res.status === 401) {
@@ -173,7 +173,7 @@ export async function npmGetToken(): Promise<string> {
   }
 
   const data = await res.json() as NpmTokenResponse;
-  _cachedToken  = data.token;
+  _cachedToken = data.token;
   _tokenExpires = new Date(data.expires);
   return _cachedToken;
 }
@@ -183,7 +183,7 @@ export async function npmLogout(): Promise<void> {
   const t = _cachedToken;
   clearTokenCache();
   if (t) {
-    await npmFetch("/tokens", { method: "DELETE" }, t).catch(() => {});
+    await npmFetch("/tokens", { method: "DELETE" }, t).catch(() => { });
   }
 }
 
@@ -209,14 +209,18 @@ export async function npmPing(): Promise<boolean> {
  */
 export async function npmGetStatus(): Promise<NpmStatus> {
   if (!NPM_HOST.email || !NPM_HOST.password) {
-    return { status: "no_credentials", hostCount: 0, token: null,
-             error: "NPM_EMAIL / NPM_PASSWORD not set in .env" };
+    return {
+      status: "no_credentials", hostCount: 0, token: null,
+      error: "NPM_EMAIL / NPM_PASSWORD not set in .env"
+    };
   }
 
   const reachable = await npmPing();
   if (!reachable) {
-    return { status: "unreachable", hostCount: 0, token: null,
-             error: `Cannot reach NPM at ${NPM_HOST.apiUrl}` };
+    return {
+      status: "unreachable", hostCount: 0, token: null,
+      error: `Cannot reach NPM at ${NPM_HOST.apiUrl}`
+    };
   }
 
   let token: string;
@@ -267,7 +271,7 @@ async function resolveProxyHostsBase(token: string): Promise<string> {
 
 /** List all proxy hosts (with SSL cert details expanded when supported). */
 export async function npmListHosts(token?: string): Promise<NpmProxyHost[]> {
-  const t    = token ?? await npmGetToken();
+  const t = token ?? await npmGetToken();
   const base = await resolveProxyHostsBase(t);
 
   // Try ?expand=certificate first (v2.x richer response); fall back to plain.
@@ -290,34 +294,250 @@ export async function npmFindHost(
 
 /** Enable a proxy host by id. */
 export async function npmEnableHost(id: number, token?: string): Promise<void> {
-  const t    = token ?? await npmGetToken();
+  const t = token ?? await npmGetToken();
   const base = await resolveProxyHostsBase(t);
-  const res  = await npmFetch(`${base}/${id}/enable`, { method: "POST" }, t);
+  const res = await npmFetch(`${base}/${id}/enable`, { method: "POST" }, t);
   if (!res.ok) throw new Error(`Enable failed (${res.status})`);
 }
 
 /** Disable a proxy host by id. */
 export async function npmDisableHost(id: number, token?: string): Promise<void> {
-  const t    = token ?? await npmGetToken();
+  const t = token ?? await npmGetToken();
   const base = await resolveProxyHostsBase(t);
-  const res  = await npmFetch(`${base}/${id}/disable`, { method: "POST" }, t);
+  const res = await npmFetch(`${base}/${id}/disable`, { method: "POST" }, t);
   if (!res.ok) throw new Error(`Disable failed (${res.status})`);
 }
 
 /** Delete a proxy host by id. */
 export async function npmDeleteHost(id: number, token?: string): Promise<void> {
-  const t    = token ?? await npmGetToken();
+  const t = token ?? await npmGetToken();
   const base = await resolveProxyHostsBase(t);
-  const res  = await npmFetch(`${base}/${id}`, { method: "DELETE" }, t);
+  const res = await npmFetch(`${base}/${id}`, { method: "DELETE" }, t);
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
 
 /** List all certificates. */
+// Cached certs base path — same v2/v3 versioning issue as proxy-hosts.
+//   v2.x  →  /certificates
+//   v3.x  →  /nginx/certificates
+let cachedCertsBase: string | null = null;
+
+async function resolveCertsBase(token: string): Promise<string> {
+  if (cachedCertsBase) return cachedCertsBase;
+  const candidates = ["/nginx/certificates", "/certificates"];
+  for (const base of candidates) {
+    const res = await npmFetch(base, {}, token);
+    if (res.status === 401) { clearTokenCache(); throw new Error("NPM token expired"); }
+    if (res.status !== 404) { cachedCertsBase = base; return base; }
+  }
+  throw new Error("NPM certificates endpoint not found (tried /nginx/certificates and /certificates)");
+}
+
+/** List all certificates. */
 export async function npmListCerts(token?: string): Promise<NpmCertificate[]> {
-  const t   = token ?? await npmGetToken();
-  const res = await npmFetch("/certificates", {}, t);
+  const t = token ?? await npmGetToken();
+  const base = await resolveCertsBase(t);
+  const res = await npmFetch(base, {}, t);
   if (!res.ok) throw new Error(`Failed to list certs (${res.status})`);
   return res.json() as Promise<NpmCertificate[]>;
+}
+
+/**
+ * Find an existing NPM certificate that covers `domain`.
+ *
+ * Matches:
+ *   · Exact:    cert.domain_names includes "dev.unenter.live"
+ *   · Wildcard: cert.domain_names includes "*.unenter.live"
+ *
+ * Prefers the cert with the latest expiry. Logs via onLine so progress is
+ * visible in the TUI. Returns null if no match — caller should request new.
+ */
+export async function npmFindCertForDomain(
+  domain: string,
+  token?: string,
+  onLine?: OnLine,
+): Promise<NpmCertificate | null> {
+  let certs: NpmCertificate[];
+  try {
+    certs = await npmListCerts(token);
+  } catch (e) {
+    onLine?.(`⚠ Could not list NPM certs: ${String(e)}`);
+    return null;
+  }
+
+  onLine?.(`  Found ${certs.length} cert(s) in NPM — scanning for match...`);
+
+  const dotIdx = domain.indexOf(".");
+  const wildcard = dotIdx >= 0 ? `*${domain.slice(dotIdx)}` : null;
+
+  const matches = certs.filter((c) =>
+    c.domain_names.includes(domain) ||
+    (wildcard !== null && c.domain_names.includes(wildcard))
+  );
+
+  if (matches.length === 0) {
+    onLine?.(`  No existing cert covers "${domain}"${wildcard ? ` or "${wildcard}"` : ""}`);
+    return null;
+  }
+
+  const best = matches.reduce((a, c) => {
+    const aExp = a.expires_on ? new Date(a.expires_on).getTime() : 0;
+    const cExp = c.expires_on ? new Date(c.expires_on).getTime() : 0;
+    return cExp > aExp ? c : a;
+  });
+
+  onLine?.(`  Found ${matches.length} matching cert(s) — using #${best.id} "${best.nice_name}"`);
+  return best;
+}
+
+// ── Dev-host registration ─────────────────────────────────────────────────────
+
+/**
+ * Register (or repair) a dev proxy host in NPM.
+ *
+ * Reuses any existing cert covering the domain (exact or wildcard) so we
+ * never hit the LE 5-cert/week rate limit for dev.* subdomains.
+ * Handles the partial-create case: if NPM created the host during a failed
+ * LE attempt, the host exists but has no cert — we PATCH it to attach one.
+ * Falls back to HTTP-only if no cert is available at all.
+ *
+ * Non-fatal: logs ⚠ on failure so the dev start is not blocked.
+ */
+export async function npmAddDevHost(
+  domain: string,
+  forwardHost: string,
+  forwardPort: number,
+  onLine: OnLine,
+): Promise<number> {
+  const reachable = await npmPing();
+  if (!reachable) {
+    onLine(`⚠ NPM unreachable — skipping dev host registration`);
+    return 1;
+  }
+
+  let token: string;
+  try {
+    token = await npmGetToken();
+  } catch {
+    onLine(`⚠ NPM auth failed — skipping dev host registration`);
+    return 1;
+  }
+
+  onLine(`Checking NPM for existing cert covering ${domain}...`);
+  const reusableCert = await npmFindCertForDomain(domain, token, onLine);
+
+  const existing = await npmFindHost(domain, token).catch(() => null);
+
+  if (existing) {
+    const hasCert = existing.certificate_id && existing.certificate_id !== 0;
+    const correctHost = existing.forward_host === forwardHost;
+    const correctPort = existing.forward_port === forwardPort;
+    const forwardOk = correctHost && correctPort;
+
+    if (hasCert && forwardOk) {
+      onLine(`✓ NPM dev host already registered (id #${existing.id}, SSL ok)`);
+      return 0;
+    }
+
+    if (!reusableCert && forwardOk) {
+      onLine(`✓ NPM dev host registered (id #${existing.id}, HTTP-only — no cert available)`);
+      return 0;
+    }
+
+    // Need to PATCH: either cert is missing, or forward target is wrong (e.g.
+    // pointing at container name instead of the stack proxy IP).
+    const reason = !forwardOk
+      ? `wrong forward (${existing.forward_host}:${existing.forward_port} → ${forwardHost}:${forwardPort})`
+      : `missing cert`;
+    onLine(`⚠ Dev host #${existing.id} needs update — ${reason}`);
+    if (reusableCert) {
+      onLine(`  Attaching cert #${reusableCert.id} "${reusableCert.nice_name}"...`);
+    }
+    const patchPayload = {
+      domain_names: [domain],
+      forward_scheme: "http",
+      forward_host: forwardHost,
+      forward_port: forwardPort,
+      certificate_id: reusableCert ? reusableCert.id : (existing.certificate_id ?? 0),
+      ssl_forced: reusableCert ? true : !!existing.ssl_forced,
+      http2_support: reusableCert ? true : !!existing.http2_support,
+      allow_websocket_upgrade: true,
+      block_exploits: false,
+      caching_enabled: false,
+      hsts_enabled: false,
+      hsts_subdomains: false,
+      access_list_id: 0,
+      advanced_config: "",
+      locations: [],
+    };
+    try {
+      const base = await resolveProxyHostsBase(token);
+      const res = await npmFetch(`${base}/${existing.id}`, {
+        method: "PUT",
+        body: JSON.stringify(patchPayload),
+      }, token, TIMEOUT_MS);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        onLine(`⚠ Host patch failed (${res.status}): ${text}`);
+        onLine(`  Fix manually: ${NPM_HOST.uiUrl}`);
+        return 1;
+      }
+      const certNote = reusableCert ? `, SSL cert #${reusableCert.id} attached` : "";
+      onLine(`✓ Dev host patched — forward → ${forwardHost}:${forwardPort}${certNote}`);
+      return 0;
+    } catch (e) {
+      onLine(`⚠ Host patch error: ${String(e)}`);
+      return 1;
+    }
+  }
+
+  // Host doesn't exist yet — create with SSL if cert available, else HTTP-only.
+  const certId = reusableCert ? reusableCert.id : 0;
+  const sslEnabled = reusableCert != null;
+
+  const payload = {
+    domain_names: [domain],
+    forward_scheme: "http",
+    forward_host: forwardHost,
+    forward_port: forwardPort,
+    certificate_id: certId,
+    ssl_forced: sslEnabled,
+    http2_support: sslEnabled,
+    allow_websocket_upgrade: true,
+    block_exploits: false,
+    caching_enabled: false,
+    hsts_enabled: false,
+    hsts_subdomains: false,
+    access_list_id: 0,
+    advanced_config: "",
+    locations: [],
+  };
+
+  try {
+    const base = await resolveProxyHostsBase(token);
+    const res = await npmFetch(base, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token, TIMEOUT_MS);
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      onLine(`⚠ NPM dev host create failed (${res.status}): ${text}`);
+      onLine(`  Internal proxy is active — dev URL still reachable internally.`);
+      return 1;
+    }
+
+    const created = await res.json() as NpmProxyHost;
+    const sslNote = reusableCert
+      ? `SSL via cert #${reusableCert.id}`
+      : `HTTP-only (no cert available)`;
+    onLine(`✓ NPM dev host registered  (id #${created.id}, ${sslNote})`);
+    return 0;
+  } catch (e) {
+    onLine(`⚠ NPM dev host create error: ${String(e)}`);
+    onLine(`  Internal proxy is active — dev URL still reachable internally.`);
+    return 1;
+  }
 }
 
 // ── Zone registration ─────────────────────────────────────────────────────────
@@ -332,7 +552,7 @@ export async function npmListCerts(token?: string): Promise<NpmCertificate[]> {
  * Streams progress to onLine so the TUI overlay stays live.
  */
 export async function npmAddZone(
-  zone:   Zone,
+  zone: Zone,
   onLine: OnLine
 ): Promise<number> {
   const domain = zone.domain;
@@ -381,7 +601,7 @@ export async function npmAddZone(
   }
 
   if (existing) {
-    const sslLabel     = existing.certificate_id ? "SSL ✓" : "no cert";
+    const sslLabel = existing.certificate_id ? "SSL ✓" : "no cert";
     const enabledLabel = existing.enabled ? "enabled" : "DISABLED";
     onLine(`Found (host #${existing.id})  ·  ${sslLabel}  ·  ${enabledLabel}`);
     onLine(`  forward  →  ${existing.forward_host}:${existing.forward_port}`);
@@ -400,22 +620,22 @@ export async function npmAddZone(
     onLine(`  Updating proxy host #${existing.id}...`);
 
     const updatePayload = {
-      domain_names:            [domain],
-      forward_scheme:          "http",
-      forward_host:            STACK_HOST.ip,
-      forward_port:            STACK_HOST.proxyPort,
+      domain_names: [domain],
+      forward_scheme: "http",
+      forward_host: STACK_HOST.ip,
+      forward_port: STACK_HOST.proxyPort,
       // Keep the existing cert rather than requesting a new one.
-      certificate_id:          existing.certificate_id ?? 0,
-      ssl_forced:              true,
-      http2_support:           true,
+      certificate_id: existing.certificate_id ?? 0,
+      ssl_forced: true,
+      http2_support: true,
       allow_websocket_upgrade: true,
-      block_exploits:          true,
-      caching_enabled:         false,
-      hsts_enabled:            false,
-      hsts_subdomains:         false,
-      access_list_id:          0,
-      advanced_config:         "",
-      locations:               [],
+      block_exploits: true,
+      caching_enabled: false,
+      hsts_enabled: false,
+      hsts_subdomains: false,
+      access_list_id: 0,
+      advanced_config: "",
+      locations: [],
     };
 
     let updateRes: Response;
@@ -423,7 +643,7 @@ export async function npmAddZone(
       const base = await resolveProxyHostsBase(token);
       updateRes = await npmFetch(`${base}/${existing.id}`, {
         method: "PUT",
-        body:   JSON.stringify(updatePayload),
+        body: JSON.stringify(updatePayload),
       }, token, SLOW_TIMEOUT_MS);
     } catch (e) {
       onLine(`✗ Update failed: ${String(e)}`);
@@ -445,11 +665,29 @@ export async function npmAddZone(
 
   onLine(`Not found — creating proxy host...`);
 
-  // 5. Cert email required for Let's Encrypt
-  const leEmail = NPM_HOST.letsencryptEmail;
-  if (!leEmail) {
-    onLine("✗ NPM_LE_EMAIL or NPM_EMAIL must be set for Let's Encrypt");
-    return 1;
+  // 5. Reuse an existing cert if available — avoids LE 5-cert/week rate limit.
+  onLine(`Checking NPM for existing cert covering ${domain}...`);
+  const reusableCert = await npmFindCertForDomain(domain, token, onLine);
+
+  let certId: number | string;
+  let certMeta: Record<string, unknown> | undefined;
+
+  if (reusableCert) {
+    const exp = reusableCert.expires_on
+      ? `expires ${new Date(reusableCert.expires_on).toLocaleDateString()}`
+      : "no expiry";
+    onLine(`✓ Reusing cert #${reusableCert.id}  "${reusableCert.nice_name}"  (${exp})`);
+    certId = reusableCert.id;
+    certMeta = undefined;
+  } else {
+    const leEmail = NPM_HOST.letsencryptEmail;
+    if (!leEmail) {
+      onLine("✗ NPM_LE_EMAIL or NPM_EMAIL must be set for Let's Encrypt");
+      return 1;
+    }
+    onLine(`No existing cert found — requesting new Let's Encrypt cert...`);
+    certId = "new";
+    certMeta = { letsencrypt_email: leEmail, letsencrypt_agree: true, dns_challenge: false };
   }
 
   // 6. Create
@@ -460,41 +698,41 @@ export async function npmAddZone(
   //   · certificate_id: "new" triggers auto-Let's Encrypt issuance.
   //   · boolean flags are accepted but NPM internally stores as 0/1.
   //   · access_list_id must be a numeric id (0 = no list).
-  const payload = {
-    domain_names:            [domain],
-    forward_scheme:          "http",
-    forward_host:            STACK_HOST.ip,
-    forward_port:            STACK_HOST.proxyPort,
-    certificate_id:          "new",
-    meta: {
-      letsencrypt_email:     leEmail,
-      letsencrypt_agree:     true,
-      dns_challenge:         false,
-    },
-    ssl_forced:              true,
-    http2_support:           true,
+  const payload: Record<string, unknown> = {
+    domain_names: [domain],
+    forward_scheme: "http",
+    forward_host: STACK_HOST.ip,
+    forward_port: STACK_HOST.proxyPort,
+    certificate_id: certId,
+    ...(certMeta ? { meta: certMeta } : {}),
+    ssl_forced: true,
+    http2_support: true,
     allow_websocket_upgrade: true,
-    block_exploits:          true,
-    caching_enabled:         false,
-    hsts_enabled:            false,
-    hsts_subdomains:         false,
-    access_list_id:          0,
-    advanced_config:         "",
-    locations:               [],
+    block_exploits: true,
+    caching_enabled: false,
+    hsts_enabled: false,
+    hsts_subdomains: false,
+    access_list_id: 0,
+    advanced_config: "",
+    locations: [],
   };
 
-  onLine("  (this may take 30-60s — Let's Encrypt HTTP-01 challenge runs server-side)");
+  const slowPath = certId === "new";
+  if (slowPath) {
+    onLine("  (this may take 30-60s — Let's Encrypt HTTP-01 challenge runs server-side)");
+  }
+  const timeout = slowPath ? SLOW_TIMEOUT_MS : TIMEOUT_MS;
   let createRes: Response;
   try {
     const base = await resolveProxyHostsBase(token);
     createRes = await npmFetch(base, {
       method: "POST",
-      body:   JSON.stringify(payload),
-    }, token, SLOW_TIMEOUT_MS);
+      body: JSON.stringify(payload),
+    }, token, timeout);
   } catch (e) {
     const msg = String(e);
     if (msg.includes("AbortError")) {
-      onLine(`✗ Request timed out after ${SLOW_TIMEOUT_MS / 1000}s`);
+      onLine(`✗ Request timed out after ${timeout / 1000}s`);
       onLine("  NPM may still be processing — check the UI, the host might appear shortly.");
     } else {
       onLine(`✗ Network error: ${msg}`);
@@ -522,7 +760,9 @@ export async function npmAddZone(
 
   const created = await createRes.json() as NpmProxyHost;
   onLine(`✓ Proxy host created  (id #${created.id})`);
-  onLine(`✓ Let's Encrypt cert requested`);
+  onLine(reusableCert
+    ? `✓ SSL cert reused  (id #${reusableCert.id}  "${reusableCert.nice_name}")`
+    : `✓ Let's Encrypt cert requested`);
   onLine("");
   onLine(`  ${domain}  →  ${STACK_HOST.ip}:${STACK_HOST.proxyPort}`);
   onLine("  SSL forced · HTTP/2 · WebSocket upgrade · exploit blocking");

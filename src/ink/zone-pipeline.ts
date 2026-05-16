@@ -23,7 +23,7 @@
 
 import { getStatus, pullAndUp, ensureZoneNetwork, reloadProxy } from "./docker.ts";
 import { buildZone }                         from "./zone-build.ts";
-import { npmAddZone }                        from "./npm-api.ts";
+import { npmAddZone }                        from "./npm/index.ts";
 import { scaffoldZone, deleteZone }          from "./zone-scaffold.ts";
 import type { DerivedZone }                  from "./zone-scaffold.ts";
 import { addZoneRoute, getRoutes }           from "./proxy-config.ts";

@@ -2,7 +2,7 @@
 
 import { Smile, Paperclip, Send, X, Image, FileText } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 import './MessageInput.scss';
 

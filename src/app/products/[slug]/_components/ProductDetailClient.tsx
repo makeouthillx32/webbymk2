@@ -17,6 +17,7 @@ import {
   Ruler,
 } from "lucide-react";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,10 +162,12 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
   const { addItem } = useCart();
 
   // ── Image URL builder ──────────────────────────────────────────────────────
-  const getImageUrl = (image: ProductImage) => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return `${supabaseUrl}/storage/v1/object/public/${image.bucket_name}/${image.object_path}`;
-  };
+  // Uses NEXT_PUBLIC_SUPABASE_URL_BROWSER (public-accessible) so the URL is
+  // valid both in the browser and in next.config.js remotePatterns.
+  // DO NOT use NEXT_PUBLIC_SUPABASE_URL here — in Docker that resolves to the
+  // internal kong hostname which is not in remotePatterns and causes a 500.
+  const getImageUrl = (image: ProductImage) =>
+    supabasePublicUrlFromImage(image) ?? "";
 
   // ── Split images: gallery vs size-guide ───────────────────────────────────
   const { galleryImages, sizeGuideImages } = useMemo(() => {

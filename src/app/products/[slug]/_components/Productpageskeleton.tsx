@@ -6,6 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, ShoppingCart, Heart, Share2 } from "lucide-react";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 
 interface ProductImage {
   id: string;
@@ -69,10 +70,10 @@ export default function ProductPageClient({ product }: ProductPageClientProps) {
   }>({});
 
   // Get image URL from Supabase Storage
-  const getImageUrl = (image: ProductImage) => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return `${supabaseUrl}/storage/v1/object/public/${image.bucket_name}/${image.object_path}`;
-  };
+  // Uses NEXT_PUBLIC_SUPABASE_URL_BROWSER so the URL matches next.config.js
+  // remotePatterns and works in the browser (not the Docker-internal kong URL).
+  const getImageUrl = (image: ProductImage) =>
+    supabasePublicUrlFromImage(image) ?? "";
 
   // Get unique option values
   const getOptionValues = (optionName: 'option1' | 'option2' | 'option3') => {

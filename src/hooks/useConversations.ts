@@ -1,6 +1,6 @@
 // hooks/useConversations.ts - Conversation management hook
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { useRealtimeInsert } from '@/hooks/useRealtimeInsert';
 import { storage, CACHE_KEYS } from '@/lib/cookieUtils';
 import type { Conversation } from '@/app/dashboard/[id]/messages/_components/ChatSidebar';

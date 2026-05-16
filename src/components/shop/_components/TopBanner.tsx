@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
+import { getBrowserSupabaseUrl } from "@/lib/multiZone";
 import "./top-banner.scss";
 
 // -----------------------
@@ -126,7 +127,7 @@ function groupIsEligible(g: BannerGroup, fallbackTZ: string) {
 export function TopBanner() {
   const supabase = useMemo(() => {
     return createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      getBrowserSupabaseUrl(),
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
   }, []);

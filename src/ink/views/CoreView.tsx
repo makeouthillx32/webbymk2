@@ -12,7 +12,7 @@
 // Neither can be deleted or NPM-registered from here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, useInput }          from "ink";
 
 import type { Zone }   from "../../config/zones.ts";
@@ -42,9 +42,13 @@ interface CoreViewProps {
   proxyStatus:     Status;
   runOp:           (title: string, op: (o: (l: string) => void) => Promise<number>) => void;
   openLogs:        (zone: Zone) => void;
+  /** Start dev container, stream logs, stop+cleanup on dismiss. */
+  runDevMode:      (zone: Zone) => void;
   addNotification: (msg: string, type?: "success" | "error" | "info") => void;
   onGoBack:        () => void;
   isActive:        boolean;
+  /** Called once on mount — used to force-refresh zone definitions from DB */
+  onEnter?:        () => void;
 }
 
 // ── Proxy pseudo-zone (not in DB — constructed locally) ───────────────────────
@@ -70,9 +74,13 @@ const PROXY_ACTIONS: Action[] = [
 
 export function CoreView({
   zones, zoneStatuses, proxyStatus,
-  runOp, openLogs, addNotification,
-  onGoBack, isActive,
+  runOp, openLogs, runDevMode, addNotification,
+  onGoBack, isActive, onEnter,
 }: CoreViewProps) {
+
+  // Force-refresh zone definitions the moment this view is entered so any
+  // DB changes (e.g. dockerfile field updates) are always immediately visible.
+  useEffect(() => { onEnter?.(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const coreApp = zones.find(isCoreZone) ?? null;
   const host = useHostMonitor();
@@ -104,23 +112,32 @@ export function CoreView({
         }
         break;
       case "build":
-        runOp(`Build+push  ${zone.label}`, async (o) => {
+        runOp(`Build + Deploy  ${zone.label}`, async (o) => {
           if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
-          return buildZone(zone, o);
+          const code = await buildZone(zone, o);
+          if (code !== 0) return code;
+          o("--- pull + up ---");
+          return pullAndUp(zone, o);
         });
         break;
       case "rebuild":
         if (zone.key === "proxy") {
           runOp("Rebuild proxy  (no cache)", (o) => reloadProxy(o));
         } else {
-          runOp(`Rebuild  ${zone.label}  (no cache)`, async (o) => {
+          runOp(`Rebuild + Deploy  ${zone.label}  (no cache)`, async (o) => {
             if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
-            return buildZone(zone, o, { noCache: true });
+            const code = await buildZone(zone, o, { noCache: true });
+            if (code !== 0) return code;
+            o("--- pull + up ---");
+            return pullAndUp(zone, o);
           });
         }
         break;
       case "logs":
         openLogs(zone);
+        break;
+      case "dev":
+        runDevMode(zone);
         break;
     }
     setActionOpen(false);

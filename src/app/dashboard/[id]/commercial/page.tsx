@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { ChevronDown, Save, Download, Upload, Palette } from 'lucide-react';
 
 // Create Supabase client

@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import NewChatModal from './NewChatModal';
 import ChatSidebarHeader from './ChatSidebarHeader';
 import ChatSidebarSearch from './ChatSidebarSearch';

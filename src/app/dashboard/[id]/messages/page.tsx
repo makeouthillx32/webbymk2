@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 import ChatSidebar, { Conversation } from './_components/ChatSidebar';
 import ChatHeader from './_components/ChatHeader';

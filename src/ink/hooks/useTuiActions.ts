@@ -2,7 +2,7 @@
 import { startCreation, deleteZone } from "../zone/index.js";
 import { pullAndUp, restartZone, reloadProxy, doctorComposeService } from "../docker.js";
 import { deployZone, buildZone, gitPush, buildAll, deployAll } from "../zone-build.js";
-import { npmAddZone } from "../npm-api.js";
+import { npmAddZone } from "../npm/index.ts";
 import { invalidateZoneCache } from "../zone-store.js";
 import type { Zone } from "../../config/zones.js";
 import type { DerivedZone } from "../zone/index.js";

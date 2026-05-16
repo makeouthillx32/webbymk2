@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/utils/supabase/client";
 import type { Session, User } from "@supabase/auth-helpers-nextjs";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
 import { iosSessionHelpers } from "@/lib/cookieUtils";

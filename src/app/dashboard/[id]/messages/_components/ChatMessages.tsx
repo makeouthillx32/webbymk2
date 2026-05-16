@@ -3,7 +3,7 @@
 import { Heart, Trash2, MoreVertical, Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { useState, useRef, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from "@/utils/supabase/client";
 import { toast } from 'react-hot-toast';
 import './ChatMessages.scss';
 
