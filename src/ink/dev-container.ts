@@ -165,12 +165,17 @@ export async function startDevContainer(
     ...(existsSync(envFile) ? ["--env-file", envFile] : []),
     // Zone identity override
     "-e", `NEXT_PUBLIC_ZONE=${zone.key}`,
+    // Windows bind mounts do not always deliver filesystem events into Linux
+    // containers. Polling keeps Next dev/HMR honest for host-side edits.
+    "-e", "WATCHPACK_POLLING=true",
+    "-e", "CHOKIDAR_USEPOLLING=true",
+    "-e", "NEXT_WEBPACK_USEPOLLING=1",
     // Working directory
     "-w", "/app",
     // Image — lightweight official Bun runtime
     "oven/bun:1",
     // Install (updates node_modules volume if deps changed), then start dev server
-    "sh", "-c", "bun install && bun dev",
+    "sh", "-c", "rm -rf .next && bun install && bun dev",
   ];
 
   return new Promise((resolve) => {

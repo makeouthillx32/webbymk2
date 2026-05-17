@@ -63,12 +63,16 @@ interface OperationOverlayProps {
   onKill?:  () => void;
   /** Called when user presses [enter] (only fires when !busy) */
   onEnter?: () => void;
+  /** True once the dev log stream detects Next.js "Ready in Xs". */
+  devReady?:   boolean;
   /** Called when user presses [c] (copy all buffered lines) */
   onCopy?:     () => void;
   /** Called when user presses [C] (copy only visible tail lines) */
   onCopyTail?: (lines: string[]) => void;
+  /** Called when user presses [r] on a dismissable (dev-mode) op — hard restart. */
+  onRestart?:  () => void;
   /** Called when user presses [O] (pop out to terminal) */
-  onPopout?: () => void;
+  onPopout?:   () => void;
 }
 
 // ── Chrome constants ──────────────────────────────────────────────────────────
@@ -83,8 +87,8 @@ const CHROME_ROWS = 4;
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function OperationOverlay({
-  title, lines, busy, mode, didCopy, dismissable,
-  onQ, onEsc, onKill, onEnter, onCopy, onCopyTail, onPopout,
+  title, lines, busy, mode, didCopy, dismissable, devReady,
+  onQ, onEsc, onKill, onEnter, onCopy, onCopyTail, onRestart, onPopout,
 }: OperationOverlayProps) {
   const { tw, iw } = useWidths();
   const th         = useTermHeight();
@@ -102,8 +106,9 @@ export function OperationOverlay({
     if (input === "q")       { onQ?.();                                          return; }
     if (key.escape)          { dismissable ? onKill?.() : onEsc?.();            return; }
     if (key.return && !busy) { onEnter?.();                                      return; }
-    if (input === "c")       { onCopy?.();                                       return; }
-    if (input === "C")       { onCopyTail?.(lines.slice(-contentHeight));        return; }
+    if (input === "c")       { onCopy?.();                                        return; }
+    if (input === "C")       { onCopyTail?.(lines.slice(-contentHeight));         return; }
+    if (input === "r" && dismissable) { onRestart?.();                            return; }
     if (input === "O")       { onPopout?.();                                      return; }
   });
 
@@ -123,7 +128,8 @@ export function OperationOverlay({
         <Box gap={2}>
           {/* Status badge */}
           {busy  && mode === "output" && <Text color="yellow">running</Text>}
-          {busy  && mode === "logs"   && <Text color="blue">streaming</Text>}
+          {busy  && mode === "logs"   && !devReady && <Text color="yellow">compiling</Text>}
+          {busy  && mode === "logs"   &&  devReady && <Text color="green">ready</Text>}
           {!busy && mode === "output" && <Text color="green">done</Text>}
           {!busy && mode === "logs"   && <Text color="gray">stopped</Text>}
 
@@ -139,8 +145,9 @@ export function OperationOverlay({
                 : "[esc/q] close"}
           </Text>
 
-          {/* Copy feedback */}
-          <Text dimColor>[c] copy  [C] copy tail</Text>
+          {/* Copy + restart hints */}
+          <Text dimColor>[c/C] copy</Text>
+          {dismissable && <Text dimColor>[r] restart</Text>}
           {didCopy && <Text color="green">copied</Text>}
         </Box>
       </Box>

@@ -6,10 +6,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  Zone         Host                        Port   Owns
 //  ──────────   ──────────────────────────  ─────  ───────────────────────────
-//  unenter      unenter.live                3000   /, /about, /services, etc.
+//  unenter      www.unenter.live            3000   /, /about, /services, etc.
 //  dashboard    dashboard.unenter.live      3001   /dashboard/**
 //  shop         shop.unenter.live           3002   /shop, /products, /checkout
 //  app          app.unenter.live            3003   /profile, /settings, /client
+//
+// NOTE: www.unenter.live is canonical for core — NPM routes www, not bare apex.
+//       Bare apex (unenter.live) redirects to www. Never the other way around.
 //
 // All zones currently run as one Next.js instance. The proxy routes by Host
 // header. When a zone is split into its own deployment, only its port changes
@@ -44,6 +47,10 @@ export interface ZoneConfig {
 export const ZONES: Record<ZoneName, ZoneConfig> = {
   unenter: {
     name:         "unenter",
+    // Internal routing key only — NOT the public canonical URL.
+    // The public URL is www.unenter.live (see getCanonicalHost).
+    // Keeping this as bare CORE_DOMAIN so the middleware's zone-prefix-rewrite
+    // guard (normalizedHost === zoneConfig.host) never fires for www requests.
     host:         CORE_DOMAIN,
     port:         3000,
     routePrefixes: [
@@ -127,23 +134,48 @@ export function normalizeHost(host: string | null | undefined): string {
 /** Returns the zone for a given public host. Defaults to "unenter". */
 export function getZoneFromHost(host: string | null | undefined): ZoneName {
   const h = normalizeHost(host);
+
+  // Direct match against known zone hosts
   for (const zone of Object.values(ZONES)) {
     if (h === zone.host) return zone.name;
   }
+
   // www redirect → core
   if (h === `www.${CORE_DOMAIN}`) return "unenter";
+
+  // Dev-subdomain fallback: strip "dev." prefix and re-resolve.
+  // e.g.  dev.blog.unenter.live  →  blog.unenter.live  →  "blog"
+  //       dev.unenter.live       →  unenter.live        →  "unenter"
+  // This is belt-and-suspenders — isLocalDevelopmentHost should catch these
+  // first so the middleware uses path-based detection, but if it ever reaches
+  // getZoneFromHost we still return the right zone instead of "unenter".
+  if (h.startsWith("dev.")) {
+    const stripped = h.slice(4);  // remove "dev."
+    for (const zone of Object.values(ZONES)) {
+      if (stripped === zone.host) return zone.name;
+    }
+    if (stripped === CORE_DOMAIN) return "unenter";
+  }
+
   return "unenter";
 }
 
-/** Strips www, resolves to canonical host. */
+/**
+ * Resolve the canonical public host.
+ *
+ * www.unenter.live is canonical — NPM only has a proxy host for www, not bare
+ * apex.  Bare apex requests are rare (direct-IP, old bookmarks) and should
+ * redirect to www.  All other zone subdomains are their own canonical.
+ */
 export function getCanonicalHost(host: string | null | undefined): string {
   const h = normalizeHost(host);
-  if (h === `www.${CORE_DOMAIN}`) return CORE_DOMAIN;
+  // Both www and bare apex → canonical is www
+  if (h === CORE_DOMAIN || h === `www.${CORE_DOMAIN}`) return `www.${CORE_DOMAIN}`;
   // Known zone host → return as-is
   for (const zone of Object.values(ZONES)) {
     if (h === zone.host) return h;
   }
-  return CORE_DOMAIN;
+  return `www.${CORE_DOMAIN}`;
 }
 
 /** Given a URL pathname, returns the zone that owns it. */
@@ -197,13 +229,17 @@ export function crossZoneUrl(zone: ZoneName, pathname: string): string {
 
 export function isLocalDevelopmentHost(host: string): boolean {
   return (
-    host === "localhost"    ||
-    host === "127.0.0.1"   ||
-    host === "0.0.0.0"     ||
-    // dev.* subdomains are preview containers — treat as local so they use
-    // path-based zone detection and don't get redirected to the canonical host.
-    host === `dev.${CORE_DOMAIN}` ||
-    host.endsWith(`.dev.${CORE_DOMAIN}`)
+    host === "localhost"  ||
+    host === "127.0.0.1" ||
+    host === "0.0.0.0"   ||
+    // Any dev.* subdomain under the core domain — covers ALL dev containers:
+    //   dev.unenter.live        (core dev container)
+    //   dev.blog.unenter.live   (blog zone dev container)
+    //   dev.shop.unenter.live   (shop zone dev container)
+    //   dev.dashboard.unenter.live  (dashboard zone dev container)
+    // These get path-based zone detection in middleware (not host-based) so
+    // they are never incorrectly redirected to the canonical production host.
+    (host.startsWith("dev.") && (host === `dev.${CORE_DOMAIN}` || host.endsWith(`.${CORE_DOMAIN}`)))
   );
 }
 

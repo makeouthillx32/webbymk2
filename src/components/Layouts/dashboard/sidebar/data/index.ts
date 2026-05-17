@@ -3,6 +3,9 @@
 import * as Icons from "../icons";
 
 export const NAV_DATA = [
+  // ─────────────────────────────────────────────
+  // MAIN MENU
+  // ─────────────────────────────────────────────
   {
     label: "MAIN MENU",
     items: [
@@ -13,27 +16,28 @@ export const NAV_DATA = [
         items: [],
       },
       {
-        title: "PoS",
-        url: "/POS",
-        icon: Icons.Calendar,
-        items: [],
-      },
-      {
-        title: "Orders",
-        url: "/Orders",
-        icon: Icons.User,
-        items: [],
-      },
-      {
         title: "Messages",
         url: "/messages",
         icon: Icons.MessageIcon,
         items: [],
       },
 
-      // ✅ NEW: Home dropdown (Pages + Images)
+      // ── Chrome ──────────────────────────────
       {
-        title: "Home",
+        title: "Chrome",
+        icon: Icons.FourCircle,
+        items: [
+          {
+            title: "Categories Header",
+            url: "/settings/categories",
+            icon: Icons.Table,
+          },
+        ],
+      },
+
+      // ── Content ─────────────────────────────
+      {
+        title: "Content",
         icon: Icons.HomeIcon,
         items: [
           {
@@ -42,23 +46,67 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
-            title: "Home-Page",
-            url: "/settings/homepage_content",
-            icon: Icons.FourCircle,
-          },
-          {
             title: "Pages",
             url: "/settings/static-pages",
             icon: Icons.Table,
           },
           {
-            title: "Images",
-            url: "/settings/hero-carousel",
+            title: "Home-Page",
+            url: "/settings/homepage_content",
             icon: Icons.FourCircle,
           },
         ],
       },
 
+      // ── Shop ────────────────────────────────
+      {
+        title: "Shop",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "PoS",
+            url: "/POS",
+            icon: Icons.Calendar,
+          },
+          {
+            title: "Orders",
+            url: "/Orders",
+            icon: Icons.User,
+          },
+          {
+            title: "Banners",
+            url: "/settings/top-banner",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Discounts",
+            url: "/settings/discounts",
+            icon: Icons.Table,
+          },
+          {
+            title: "Inventory",
+            url: "/settings/inventory",
+            icon: Icons.Table,
+          },
+          {
+            title: "Tags / Subcategories",
+            url: "/settings/tags",
+            icon: Icons.Alphabet,
+          },
+          {
+            title: "Collections",
+            url: "/settings/collections",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Products",
+            url: "/settings/products",
+            icon: Icons.Authentication,
+          },
+        ],
+      },
+
+      // ── Admin ───────────────────────────────
       {
         title: "Admin",
         icon: Icons.SettingsIcon,
@@ -67,54 +115,6 @@ export const NAV_DATA = [
             title: "Members",
             url: "/settings/members",
             icon: Icons.User,
-          },
-
-          // ───────── Store Management ─────────
-          {
-            title: "Products",
-            url: "/settings/products",
-            icon: Icons.Authentication,
-          },
-          {
-            title: "Categories",
-            url: "/settings/categories",
-            icon: Icons.Table,
-          },
-          {
-            title: "Collections",
-            url: "/settings/collections",
-            icon: Icons.FourCircle, // ✅ safe replacement
-          },
-          {
-            title: "Tags / Subcategories",
-            url: "/settings/tags",
-            icon: Icons.Alphabet,
-          },
-
-          // ───────── Marketing ─────────
-          {
-            title: "Banners",
-            url: "/settings/top-banner",
-            icon: Icons.FourCircle, // ✅ Image icon removed
-          },
-          {
-            title: "Discounts",
-            url: "/settings/discounts",
-            icon: Icons.Table,
-          },
-
-          // ───────── Operations ─────────
-          {
-            title: "Inventory",
-            url: "/settings/inventory",
-            icon: Icons.Table,
-          },
-
-          // ───────── System ─────────
-          {
-            title: "Invites",
-            url: "/settings/invites",
-            icon: Icons.Table,
           },
           {
             title: "Permissions",
@@ -126,8 +126,19 @@ export const NAV_DATA = [
             url: "/settings/thememaker",
             icon: Icons.SettingsIcon,
           },
+        ],
+      },
 
-          // ───────── Dev / Seed (optional) ─────────
+      // ── Storage ─────────────────────────────
+      {
+        title: "Storage",
+        icon: Icons.Alphabet,
+        items: [
+          {
+            title: "Images",
+            url: "/settings/hero-carousel",
+            icon: Icons.FourCircle,
+          },
           {
             title: "Storage",
             url: "/Documents",
@@ -138,8 +149,12 @@ export const NAV_DATA = [
     ],
   },
 
+  // ─────────────────────────────────────────────
+  // ADMIN
+  // ─────────────────────────────────────────────
   {
-    label: "DEVELOPMENT",
+    label: "ADMIN",
+    collapsible: true,
     items: [
       {
         title: "Forms",
@@ -156,12 +171,28 @@ export const NAV_DATA = [
         ],
       },
       {
+        title: "Invites",
+        url: "/settings/invites",
+        icon: Icons.Table,
+        items: [],
+      },
+      {
         title: "Tables",
         icon: Icons.Table,
         items: [
           {
             title: "Tables",
             url: "/tables",
+          },
+        ],
+      },
+      {
+        title: "Charts",
+        icon: Icons.FourCircle,
+        items: [
+          {
+            title: "Basic Chart",
+            url: "/charts/basic-chart",
           },
         ],
       },
@@ -181,4 +212,5 @@ export const NAV_DATA = [
       },
     ],
   },
+
 ];

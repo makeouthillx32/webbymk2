@@ -54,7 +54,13 @@ function stripLocaleFromPathname(pathname: string, locale: Locale): string {
 
 export async function middleware(request: NextRequest) {
   const url            = request.nextUrl.clone();
-  const rawHost        = request.headers.get("host") ?? "";
+  // Prefer x-forwarded-host (set by NPM/OpenResty) over host so the zone
+  // resolver sees the original public hostname even when the reverse proxy
+  // rewrites the Host header to the upstream service address.
+  const rawHost        =
+    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+    request.headers.get("host") ||
+    "";
   const normalizedHost = normalizeHost(rawHost);
   const canonicalHost  = getCanonicalHost(normalizedHost);
   const isLocal        = isLocalDevelopmentHost(normalizedHost);
@@ -62,6 +68,7 @@ export async function middleware(request: NextRequest) {
   // ── 1. www → canonical redirect ───────────────────────────────────────────
   if (!isLocal && normalizedHost !== canonicalHost) {
     url.hostname = canonicalHost;
+    url.port     = "";   // strip internal container port — public URL has none
     return NextResponse.redirect(url, 301);
   }
 
@@ -83,6 +90,19 @@ export async function middleware(request: NextRequest) {
 
   const requestInit = { headers: requestHeaders };
 
+  // Some browsers can keep an older Server Action form document around during
+  // local dev rebuilds. Route those stale POSTs into the stable sign-in handler.
+  if (request.method === "POST" && url.pathname === "/sign-in") {
+    const signInTarget = url.clone();
+    signInTarget.pathname = "/auth/sign-in";
+    return NextResponse.redirect(signInTarget, 307);
+  }
+
+  const createRoutedResponse = () =>
+    rewriteTarget
+      ? NextResponse.rewrite(rewriteTarget, { request: requestInit })
+      : NextResponse.next({ request: requestInit });
+
   // ── 5a. Zone-subdomain path prefix injection ─────────────────────────────
   // When a zone is accessed via its own subdomain (e.g. blog.unenter.live/my-post)
   // but the Next.js pages live under a path prefix (/blog/my-post), rewrite the
@@ -94,7 +114,7 @@ export async function middleware(request: NextRequest) {
   const needsZonePrefixRewrite =
     !isLocal &&
     normalizedHost === zoneConfig.host &&
-    normalizedHost !== CORE_DOMAIN &&
+    normalizedHost !== CORE_DOMAIN &&   // core (incl. www) never needs path-prefix injection
     zonePrimaryPrefix !== null &&
     !url.pathname.startsWith(zonePrimaryPrefix);
 
@@ -123,9 +143,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(rewriteTarget, 302);
   }
 
-  let response: NextResponse = rewriteTarget
-    ? NextResponse.rewrite(rewriteTarget, { request: requestInit })
-    : NextResponse.next({ request: requestInit });
+  let response: NextResponse = createRoutedResponse();
 
   // Propagate zone headers to the response (readable by client via fetch)
   response.headers.set(ZONE_HEADER,      zoneFromHost);
@@ -161,9 +179,8 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          const refreshed = rewriteTarget
-            ? NextResponse.rewrite(rewriteTarget, { request: requestInit })
-            : NextResponse.next({ request: requestInit });
+          requestHeaders.set("cookie", request.cookies.toString());
+          const refreshed = createRoutedResponse();
           cookiesToSet.forEach(({ name, value, options }) =>
             refreshed.cookies.set(name, value, options ?? {})
           );

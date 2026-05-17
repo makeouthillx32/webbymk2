@@ -31,6 +31,7 @@ import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
 import { composeRun, pullAndUp }             from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
 import { getCredential }                     from "../utils/secureStorage/index.js";
+import { log }                               from "./logger.ts";
 
 declare const UNAXIS_VERSION: string | undefined;
 
@@ -139,8 +140,18 @@ async function resolveGhcrToken(): Promise<string | null> {
   //   Set via: unaxis credentials set ghcr_token ghp_xxxx
   try {
     const stored = await getCredential("ghcr_token");
-    if (stored?.trim()) return encodeGhcrAuth(stored.trim());
-  } catch {}
+    if (stored?.trim()) {
+      const encoded = encodeGhcrAuth(stored.trim());
+      log.info("ghcr-token", "resolved via p1 secureStorage", {
+        tokenLen: stored.trim().length,
+        tokenPrefix: stored.trim().slice(0, 10) + "…",
+      });
+      return encoded;
+    }
+    log.debug("ghcr-token", "p1 secureStorage: key present but empty or null");
+  } catch (e) {
+    log.warn("ghcr-token", "p1 secureStorage: threw", { err: String(e) });
+  }
 
   // ── Priority 2: legacy %APPDATA%\unenter\config.json ────────────────────
   //   Backwards compat for installs that haven't migrated to secureStorage yet.
@@ -151,10 +162,16 @@ async function resolveGhcrToken(): Promise<string | null> {
   try {
     const uc = JSON.parse(readFileSync(unenterCfgPath, "utf8")) as Record<string, unknown>;
     const pat = (uc["ghcrToken"] as string | undefined)?.trim();
-    if (pat) return encodeGhcrAuth(pat);
-  } catch {}
+    if (pat) {
+      log.info("ghcr-token", "resolved via p2 legacy config.json", { path: unenterCfgPath });
+      return encodeGhcrAuth(pat);
+    }
+    log.debug("ghcr-token", "p2 legacy config: no ghcrToken field");
+  } catch {
+    log.debug("ghcr-token", "p2 legacy config: file missing or unreadable", { path: unenterCfgPath });
+  }
 
-  // ── Priority 2: base64 auth already in Docker's config ────────────────────
+  // ── Priority 3: base64 auth already in Docker's config ────────────────────
   //
   // Handles the case where the user ran `docker login ghcr.io` and Docker
   // wrote the credentials directly into ~/.docker/config.json (no store).
@@ -166,6 +183,8 @@ async function resolveGhcrToken(): Promise<string | null> {
   try {
     dockerCfg = JSON.parse(readFileSync(dockerCfgPath, "utf8")) as Record<string, unknown>;
   } catch {
+    log.warn("ghcr-token", "p3 docker config.json unreadable — no fallback", { path: dockerCfgPath });
+    log.error("ghcr-token", "all resolution paths exhausted: token is null");
     return null;
   }
 
@@ -173,10 +192,14 @@ async function resolveGhcrToken(): Promise<string | null> {
   const auths = dockerCfg["auths"] as Record<string, { auth?: string }> | undefined;
   for (const key of ["ghcr.io", "https://ghcr.io"]) {
     const a = auths?.[key]?.auth;
-    if (a) return a;
+    if (a) {
+      log.info("ghcr-token", "resolved via p3 docker config.json inline auth", { authKey: key });
+      return a;
+    }
   }
+  log.debug("ghcr-token", "p3 docker config: no inline auth for ghcr.io");
 
-  // ── Priority 3: credential helper (may fail on Windows with wincred) ───────
+  // ── Priority 4: credential helper (may fail on Windows with wincred) ───────
   //
   // Works when Docker Desktop uses docker-credential-desktop (pipe-based).
   // Fails with docker-credential-wincred due to Windows session restrictions.
@@ -191,9 +214,11 @@ async function resolveGhcrToken(): Promise<string | null> {
       if (r.status === 0 && r.stdout) {
         try {
           const c = JSON.parse(r.stdout) as { Username: string; Secret: string };
+          log.info("ghcr-token", "resolved via p4 credential helper", { store, inputUrl, user: c.Username });
           return Buffer.from(`${c.Username}:${c.Secret}`).toString("base64");
         } catch {}
       }
+      log.debug("ghcr-token", "p4 credsStore helper failed or returned no data", { store, exit: r.status });
     }
     const helpers = dockerCfg["credHelpers"] as Record<string, string> | undefined;
     const helper  = helpers?.["ghcr.io"];
@@ -204,13 +229,16 @@ async function resolveGhcrToken(): Promise<string | null> {
       if (r.status === 0 && r.stdout) {
         try {
           const c = JSON.parse(r.stdout) as { Username: string; Secret: string };
+          log.info("ghcr-token", "resolved via p4 credHelper", { helper, inputUrl, user: c.Username });
           return Buffer.from(`${c.Username}:${c.Secret}`).toString("base64");
         } catch {}
       }
+      log.debug("ghcr-token", "p4 credHelper failed or returned no data", { helper, exit: r.status });
     }
     break; // only retry the loop if needed
   }
 
+  log.error("ghcr-token", "all resolution paths exhausted: token is null");
   return null;
 }
 
@@ -224,6 +252,12 @@ async function resolveGhcrToken(): Promise<string | null> {
 async function createBuildDockerConfig(): Promise<BuildDockerConfig> {
   const ghcrToken = await resolveGhcrToken();
 
+  if (!ghcrToken) {
+    log.error("docker-config", "no GHCR token — push will be denied by registry");
+  } else {
+    log.info("docker-config", "GHCR auth embedded in temp Docker config");
+  }
+
   const config: Record<string, unknown> = {
     auths: {} as Record<string, unknown>,
   };
@@ -234,6 +268,7 @@ async function createBuildDockerConfig(): Promise<BuildDockerConfig> {
 
   const tmpDir = mkdtempSync(join(tmpdir(), "unt-docker-"));
   writeFileSync(join(tmpDir, "config.json"), JSON.stringify(config, null, 2), "utf8");
+  log.debug("docker-config", "temp DOCKER_CONFIG written", { tmpDir });
 
   return {
     tmpDir,
@@ -360,6 +395,18 @@ export async function buildZone(
 ): Promise<number> {
   const dockerfile = zone.dockerfile ?? "Dockerfile";
   const dockerCfg  = await createBuildDockerConfig();
+  const t0         = Date.now();
+
+  log.info("build", "started", {
+    zone:      zone.key,
+    image:     zone.image,
+    noCache:   !!opts.noCache,
+    dockerfile,
+  });
+
+  // Mirror every docker output line into the log file.
+  const logBuild = (l: string) => { onLine(l); log.docker(zone.key, "build", l); };
+  const logPush  = (l: string) => { onLine(l); log.docker(zone.key, "push",  l); };
 
   try {
     const buildArgs = loadBuildArgs(zone);
@@ -383,39 +430,46 @@ export async function buildZone(
       ".",
     ];
 
-    onLine(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
-    onLine(`docker build ${opts.noCache ? "--no-cache " : ""}... -t ${zone.image} .`);
+    logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
+    logBuild(`docker build ${opts.noCache ? "--no-cache " : ""}... -t ${zone.image} .`);
 
     // BuildKit (default) — matches build-and-push.ps1 + docker compose.
     // DOCKER_CONFIG points to our temp dir with embedded GHCR credentials
     // for the push step; the build itself only uses public base images.
-    const buildCode = await spawnDocker(buildCmd, onLine, {
+    const buildCode = await spawnDocker(buildCmd, logBuild, {
       DOCKER_CONFIG: dockerCfg.tmpDir,
     });
     if (buildCode !== 0) {
-      onLine(`FAILED: build exited ${buildCode}`);
+      log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
+      logBuild(`FAILED: build exited ${buildCode}`);
       return buildCode;
     }
-    onLine(`OK: build complete`);
+    log.info("build", "docker build complete", { zone: zone.key, ms: Date.now() - t0 });
+    logBuild(`OK: build complete`);
 
-    onLine(`--- push: ${zone.image} ---`);
+    logPush(`--- push: ${zone.image} ---`);
+    const tp = Date.now();
+    log.info("push", "started", { zone: zone.key, image: zone.image });
     const dockerEnv = { DOCKER_CONFIG: dockerCfg.tmpDir };
-    const pushCode = await spawnDocker(["push", zone.image], onLine, dockerEnv);
+    const pushCode = await spawnDocker(["push", zone.image], logPush, dockerEnv);
     if (pushCode !== 0) {
-      onLine("FAILED: push - set GHCR token in Settings [s] -> [t]");
+      log.error("push", "registry denied or network error", { zone: zone.key, image: zone.image, exit: pushCode, ms: Date.now() - tp });
+      logPush("FAILED: push - set GHCR token in Settings [s] -> [t]");
       return pushCode;
     }
-    onLine(`OK: pushed ${zone.image}`);
+    log.info("push", "complete", { zone: zone.key, image: zone.image, ms: Date.now() - tp });
+    logPush(`OK: pushed ${zone.image}`);
 
     // ── Versioned tags — non-fatal, best-effort ──────────────────────────────
     // Push date+time and version tags alongside :latest so rollbacks are
     // always possible.  Failures here are logged but don't fail the build.
-    onLine(`--- versioned tags ---`);
+    logPush(`--- versioned tags ---`);
     const dateTag    = deploymentDateTag();
     const versionTag = unaxisVersionTag();
-    await tagAndPush(zone.image, dateTag, onLine, dockerEnv);
-    if (versionTag) await tagAndPush(zone.image, versionTag, onLine, dockerEnv);
-    onLine(`OK: versioned tags pushed`);
+    await tagAndPush(zone.image, dateTag, logPush, dockerEnv);
+    if (versionTag) await tagAndPush(zone.image, versionTag, logPush, dockerEnv);
+    log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, versionTag: versionTag ?? null });
+    logPush(`OK: versioned tags pushed`);
 
     return 0;
 
@@ -434,8 +488,17 @@ export async function deployZone(
   zone:   Zone,
   onLine: (l: string) => void,
 ): Promise<number> {
-  onLine(`--- deploy: ${zone.label} ---`);
-  return pullAndUp(zone, onLine);
+  const t0 = Date.now();
+  log.info("deploy", "started", { zone: zone.key, image: zone.image });
+  const logDeploy = (l: string) => { onLine(l); log.docker(zone.key, "deploy", l); };
+  logDeploy(`--- deploy: ${zone.label} ---`);
+  const code = await pullAndUp(zone, logDeploy);
+  if (code !== 0) {
+    log.error("deploy", "failed", { zone: zone.key, exit: code, ms: Date.now() - t0 });
+  } else {
+    log.info("deploy", "complete", { zone: zone.key, ms: Date.now() - t0 });
+  }
+  return code;
 }
 
 // ── Build + deploy all zones ──────────────────────────────────────────────────

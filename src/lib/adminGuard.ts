@@ -18,7 +18,7 @@ export async function requireAdmin() {
 
   if (userError || !user) {
     authLogger.securityEvent('Admin access attempt without session');
-    redirect('/sign-in?error=auth_required&message=Please sign in to continue');
+    redirect('/sign-in?next=/dashboard/me&error=auth_required&message=Please sign in to continue');
   }
 
   // Get user profile to check role
@@ -33,7 +33,7 @@ export async function requireAdmin() {
       userId: user.id,
       error: profileError?.message
     });
-    redirect('/sign-in?error=profile_error&message=Could not verify permissions');
+    redirect('/sign-in?next=/dashboard/me&error=profile_error&message=Could not verify permissions');
   }
 
   // Check if user is admin

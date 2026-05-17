@@ -79,7 +79,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     0
   );
   const description = `${shareMessage} · ${itemCount} item${itemCount !== 1 ? "s" : ""} inside.`;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://desertcowgirl.co";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.unenter.live";
 
   return {
     title: `${shareName} | Desert Cowgirl Co.`,

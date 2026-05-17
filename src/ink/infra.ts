@@ -110,7 +110,7 @@ export const INFRA_SERVICES: InfraService[] = [
   s("Cool",      "cool.unenter.live",       "http://192.168.50.75:9080",  "LOVE"),
 
   // ── P0W3R  192.168.50.204 ─────────────────────────────────────────────────
-  s("App",       "unenter.live",            "http://192.168.50.204:3000", "POWER"),
+  s("App",       "www.unenter.live",         "http://192.168.50.204:3000", "POWER"),
   s("DB UI",     "db.unenter.live",         "http://192.168.50.204:8001", "POWER"),
   s("Portainer", "port.unenter.live",       "http://192.168.50.204:9000", "POWER"),
   s("n8n",       "n8n.unenter.live",        "http://192.168.50.204:5678", "POWER"),

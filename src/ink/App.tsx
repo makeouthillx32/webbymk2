@@ -25,7 +25,7 @@
 //   src/cli.ts → src/entrypoints/cli.tsx → src/ink/App.tsx (render entry)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import { useInput, useApp, render }              from "ink";
 import { unstable_batchedUpdates }               from "react-dom";
 
@@ -80,6 +80,24 @@ import type { RuntimeInstance }            from "./zone/supabase-factory.ts";
 import { InstanceWizardScreen }            from "./screens/InstanceWizardScreen.tsx";
 import { StackManagerScreen }              from "./screens/StackManagerScreen.tsx";
 import { devContainerName, startDevContainer, stopDevContainer } from "./dev-container.ts";
+import { startIpcServer }                  from "./ipc-server.ts";
+import { getStatus }                       from "./docker.ts";
+import { captureDockerLogs, parseTail }    from "./log-snapshot.ts";
+import { loadZones }                       from "./zone-store.ts";
+import { reconcileProxyRoutes }            from "./proxy-config.ts";
+import {
+  appendTimeline,
+  appendWatchText,
+  beginWatch,
+  endWatch,
+  getActiveWatch,
+  noteWatch,
+  watchRoot,
+  writeWatchText,
+  type WatchMode,
+}                                          from "./watch-session.ts";
+import { parseLogTail, snapshotContainerLogs } from "./log-snapshot.ts";
+import { PROXY }                          from "../config/zones.ts";
 import type { Zone }                       from "../config/zones.ts";
 import { TerminalWriteProvider }           from "./useTerminalNotification.ts";
 
@@ -126,7 +144,7 @@ export function App() {
     anyBusy,
     logProcRef,   logOpIdRef,
     runOp,        runOpQueued,     runCreateZone,   openLogs,
-    runDevModeOp, triggerDismissHook,
+    runDevModeOp, triggerDismissHook, triggerRestartHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
 
@@ -141,6 +159,16 @@ export function App() {
       (o) => stopDevContainer(zone, o),
     );
   }, [runDevModeOp]);
+
+  const ipcStateRef = useRef({
+    view,
+    bgOps,
+    proxyStatus,
+  });
+
+  useEffect(() => {
+    ipcStateRef.current = { view, bgOps, proxyStatus };
+  }, [view, bgOps, proxyStatus]);
 
   // ── Stack focus — separate from visibility ────────────────────────────────
   // stackOpen        = strip is rendered (auto-set when ops start)
@@ -161,6 +189,499 @@ export function App() {
       setStackManagerOpen(false);
     }
   }, [bgOps.length, setStackOpen]);
+
+  // ── IPC server — CLI agent bridge ─────────────────────────────────────────
+  // Starts a local TCP server (127.0.0.1:50505) so external CLI calls like
+  // `unaxis dev core` or `unaxis restart core` can drive the TUI operations
+  // without needing a separate process.  The handlers call the same underlying
+  // dev-container functions the TUI uses; the TUI refreshes via normal polling.
+  useEffect(() => {
+    // Keep a stable ref to zones so handlers always see the latest list.
+    const resolveZone = async (key: string): Promise<Zone | null> => {
+      const all = await loadZones();
+      return all.find((z) => z.key === key || z.label?.toLowerCase() === key.toLowerCase()) ?? null;
+    };
+
+    const formatDevStatus = async (zone: Zone): Promise<string> => {
+      const status = await getStatus(devContainerName(zone));
+      if (status === "running") return "● running";
+      if (status === "starting") return "◌ starting";
+      return "○ stopped";
+    };
+
+    const printZoneStatus = async (zone: Zone, onLine: (line: string) => void) => {
+      onLine(`${zone.label} · ${zone.domain}`);
+      onLine(`  key       : ${zone.key}`);
+      onLine(`  container : ${zone.container}`);
+      onLine(`  dev       : ${await formatDevStatus(zone)} (${devContainerName(zone)})`);
+      onLine(`✓ zone status`);
+      return 0;
+    };
+
+    const takeSessionSnapshot = async (reason = "manual snapshot"): Promise<string> => {
+      const all = await loadZones();
+      const { view: currentView, bgOps: currentOps, proxyStatus: currentProxy } = ipcStateRef.current;
+      const zoneLines = await Promise.all(all.map(async (z) =>
+        `  ${z.key.padEnd(18)} ${await formatDevStatus(z)}  ${z.domain}`
+      ));
+      const stackLines = currentOps.length === 0
+        ? ["  stack empty"]
+        : currentOps.map((op) => {
+            const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
+            const last = op.lines[op.lines.length - 1];
+            return `  #${op.id} ${state.padEnd(7)} ${op.title}${last ? ` · ${last}` : ""}`;
+          });
+
+      return [
+        `UNAXIS watch snapshot`,
+        `reason : ${reason}`,
+        `time   : ${new Date().toISOString()}`,
+        `cwd    : ${process.cwd()}`,
+        `view   : ${currentView}`,
+        `proxy  : ${currentProxy}`,
+        "",
+        "zones:",
+        ...zoneLines,
+        "",
+        "stack:",
+        ...stackLines,
+        "",
+      ].join("\n");
+    };
+
+    const argValue = (args: string[], name: string): string | undefined => {
+      const idx = args.indexOf(name);
+      return idx >= 0 ? args[idx + 1] : undefined;
+    };
+
+    const validMode = (value: string | undefined): WatchMode | undefined => {
+      if (value === "light" || value === "dev" || value === "risky") return value;
+      return undefined;
+    };
+
+    const server = startIpcServer({
+
+      // unaxis dev <zone>  — toggle dev container on/off
+      dev: async (args, onLine) => {
+        const zoneName = args[0];
+        if (!zoneName) { onLine("✗ usage: dev <zone-key>"); return 1; }
+        const zone = await resolveZone(zoneName);
+        if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
+        const status = await getStatus(devContainerName(zone));
+        if (status === "running" || status === "starting") {
+          onLine(`Stopping dev container for ${zone.label}…`);
+          return stopDevContainer(zone, onLine);
+        }
+        onLine(`Starting dev container for ${zone.label}…`);
+        return startDevContainer(zone, onLine);
+      },
+
+      // unaxis restart <zone>  — hard stop → start
+      restart: async (args, onLine) => {
+        const zoneName = args[0];
+        if (!zoneName) { onLine("✗ usage: restart <zone-key>"); return 1; }
+        const zone = await resolveZone(zoneName);
+        if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
+        onLine(`Restarting dev container for ${zone.label}…`);
+        const stopCode = await stopDevContainer(zone, onLine);
+        if (stopCode !== 0) return stopCode;
+        return startDevContainer(zone, onLine);
+      },
+
+      // unaxis list  — show all zones and their dev container status
+      list: async (_args, onLine) => {
+        const all = await loadZones();
+        if (all.length === 0) { onLine("(no zones configured)"); return 0; }
+        for (const z of all) {
+          onLine(`  ${z.key.padEnd(18)} ${await formatDevStatus(z)}  ${z.domain}`);
+        }
+        onLine(`✓ ${all.length} zone${all.length !== 1 ? "s" : ""}`);
+        return 0;
+      },
+
+      // unaxis zones  — clearer alias for list
+      zones: async (_args, onLine) => {
+        const all = await loadZones();
+        if (all.length === 0) { onLine("(no zones configured)"); return 0; }
+        for (const z of all) {
+          onLine(`  ${z.key.padEnd(18)} ${await formatDevStatus(z)}  ${z.domain}`);
+        }
+        onLine(`✓ ${all.length} zone${all.length !== 1 ? "s" : ""}`);
+        return 0;
+      },
+
+      // unaxis session  — agent-friendly snapshot of the attached TUI
+      session: async (_args, onLine) => {
+        const all = await loadZones();
+        const { view: currentView, bgOps: currentOps, proxyStatus: currentProxy } = ipcStateRef.current;
+        const running = currentOps.filter((o) => o.busy && !o.dismissable).length;
+        const live = currentOps.filter((o) => o.busy && o.dismissable).length;
+        const done = currentOps.filter((o) => !o.busy).length;
+        onLine("✓ UNAXIS TUI is running");
+        onLine(`  cwd    : ${process.cwd()}`);
+        onLine(`  view   : ${currentView}`);
+        onLine(`  proxy  : ${currentProxy}`);
+        onLine(`  zones  : ${all.length}`);
+        onLine(`  stack  : ${running} running, ${live} live, ${done} done`);
+        return 0;
+      },
+
+      // unaxis stack  — compact list of visible TUI ops
+      stack: async (_args, onLine) => {
+        const ops = ipcStateRef.current.bgOps;
+        if (ops.length === 0) { onLine("✓ stack empty"); return 0; }
+        for (const op of ops) {
+          const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
+          const last = op.lines[op.lines.length - 1];
+          onLine(`  #${op.id} ${state.padEnd(7)} ${op.title}${last ? ` · ${last}` : ""}`);
+        }
+        onLine(`✓ ${ops.length} stack item${ops.length !== 1 ? "s" : ""}`);
+        return 0;
+      },
+
+      // unaxis watch begin|status|note|snapshot|end
+      watch: async (args, onLine) => {
+        const sub = args[0] ?? "status";
+
+        if (sub === "begin") {
+          const label = (argValue(args, "--label") ?? args.slice(1).filter((a) => !a.startsWith("--")).join(" ")) || "agent session";
+          const mode = validMode(argValue(args, "--mode")) ?? (args.includes("--db-backup") ? "risky" : "light");
+          const zone = argValue(args, "--zone");
+          const session = beginWatch({ label, mode, zone });
+          const snapshot = await takeSessionSnapshot("watch begin");
+          writeWatchText(session, "preflight.txt", snapshot);
+          onLine(`✓ watch started: ${session.id}`);
+          onLine(`  label : ${session.label}`);
+          onLine(`  mode  : ${session.mode}`);
+          if (session.zone) onLine(`  zone  : ${session.zone}`);
+          onLine(`  dir   : ${session.dir}`);
+
+          if (args.includes("--db-backup")) {
+            onLine("• DB backup requested by watch begin");
+            appendTimeline(session, "db.backup.start", { reason: "watch begin" });
+            const lines: string[] = [];
+            const code = await backupDatabase((line) => {
+              lines.push(line);
+              onLine(line);
+            });
+            appendWatchText(session, "backups.txt", lines.join("\n") + "\n");
+            appendTimeline(session, "db.backup.end", { exitCode: code });
+            if (code !== 0) return code;
+          }
+          return 0;
+        }
+
+        if (sub === "status") {
+          const session = getActiveWatch();
+          if (!session) {
+            onLine(`○ no active watch`);
+            onLine(`  root: ${watchRoot()}`);
+            return 0;
+          }
+          onLine(`✓ watch active: ${session.id}`);
+          onLine(`  label : ${session.label}`);
+          onLine(`  mode  : ${session.mode}`);
+          if (session.zone) onLine(`  zone  : ${session.zone}`);
+          onLine(`  dir   : ${session.dir}`);
+          return 0;
+        }
+
+        if (sub === "note") {
+          const message = args.slice(1).join(" ").trim();
+          if (!message) { onLine("✗ usage: watch note <message>"); return 2; }
+          const session = noteWatch(message);
+          if (!session) { onLine("✗ no active watch"); return 1; }
+          onLine(`✓ note recorded: ${message}`);
+          return 0;
+        }
+
+        if (sub === "snapshot") {
+          const session = getActiveWatch();
+          if (!session) { onLine("✗ no active watch"); return 1; }
+          const reason = (argValue(args, "--reason") ?? args.slice(1).filter((a) => !a.startsWith("--")).join(" ")) || "manual snapshot";
+          const text = await takeSessionSnapshot(reason);
+          const filename = `snapshot-${Date.now()}.txt`;
+          writeWatchText(session, filename, text);
+          appendTimeline(session, "snapshot", { reason, file: filename });
+          onLine(`✓ snapshot recorded: ${filename}`);
+          return 0;
+        }
+
+        if (sub === "end") {
+          const session = endWatch();
+          if (!session) { onLine("○ no active watch"); return 0; }
+          onLine(`✓ watch ended: ${session.id}`);
+          onLine(`  dir: ${session.dir}`);
+          return 0;
+        }
+
+        onLine(`✗ unknown watch command: ${sub}`);
+        onLine("  usage: watch begin|status|note|snapshot|end");
+        return 2;
+      },
+
+      // unaxis db backup [--reason "..."]
+      db: async (args, onLine) => {
+        const sub = args[0];
+        if (sub === "logs") {
+          const tail = parseTail(args);
+          const result = await captureDockerLogs({
+            label: "db",
+            container: "unt_db",
+            tail,
+          }, onLine);
+          if (result.code === 0) onLine(`✓ db logs (${result.tail} lines)`);
+          return result.code;
+        }
+
+        if (sub !== "backup") {
+          onLine("✗ usage: db backup [--reason <text>] | db logs [--tail <lines>]");
+          return 2;
+        }
+        const reason = argValue(args, "--reason") ?? "manual CLI backup";
+        const session = getActiveWatch();
+        if (session) appendTimeline(session, "db.backup.start", { reason });
+        const lines: string[] = [];
+        const code = await backupDatabase((line) => {
+          lines.push(line);
+          onLine(line);
+        });
+        if (session) {
+          appendWatchText(session, "backups.txt", `# ${new Date().toISOString()} ${reason}\n${lines.join("\n")}\n`);
+          appendTimeline(session, "db.backup.end", { reason, exitCode: code });
+        }
+        return code;
+      },
+
+      // unaxis preflight edit --zone <zone> [--db-backup] [--dev] [--watch] [--label <text>]
+      preflight: async (args, onLine) => {
+        const sub = args[0];
+        if (sub !== "edit") {
+          onLine("✗ usage: preflight edit --zone <zone> [--db-backup] [--dev] [--watch] [--label <text>]");
+          return 2;
+        }
+
+        const zoneName = argValue(args, "--zone");
+        if (!zoneName) {
+          onLine("✗ usage: preflight edit --zone <zone> [--db-backup] [--dev] [--watch] [--label <text>]");
+          return 2;
+        }
+
+        const zone = await resolveZone(zoneName);
+        if (!zone) {
+          onLine(`✗ zone not found: "${zoneName}"`);
+          return 1;
+        }
+
+        const wantsBackup = args.includes("--db-backup");
+        const wantsDev = args.includes("--dev");
+        const wantsWatch = args.includes("--watch");
+        const label = argValue(args, "--label") ?? `preflight edit ${zone.key}`;
+        const busyOps = ipcStateRef.current.bgOps.filter((op) => op.busy && !op.dismissable);
+
+        onLine("UNAXIS preflight edit");
+        onLine(`  zone  : ${zone.key} (${zone.label})`);
+        onLine(`  domain: ${zone.domain}`);
+        onLine("✓ TUI session attached");
+
+        let session = getActiveWatch();
+        let createdWatch = false;
+        if (wantsWatch && !session) {
+          const mode: WatchMode = wantsBackup ? "risky" : (wantsDev ? "dev" : "light");
+          session = beginWatch({ label, mode, zone: zone.key });
+          createdWatch = true;
+          onLine(`✓ watch started: ${session.id}`);
+        } else if (session) {
+          onLine(`✓ watch active: ${session.id}`);
+        } else {
+          onLine("○ watch not requested");
+        }
+
+        if (session) {
+          appendTimeline(session, "preflight.edit.start", {
+            zone: zone.key,
+            dbBackup: wantsBackup,
+            dev: wantsDev,
+            createdWatch,
+          });
+        }
+
+        if (busyOps.length > 0) {
+          onLine(`✗ stack busy: ${busyOps.length} running operation${busyOps.length !== 1 ? "s" : ""}`);
+          for (const op of busyOps.slice(0, 3)) onLine(`  #${op.id} ${op.title}`);
+          if (session) appendTimeline(session, "preflight.edit.end", { zone: zone.key, exitCode: 1, reason: "stack busy" });
+          return 1;
+        }
+        onLine("✓ stack clear");
+
+        const snapshot = await takeSessionSnapshot(`preflight edit ${zone.key}`);
+        if (session) {
+          const file = `preflight-edit-${Date.now()}.txt`;
+          writeWatchText(session, file, snapshot);
+          appendTimeline(session, "snapshot", { reason: "preflight edit", file });
+          onLine(`✓ snapshot recorded: ${file}`);
+        } else {
+          onLine("✓ snapshot captured");
+        }
+
+        await printZoneStatus(zone, (line) => {
+          if (!line.startsWith("✓")) onLine(line);
+        });
+
+        if (wantsBackup) {
+          const reason = `preflight edit ${zone.key}`;
+          onLine("• DB backup requested");
+          if (session) appendTimeline(session, "db.backup.start", { reason, zone: zone.key });
+          const lines: string[] = [];
+          const code = await backupDatabase((line) => {
+            lines.push(line);
+            onLine(line);
+          });
+          if (session) {
+            appendWatchText(session, "backups.txt", `# ${new Date().toISOString()} ${reason}\n${lines.join("\n")}\n`);
+            appendTimeline(session, "db.backup.end", { reason, zone: zone.key, exitCode: code });
+          }
+          if (code !== 0) {
+            if (session) appendTimeline(session, "preflight.edit.end", { zone: zone.key, exitCode: code });
+            return code;
+          }
+        } else {
+          onLine("○ DB backup skipped");
+        }
+
+        if (wantsDev) {
+          const status = await getStatus(devContainerName(zone));
+          if (status === "running" || status === "starting") {
+            onLine(`✓ dev container already ${status} for ${zone.label}`);
+          } else {
+            if (session) appendTimeline(session, "zone.dev.start", { zone: zone.key, container: devContainerName(zone) });
+            const code = await startDevContainer(zone, onLine);
+            if (session) appendTimeline(session, "zone.dev.end", { zone: zone.key, container: devContainerName(zone), exitCode: code });
+            if (code !== 0) {
+              if (session) appendTimeline(session, "preflight.edit.end", { zone: zone.key, exitCode: code });
+              return code;
+            }
+          }
+        } else {
+          onLine("○ dev start skipped");
+        }
+
+        onLine("✓ preflight ready");
+        onLine(`  edit zone : ${zone.key}`);
+        onLine(`  live URL  : https://${zone.domain}`);
+        if (wantsDev) onLine(`  dev logs  : docker logs -f ${devContainerName(zone)}`);
+        if (session) appendTimeline(session, "preflight.edit.end", { zone: zone.key, exitCode: 0 });
+        return 0;
+      },
+
+      // unaxis zone <name> status
+      // unaxis zone <name> logs [--tail <lines>]
+      // unaxis zone <name> dev start|stop|restart
+      // unaxis zone <name> dev logs [--tail <lines>]
+      zone: async (args, onLine) => {
+        const zoneName = args[0];
+        if (!zoneName) { onLine("✗ usage: zone <zone-key> status|logs|dev <start|stop|restart|logs>"); return 2; }
+        const zone = await resolveZone(zoneName);
+        if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
+
+        const action = args[1] ?? "status";
+        if (action === "status") {
+          return printZoneStatus(zone, onLine);
+        }
+
+        if (action === "logs") {
+          const tail = parseTail(args.slice(2));
+          const result = await captureDockerLogs({
+            label: zone.key,
+            container: zone.container,
+            tail,
+          }, onLine);
+          if (result.code === 0) onLine(`✓ zone logs: ${zone.key} (${result.tail} lines)`);
+          return result.code;
+        }
+
+        if (action !== "dev") {
+          onLine(`✗ unknown zone action: ${action}`);
+          onLine("  usage: zone <zone-key> status|logs|dev <start|stop|restart|logs>");
+          return 2;
+        }
+
+        const verb = args[2];
+        if (!verb || !["start", "stop", "restart", "logs"].includes(verb)) {
+          onLine("✗ usage: zone <zone-key> dev <start|stop|restart|logs>");
+          return 2;
+        }
+
+        if (verb === "logs") {
+          const tail = parseTail(args.slice(3));
+          const container = devContainerName(zone);
+          const result = await captureDockerLogs({
+            label: `${zone.key}-dev`,
+            container,
+            tail,
+          }, onLine);
+          if (result.code === 0) onLine(`✓ zone dev logs: ${zone.key} (${result.tail} lines)`);
+          return result.code;
+        }
+
+        if (verb === "start") {
+          const status = await getStatus(devContainerName(zone));
+          if (status === "running" || status === "starting") {
+            onLine(`✓ dev container already running for ${zone.label}`);
+            return 0;
+          }
+          return startDevContainer(zone, onLine);
+        }
+
+        if (verb === "stop") {
+          return stopDevContainer(zone, onLine);
+        }
+
+        onLine(`Restarting dev container for ${zone.label}…`);
+        const stopCode = await stopDevContainer(zone, onLine);
+        if (stopCode !== 0) return stopCode;
+        return startDevContainer(zone, onLine);
+      },
+
+      // unaxis status  — confirm TUI is alive
+      status: async (_args, onLine) => {
+        onLine(`✓ UNAXIS TUI is running`);
+        return 0;
+      },
+
+      // unaxis logs proxy|db [--tail <lines>]
+      logs: async (args, onLine) => {
+        const target = args[0];
+        if (!target || !["proxy", "db"].includes(target)) {
+          onLine("✗ usage: logs proxy|db [--tail <lines>]");
+          return 2;
+        }
+        const tail = parseTail(args.slice(1));
+        const container = target === "proxy" ? PROXY.container : "unt_db";
+        const result = await captureDockerLogs({
+          label: target,
+          container,
+          tail,
+        }, onLine);
+        if (result.code === 0) onLine(`✓ ${target} logs (${result.tail} lines)`);
+        return result.code;
+      },
+    });
+
+    return () => { server.close(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Proxy reconciliation on startup ───────────────────────────────────────
+  // Supabase is the source of truth for zones. On every TUI boot, rebuild
+  // routes.json from the live zone list + actual Docker container state so
+  // the proxy is always in sync — no manual routes.json edits needed.
+  useEffect(() => {
+    loadZones()
+      .then((zones) => reconcileProxyRoutes(zones, (name) => getStatus(name)))
+      .catch(() => { /* Supabase or proxy unreachable at boot — leave routes as-is */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── goHome — overlay emergency exit: kills log, collapses to welcome ──────
   // goRoot() clears the entire history stack so any dangling view state is
@@ -308,6 +829,10 @@ export function App() {
   const handleOverlayCopyTail = useCallback((tailLines: string[]) => {
     copy(linesToClipboard(tailLines));
   }, [copy]);
+
+  const handleOverlayRestart = useCallback(() => {
+    if (overlayOpId !== null) triggerRestartHook(overlayOpId);
+  }, [overlayOpId, triggerRestartHook]);
 
   const handleOverlayPopout = useCallback(() => {
     if (!overlayOp) return;
@@ -513,8 +1038,10 @@ export function App() {
           onEsc={handleOverlayEsc}
           onKill={handleOverlayKill}
           onEnter={handleOverlayEnter}
+          devReady={overlayOp?.devReady}
           onCopy={handleOverlayCopy}
           onCopyTail={handleOverlayCopyTail}
+          onRestart={handleOverlayRestart}
           onPopout={handleOverlayPopout}
         />
       )}
@@ -772,7 +1299,12 @@ export function App() {
 
 setupGracefulShutdown();
 
-render(<KeybindingWire><NotificationsProvider><App /></NotificationsProvider></KeybindingWire>, {
-  patchConsole: false,   // don't hijack console.log (use onLine callbacks)
-  exitOnCtrlC:  false,   // App handles Ctrl-C / q itself via useApp().exit()
-})
+render(
+  <TerminalWriteProvider value={process.stdout.write.bind(process.stdout)}>
+    <KeybindingWire><NotificationsProvider><App /></NotificationsProvider></KeybindingWire>
+  </TerminalWriteProvider>,
+  {
+    patchConsole: false,   // don't hijack console.log (use onLine callbacks)
+    exitOnCtrlC:  false,   // App handles Ctrl-C / q itself via useApp().exit()
+  },
+)

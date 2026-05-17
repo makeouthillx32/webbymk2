@@ -43,6 +43,14 @@ yarn-error.log*
 # so no future edits can accidentally reintroduce credentials here.
 /config/
 
+# credential snapshot files — never commit these
+.credentials.json
+*.credentials.json
+
+# TUI structured logs — local only
+logs/
+*.ndjson
+
 # Project specific logs and dumps
 *.dump
 errors.txt

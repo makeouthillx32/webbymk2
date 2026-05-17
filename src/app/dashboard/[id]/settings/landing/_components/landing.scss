@@ -265,33 +265,33 @@
 }
 
 .type-badge.type-top_banner {
-  background: hsl(221, 83%, 53% / 0.1);
+  background: hsla(221, 83%, 53%, 0.1);
   color: hsl(221, 83%, 53%);
-  border-color: hsl(221, 83%, 53% / 0.2);
+  border-color: hsla(221, 83%, 53%, 0.2);
 }
 
 .type-badge.type-hero_carousel {
-  background: hsl(271, 91%, 65% / 0.1);
+  background: hsla(271, 91%, 65%, 0.1);
   color: hsl(271, 91%, 45%);
-  border-color: hsl(271, 91%, 65% / 0.2);
+  border-color: hsla(271, 91%, 65%, 0.2);
 }
 
 .type-badge.type-categories_grid {
-  background: hsl(142, 76%, 36% / 0.1);
+  background: hsla(142, 76%, 36%, 0.1);
   color: hsl(142, 76%, 36%);
-  border-color: hsl(142, 76%, 36% / 0.2);
+  border-color: hsla(142, 76%, 36%, 0.2);
 }
 
 .type-badge.type-static_html {
-  background: hsl(25, 95%, 53% / 0.1);
+  background: hsla(25, 95%, 53%, 0.1);
   color: hsl(25, 95%, 43%);
-  border-color: hsl(25, 95%, 53% / 0.2);
+  border-color: hsla(25, 95%, 53%, 0.2);
 }
 
 .type-badge.type-products_grid {
-  background: hsl(330, 81%, 60% / 0.1);
+  background: hsla(330, 81%, 60%, 0.1);
   color: hsl(330, 81%, 50%);
-  border-color: hsl(330, 81%, 60% / 0.2);
+  border-color: hsla(330, 81%, 60%, 0.2);
 }
 
 .section-title {
@@ -343,21 +343,21 @@
 }
 
 .active-toggle.on {
-  background: hsl(142, 76%, 36% / 0.1);
+  background: hsla(142, 76%, 36%, 0.1);
   color: hsl(142, 76%, 36%);
 }
 
 .active-toggle.on:hover {
-  background: hsl(142, 76%, 36% / 0.2);
+  background: hsla(142, 76%, 36%, 0.2);
 }
 
 .active-toggle.off {
-  background: hsl(220, 14%, 46% / 0.1);
+  background: hsla(220, 14%, 46%, 0.1);
   color: hsl(220, 14%, 46%);
 }
 
 .active-toggle.off:hover {
-  background: hsl(220, 14%, 46% / 0.2);
+  background: hsla(220, 14%, 46%, 0.2);
 }
 
 .edit-btn {
@@ -370,12 +370,12 @@
 }
 
 .delete-btn {
-  background: hsl(0, 84%, 60% / 0.1);
+  background: hsla(0, 84%, 60%, 0.1);
   color: hsl(0, 84%, 60%);
 }
 
 .delete-btn:hover {
-  background: hsl(0, 84%, 60% / 0.2);
+  background: hsla(0, 84%, 60%, 0.2);
 }
 
 .iconbtn {
@@ -407,21 +407,21 @@
 }
 
 .pillbtn.on {
-  background: hsl(142, 76%, 36% / 0.1);
+  background: hsla(142, 76%, 36%, 0.1);
   color: hsl(142, 76%, 36%);
 }
 
 .pillbtn.on:hover {
-  background: hsl(142, 76%, 36% / 0.2);
+  background: hsla(142, 76%, 36%, 0.2);
 }
 
 .pillbtn.off {
-  background: hsl(220, 14%, 46% / 0.1);
+  background: hsla(220, 14%, 46%, 0.1);
   color: hsl(220, 14%, 46%);
 }
 
 .pillbtn.off:hover {
-  background: hsl(220, 14%, 46% / 0.2);
+  background: hsla(220, 14%, 46%, 0.2);
 }
 
 .pillbtn:disabled {
@@ -433,8 +433,8 @@
   padding: 12px;
   margin-bottom: 12px;
   border-radius: var(--radius);
-  background: hsl(0, 84%, 60% / 0.1);
-  border: 1px solid hsl(0, 84%, 60% / 0.2);
+  background: hsla(0, 84%, 60%, 0.1);
+  border: 1px solid hsla(0, 84%, 60%, 0.2);
   color: hsl(0, 84%, 40%);
   font-size: 14px;
 }
@@ -551,8 +551,8 @@
 .modal-error {
   padding: 12px;
   border-radius: var(--radius);
-  background: hsl(0, 84%, 60% / 0.1);
-  border: 1px solid hsl(0, 84%, 60% / 0.2);
+  background: hsla(0, 84%, 60%, 0.1);
+  border: 1px solid hsla(0, 84%, 60%, 0.2);
   color: hsl(0, 84%, 40%);
   font-size: 14px;
   margin-bottom: 16px;

@@ -235,7 +235,13 @@ function resolveTarget(req) {
 
 const server = http.createServer((req, res) => {
   const target = resolveTarget(req);
-  req.headers["x-forwarded-host"] = req.headers["host"] ?? "";
+  // Preserve the original x-forwarded-host set by NPM (the public hostname).
+  // Only set it ourselves when it isn't already present — i.e. direct connections
+  // that bypass NPM.  Overwriting it was the root cause of zone misdetection:
+  // Next.js middleware saw the internal host instead of e.g. dev.blog.unenter.live.
+  if (!req.headers["x-forwarded-host"]) {
+    req.headers["x-forwarded-host"] = req.headers["host"] ?? "";
+  }
   req.headers["x-proxy-version"]  = "1";
   proxy.web(req, res, { target }, (err) => {
     if (!res.headersSent) { res.writeHead(502); res.end("Bad Gateway"); }

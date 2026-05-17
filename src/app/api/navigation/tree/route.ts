@@ -78,6 +78,7 @@ export async function GET() {
       .from("categories")
       .select("id, name, slug, parent_id, position, is_active")
       .eq("is_active", true)
+      .eq("section", "shop")
       .order("position", { ascending: true })
       .order("name", { ascending: true });
 

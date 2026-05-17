@@ -5,7 +5,7 @@
 // Owns:
 //   • selected        — cursor position in the zone list
 //   • actionOpen      — whether the ActionPanel overlay is visible
-//   • actionSelected  — cursor position inside the ActionPanel
+//   • actionNav       — cursor + move logic inside the ActionPanel (useActionNav)
 //   • confirmDelete   — Zone pending confirmation before delete runs
 //   • executeAction() — the 9-case switch that dispatches zone operations
 //   • useInput        — all keyboard handling for this view
@@ -26,6 +26,7 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput }          from "ink";
+import { useActionNav }                 from "../hooks/useActionNav.ts";
 
 import type { Zone }    from "../../config/zones.ts";
 import type { Status }  from "../docker.ts";
@@ -102,7 +103,6 @@ export function ZonesView({
   const [searchQuery,    setSearchQuery]    = useState("");
   const [searchActive,   setSearchActive]   = useState(false);
   const [actionOpen,     setActionOpen]     = useState(false);
-  const [actionSelected, setActionSelected] = useState(0);
   /** Zone staged for deletion — shows confirmation dialog before running op. */
   const [confirmDelete,  setConfirmDelete]  = useState<Zone | null>(null);
   /** Zone + context for the Manage Sections overlay. */
@@ -116,6 +116,15 @@ export function ZonesView({
     () => fuzzyFilter(realZones, searchQuery, zoneSearchText),
     [realZones, searchQuery],
   );
+
+  // Active actions depend on which zone is selected — must come after
+  // visibleZones so the reference is already initialized.
+  const activeZone    = visibleZones[selected];
+  const activeActions = useMemo(
+    () => activeZone ? buildActions(activeZone) : [],
+    [activeZone],
+  );
+  const actionNav = useActionNav(activeActions);
 
   const handleSearchChange = useCallback((query: string) => {
     setSearchQuery(query);
@@ -260,40 +269,23 @@ export function ZonesView({
 
     // ── Action panel open ───────────────────────────────────────────────────
     if (actionOpen) {
-      const zone    = visibleZones[selected];
-      const actions = zone ? buildActions(zone) : [];
-
       // Both Escape and q close the action panel (one virtual level back).
       // Pressing q again from the zone list will then call onGoBack().
       if (key.escape || input === "q") { setActionOpen(false); return; }
 
-      if (key.upArrow || input === "k") {
-        setActionSelected((s) => {
-          let next = s - 1;
-          while (next >= 0 && actions[next]?.disabled) next--;
-          return next >= 0 ? next : s;
-        });
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        setActionSelected((s) => {
-          let next = s + 1;
-          while (next < actions.length && actions[next]?.disabled) next++;
-          return next < actions.length ? next : s;
-        });
-        return;
-      }
+      if (key.upArrow   || input === "k") { actionNav.moveUp();   return; }
+      if (key.downArrow || input === "j") { actionNav.moveDown(); return; }
 
       if (key.return) {
-        const action = actions[actionSelected];
-        if (!action || action.disabled || !zone) return;
-        executeAction(action.id, zone);
+        const action = activeActions[actionNav.selected];
+        if (!action || action.disabled || !activeZone) return;
+        executeAction(action.id, activeZone);
         return;
       }
 
       // Shortcut keys on action rows
-      const matched = actions.find((a) => !a.disabled && a.key === input);
-      if (matched && zone) { executeAction(matched.id, zone); return; }
+      const matched = activeActions.find((a) => !a.disabled && a.key === input);
+      if (matched && activeZone) { executeAction(matched.id, activeZone); return; }
       return;
     }
 
@@ -310,7 +302,7 @@ export function ZonesView({
       if (key.return) {
         const zone = visibleZones[selected];
         if (!zone) return;
-        setActionSelected(firstEnabled(zone));
+        actionNav.reset(firstEnabled(zone));
         setActionOpen(true);
         setSearchActive(false);
         return;
@@ -342,7 +334,7 @@ export function ZonesView({
     if (key.return) {
       const zone = visibleZones[selected];
       if (!zone) return;
-      setActionSelected(firstEnabled(zone));
+      actionNav.reset(firstEnabled(zone));
       setActionOpen(true);
       return;
     }
@@ -420,7 +412,7 @@ export function ZonesView({
         <ActionPanel
           zone={visibleZones[selected]!}
           status={zoneStatuses[visibleZones[selected]!.key] ?? "missing"}
-          selected={actionSelected}
+          selected={actionNav.selected}
         />
       )}
 

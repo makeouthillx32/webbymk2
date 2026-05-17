@@ -311,7 +311,7 @@ export default async function OGImage({ params }: PageProps) {
                 display: "flex",
               }}
             >
-              desertcowgirl.co
+              unenter.live
             </div>
           </div>
         </div>

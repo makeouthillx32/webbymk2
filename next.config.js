@@ -25,6 +25,29 @@ const zone         = process.env.NEXT_PUBLIC_ZONE ?? "unenter";
 const assetPrefix  = process.env.NEXT_PUBLIC_ZONE_ASSET_PREFIX
   ?? ZONE_ASSET_PREFIXES[zone]
   ?? "";
+const isDev = process.env.NODE_ENV !== "production";
+const devNoStoreHeaders = [
+  {
+    key:   "Cache-Control",
+    value: "no-store, no-cache, max-age=0, must-revalidate",
+  },
+  {
+    key:   "CDN-Cache-Control",
+    value: "no-store",
+  },
+  {
+    key:   "Surrogate-Control",
+    value: "no-store",
+  },
+  {
+    key:   "Pragma",
+    value: "no-cache",
+  },
+  {
+    key:   "Expires",
+    value: "0",
+  },
+];
 
 const nextConfig = {
   output: "standalone",
@@ -79,6 +102,11 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // Auth pages must never reuse old RSC/client chunks during dev auth work.
+        source: "/sign-in",
+        headers: devNoStoreHeaders,
+      },
+      {
         // Apply to every route
         source: "/(.*)",
         headers: [
@@ -108,14 +136,17 @@ const nextConfig = {
         ],
       },
       {
-        // Cache Next.js static assets aggressively
+        // Cache Next.js static assets aggressively in prod. In dev, avoid stale
+        // client chunks after container rebuilds and mounted-volume cache churn.
         source: "/_next/static/(.*)",
-        headers: [
-          {
-            key:   "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
+        headers: isDev
+          ? devNoStoreHeaders
+          : [
+              {
+                key:   "Cache-Control",
+                value: "public, max-age=31536000, immutable",
+              },
+            ],
       },
       {
         // Don't cache API responses by default

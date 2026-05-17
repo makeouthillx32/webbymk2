@@ -16,6 +16,7 @@ import { DeleteConfirmModal } from "./_components/DeleteConfirmModal";
 
 type DbCategory = CategoryRow & {
   position?: number;
+  section?: string;
 };
 
 function normalizeSlug(input: string) {
@@ -28,6 +29,10 @@ function normalizeSlug(input: string) {
     .replace(/^-|-$/g, "");
 }
 
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export default function CategoriesPage() {
   const supabase = useMemo(() => {
     return createBrowserClient(
@@ -36,26 +41,47 @@ export default function CategoriesPage() {
     );
   }, []);
 
+  // ── Section state ──────────────────────────────────────────────────────────
+  const [sections, setSections] = useState<string[]>(["shop"]);
+  const [activeSection, setActiveSection] = useState<string>("shop");
+
+  // ── Category state ─────────────────────────────────────────────────────────
   const [rows, setRows] = useState<DbCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
   const [search, setSearch] = useState("");
 
+  // ── Modal state ────────────────────────────────────────────────────────────
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-
   const [selected, setSelected] = useState<DbCategory | null>(null);
 
+  // ── Load distinct sections ─────────────────────────────────────────────────
+  const loadSections = useCallback(async () => {
+    const { data } = await supabase
+      .from("categories")
+      .select("section")
+      .order("section", { ascending: true });
+
+    if (data) {
+      const unique = Array.from(new Set(data.map((r: any) => r.section as string).filter(Boolean)));
+      // Always ensure 'shop' is first
+      const ordered = ["shop", ...unique.filter((s) => s !== "shop")];
+      setSections(ordered);
+    }
+  }, [supabase]);
+
+  // ── Load categories for active section ────────────────────────────────────
   const load = useCallback(async () => {
     setErr(null);
     setLoading(true);
 
     const { data, error } = await supabase
       .from("categories")
-      .select("id,name,slug,parent_id,position,cover_image_bucket,cover_image_path,cover_image_alt") // ✅ Added cover image fields
+      .select("id,name,slug,parent_id,position,cover_image_bucket,cover_image_path,cover_image_alt,section")
+      .eq("section", activeSection)
       .order("position", { ascending: true })
       .order("name", { ascending: true });
 
@@ -68,12 +94,17 @@ export default function CategoriesPage() {
 
     setRows((data as DbCategory[]) ?? []);
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, activeSection]);
+
+  useEffect(() => {
+    loadSections();
+  }, [loadSections]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // ── Search filter ──────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -95,22 +126,11 @@ export default function CategoriesPage() {
     [rows]
   );
 
-  const safeCloseCreate = () => {
-    if (busy) return;
-    setCreateOpen(false);
-  };
+  const safeCloseCreate = () => { if (!busy) setCreateOpen(false); };
+  const safeCloseEdit   = () => { if (!busy) setEditOpen(false); };
+  const safeCloseDelete = () => { if (!busy) setDeleteOpen(false); };
 
-  const safeCloseEdit = () => {
-    if (busy) return;
-    setEditOpen(false);
-  };
-
-  const safeCloseDelete = () => {
-    if (busy) return;
-    setDeleteOpen(false);
-  };
-
-  // ✅ Create
+  // ── Create ─────────────────────────────────────────────────────────────────
   const handleCreate = async (data: { name: string; slug: string; parent_id: string | null }) => {
     setErr(null);
     setBusy(true);
@@ -118,9 +138,8 @@ export default function CategoriesPage() {
     try {
       const slug = normalizeSlug(data.slug);
 
-      // client-side duplicate guard (DB still enforces uniqueness)
       if (rows.some((r) => r.slug === slug)) {
-        setErr(`Slug "${slug}" already exists.`);
+        setErr(`Slug "${slug}" already exists in this section.`);
         return;
       }
 
@@ -131,21 +150,20 @@ export default function CategoriesPage() {
         slug,
         parent_id: data.parent_id,
         position,
+        section: activeSection,
       });
 
-      if (error) {
-        setErr(error.message);
-        return;
-      }
+      if (error) { setErr(error.message); return; }
 
       await load();
+      await loadSections(); // refresh tabs in case this is a first row in a new section
       setCreateOpen(false);
     } finally {
       setBusy(false);
     }
   };
 
-  // ✅ Edit
+  // ── Edit ───────────────────────────────────────────────────────────────────
   const handleEdit = (cat: CategoryRow) => {
     const full = rows.find((r) => r.id === cat.id) ?? (cat as DbCategory);
     setSelected(full);
@@ -180,10 +198,7 @@ export default function CategoriesPage() {
         })
         .eq("id", data.id);
 
-      if (error) {
-        setErr(error.message);
-        return;
-      }
+      if (error) { setErr(error.message); return; }
 
       await load();
       setEditOpen(false);
@@ -193,7 +208,7 @@ export default function CategoriesPage() {
     }
   };
 
-  // ✅ Delete
+  // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = (cat: CategoryRow) => {
     const full = rows.find((r) => r.id === cat.id) ?? (cat as DbCategory);
     setSelected(full);
@@ -206,13 +221,10 @@ export default function CategoriesPage() {
 
     try {
       const { error } = await supabase.from("categories").delete().eq("id", cat.id);
-
-      if (error) {
-        setErr(error.message);
-        return;
-      }
+      if (error) { setErr(error.message); return; }
 
       await load();
+      await loadSections(); // a section with 0 rows won't appear in next load
       setDeleteOpen(false);
       setSelected(null);
     } finally {
@@ -220,13 +232,21 @@ export default function CategoriesPage() {
     }
   };
 
+  // ── Section switch ─────────────────────────────────────────────────────────
+  const handleSectionChange = (section: string) => {
+    setSearch("");
+    setSelected(null);
+    setActiveSection(section);
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="categories-manager">
       <div className="categories-header">
         <div>
-          <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Categories</h1>
+          <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Category Header</h1>
           <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Manage your storefront category tree (header + shop navigation).
+            Manage category trees across sections. Shop drives storefront nav — zone sections are auto-detected from the TUI.
           </p>
         </div>
 
@@ -235,6 +255,25 @@ export default function CategoriesPage() {
           onSearchChange={setSearch}
           onCreate={() => setCreateOpen(true)}
         />
+      </div>
+
+      {/* ── Section tabs ──────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 border-b border-[hsl(var(--border))] mb-5">
+        {sections.map((section) => (
+          <button
+            key={section}
+            type="button"
+            onClick={() => handleSectionChange(section)}
+            className={[
+              "px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px",
+              activeSection === section
+                ? "border-[hsl(var(--primary))] text-[hsl(var(--primary))]"
+                : "border-transparent text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]",
+            ].join(" ")}
+          >
+            {capitalize(section)}
+          </button>
+        ))}
       </div>
 
       {err ? <ErrorAlert message={err} onRetry={load} /> : null}
@@ -250,6 +289,7 @@ export default function CategoriesPage() {
       <CreateCategoryModal
         open={createOpen}
         categories={rows}
+        activeSection={activeSection}
         onClose={safeCloseCreate}
         onCreate={handleCreate}
       />

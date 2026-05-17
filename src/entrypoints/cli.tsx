@@ -68,6 +68,30 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis --version                        print version\n' +
     '    unaxis --help                           show this message\n' +
     '\n' +
+    '  TUI commands (requires TUI to be running):\n' +
+    '    unaxis dev <zone>                       start/stop dev container for zone\n' +
+    '    unaxis restart <zone>                   hard restart dev container for zone\n' +
+    '    unaxis list                             list zones and their dev status\n' +
+    '    unaxis zones                            list zones and their dev status\n' +
+    '    unaxis logs proxy --tail 120            show bounded proxy logs\n' +
+    '    unaxis logs db --tail 120               show bounded db logs\n' +
+    '    unaxis zone <zone> status               show one zone status\n' +
+    '    unaxis zone <zone> logs --tail 120      show bounded zone logs\n' +
+    '    unaxis zone <zone> dev start            start one zone dev container\n' +
+    '    unaxis zone <zone> dev stop             stop one zone dev container\n' +
+    '    unaxis zone <zone> dev restart          restart one zone dev container\n' +
+    '    unaxis zone <zone> dev logs --tail 120  show bounded zone dev logs\n' +
+    '    unaxis session                          show attached TUI session snapshot\n' +
+    '    unaxis stack                            show current TUI stack items\n' +
+    '    unaxis watch begin --label <text>       start an agent watch session\n' +
+    '    unaxis watch status                     show active watch session\n' +
+    '    unaxis watch note <text>                add a note to active watch\n' +
+    '    unaxis watch snapshot --reason <text>   record session/stack/zone snapshot\n' +
+    '    unaxis watch end                        end active watch session\n' +
+    '    unaxis db backup --reason <text>        run DB backup through the TUI\n' +
+    '    unaxis preflight edit --zone <zone>     validate before editing a zone\n' +
+    '    unaxis status                           confirm TUI is alive\n' +
+    '\n' +
     '  Config (non-secret settings):\n' +
     '    unaxis config set default_project <path>   set default project root\n' +
     '    unaxis config get default_project          show current project root\n' +
@@ -84,6 +108,17 @@ if (args.includes('--help') || args.includes('-h')) {
     '\n'
   )
   process.exit(0)
+}
+
+// ── TUI IPC commands ──────────────────────────────────────────────────────────
+// Commands that forward to the running TUI via local TCP socket.
+// Must be checked BEFORE the config/credentials subcommands so short-circuit
+// exits work correctly.
+
+const IPC_COMMANDS = ['dev', 'restart', 'list', 'zones', 'logs', 'zone', 'session', 'stack', 'watch', 'db', 'preflight', 'status'] as const
+if (args.length > 0 && IPC_COMMANDS.includes(args[0] as typeof IPC_COMMANDS[number])) {
+  const { sendIpcCommand } = await import('../ink/ipc-client.js')
+  process.exit(await sendIpcCommand(args))
 }
 
 // ── config subcommand ─────────────────────────────────────────────────────────

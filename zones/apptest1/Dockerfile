@@ -17,6 +17,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
 COPY package.json next.config.js tsconfig.json tailwind.config.ts postcss.config.js ./
+COPY middleware.ts ./
 COPY src/ ./src/
 COPY public/ ./public/
 
@@ -27,7 +28,7 @@ COPY public/ ./public/
 #   "You cannot use different slug names for the same dynamic path"
 # app / minimal → api actions _components only
 RUN mkdir -p /tmp/core-app && \
-    for dir in api actions _components; do \
+    for dir in api actions _components providers; do \
       if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \
     done && \
     if [ -f src/app/provider.tsx ]; then cp src/app/provider.tsx /tmp/core-app/; fi && \

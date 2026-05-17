@@ -15,6 +15,7 @@
 //   [n]  edit npm token  (identity tab)
 //   [p]  edit default project path (infrastructure tab)
 //   [e]  open ~/.unaxis/settings.json in system editor
+//   [c]  open ~/.unaxis/.credentials.json in system editor
 //   [1-3] / Tab — switch tabs
 //   esc / q — back
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,15 +49,14 @@ import {
 
 // ── Open file in system default editor ───────────────────────────────────────
 
-export function openConfigInEditor(): void {
-  const path = getSettingsPath();
+function openFileInEditor(filePath: string): void {
   const command =
     process.platform === "win32" ? "cmd.exe" :
     process.platform === "darwin" ? "open" :
     "xdg-open";
   const args =
-    process.platform === "win32" ? ["/c", "start", "", path] :
-    [path];
+    process.platform === "win32" ? ["/c", "start", "", filePath] :
+    [filePath];
 
   try {
     const child = spawn(command, args, {
@@ -66,8 +66,16 @@ export function openConfigInEditor(): void {
     });
     child.unref();
   } catch {
-    // Best-effort convenience; the settings path is still visible on screen.
+    // Best-effort convenience; the path is still visible on screen.
   }
+}
+
+export function openConfigInEditor(): void {
+  openFileInEditor(getSettingsPath());
+}
+
+export function openCredentialsInEditor(): void {
+  openFileInEditor(getCredentialsPath());
 }
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
@@ -236,7 +244,8 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (input === "2") { setTab("identity"); return; }
     if (input === "3") { setTab("zones");    return; }
 
-    if (input === "e") { openConfigInEditor(); return; }
+    if (input === "e") { openConfigInEditor();     return; }
+    if (input === "c") { openCredentialsInEditor(); return; }
 
     if (activeTab === "identity") {
       if (input === "t") { startEdit("ghcr_token"); return; }
@@ -495,7 +504,8 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
                 ] : []),
                 { k: "1-3",     label: "switch tabs"         },
                 { k: "Tab",     label: "cycle tabs"           },
-                { k: "e",       label: "open settings in editor" },
+                { k: "e",       label: "open settings in editor"     },
+                { k: "c",       label: "open credentials in editor"  },
                 { k: "esc / q", label: "back"                 },
               ]
         }

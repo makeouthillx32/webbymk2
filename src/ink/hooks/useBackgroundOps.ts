@@ -35,6 +35,7 @@ import type { StackOp }    from "../components/DetachedStack.tsx";
 import { spawnLogTail }          from "../docker.ts";
 import { drainStream }           from "../utils.ts";
 import { loadZones }             from "../zone-store.ts";
+import { log }                   from "../logger.ts";
 import { createZonePipeline }    from "../zone-pipeline.ts";
 import { appendPopoutLines, cleanupPopoutFile } from "../../utils/terminalPopout.ts";
 import { registerShutdownHook }  from "../../utils/gracefulShutdown.js";
@@ -71,6 +72,8 @@ export function useBackgroundOps({
   /** Per-op dismiss callbacks — fired by App.tsx handleStackDismiss when the op
    *  is removed.  Dev-mode ops register here so cleanup runs on dismiss. */
   const dismissHooks  = useRef(new Map<number, () => void>());
+  /** Per-op restart callbacks — fired when [r] is pressed in the overlay. */
+  const restartHooks  = useRef(new Map<number, () => void>());
 
   // Stable QueryGuard for the op queue -- lazy-initialized so the class
   // constructor only runs once across the component's lifetime.
@@ -290,6 +293,11 @@ export function useBackgroundOps({
     }
   }, []);
 
+  const triggerRestartHook = useCallback((opId: number) => {
+    const hook = restartHooks.current.get(opId);
+    if (hook) hook();
+  }, []);
+
   /**
    * Start (or stop) a dev-mode container as a background op.
    *
@@ -306,71 +314,146 @@ export function useBackgroundOps({
     startFn:   (onLine: (l: string) => void) => Promise<number>,
     stopFn:    (onLine: (l: string) => void) => Promise<number>,
   ) => {
+    // Auto-cleanup: remove all finished dev ops for this label so the stack
+    // doesn't accumulate stale entries across repeated start/stop cycles.
+    setBgOps((prev) => {
+      const devTitles = new Set([`Dev  ${label}`, `Stop Dev  ${label}`]);
+      const toRemove  = prev.filter((o) => !o.busy && devTitles.has(o.title));
+      toRemove.forEach((o) => {
+        dismissHooks.current.delete(o.id);
+        restartHooks.current.delete(o.id);
+      });
+      return toRemove.length === 0
+        ? prev
+        : prev.filter((o) => o.busy || !devTitles.has(o.title));
+    });
+
     const { id, addLine } = _startOp(`Dev  ${label}`, false, true);
 
-    // Mark op as dismissable immediately — shown in the stack strip with [x]
     setBgOps((prev) =>
       prev.map((o) => o.id === id ? { ...o, dismissable: true } : o)
     );
 
-    // Determine current state then start or stop
     import("../docker.ts").then(({ getStatus }) => getStatus(container)).then((status) => {
       const running = status === "running" || status === "starting";
 
       if (running) {
-        // Container is live — stop it
+        log.info("dev", "container already running — stopping", { label, container });
         addLine(`Dev container "${container}" is running — stopping…`);
-        return stopFn(addLine).then((code) => {
+        return stopFn((l) => { addLine(l); log.docker(label, "stop", l); }).then((code) => {
           addLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+          if (code === 0) log.info("dev", "stopped", { label, container });
+          else            log.error("dev", "stop failed", { label, container, exit: code });
           setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
         });
       }
 
-      // Container is not running — start it
-      return startFn(addLine).then((code) => {
+      log.info("dev", "starting", { label, container });
+      return startFn((l) => { addLine(l); log.docker(label, "dev", l); }).then((code) => {
         if (code !== 0) {
+          log.error("dev", "start failed", { label, container, exit: code });
           addLine(`✗ start failed (exit ${code})`);
           setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
           return;
         }
 
-        // Start succeeded — immediately stream container logs so the user
-        // sees Next.js startup output without having to press [l].
-        addLine(`─── streaming dev logs (Next.js starting…) ───`);
+        log.info("dev", "container started — streaming logs", { label, container });
 
-        const logProc = spawnLogTail(container, 50);
+        // Mutable ref to the active log process — shared by dismiss + restart hooks
+        // so both always operate on the latest process regardless of restarts.
+        let currentLogProc: ReturnType<typeof spawnLogTail> | null = null;
 
-        // Keep op alive while logs stream; isLog=true so it doesn't block
-        // zone builds from running concurrently.
-        setBgOps((prev) => prev.map((o) =>
-          o.id === id ? { ...o, busy: true, isLog: true, dismissable: true } : o
-        ));
+        // Wrap addLine to detect Next.js "Ready in Xs" and flip devReady badge.
+        const devAddLine = (l: string) => {
+          addLine(l);
+          log.docker(label, "dev", l);
+          if (/Ready in \d/.test(l)) {
+            log.info("dev", "Next.js ready", { label, container });
+            setBgOps((prev) => prev.map((o) =>
+              o.id === id ? { ...o, devReady: true } : o
+            ));
+          }
+        };
 
-        drainStream(logProc.stdout!, addLine);
-        drainStream(logProc.stderr!, addLine);
-
-        logProc.on("close", () => {
-          // Log stream ended (container stopped externally)
+        // Start streaming logs — called on initial start and after each restart.
+        function startStreaming() {
           setBgOps((prev) => prev.map((o) =>
-            o.id === id ? { ...o, busy: false } : o
+            o.id === id
+              ? { ...o, busy: true, isLog: true, dismissable: true, devReady: false }
+              : o
           ));
-        });
+          const logProc = spawnLogTail(container, 50);
+          currentLogProc = logProc;
+          drainStream(logProc.stdout!, devAddLine);
+          drainStream(logProc.stderr!, devAddLine);
+          logProc.on("close", () => {
+            if (currentLogProc === logProc) {
+              log.warn("dev", "log stream closed", { label, container });
+              setBgOps((prev) => prev.map((o) =>
+                o.id === id ? { ...o, busy: false } : o
+              ));
+            }
+          });
+        }
 
-        // Dismiss hook: kill log stream then stop the container
+        addLine(`─── streaming dev logs (Next.js starting…) ───`);
+        startStreaming();
+
+        // Dismiss hook — kill stream + stop container
         dismissHooks.current.set(id, () => {
-          logProc.kill();
+          currentLogProc?.kill();
+          restartHooks.current.delete(id);
+          log.info("dev", "dismissed — stopping container", { label, container });
           const { id: stopId, addLine: stopLine } = _startOp(`Stop Dev  ${label}`, false, false);
-          stopFn(stopLine).then((code) => {
+          stopFn((l) => { stopLine(l); log.docker(label, "stop", l); }).then((code) => {
             stopLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+            if (code === 0) log.info("dev", "stopped via dismiss", { label, container });
+            else            log.error("dev", "stop via dismiss failed", { label, container, exit: code });
             setBgOps((prev) => prev.map((o) =>
               o.id === stopId ? { ...o, busy: false } : o
             ));
           }).catch((err) => {
             stopLine(`✗ stop error: ${String(err)}`);
+            log.error("dev", "stop via dismiss threw", { label, container, err: String(err) });
             setBgOps((prev) => prev.map((o) =>
               o.id === stopId ? { ...o, busy: false } : o
             ));
           });
+        });
+
+        // Restart hook — hard restart: stop → start → resume streaming
+        restartHooks.current.set(id, () => {
+          currentLogProc?.kill();
+          currentLogProc = null;
+          setBgOps((prev) => prev.map((o) =>
+            o.id === id ? { ...o, devReady: false, busy: true, isLog: false } : o
+          ));
+          addLine(`─── hard restart — stopping container… ───`);
+          stopFn(addLine)
+            .then(() => {
+              addLine(`─── starting fresh container… ───`);
+              return startFn(addLine);
+            })
+            .then((restartCode) => {
+              if (restartCode !== 0) {
+                addLine(`✗ restart failed (exit ${restartCode})`);
+                setBgOps((prev) => prev.map((o) =>
+                  o.id === id ? { ...o, busy: false } : o
+                ));
+                return;
+              }
+              setBgOps((prev) => prev.map((o) =>
+                o.id === id ? { ...o, lines: [] } : o
+              ));
+              addLine(`─── streaming dev logs (Next.js starting…) ───`);
+              startStreaming();
+            })
+            .catch((err) => {
+              addLine(`✗ restart error: ${String(err)}`);
+              setBgOps((prev) => prev.map((o) =>
+                o.id === id ? { ...o, busy: false } : o
+              ));
+            });
         });
       });
     }).catch((err) => {
@@ -402,6 +485,7 @@ export function useBackgroundOps({
     openLogs,
     runDevModeOp,
     triggerDismissHook,
+    triggerRestartHook,
     registerPopout, dismissPopout,
   };
 }

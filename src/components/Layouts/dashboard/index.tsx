@@ -3,7 +3,7 @@
 import { SearchIcon } from "@/assets/icons";
 import Image from "next/image";
 import Link from "next/link";
-import { useSidebarContext } from "../sidebar/sidebar-context";
+import { useSidebarContext } from "./sidebar/sidebar-context";
 import { MenuIcon } from "./icons";
 import { Notification } from "./notification";
 import { ThemeToggleSwitch } from "./theme-toggle";

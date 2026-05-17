@@ -7,7 +7,7 @@ import {
   UserIcon,
 } from "@/assets/icons";
 import InputGroup from "@/components/FormElements/InputGroup";
-import { ShowcaseSection } from "@/components/Layouts/sidebar/showcase-section";
+import { ShowcaseSection } from "@/components/Layouts/dashboard/sidebar/showcase-section";
 
 export function PersonalInfoForm() {
   const [profile, setProfile] = useState({

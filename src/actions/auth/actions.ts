@@ -10,11 +10,29 @@ import { authLogger } from "@/lib/authLogger";
 import type { ProfileUpsertRow } from "./types";
 import { getAndClearLastPage, populateUserCookies, clearAuthCookies } from "./cookies";
 
+const safeRedirectPath = (candidate: unknown): string | null => {
+  if (typeof candidate !== "string") return null;
+  if (!candidate.startsWith("/") || candidate.startsWith("//")) return null;
+
+  const pathOnly = candidate.split("#")[0].split("?")[0];
+  if (
+    pathOnly === "/sign-in" ||
+    pathOnly === "/sign-up" ||
+    pathOnly === "/forgot-password" ||
+    pathOnly === "/reset-password" ||
+    pathOnly.startsWith("/auth/")
+  ) {
+    return null;
+  }
+
+  return candidate;
+};
+
 const safeOrigin = async (): Promise<string> => {
   const headerList = await headers();
   const origin = headerList.get("origin") || "";
   if (origin) return origin;
-  return (process.env.NEXT_PUBLIC_SITE_URL || "https://desertcowgirl.co").replace(/\/$/, "");
+  return (process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live").replace(/\/$/, "");
 };
 
 export const signUpAction = async (formData: FormData) => {
@@ -141,7 +159,9 @@ export const signUpAction = async (formData: FormData) => {
 export const signInAction = async (formData: FormData) => {
   const email = formData.get("email")?.toString().trim() || "";
   const password = formData.get("password")?.toString() || "";
-  const remember = formData.get("remember") === "true";
+  const rememberValue = formData.get("remember")?.toString();
+  const remember = rememberValue === "true" || rememberValue === "on";
+  const nextPath = safeRedirectPath(formData.get("next"));
 
   console.log("[Auth] 🔐 Sign-in attempt:", { email, remember });
 
@@ -157,7 +177,7 @@ export const signInAction = async (formData: FormData) => {
   await populateUserCookies(data.user.id, remember);
   await new Promise((r) => setTimeout(r, 100));
 
-  const lastPage = await getAndClearLastPage();
+  const lastPage = nextPath ?? safeRedirectPath(await getAndClearLastPage()) ?? "/dashboard/me";
   // ✅ Append ?refresh=true so the client Provider immediately syncs the session
   const separator = lastPage.includes("?") ? "&" : "?";
   return redirect(`${lastPage}${separator}refresh=true`);

@@ -12,8 +12,9 @@
 // Neither can be deleted or NPM-registered from here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput }          from "ink";
+import { useActionNav }                 from "../hooks/useActionNav.ts";
 
 import type { Zone }   from "../../config/zones.ts";
 import type { Status } from "../docker.ts";
@@ -86,14 +87,17 @@ export function CoreView({
   const host = useHostMonitor();
 
   // Rows: 0 = App, 1 = Proxy
-  const [selected,       setSelected]       = useState(0);
-  const [actionOpen,     setActionOpen]     = useState(false);
-  const [actionSelected, setActionSelected] = useState(0);
+  const [selected,   setSelected]   = useState(0);
+  const [actionOpen, setActionOpen] = useState(false);
 
-  const activeZone    = selected === 0 ? coreApp   : PROXY_ZONE;
-  const activeActions = selected === 0
-    ? (coreApp ? buildCoreActions(coreApp) : [])
-    : PROXY_ACTIONS;
+  const activeZone    = selected === 0 ? coreApp : PROXY_ZONE;
+  const activeActions = useMemo(
+    () => selected === 0
+      ? (coreApp ? buildCoreActions(coreApp) : [])
+      : PROXY_ACTIONS,
+    [selected, coreApp],
+  );
+  const actionNav = useActionNav(activeActions);
 
   // ── Action executor ──────────────────────────────────────────────────────
   const executeAction = useCallback((actionId: string, zone: Zone) => {
@@ -149,24 +153,11 @@ export function CoreView({
     if (actionOpen) {
       if (key.escape || input === "q") { setActionOpen(false); return; }
 
-      if (key.upArrow || input === "k") {
-        setActionSelected((s) => {
-          let next = s - 1;
-          while (next >= 0 && activeActions[next]?.disabled) next--;
-          return next >= 0 ? next : s;
-        });
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        setActionSelected((s) => {
-          let next = s + 1;
-          while (next < activeActions.length && activeActions[next]?.disabled) next++;
-          return next < activeActions.length ? next : s;
-        });
-        return;
-      }
+      if (key.upArrow   || input === "k") { actionNav.moveUp();   return; }
+      if (key.downArrow || input === "j") { actionNav.moveDown(); return; }
+
       if (key.return) {
-        const action = activeActions[actionSelected];
+        const action = activeActions[actionNav.selected];
         if (!action || action.disabled || !activeZone) return;
         executeAction(action.id, activeZone);
         return;
@@ -176,13 +167,13 @@ export function CoreView({
       return;
     }
 
-    if (key.upArrow   || input === "k") { setSelected((s) => Math.max(0, s - 1));    return; }
-    if (key.downArrow || input === "j") { setSelected((s) => Math.min(1, s + 1));    return; }
+    if (key.upArrow   || input === "k") { setSelected((s) => Math.max(0, s - 1)); return; }
+    if (key.downArrow || input === "j") { setSelected((s) => Math.min(1, s + 1)); return; }
 
     if (key.return) {
       if (!activeZone) return;
-      const firstEnabled = activeActions.findIndex((a) => !a.disabled);
-      setActionSelected(firstEnabled >= 0 ? firstEnabled : 0);
+      const firstEnabledIdx = activeActions.findIndex((a) => !a.disabled);
+      actionNav.reset(firstEnabledIdx >= 0 ? firstEnabledIdx : 0);
       setActionOpen(true);
       return;
     }
@@ -206,7 +197,7 @@ export function CoreView({
       <ActionPanel
         zone={activeZone}
         status={selected === 1 ? proxyStatus : (zoneStatuses[activeZone.key] ?? "missing")}
-        selected={actionSelected}
+        selected={actionNav.selected}
       />
     );
   }

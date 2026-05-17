@@ -70,7 +70,9 @@ export function getSettingsPath(): string {
 
 function readJson(filePath: string): Record<string, string> {
   try {
-    const raw = readFileSync(filePath, 'utf-8')
+    // Strip UTF-8 BOM (EF BB BF) — PowerShell 5 writes it with -Encoding UTF8
+    // and JSON.parse() will throw on the leading ﻿ character.
+    const raw = readFileSync(filePath, 'utf-8').replace(/^﻿/, '')
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, string>

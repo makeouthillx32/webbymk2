@@ -8,7 +8,8 @@ import { spawn }       from "child_process";
 import type { ChildProcess } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join }         from "path";
-import { PROJECT_DIR, PROXY, type Zone } from "../config/zones.ts";
+import { PROJECT_DIR, PROXY, GHCR_USER, type Zone } from "../config/zones.ts";
+import { getCredential } from "../utils/secureStorage/index.js";
 
 export type Status =
   | "running"    // up and healthy (or no healthcheck configured)
@@ -513,6 +514,51 @@ export function doctorComposeService(
 }
 
 /**
+ * Ensure Docker is authenticated to ghcr.io before a pull.
+ *
+ * Reads the raw PAT from secureStorage("ghcr_token") and runs
+ * `docker login ghcr.io --password-stdin` so that `compose pull` never fails
+ * with "denied" even when Docker Desktop's credential store is stale.
+ *
+ * Silent no-op if no token is stored — the pull will use whatever Docker's
+ * existing credential state is (may still work if the user ran docker login
+ * manually, or if the image is public).
+ */
+async function ensureGhcrLogin(onLine?: (l: string) => void): Promise<void> {
+  let pat: string | null = null;
+  try {
+    pat = await getCredential("ghcr_token");
+  } catch {
+    // Credential store unavailable — skip, let the pull try on its own.
+    return;
+  }
+  if (!pat?.trim()) return;
+
+  // docker login reads the password from stdin so the token never appears in
+  // the process argument list (no leak in `ps` output or TUI log lines).
+  await new Promise<void>((resolve) => {
+    const proc = spawn(
+      "docker",
+      ["login", "ghcr.io", "--username", GHCR_USER, "--password-stdin"],
+      { env: DOCKER_ENV, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let out = "";
+    proc.stdout!.on("data", (d: Buffer) => { out += d.toString(); });
+    proc.stderr!.on("data", (d: Buffer) => { out += d.toString(); });
+    proc.on("close", (code) => {
+      if (code === 0) {
+        onLine?.("✓ GHCR login refreshed");
+      } else {
+        onLine?.(`  GHCR login warning: ${out.trim().split("\n").pop() ?? "unknown error"}`);
+      }
+      resolve();
+    });
+    proc.on("error", () => resolve()); // docker not found — non-fatal
+    proc.stdin!.end(pat!.trim());
+  });
+}
+
+/**
  * `docker compose pull <service> && docker compose up -d --force-recreate <service>`
  *
  * For new-style zones (with their own zones/<key>/docker-compose.yml) the
@@ -537,6 +583,9 @@ export async function pullAndUp(
 
   const internet = await checkInternetConnectivity();
   if (internet.online) {
+    // Refresh GHCR credentials before pulling — prevents "denied" errors when
+    // Docker Desktop's credential store is stale after a push from the TUI.
+    await ensureGhcrLogin(onLine);
     onLine?.(`Pulling ${zone.image}...`);
     const pullCode = await composeRun(["pull", zone.service], onLine, file);
     if (pullCode !== 0) return pullCode;

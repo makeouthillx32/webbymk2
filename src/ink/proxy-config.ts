@@ -3,43 +3,29 @@
 // Read / write proxy-config/routes.json — the live routing table for the
 // reverse proxy.
 //
-// After every write, the TUI calls signalProxyReload() which hits the proxy's
-// internal admin API (POST http://127.0.0.1:3081/reload).  The proxy reloads
-// its in-memory route map instantly — no container restart, no file watching,
-// no OS-specific inotify dependency.
+// Supabase is the source of truth for zone definitions. routes.json is a
+// derived cache that the proxy reads. On every TUI boot, reconcileProxyRoutes()
+// rebuilds it from live Supabase data + Docker container state so it is always
+// correct regardless of what happened while the TUI was down.
 //
-// fs.watch + polling remain in the proxy as a defence-in-depth fallback (e.g.
-// manual edits to routes.json), but the admin API is the primary signal path.
-//
-// Shape:
-//   {
-//     "coreDomain":   "unenter.live",
-//     "coreUpstream": "http://unt_app:3000",
-//     "zones": {
-//       "blog":   "http://blog:3000",
-//       "shop":   "http://shop:3000",
-//     }
-//   }
+// After every write, signalProxyReload() hits POST /reload on the proxy admin
+// API for an instant in-memory route update — no container restart needed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { PROJECT_DIR } from "../config/zones.ts";
+import type { Zone } from "../config/zones.ts";
 
 export const PROXY_ADMIN_URL = process.env.PROXY_ADMIN_URL ?? "http://127.0.0.1:3081";
 
 // ── Admin signal ──────────────────────────────────────────────────────────────
 
-/**
- * Tell the running proxy container to reload its route map from routes.json.
- * Fire-and-forget — if the proxy is unreachable the file-watch/poll fallback
- * still picks up the change; this just makes it instantaneous.
- */
 async function signalProxyReload(): Promise<void> {
   try {
     await fetch(`${PROXY_ADMIN_URL}/reload`, { method: "POST", signal: AbortSignal.timeout(2_000) });
   } catch {
-    // Proxy unreachable or not yet started — poll fallback will catch it.
+    // Proxy unreachable — poll fallback will catch it.
   }
 }
 
@@ -57,21 +43,12 @@ export interface ProxyRoutes {
 
 function read(): ProxyRoutes {
   if (!existsSync(ROUTES_FILE)) {
-    return {
-      coreDomain:   "unenter.live",
-      coreUpstream: "http://unt_app:3000",
-      zones:        {},
-    };
+    return { coreDomain: "unenter.live", coreUpstream: "http://unt_app:3000", zones: {} };
   }
   try {
     return JSON.parse(readFileSync(ROUTES_FILE, "utf-8")) as ProxyRoutes;
   } catch {
-    // Corrupt file — return safe default rather than crashing.
-    return {
-      coreDomain:   "unenter.live",
-      coreUpstream: "http://unt_app:3000",
-      zones:        {},
-    };
+    return { coreDomain: "unenter.live", coreUpstream: "http://unt_app:3000", zones: {} };
   }
 }
 
@@ -82,14 +59,6 @@ function write(routes: ProxyRoutes): void {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Register a zone in the live routing table.
- * The proxy hot-reloads within ~150ms — no restart needed.
- *
- * @param key      Zone key (e.g. "test21")
- * @param upstream Internal Docker upstream (e.g. "http://test21:3000")
- * @param onLine   Optional progress logger
- */
 export async function addZoneRoute(
   key:      string,
   upstream: string,
@@ -102,13 +71,6 @@ export async function addZoneRoute(
   onLine?.(`✓ proxy route added:  ${key}.${routes.coreDomain}  →  ${upstream}`);
 }
 
-/**
- * Remove a zone from the live routing table.
- * The proxy stops forwarding to this zone within ~150ms.
- *
- * @param key    Zone key (e.g. "test21")
- * @param onLine Optional progress logger
- */
 export async function removeZoneRoute(
   key:     string,
   onLine?: (l: string) => void,
@@ -124,9 +86,68 @@ export async function removeZoneRoute(
   onLine?.(`✓ proxy route removed:  ${key}.${routes.coreDomain}`);
 }
 
-/**
- * Return the current routes map for display/debugging.
- */
 export function getRoutes(): ProxyRoutes {
   return read();
+}
+
+// ── Startup reconciliation ────────────────────────────────────────────────────
+
+/**
+ * Rebuild routes.json from Supabase zone data + live Docker state.
+ *
+ * Supabase is the source of truth for zone definitions. This function:
+ *   - Adds a route for every production zone whose container is running.
+ *   - Keeps dev routes only while their dev container is still running.
+ *   - Removes everything else (stale routes, manual edits, crashed containers).
+ *
+ * Called on TUI boot. No-op if Supabase returned an empty zone list so we
+ * never wipe a working routes.json when the DB is temporarily unreachable.
+ */
+export async function reconcileProxyRoutes(
+  zones:              Zone[],
+  getContainerStatus: (name: string) => Promise<string>,
+  onLine?:            (l: string) => void,
+): Promise<void> {
+  if (zones.length === 0) return;
+
+  const current = read();
+  const next: Record<string, string> = {};
+
+  // Production zone routes — derived from Supabase zone definitions
+  for (const zone of zones) {
+    const upstream = `http://${zone.container}:3000`;
+    const status = await getContainerStatus(zone.container);
+    if (status === "running" || status === "starting") {
+      next[zone.key] = upstream;
+    }
+    // Container not running → omit route; no stale entry, no 502
+  }
+
+  // Dev routes — keep only while the dev container is actually running
+  // "dev"       → dev-core   (core zone in dev mode)
+  // "dev.blog"  → dev-blog   (blog zone in dev mode)
+  for (const [key, upstream] of Object.entries(current.zones)) {
+    if (!key.startsWith("dev")) continue;
+    const suffix    = key === "dev" ? "core" : key.slice(4); // strip "dev."
+    const container = `dev-${suffix}`;
+    const status    = await getContainerStatus(container);
+    if (status === "running" || status === "starting") {
+      next[key] = upstream;
+    }
+    // Gone container → key not added → route disappears automatically
+  }
+
+  const updated: ProxyRoutes = {
+    coreDomain:   current.coreDomain,
+    coreUpstream: current.coreUpstream,
+    zones:        next,
+  };
+
+  write(updated);
+  await signalProxyReload();
+
+  const kept    = Object.keys(next);
+  const removed = Object.keys(current.zones).filter((k) => !(k in next));
+  if (removed.length) onLine?.(`  removed stale routes: ${removed.join(", ")}`);
+  onLine?.(`✓ proxy synced from Supabase — ${kept.length} active route${kept.length !== 1 ? "s" : ""}: ${kept.join(", ") || "none"}`);
 }

@@ -35,6 +35,7 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # Root configs — used directly, no wrappers needed
 COPY package.json next.config.js tsconfig.json tailwind.config.ts postcss.config.js ./
+COPY middleware.ts ./
 
 # Shared core (components, lib, styles, utils, etc.)
 COPY src/ ./src/
@@ -42,9 +43,11 @@ COPY public/ ./public/
 
 # Swap src/app/: keep only provider.tsx, then overlay blog zone pages
 RUN cp src/app/provider.tsx /tmp/provider.tsx && \
+    cp -r src/app/providers /tmp/providers 2>/dev/null || true && \
     rm -rf src/app && \
     mkdir -p src/app && \
-    mv /tmp/provider.tsx src/app/provider.tsx
+    mv /tmp/provider.tsx src/app/provider.tsx && \
+    { mv /tmp/providers src/app/providers 2>/dev/null || true; }
 
 # Also preserve any root-level type files that pages might reference
 COPY zones/blog/src/app/ ./src/app/

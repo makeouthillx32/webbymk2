@@ -271,7 +271,7 @@ export default async function Image({
                 marginTop: 4,
               }}
             >
-              desertcowgirl.co/products/{slug}
+              unenter.live/products/{slug}
             </span>
           </div>
         </div>

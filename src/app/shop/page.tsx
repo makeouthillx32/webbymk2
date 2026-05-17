@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     "Western-inspired pants and shirts with a warm, modern rustic aesthetic. Thoughtfully designed staples made for everyday wear.",
 
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL || "https://desertcowgirl.co"
+    process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live"
   ),
 
   openGraph: {
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     description:
       "Shop western-inspired pants and shirts with a warm, modern rustic look—quality staples made for everyday wear.",
     type: "website",
-    url: "https://desertcowgirl.co/",
+    url: "https://www.unenter.live/",
     siteName: "Desert Cowgirl",
     images: [
       {

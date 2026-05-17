@@ -13,6 +13,7 @@ type Category = {
 interface CreateCategoryModalProps {
   open: boolean;
   categories: Category[];
+  activeSection: string;
   onClose: () => void;
   onCreate: (data: { name: string; slug: string; parent_id: string | null }) => Promise<void>;
 }
@@ -29,6 +30,7 @@ function slugify(str: string) {
 export function CreateCategoryModal({
   open,
   categories,
+  activeSection,
   onClose,
   onCreate,
 }: CreateCategoryModalProps) {
@@ -88,7 +90,12 @@ export function CreateCategoryModal({
 
       <div className="relative z-10 w-full max-w-md bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[hsl(var(--border))]">
-          <h2 className="text-base font-semibold text-[hsl(var(--foreground))]">New Category</h2>
+          <h2 className="text-base font-semibold text-[hsl(var(--foreground))]">
+            New Category
+            <span className="ml-2 text-xs font-normal text-[hsl(var(--muted-foreground))] bg-[hsl(var(--muted))] px-1.5 py-0.5 rounded capitalize">
+              {activeSection}
+            </span>
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -129,7 +136,7 @@ export function CreateCategoryModal({
               placeholder="graphic-tees"
               className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] font-mono placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/30"
             />
-            <p className="text-xs text-[hsl(var(--muted-foreground))]">/shop/{slug || "…"}</p>
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">/{activeSection}/{slug || "…"}</p>
           </div>
 
           <div className="space-y-1.5">

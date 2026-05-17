@@ -24,10 +24,9 @@ import type { Session, User } from "@supabase/auth-helpers-nextjs";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
 import { iosSessionHelpers } from "@/lib/cookieUtils";
 import { getBrowserSupabaseUrl } from "@/lib/multiZone";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { authLogger } from "@/lib/authLogger";
 import { RoleProvider } from "@/lib/roleContext";
-import { isAuthRoute, isProtectedRoute } from "@/lib/protectedRoutes";
 
 // ── Context type ──────────────────────────────────────────────────────────────
 
@@ -82,7 +81,6 @@ function InternalAuthProvider({
 }) {
   const [user, setUser] = useState<User | null>(null);
   const router = useRouter();
-  const pathname = usePathname();
 
   const refreshSession = () => {
     iosSessionHelpers.refreshSession();
@@ -104,16 +102,6 @@ function InternalAuthProvider({
       router.refresh();
     }
   }, [session, router]);
-
-  // Redirect unauthenticated users away from protected routes.
-  useEffect(() => {
-    if (isLoading) return;
-    if (!session && isProtectedRoute(pathname) && !isAuthRoute(pathname)) {
-      const target = pathname + (location.search || "");
-      console.log(`[AuthProvider] Redirecting guest to sign-in from protected route: ${pathname}`);
-      router.replace(`/sign-in?next=${encodeURIComponent(target)}`);
-    }
-  }, [session, isLoading, pathname, router]);
 
   return (
     <AuthContext.Provider value={{ user, session, isLoading, refreshSession }}>
@@ -154,6 +142,62 @@ export function AuthProviderWrapper({
 
   const isAuthLoading    = !sessionFetched;
   const pendingRefreshRef = useRef(false);
+  const syncInFlightRef = useRef(false);
+  const hasServerSessionRef = useRef(!!propSession);
+
+  const getPostSignInRedirect = () => {
+    if (typeof window === "undefined") return "/dashboard/me";
+
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("://")) {
+      return next;
+    }
+
+    const stored = window.sessionStorage.getItem("postSignInRedirect");
+    if (stored?.startsWith("/") && !stored.startsWith("//") && !stored.includes("://")) {
+      return stored;
+    }
+
+    return "/dashboard/me";
+  };
+
+  const syncBrowserSessionToServer = async (newSession: Session) => {
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
+
+    const redirectTo = getPostSignInRedirect();
+    window.sessionStorage.setItem("postSignInRedirect", redirectTo);
+
+    try {
+      console.log("[AuthProvider] Syncing browser session to server cookies:", redirectTo);
+      const response = await fetch("/auth/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        body: JSON.stringify({
+          access_token: newSession.access_token,
+          refresh_token: newSession.refresh_token,
+          next: redirectTo,
+          remember: window.localStorage.getItem("rememberMe") === "true",
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        console.error("[AuthProvider] Server session sync failed:", payload);
+        return;
+      }
+
+      window.sessionStorage.removeItem("postSignInRedirect");
+      window.location.assign(payload.redirectTo || `${redirectTo}?refresh=true`);
+    } catch (error) {
+      console.error("[AuthProvider] Server session sync threw:", error);
+    } finally {
+      syncInFlightRef.current = false;
+    }
+  };
 
   // ── forceRefreshSession ────────────────────────────────────────────────────
   // Called by InternalAuthProvider (manual refresh), iOS handlers, and the
@@ -189,6 +233,11 @@ export function AuthProviderWrapper({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("://")) {
+      window.sessionStorage.setItem("postSignInRedirect", next);
+    }
+
     if (params.get("refresh") === "true") {
       console.log("[AuthProvider] 🔑 ?refresh=true detected — forcing immediate session sync");
       pendingRefreshRef.current = true;
@@ -230,6 +279,12 @@ export function AuthProviderWrapper({
         return;
       }
 
+      if (event === "INITIAL_SESSION" && !newSession && hasServerSessionRef.current) {
+        console.log("[AuthProvider] ⏳ Keeping server session during null INITIAL_SESSION");
+        setSessionFetched(true);
+        return;
+      }
+
       setInitialSession(newSession);
       setLiveSession(newSession);
       setSessionFetched(true);
@@ -245,6 +300,10 @@ export function AuthProviderWrapper({
             detail: { event, session: newSession },
           })
         );
+      }
+
+      if (event === "SIGNED_IN" && newSession) {
+        syncBrowserSessionToServer(newSession);
       }
     });
 

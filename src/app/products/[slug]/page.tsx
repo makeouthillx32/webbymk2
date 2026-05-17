@@ -15,7 +15,7 @@ import ProductDetailClient from "./_components/ProductDetailClient";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://desertcowgirl.co";
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.unenter.live";
 
 // ─── Static params ────────────────────────────────────────────────────────────
 

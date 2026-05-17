@@ -41,6 +41,8 @@ export interface StackOp {
   isLog:       boolean;
   /** When true, [x] dismiss is allowed even while busy (used by dev-mode ops). */
   dismissable?: boolean;
+  /** Set true when the dev log stream detects Next.js "Ready in Xs". */
+  devReady?:   boolean;
 }
 
 interface DetachedStackProps {
@@ -68,6 +70,7 @@ interface DetachedStackProps {
 
 function ShadowStrip({ op, depth }: { op: StackOp; depth: number }) {
   const canDismiss = op.dismissable ?? !op.busy;
+  const lastLine   = op.lines[op.lines.length - 1];
   return (
     <Box paddingLeft={depth + 1} gap={1}>
       <Text dimColor>{"└─"}</Text>
@@ -75,7 +78,10 @@ function ShadowStrip({ op, depth }: { op: StackOp; depth: number }) {
       <Text color={op.busy ? "yellow" : undefined} dimColor={!op.busy}>
         {op.title}
       </Text>
-      {canDismiss && <Text dimColor>  [x] dismiss</Text>}
+      {lastLine && (
+        <Text dimColor wrap="truncate-end">· {lastLine}</Text>
+      )}
+      {canDismiss && <Text dimColor>  [x]</Text>}
     </Box>
   );
 }

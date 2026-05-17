@@ -41,6 +41,7 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # Root configs — used directly, no wrappers
 COPY package.json next.config.js tsconfig.json tailwind.config.ts postcss.config.js ./
+COPY middleware.ts ./
 
 # Full core — all shared components, utils, lib, styles, AND all app pages
 COPY src/ ./src/

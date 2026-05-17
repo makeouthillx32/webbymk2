@@ -1,13 +1,8 @@
-// components/SignInForm.tsx
-// ✅ Server Component version (uses your server action + server cookies)
-
 import Link from "next/link";
 import SignInWithGoogle from "@/components/ui/SignInWithGoogle";
 import { Mail, Lock } from "lucide-react";
 
-import { signInAction } from "@/actions/auth/actions";
 import { FormMessage, Message } from "@/components/form-message";
-import { SubmitButton } from "@/components/submit-button";
 
 type Props = {
   message?: Message;
@@ -32,8 +27,9 @@ export default function SignInForm({ message }: Props) {
             <div className="flex-grow border-t border-[hsl(var(--border))]" />
           </div>
 
-          {/* ✅ Server action handles auth + cookie population + redirect */}
-          <form action={signInAction} className="space-y-5" autoComplete="on">
+          <form action="/auth/sign-in" method="post" className="space-y-5" autoComplete="on">
+            <input type="hidden" name="next" value="/dashboard/me" />
+
             <div className="space-y-2">
               <label
                 htmlFor="email"
@@ -77,14 +73,13 @@ export default function SignInForm({ message }: Props) {
                   name="password"
                   type="password"
                   autoComplete="current-password"
-                  placeholder="••••••••"
+                  placeholder="Password"
                   required
                   className="w-full px-4 py-2 pl-10 border border-[hsl(var(--border))] rounded-[var(--radius)] bg-[hsl(var(--input))] text-[hsl(var(--foreground))] placeholder-[hsl(var(--muted-foreground))] font-[var(--font-sans)] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--sidebar-ring))] focus:border-[hsl(var(--sidebar-primary))] transition-colors leading-[1.5]"
                 />
               </div>
             </div>
 
-            {/* ✅ Your server action expects: remember === "true" */}
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 text-sm font-[var(--font-sans)] text-[hsl(var(--muted-foreground))]">
                 <input
@@ -104,14 +99,13 @@ export default function SignInForm({ message }: Props) {
               </Link>
             </div>
 
-            <SubmitButton
-              pendingText="Signing in..."
+            <button
+              type="submit"
               className="w-full bg-[hsl(var(--sidebar-primary))] hover:bg-[hsl(var(--sidebar-primary))]/90 text-[hsl(var(--sidebar-primary-foreground))] font-medium py-2.5 px-4 rounded-[var(--radius)] transition-colors duration-200 shadow-[var(--shadow-sm)] font-[var(--font-sans)] flex items-center justify-center"
             >
               Sign in
-            </SubmitButton>
+            </button>
 
-            {/* ✅ shows success/error messages from redirects */}
             {message ? <FormMessage message={message} /> : null}
           </form>
 

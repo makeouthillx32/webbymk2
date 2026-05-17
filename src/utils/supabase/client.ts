@@ -10,7 +10,7 @@
 // drop-in replacement anywhere @supabase/ssr's createBrowserClient was called
 // directly with process.env.NEXT_PUBLIC_SUPABASE_URL.
 // ─────────────────────────────────────────────────────────────────────────────
-import { createBrowserClient as createSupabaseBrowserClient } from "@/utils/supabase/client";
+import { createBrowserClient as createSupabaseBrowserClient } from "@supabase/ssr";
 
 const BROWSER_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||

@@ -17,10 +17,17 @@ export function Sidebar() {
 
   const { setIsOpen, isOpen, isMobile, toggleSidebar } = useSidebarContext();
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [collapsedSections, setCollapsedSections] = useState<string[]>([]);
 
   const toggleExpanded = (title: string) => {
     setExpandedItems((prev) =>
       prev.includes(title) ? [] : [title]
+    );
+  };
+
+  const toggleSection = (label: string) => {
+    setCollapsedSections((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
     );
   };
 
@@ -86,12 +93,32 @@ export function Sidebar() {
 
           {/* Navigation Sections */}
           <div className="custom-scrollbar mt-6 flex-1 overflow-y-auto pr-3 min-[850px]:mt-10">
-            {NAV_DATA.map((section) => (
+            {NAV_DATA.map((section) => {
+              const isSectionCollapsed = collapsedSections.includes(section.label);
+              return (
               <div key={section.label} className="mb-6">
-                <h2 className="mb-5 text-sm font-medium text-[var(--lt-fg)]">
-                  {section.label}
-                </h2>
+                {section.collapsible ? (
+                  <button
+                    onClick={() => toggleSection(section.label)}
+                    className="mb-5 flex w-full items-center justify-between pr-2 text-sm font-medium text-[var(--lt-fg)] hover:text-[var(--lt-fg)]"
+                    aria-expanded={!isSectionCollapsed}
+                  >
+                    <span>{section.label}</span>
+                    <ChevronUp
+                      className={cn(
+                        "size-4 transition-transform duration-200",
+                        isSectionCollapsed ? "rotate-180" : "rotate-0"
+                      )}
+                      aria-hidden="true"
+                    />
+                  </button>
+                ) : (
+                  <h2 className="mb-5 text-sm font-medium text-[var(--lt-fg)]">
+                    {section.label}
+                  </h2>
+                )}
 
+                {!isSectionCollapsed && (
                 <nav role="navigation" aria-label={section.label}>
                   <ul className="space-y-2">
                     {section.items.map((item) => {
@@ -174,8 +201,10 @@ export function Sidebar() {
                     })}
                   </ul>
                 </nav>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </aside>
