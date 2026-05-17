@@ -4,6 +4,7 @@
 // so the user can restore them later from "recently saved" history.
 
 import { createServerClient } from "@/utils/supabase/server";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -144,8 +145,6 @@ export async function POST(
     let savedCartId: string | null = null;
 
     if (!existingError && existingItems && existingItems.length > 0) {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-
       // Fetch primary images for existing cart products in one query
       const productIds = [...new Set(existingItems.map((i: any) => i.product_id).filter(Boolean))];
       const { data: images } = await adminClient
@@ -168,9 +167,8 @@ export async function POST(
           return (a.sort_order ?? a.position ?? 999) - (b.sort_order ?? b.position ?? 999);
         });
         const best = sorted[0];
-        if (best?.bucket_name && best?.object_path) {
-          imageMap.set(pid, `${supabaseUrl}/storage/v1/object/public/${best.bucket_name}/${best.object_path}`);
-        }
+        const imageUrl = supabasePublicUrlFromImage(best);
+        if (imageUrl) imageMap.set(pid, imageUrl);
       }
 
       // Rich JSONB snapshot — preserves everything needed to show & restore the items

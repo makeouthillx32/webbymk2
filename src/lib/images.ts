@@ -13,8 +13,10 @@
  * - DO NOT pass "/_next/image?url=..." into <Image src>. Let Next optimize automatically.
  *
  * Base priority:
- * 1) NEXT_PUBLIC_SUPABASE_URL (classic project URL)
- * 2) SUPABASE_S3_ENDPOINT (derive base by removing /storage/v1/s3)
+ * 1) NEXT_PUBLIC_SUPABASE_URL_BROWSER (browser/public URL)
+ * 2) SUPABASE_PUBLIC_URL when it is not an internal Docker URL
+ * 3) NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PROJECT_URL fallbacks
+ * 4) SUPABASE_S3_ENDPOINT (derive base by removing /storage/v1/s3)
  */
 
 export type DbImage = {
@@ -37,6 +39,10 @@ function stripTrailingSlashes(s: string) {
   return s.replace(/\/+$/, "");
 }
 
+function isInternalDockerUrl(s?: string | null) {
+  return !!s && /^https?:\/\/(?:kong|supabase-kong)(?::\d+)?(?:\/|$)/i.test(s);
+}
+
 function encodeObjectPath(path: string) {
   // Encode each segment but keep "/" separators
   return path
@@ -48,6 +54,9 @@ function encodeObjectPath(path: string) {
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ??
+  (isInternalDockerUrl(process.env.SUPABASE_PUBLIC_URL)
+    ? undefined
+    : process.env.SUPABASE_PUBLIC_URL) ??
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
   process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ??
   "";
@@ -59,7 +68,6 @@ const S3_BASE = deriveStorageBaseFromS3Endpoint(
     ""
 );
 
-// Keep classic behavior: prefer NEXT_PUBLIC_SUPABASE_URL if set
 const STORAGE_BASE = stripTrailingSlashes(SUPABASE_URL || S3_BASE || "");
 
 if (!STORAGE_BASE) {

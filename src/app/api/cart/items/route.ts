@@ -1,5 +1,6 @@
 // app/api/cart/items/route.ts
 import { createServerClient } from "@/utils/supabase/server";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 import { NextRequest, NextResponse } from "next/server";
 
 function jsonOk(data: any, meta?: any) {
@@ -152,20 +153,12 @@ export async function GET(request: NextRequest) {
     }
 
     // 3) Build enriched items with image_url
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-
     const enriched = (items ?? []).map((item: any) => {
       const imgs = imagesByProductId.get(item.product_id) ?? [];
       const primary = pickPrimaryImage(imgs);
 
-      let image_url: string | null = null;
-      let image_alt: string | null = null;
-
-      if (primary?.bucket_name && primary?.object_path) {
-        // Build URL directly — avoids an extra async call per item
-        image_url = `${supabaseUrl}/storage/v1/object/public/${primary.bucket_name}/${primary.object_path}`;
-        image_alt = primary.alt_text ?? null;
-      }
+      const image_url = supabasePublicUrlFromImage(primary);
+      const image_alt = primary?.alt_text ?? null;
 
       return {
         id: item.id,

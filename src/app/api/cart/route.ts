@@ -1,5 +1,6 @@
 // app/api/cart/route.ts
 import { createServerClient } from "@/utils/supabase/server";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 import { NextRequest, NextResponse } from "next/server";
 
 function jsonOk(data: any) {
@@ -124,17 +125,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-
     // Build enriched items
     const enrichedItems = (items ?? []).map((item: any) => {
       const imgs = imagesByProductId.get(item.product_id) ?? [];
       const primary = pickPrimaryImage(imgs);
 
-      const image_url =
-        primary?.bucket_name && primary?.object_path
-          ? `${supabaseUrl}/storage/v1/object/public/${primary.bucket_name}/${primary.object_path}`
-          : null;
+      const image_url = supabasePublicUrlFromImage(primary);
 
       return {
         id: item.id,

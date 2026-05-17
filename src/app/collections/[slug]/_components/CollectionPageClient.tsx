@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 import { formatCurrency } from "@/lib/money";
 
 interface ProductImage {
@@ -48,11 +49,8 @@ type SortOption = "featured" | "price-asc" | "price-desc" | "newest" | "title";
 export default function CollectionPageClient({ collection, products }: CollectionPageClientProps) {
   const [sortBy, setSortBy] = useState<SortOption>("featured");
 
-  // Get image URL from Supabase Storage
-  const getImageUrl = (image: ProductImage) => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return `${supabaseUrl}/storage/v1/object/public/${image.bucket_name}/${image.object_path}`;
-  };
+  const getImageUrl = (image: ProductImage) =>
+    supabasePublicUrlFromImage(image) ?? "";
 
   // Get primary image for a product
   const getPrimaryImage = (product: Product) => {

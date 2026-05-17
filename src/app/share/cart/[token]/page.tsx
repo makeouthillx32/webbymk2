@@ -4,6 +4,7 @@
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createServerClient } from "@/utils/supabase/server";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 import SharedCartClient from "./_components/SharedCartClient";
 
 interface PageProps {
@@ -109,8 +110,6 @@ export default async function SharedCartPage({ params }: PageProps) {
 
   if (!cart) notFound();
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-
   const items = (cart.cart_items ?? []).map((item: any) => {
     const images: any[] = item.products?.product_images ?? [];
 
@@ -122,10 +121,7 @@ export default async function SharedCartPage({ params }: PageProps) {
       )[0] ??
       null;
 
-    const imageUrl =
-      primary?.bucket_name && primary?.object_path
-        ? `${supabaseUrl}/storage/v1/object/public/${primary.bucket_name}/${primary.object_path}`
-        : null;
+    const imageUrl = supabasePublicUrlFromImage(primary);
 
     return {
       id: item.id,

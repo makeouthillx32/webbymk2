@@ -6,17 +6,17 @@
 
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
+import { supabasePublicUrlFromImage } from "@/lib/images";
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ ok: false, error: { code, message } }, { status });
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-
 function buildImageUrl(bucketName: string | null, objectPath: string | null): string | null {
-  if (!bucketName || !objectPath || !SUPABASE_URL) return null;
-  const encoded = objectPath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucketName}/${encoded}`;
+  return supabasePublicUrlFromImage({
+    bucket_name: bucketName,
+    object_path: objectPath,
+  });
 }
 
 function pickImageUrl(images: any[]): string | null {
