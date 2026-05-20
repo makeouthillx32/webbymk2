@@ -12,9 +12,9 @@
 
 import React, { useState, useCallback } from 'react'
 import { Box, Text, useInput, useApp } from 'ink'
-import { spawn }                 from 'child_process'
-import { detectProjectRoot, missingMarkers } from '../../utils/rootGuard.js'
-import { gracefulShutdownSync }  from '../../utils/gracefulShutdown.js'
+import { spawn } from 'child_process'
+import { detectProjectRoot, missingMarkers } from '../utils/rootGuard.js'
+import { gracefulShutdownSync } from '../utils/gracefulShutdown.js'
 
 type ScreenState =
   | { phase: 'idle' }
@@ -24,11 +24,11 @@ type ScreenState =
 export function WrongRootScreen() {
   const { exit } = useApp()
 
-  const [rootState, setRootState]     = useState(() => detectProjectRoot())
-  const [screen, setScreen]           = useState<ScreenState>({ phase: 'idle' })
+  const [rootState, setRootState] = useState(() => detectProjectRoot())
+  const [screen, setScreen] = useState<ScreenState>({ phase: 'idle' })
 
   const detected = !rootState.valid ? rootState.detected : null
-  const missing  = missingMarkers(process.cwd())
+  const missing = missingMarkers(process.cwd())
 
   const doRelaunch = useCallback(() => {
     if (detected === null) return
@@ -36,8 +36,8 @@ export function WrongRootScreen() {
     // Spawn a fresh process from the detected root, then exit this one.
     // The new process inherits the same terminal session.
     spawn(process.execPath, process.argv.slice(1), {
-      cwd:      detected,
-      stdio:    'inherit',
+      cwd: detected,
+      stdio: 'inherit',
       detached: false,
     })
     setTimeout(() => gracefulShutdownSync(0), 100)

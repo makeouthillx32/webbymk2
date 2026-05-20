@@ -1,14 +1,17 @@
 // src/ink/components/Header.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// App header bar — live clock + background-op summary.
+// App header bar — live clock + background-op summary + environment badge.
 //
 //   left:   UNAXIS  v0.0.x  [dev]  ·  Unified Next App eXecution & Infrastructure System
+//   center: [env badge — only when >1 env or non-prod type]
 //   right:  [spinner + op title]  ·  HH:MM:SS
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
 import { Box, Text }                  from "ink";
 import type { StackOp }               from "./DetachedStack.tsx";
+import type { EnvironmentType }       from "../environment-store.ts";
+import { environmentTypeColor }       from "../environment-store.ts";
 
 declare const UNAXIS_VERSION: string | undefined;
 const VERSION = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION : "0.0.5";
@@ -58,12 +61,16 @@ function buildOHint(focused: boolean, open: boolean, count: number): string {
 // ── Header component ──────────────────────────────────────────────────────────
 
 interface HeaderProps {
-  ops:          StackOp[];
-  stackOpen:    boolean;
-  stackFocused: boolean;
+  ops:           StackOp[];
+  stackOpen:     boolean;
+  stackFocused:  boolean;
+  /** Active environment name — e.g. "prod", "staging", "azure-test" */
+  activeEnvName?: string;
+  /** Active environment type — drives badge color */
+  activeEnvType?: EnvironmentType;
 }
 
-export function Header({ ops, stackOpen, stackFocused }: HeaderProps) {
+export function Header({ ops, stackOpen, stackFocused, activeEnvName, activeEnvType }: HeaderProps) {
   const time    = useClock();
   const spinner = useSpinner(ops.some((o) => o.busy));
 
@@ -72,18 +79,34 @@ export function Header({ ops, stackOpen, stackFocused }: HeaderProps) {
   const topOp     = ops.find((o) => o.busy) ?? ops[ops.length - 1] ?? null;
   const hasOps    = ops.length > 0;
 
+  // Show env badge whenever we have a name — lets the operator always know
+  // which environment the TUI is targeting, especially after env use <name>.
+  const envColor  = activeEnvType ? environmentTypeColor(activeEnvType) : "cyan";
+  const showEnv   = !!activeEnvName;
+
   // [o] hint reflects the real toggle state so the user knows what pressing it does.
   const oHint = buildOHint(stackFocused, stackOpen, ops.length);
 
   return (
     <Box justifyContent="space-between" marginBottom={0}>
+
+      {/* ── Left: brand ────────────────────────────────────────────────── */}
       <Box gap={2}>
         <Text bold color="cyan">UNAXIS</Text>
         <Text dimColor color="cyan">v{VERSION}</Text>
         {isDev && <Text bold color="magenta">dev</Text>}
         <Text dimColor>·</Text>
         <Text dimColor>{FULL_NAME}</Text>
+        {showEnv && (
+          <>
+            <Text dimColor>·</Text>
+            {/* env badge: colored pill showing active environment */}
+            <Text bold color={envColor as any}>[{activeEnvName}]</Text>
+          </>
+        )}
       </Box>
+
+      {/* ── Right: ops + clock ─────────────────────────────────────────── */}
       <Box gap={2}>
         {hasOps && (
           <Box gap={1}>
@@ -106,6 +129,7 @@ export function Header({ ops, stackOpen, stackFocused }: HeaderProps) {
         <Text dimColor>·</Text>
         <Text dimColor>{time}</Text>
       </Box>
+
     </Box>
   );
 }

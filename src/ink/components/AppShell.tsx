@@ -19,6 +19,7 @@ import type { Notification }         from "./Notifications.tsx";
 import { PANEL_TABS, type View }     from "../hooks/useAppRouter.ts";
 
 import { Header }                    from "./Header.tsx";
+import type { EnvironmentType }      from "../environment-store.ts";
 import { Tabs }                      from "./Tabs.tsx";
 import { NotificationsPane }         from "./Notifications.tsx";
 import { DetachedStack }             from "./DetachedStack.tsx";
@@ -38,6 +39,10 @@ interface AppShellProps {
   didCopy:       boolean;
   children:      React.ReactNode;
 
+  /** Active environment — shown as a badge in the header. */
+  activeEnvName?: string;
+  activeEnvType?: EnvironmentType;
+
   onStackUp?:         () => void;
   onStackDown?:       () => void;
   onStackEnter?:      () => void;
@@ -54,7 +59,7 @@ interface AppShellProps {
 
 export function AppShell({
   view, history, subCrumbs, bgOps, stackOpen, stackFocused, stackFocusId,
-  notifications, didCopy, children,
+  notifications, didCopy, children, activeEnvName, activeEnvType,
   onStackUp, onStackDown, onStackEnter,
   onStackDismiss, onStackDismissAll, onStackPopout,
   onStackCopy, onStackCopyTail, onStackClose, onStackHide,
@@ -66,7 +71,13 @@ export function AppShell({
     <Box flexDirection="column" height={th} overflow="hidden">
 
       {/* ── App header ──────────────────────────────────────────────────── */}
-      <Header ops={bgOps} stackOpen={stackOpen} stackFocused={stackFocused} />
+      <Header
+        ops={bgOps}
+        stackOpen={stackOpen}
+        stackFocused={stackFocused}
+        activeEnvName={activeEnvName}
+        activeEnvType={activeEnvType}
+      />
 
       {/* ── Breadcrumb trail (hidden at root / welcome) ──────────────────── */}
       <Breadcrumbs history={history} subCrumbs={subCrumbs} />

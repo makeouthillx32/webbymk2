@@ -1,26 +1,16 @@
-// tui/components/Pane.tsx
-// API-compatible with src/components/design-system/Pane.tsx
-//
-// Core props: children, color?
-// TUI extensions: title? (centered label in divider), width?, gap?
+// Compatibility surface for older runtime imports.
+// Canonical implementation lives in components/design-system/Pane.tsx.
 
-import React       from "react";
-import { Box }     from "ink";
-import { Divider } from "./Divider.tsx";
+import React from 'react';
+import {
+  Pane as DesignPane,
+  type PaneProps as DesignPaneProps,
+} from './design-system/Pane.js';
 
-export interface PaneProps {
-  children:  React.ReactNode;
-  color?:    string;  // theme token or raw color
-  title?:    string;  // TUI extension: label in divider
-  width?:    number;  // TUI extension: divider width
-  gap?:      number;  // TUI extension: gap between divider and body
+export interface PaneProps extends Omit<DesignPaneProps, 'color'> {
+  color?: string;
 }
 
-export function Pane({ children, color, title, width, gap = 0 }: PaneProps) {
-  return (
-    <Box flexDirection="column" gap={gap}>
-      <Divider title={title} color={color} width={width} />
-      {children}
-    </Box>
-  );
+export function Pane({ color, ...props }: PaneProps): React.ReactNode {
+  return <DesignPane color={color as DesignPaneProps['color']} {...props} />;
 }

@@ -22,7 +22,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useCallback } from "react";
-import { Box, Text, useInput }                   from "ink";
+import { Box, Text, useInput } from "ink";
 import {
   initializeSupabaseCore,
   createRuntimeInstance,
@@ -31,19 +31,19 @@ import {
   type RuntimeInstance,
   type RuntimePorts,
   type RuntimeSecrets,
-}                                                from "../zone/supabase-factory.ts";
-import { startCoreStack }                        from "../db-api.ts";
-import { Divider }                               from "../components/Divider.tsx";
-import { SearchInput }                           from "../components/SearchBox.tsx";
-import ScrollBox                                 from "../components/ScrollBox.tsx";
-import { Spinner }                               from "../components/Spinner.tsx";
+} from "../ink/zone/supabase-factory.js";
+import { startCoreStack } from "../ink/db-api.js";
+import { Divider } from "../ink/components/Divider.jsx";
+import { SearchInput } from "../ink/components/SearchBox.jsx";
+import ScrollBox from "../ink/components/ScrollBox.jsx";
+import { Spinner } from "../ink/components/Spinner.jsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type WizardStep = "name" | "preview" | "deploy";
 
 export interface InstanceWizardScreenProps {
-  onDone:   (instance: RuntimeInstance) => void;
+  onDone: (instance: RuntimeInstance) => void;
   onCancel: () => void;
 }
 
@@ -58,12 +58,12 @@ function toSlugPreview(name: string): string {
 function previewPorts(name: string): RuntimePorts {
   const base = 8000 + (name.length * 7 % 1000);
   return {
-    kong:      base,
-    kongSSL:   base + 443,
-    postgres:  base + 2000,
-    pooler:    base + 3000,
+    kong: base,
+    kongSSL: base + 443,
+    postgres: base + 2000,
+    pooler: base + 3000,
     analytics: base + 1000,
-    studio:    base + 100,
+    studio: base + 100,
   };
 }
 
@@ -75,16 +75,16 @@ function NamingStep({
   onNext,
   onCancel,
 }: {
-  name:         string;
+  name: string;
   onChangeName: (v: string) => void;
-  onNext:       () => void;
-  onCancel:     () => void;
+  onNext: () => void;
+  onCancel: () => void;
 }) {
   const slug = toSlugPreview(name);
 
   useInput((_input, key) => {
-    if (key.return && name.trim().length > 0) { onNext();   return; }
-    if (key.escape)                           { onCancel(); return; }
+    if (key.return && name.trim().length > 0) { onNext(); return; }
+    if (key.escape) { onCancel(); return; }
   });
 
   return (
@@ -128,36 +128,36 @@ function PreviewStep({
   onNext,
   onBack,
 }: {
-  name:   string;
+  name: string;
   onNext: () => void;
   onBack: () => void;
 }) {
-  const slug  = toSlugPreview(name);
+  const slug = toSlugPreview(name);
   const ports = previewPorts(name);
 
   const rows: [string, string, string?][] = [
     // Ports
-    ["Kong (API)",    String(ports.kong),      "KONG_HTTP_PORT"],
-    ["Studio",        String(ports.studio),    "STUDIO_PORT"],
-    ["Postgres",      String(ports.postgres),  "POSTGRES_PORT"],
-    ["Pooler",        String(ports.pooler),    "POOLER_PROXY_PORT_TRANSACTION"],
-    ["Analytics",     String(ports.analytics), "ANALYTICS_PORT"],
+    ["Kong (API)", String(ports.kong), "KONG_HTTP_PORT"],
+    ["Studio", String(ports.studio), "STUDIO_PORT"],
+    ["Postgres", String(ports.postgres), "POSTGRES_PORT"],
+    ["Pooler", String(ports.pooler), "POOLER_PROXY_PORT_TRANSACTION"],
+    ["Analytics", String(ports.analytics), "ANALYTICS_PORT"],
     // Containers (derived from slug)
     [""],
-    ["db container",  `${slug}-{ts}-db`],
-    ["kong",          `${slug}-{ts}-kong`],
-    ["auth",          `${slug}-{ts}-auth`],
-    ["studio",        `${slug}-{ts}-studio`],
+    ["db container", `${slug}-{ts}-db`],
+    ["kong", `${slug}-{ts}-kong`],
+    ["auth", `${slug}-{ts}-auth`],
+    ["studio", `${slug}-{ts}-studio`],
     // URLs
     [""],
-    ["Studio URL",    `http://127.0.0.1:${ports.studio}`],
-    ["API URL",       `http://127.0.0.1:${ports.kong}`],
+    ["Studio URL", `http://127.0.0.1:${ports.studio}`],
+    ["API URL", `http://127.0.0.1:${ports.kong}`],
     // Secrets (generated at create time)
     [""],
     ["POSTGRES_PASSWORD", "<generated 32-char>"],
-    ["JWT_SECRET",        "<generated 64-char>"],
-    ["ANON_KEY",          "<JWT HS256 anon>"],
-    ["SERVICE_ROLE_KEY",  "<JWT HS256 service_role>"],
+    ["JWT_SECRET", "<generated 64-char>"],
+    ["ANON_KEY", "<JWT HS256 anon>"],
+    ["SERVICE_ROLE_KEY", "<JWT HS256 service_role>"],
   ];
 
   useInput((_input, key) => {
@@ -205,14 +205,14 @@ function DeployStep({
   onDone,
   onBack,
 }: {
-  name:   string;
+  name: string;
   onDone: (instance: RuntimeInstance) => void;
   onBack: () => void;
 }) {
-  const [phase,    setPhase]    = useState<DeployPhase>("idle");
-  const [lines,    setLines]    = useState<string[]>([]);
+  const [phase, setPhase] = useState<DeployPhase>("idle");
+  const [lines, setLines] = useState<string[]>([]);
   const [instance, setInstance] = useState<RuntimeInstance | null>(null);
-  const started                 = useRef(false);
+  const started = useRef(false);
 
   const addLine = useCallback((l: string) => {
     setLines((prev) => [...prev, l]);
@@ -261,26 +261,26 @@ function DeployStep({
 
   // [↵] to finish once done
   useInput((_input, key) => {
-    if (phase === "done"  && key.return) { onDone(instance!); return; }
-    if (phase === "error" && key.escape) { onBack();          return; }
+    if (phase === "done" && key.return) { onDone(instance!); return; }
+    if (phase === "error" && key.escape) { onBack(); return; }
   });
 
   const phaseLabel: Record<DeployPhase, string> = {
-    idle:   "Preparing...",
-    init:   "Initializing core template...",
+    idle: "Preparing...",
+    init: "Initializing core template...",
     create: "Scaffolding instance...",
-    start:  "Starting compose stack...",
-    done:   "Deployment complete",
-    error:  "Deployment failed",
+    start: "Starting compose stack...",
+    done: "Deployment complete",
+    error: "Deployment failed",
   };
 
   const phaseColor: Record<DeployPhase, string> = {
-    idle:   "gray",
-    init:   "yellow",
+    idle: "gray",
+    init: "yellow",
     create: "yellow",
-    start:  "cyan",
-    done:   "green",
-    error:  "red",
+    start: "cyan",
+    done: "green",
+    error: "red",
   };
 
   return (
@@ -289,7 +289,7 @@ function DeployStep({
 
       <Box paddingX={2} gap={2} marginBottom={1}>
         {phase !== "done" && phase !== "error" && <Spinner active={true} />}
-        {phase === "done"  && <Text color="green">✓</Text>}
+        {phase === "done" && <Text color="green">✓</Text>}
         {phase === "error" && <Text color="red">✗</Text>}
         <Text color={phaseColor[phase]}>{phaseLabel[phase]}</Text>
       </Box>
@@ -301,8 +301,8 @@ function DeployStep({
             {lines.map((l, i) => (
               <Text key={i} wrap="truncate" dimColor={l.startsWith("  ")} color={
                 l.startsWith("✓") ? "green" :
-                l.startsWith("✗") ? "red"   :
-                l.startsWith("⚠") ? "yellow": undefined
+                  l.startsWith("✗") ? "red" :
+                    l.startsWith("⚠") ? "yellow" : undefined
               }>
                 {l}
               </Text>
@@ -312,7 +312,7 @@ function DeployStep({
       </Box>
 
       <Box paddingX={2} marginTop={1} gap={3}>
-        {phase === "done"  && <><Text dimColor>[↵]</Text><Text dimColor>finish</Text></>}
+        {phase === "done" && <><Text dimColor>[↵]</Text><Text dimColor>finish</Text></>}
         {phase === "error" && <><Text dimColor>[Esc]</Text><Text dimColor>back</Text></>}
         {phase !== "done" && phase !== "error" && (
           <Text dimColor>deployment in progress...</Text>

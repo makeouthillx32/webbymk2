@@ -31,6 +31,9 @@ const outdir   = join(import.meta.dir, 'dist')
 const outfile  = join(outdir, 'cli.js')
 const entry    = join(import.meta.dir, '../entrypoints/cli.tsx')
 
+const tuiNodeModules = join(import.meta.dir, 'node_modules')
+const tuiInkBuild    = join(tuiNodeModules, 'ink', 'build')
+
 // ── Clean ──────────────────────────────────────────────────────────────────────
 
 try { rmSync(outdir, { recursive: true }) } catch {}
@@ -50,6 +53,31 @@ const result = await Bun.build({
   minify:      false,
   sourcemap:   'none',
   external:    ['yoga-wasm-web'],
+  plugins: [
+    {
+      name: 'unaxis-tui-runtime-aliases',
+      setup(builder) {
+        builder.onResolve({ filter: /^ink$/ }, () => ({
+          path: join(tuiInkBuild, 'index.js'),
+        }))
+        builder.onResolve({ filter: /^ink\/(.+)$/ }, ({ path }) => ({
+          path: join(tuiInkBuild, path.slice('ink/'.length)),
+        }))
+        builder.onResolve({ filter: /^react$/ }, () => ({
+          path: join(tuiNodeModules, 'react', 'index.js'),
+        }))
+        builder.onResolve({ filter: /^react\/(.+)$/ }, ({ path }) => ({
+          path: join(tuiNodeModules, 'react', path.slice('react/'.length) + '.js'),
+        }))
+        builder.onResolve({ filter: /^react-dom$/ }, () => ({
+          path: join(tuiNodeModules, 'react-dom', 'index.js'),
+        }))
+        builder.onResolve({ filter: /^react-dom\/(.+)$/ }, ({ path }) => ({
+          path: join(tuiNodeModules, 'react-dom', path.slice('react-dom/'.length) + '.js'),
+        }))
+      },
+    },
+  ],
   define: {
     'process.env.NODE_ENV': '"production"',
     'UNAXIS_VERSION':       '"' + version + '"',

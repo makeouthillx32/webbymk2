@@ -1,9 +1,3 @@
-// src/ink/components/design-system/SectionFrame.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Rounded-border section container for dashboard grouping.
-// Includes a bold title and optional right-aligned metadata/actions.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React from 'react';
 import { Box } from 'ink';
 import ThemedBox from './ThemedBox.js';
@@ -12,22 +6,26 @@ import type { Theme } from '../../utils/theme.js';
 
 export interface SectionFrameProps {
   title: string;
-  /** Theme key for the title color */
+  /**
+   * Theme key for the title color.
+   */
   tone?: keyof Theme;
-  /** Optional metadata or shortcut hints shown on the top-right edge */
+  /**
+   * Optional metadata or shortcut hints shown on the top-right edge.
+   */
   right?: React.ReactNode;
   children: React.ReactNode;
 }
 
 /**
- * SectionFrame provides a standardized container for dashboard widgets.
+ * Standard container for grouped runtime widgets.
  */
 export function SectionFrame({
   title,
   tone = 'suggestion',
   right,
   children,
-}: SectionFrameProps) {
+}: SectionFrameProps): React.ReactNode {
   return (
     <ThemedBox
       borderStyle="round"

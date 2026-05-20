@@ -9,10 +9,10 @@
  *   5. Delegate to src/ink/App.tsx
  */
 
-import { detectProjectRoot }                       from './utils/rootGuard.js'
-import { initRuntimeState }                        from './bootstrap/state.js'
-import { profileCheckpoint, flushStartupProfile }  from './utils/startupProfiler.js'
-import { ensureRuntimeEnv }                        from './utils/runtimeEnv.js'
+import { detectProjectRoot } from './utils/rootGuard.js'
+import { initRuntimeState } from './bootstrap/state.js'
+import { profileCheckpoint, flushStartupProfile } from './utils/startupProfiler.js'
+import { ensureRuntimeEnv } from './utils/runtimeEnv.js'
 
 // 1. Snapshot original cwd
 const originalCwd = process.cwd()
@@ -47,10 +47,10 @@ ensureRuntimeEnv(true)
 // 4. Initialize runtime singleton
 initRuntimeState({
   originalCwd,
-  projectRoot:  effectiveRoot,
-  rootValid:    true,
+  projectRoot: effectiveRoot,
+  rootValid: true,
   detectedRoot: null,
-  startedAt:    Date.now(),
+  startedAt: Date.now(),
 })
 
 profileCheckpoint('state-init')

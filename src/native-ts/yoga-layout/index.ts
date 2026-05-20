@@ -405,6 +405,10 @@ export class Node {
     this.children = []
     this.parent = null
   }
+  freeRecursive(): void {
+    for (const c of this.children) c.freeRecursive()
+    this.free()
+  }
 
   markDirty(): void {
     if (this.isDirty_) return
@@ -440,6 +444,9 @@ export class Node {
   getChild(i: number): Node {
     return this.children[i]!
   }
+  getParent(): Node | null {
+    return this.parent
+  }
 
   setMeasureFunc(
     f: (
@@ -450,6 +457,10 @@ export class Node {
     ) => { width?: number; height?: number } | null,
   ): void {
     this.measureFunc = f
+    this.markDirty()
+  }
+  unsetMeasureFunc(): void {
+    this.measureFunc = null
     this.markDirty()
   }
 
@@ -592,6 +603,9 @@ export class Node {
   setDisplay(d: Display): void {
     this.style.display = d
     this.markDirty()
+  }
+  getDisplay(): Display {
+    return this.style.display
   }
   setOverflow(o: Overflow): void {
     this.style.overflow = o

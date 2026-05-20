@@ -18,9 +18,9 @@
 //   GET    /api/certificates           — list all SSL certs
 //
 // Credentials are read from .env:
-//   NPM_EMAIL=admin@unenter.live
+//   NPM_EMAIL=admin@<your-domain>
 //   NPM_PASSWORD=your-npm-password
-//   NPM_LE_EMAIL=admin@unenter.live     (optional, defaults to NPM_EMAIL)
+//   NPM_LE_EMAIL=admin@<your-domain>     (optional, defaults to NPM_EMAIL)
 //
 // Token is cached in memory with its expiry so the TUI doesn't re-auth on
 // every operation. The cache is invalidated if a 401 is received.
@@ -155,7 +155,7 @@ export async function npmGetToken(): Promise<string> {
   if (!NPM_HOST.email || !NPM_HOST.password) {
     throw new Error(
       "NPM credentials missing.\n" +
-      "  Add to .env:  NPM_EMAIL=admin@unenter.live\n" +
+      "  Add to .env:  NPM_EMAIL=admin@<your-domain>\n" +
       "                NPM_PASSWORD=your-password"
     );
   }
@@ -574,7 +574,7 @@ export async function npmAddZone(
   const reachable = await npmPing();
   if (!reachable) {
     onLine(`✗ Cannot reach NPM at ${NPM_HOST.apiUrl}`);
-    onLine("  Is L0VE (192.168.50.75) online?");
+    onLine(`  Is L0VE (${NPM_HOST.ip}) online?`);
     return 1;
   }
   onLine("✓ NPM reachable");

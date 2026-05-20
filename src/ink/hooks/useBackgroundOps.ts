@@ -213,7 +213,7 @@ export function useBackgroundOps({
   // Zone creation -- 6-step pipeline
   // addLine calls are batched in an 80 ms window so heavy docker output
   // does not trigger dozens of re-renders per second.
-  const runCreateZone = useCallback((zone: DerivedZone) => {
+  const runCreateZone = useCallback((zone: DerivedZone, dockerUrl?: string) => {
     const { id, addLine: rawAddLine } = _startOp(`Create  ${zone.label}`, false, true);
 
     let lineBuffer: string[] = [];
@@ -230,7 +230,7 @@ export function useBackgroundOps({
       }
     };
 
-    createZonePipeline(zone, addLine).then((code) => {
+    createZonePipeline(zone, addLine, dockerUrl).then((code) => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       lineBuffer.splice(0).forEach(rawAddLine);
 

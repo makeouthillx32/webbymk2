@@ -2,21 +2,24 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { Spinner } from '../Spinner.tsx';
 
-type LoadingStateProps = {
+export type LoadingStateProps = {
   /**
    * The loading message to display next to the spinner.
    */
-  message: string;
+  message?: string;
+
+  /**
+   * Backward-compatible alias used by some runtime components.
+   */
+  label?: string;
 
   /**
    * Display the message in bold.
-   * @default false
    */
   bold?: boolean;
 
   /**
    * Display the message in dimmed color.
-   * @default false
    */
   dimColor?: boolean;
 
@@ -27,37 +30,24 @@ type LoadingStateProps = {
 };
 
 /**
- * A spinner with loading message for async operations.
- *
- * @example
- * // Basic loading
- * <LoadingState message="Loading..." />
- *
- * @example
- * // Bold loading message
- * <LoadingState message="Loading sessions" bold />
- *
- * @example
- * // With subtitle
- * <LoadingState
- *   message="Loading sessions"
- *   bold
- *   subtitle="Fetching your UNENTER Code sessions..."
- * />
+ * A spinner with a loading message for async Unaxis operations.
  */
 export function LoadingState({
   message,
+  label,
   bold = false,
   dimColor = false,
   subtitle,
 }: LoadingStateProps): React.ReactNode {
+  const text = message ?? label ?? 'Loading...';
+
   return (
     <Box flexDirection="column">
       <Box flexDirection="row">
         <Spinner />
         <Text bold={bold} dimColor={dimColor}>
           {' '}
-          {message}
+          {text}
         </Text>
       </Box>
       {subtitle && <Text dimColor>{subtitle}</Text>}

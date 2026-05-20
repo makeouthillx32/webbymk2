@@ -43,9 +43,9 @@ import { AppShell } from "./components/AppShell.tsx";
 import { AlternateScreen } from "./components/AlternateScreen.tsx";
 
 // ── Screens ───────────────────────────────────────────────────────────────────
-import { WelcomeScreen } from "./screens/WelcomeScreen.tsx";
-import { SettingsScreen, openConfigInEditor } from "./screens/SettingsScreen.tsx";
-import { ZoneWizardScreen } from "./screens/ZoneWizardScreen.tsx";
+import { WelcomeScreen } from "../screens/WelcomeScreen.js";
+import { SettingsScreen, openConfigInEditor } from "../screens/SettingsScreen.js";
+import { ZoneWizardScreen } from "../screens/ZoneWizardScreen.js";
 
 // ── Views ─────────────────────────────────────────────────────────────────────
 import { CoreView } from "./views/CoreView.tsx";
@@ -55,8 +55,10 @@ import { ZonesView } from "./views/ZonesView.tsx";
 import { NpmPanel } from "./panels/Npm/index.tsx";
 import { DbPanel } from "./panels/Db/index.tsx";
 import { InfraPanel } from "./panels/Infra/index.tsx";
-import { EnvPanel } from "./panels/Env/index.tsx";
-import { NotesScreen } from "./screens/NotesScreen.tsx";
+import { EnvPanel }          from "./panels/Env/index.tsx";
+import { EnvDetailScreen }   from "./panels/Env/EnvDetailScreen.tsx";
+import { NotesScreen }           from "../screens/NotesScreen.js";
+import { AddEnvironmentScreen }  from "../screens/AddEnvironmentScreen.js";
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
 import { OperationOverlay } from "./OperationOverlay.tsx";
@@ -79,8 +81,8 @@ import { resolveRuntimeProjectRoot } from "../utils/runtimeEnv.js";
 import { snapshotInstance, restoreInstance } from "./zone/snapshot.ts";
 import { loadRegistry } from "./zone/supabase-factory.ts";
 import type { RuntimeInstance } from "./zone/supabase-factory.ts";
-import { InstanceWizardScreen } from "./screens/InstanceWizardScreen.tsx";
-import { StackManagerScreen } from "./screens/StackManagerScreen.tsx";
+import { InstanceWizardScreen } from "../screens/InstanceWizardScreen.js";
+import { StackManagerScreen } from "../screens/StackManagerScreen.js";
 import { devContainerName, startDevContainer, stopDevContainer } from "./dev-container.ts";
 import { startIpcServer } from "./ipc-server.ts";
 import { getStatus } from "./docker.ts";
@@ -108,6 +110,7 @@ import { parseLogTail, snapshotContainerLogs } from "./log-snapshot.ts";
 import { PROXY } from "../config/zones.ts";
 import type { Zone } from "../config/zones.ts";
 import { TerminalWriteProvider } from "./useTerminalNotification.ts";
+import { TerminalSizeProvider } from "./components/TerminalSizeContext.tsx";
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -150,6 +153,11 @@ export function App() {
     checkInfra,
     refreshEnvs,
   } = useEnvManager();
+
+  // ── Selected environment for detail screen ────────────────────────────────
+  const [selectedEnvForDetail, setSelectedEnvForDetail] = useState<
+    import("./environment-store.ts").UnaxisEnvironment | null
+  >(null);
 
   // ── Background operations ──────────────────────────────────────────────────
   const {
@@ -1414,9 +1422,29 @@ export function App() {
             <EnvPanel
               onGoBack={goBack}
               addNotification={addNotification}
+              runOp={runOpQueued}
+              onAddEnvironment={() => navigate("add-environment")}
+              onSelectEnv={(env) => {
+                setSelectedEnvForDetail(env);
+                navigate("env-detail");
+              }}
               envStale={envStale}
               lastEnvError={lastEnvError}
               envDataAge={envDataAge}
+            />
+          )}
+
+          {view === "env-detail" && selectedEnvForDetail && (
+            <EnvDetailScreen
+              env={selectedEnvForDetail}
+              onBack={goBack}
+            />
+          )}
+
+          {view === "add-environment" && (
+            <AddEnvironmentScreen
+              onDone={() => { goBack(); addNotification("Environment added", "success"); }}
+              onCancel={goBack}
             />
           )}
 
@@ -1435,7 +1463,9 @@ setupGracefulShutdown();
 
 render(
   <TerminalWriteProvider value={process.stdout.write.bind(process.stdout)}>
-    <KeybindingWire><NotificationsProvider><App /></NotificationsProvider></KeybindingWire>
+    <TerminalSizeProvider>
+      <KeybindingWire><NotificationsProvider><App /></NotificationsProvider></KeybindingWire>
+    </TerminalSizeProvider>
   </TerminalWriteProvider>,
   {
     patchConsole: false,   // don't hijack console.log (use onLine callbacks)

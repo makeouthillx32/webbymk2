@@ -6,7 +6,6 @@ import React, {
   useState,
 } from 'react';
 import useStdin from '../../hooks/use-stdin.js';
-import { getGlobalConfig, saveGlobalConfig } from '../../../utils/config.js';
 import {
   getSystemThemeName,
   type SystemTheme,
@@ -45,14 +44,12 @@ type Props = {
 };
 
 function defaultInitialTheme(): ThemeSetting {
-  return getGlobalConfig().theme;
+  return DEFAULT_THEME;
 }
 
-function defaultSaveTheme(setting: ThemeSetting): void {
-  saveGlobalConfig((current) => ({
-    ...current,
-    theme: setting,
-  }));
+function defaultSaveTheme(_setting: ThemeSetting): void {
+  // Theme persistence should use a Unaxis-owned settings adapter, not the
+  // donor/global config module. Until that adapter exists, keep render pure.
 }
 
 export function ThemeProvider({

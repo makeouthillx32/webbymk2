@@ -1,18 +1,43 @@
 {
   "compilerOptions": {
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     // baseUrl is tui/ — all paths below are relative to here
     "baseUrl": ".",
     "paths": {
       // Core app utilities, types, and lib functions (non-React-19 code)
       // baseUrl is src/tui/ — one level up lands in src/, which is @/*
-      "@/*": ["../*"],
+      "@/*": [
+        "../*"
+      ],
       // Pin ink to tui/node_modules (React 18 build) — not the root React 19 copy
-      "ink": ["./node_modules/ink/build/index.js"],
-      "ink/*": ["./node_modules/ink/build/*"],
+      "ink": [
+        "./node_modules/ink/build/index.js"
+      ],
+      "ink/*": [
+        "./node_modules/ink/build/*"
+      ],
+      // Pin react to tui/node_modules
+      "react": [
+        "./node_modules/react"
+      ],
+      "react/*": [
+        "./node_modules/react/*"
+      ],
+      "react-dom": [
+        "./node_modules/react-dom"
+      ],
+      "react-dom/*": [
+        "./node_modules/react-dom/*"
+      ],
       // Map project-root-relative src/* imports → ../*, relative to src/ink/
       // Fixes: import '...' from 'src/native-ts/yoga-layout/index.js' in layout/yoga.ts
-      "src/*": ["../*"]
+      "src/*": [
+        "../*"
+      ]
     },
     "allowJs": true,
     "skipLibCheck": true,
@@ -28,6 +53,22 @@
   // Include all .ts/.tsx in src/ink/ and imported src/config/ files.
   // "../config/**" is relative to this tsconfig (src/ink/) → resolves to src/config/
   // Without it, Bun's --watch reports "not in project directory" for config imports.
-  "include": ["**/*.ts", "**/*.tsx", "../config/**/*.ts"],
-  "exclude": ["node_modules", "_archive", "templates"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../config/**/*.ts",
+    "../screens/ZoneWizardScreen.tsx",
+    "../screens/WrongRootScreen.tsx",
+    "../screens/WelcomeScreen.tsx",
+    "../screens/StackManagerScreen.tsx",
+    "../screens/SnapshotGalleryScreen.tsx",
+    "../screens/SettingsScreen.tsx",
+    "../screens/NotesScreen.tsx",
+    "../screens/InstanceWizardScreen.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "_archive",
+    "templates"
+  ]
 }

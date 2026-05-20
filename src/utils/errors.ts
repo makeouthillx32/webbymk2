@@ -1,5 +1,3 @@
-import { APIUserAbortError } from '@anthropic-ai/sdk'
-
 export class ClaudeError extends Error {
   constructor(message: string) {
     super(message)
@@ -18,16 +16,12 @@ export class AbortError extends Error {
 
 /**
  * True iff `e` is any of the abort-shaped errors the codebase encounters:
- * our AbortError class, a DOMException from AbortController.abort()
- * (.name === 'AbortError'), or the SDK's APIUserAbortError. The SDK class
- * is checked via instanceof because minified builds mangle class names —
- * constructor.name becomes something like 'nJT' and the SDK never sets
- * this.name, so string matching silently fails in production.
+ * our AbortError class or a DOMException from AbortController.abort()
+ * (.name === 'AbortError').
  */
 export function isAbortError(e: unknown): boolean {
   return (
     e instanceof AbortError ||
-    e instanceof APIUserAbortError ||
     (e instanceof Error && e.name === 'AbortError')
   )
 }

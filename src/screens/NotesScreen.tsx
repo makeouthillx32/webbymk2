@@ -5,22 +5,22 @@
 
 import React, { useCallback } from 'react'
 import { Box, Text, useInput } from 'ink'
-import { spawn }               from 'child_process'
-import { getRuntime }          from '../../bootstrap/state.js'
+import { spawn } from 'child_process'
+import { getRuntime } from '../bootstrap/state.js'
 
 interface Props {
   onGoBack: () => void
 }
 
 export function NotesScreen({ onGoBack }: Props) {
-  const runtime     = getRuntime()
+  const runtime = getRuntime()
   const projectRoot = runtime.projectRoot
 
   const openFolder = useCallback(() => {
     if (process.platform === 'win32') {
       spawn('explorer', [projectRoot], { detached: true, stdio: 'ignore' })
     } else if (process.platform === 'darwin') {
-      spawn('open',     [projectRoot], { detached: true, stdio: 'ignore' })
+      spawn('open', [projectRoot], { detached: true, stdio: 'ignore' })
     } else {
       spawn('xdg-open', [projectRoot], { detached: true, stdio: 'ignore' })
     }

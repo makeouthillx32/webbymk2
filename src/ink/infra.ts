@@ -12,10 +12,8 @@
 //
 // Machine groups:
 //   INTERNET  —  GoDaddy DNS + ASUS DDNS  (public internet layer)
-//   LOVE      —  NPM, Mail, AI  (192.168.50.75)
-//   POWER     —  App stack, DB, services  (192.168.50.204)
-//
-// WINDMILL (192.168.50.178) was retired — that IP and project no longer exist.
+//   LOVE      —  NPM, Mail, AI  (IP read from config.json / Supabase env record)
+//   POWER     —  App stack, DB, services  (IP read from config.json / Supabase env record)
 //
 // Sections exported:
 //   INFRA_SERVICES  — checkable endpoints grouped by machine
@@ -23,7 +21,8 @@
 //   PORT_FORWARDS   — GT-BE98 Pro router port-forward rules
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DNS_PROVIDER, DDNS_PROVIDER } from "../config/stack.ts";
+import { DNS_PROVIDER, DDNS_PROVIDER, NPM_IP_SAFE, STACK_IP_SAFE } from "../config/stack.ts";
+import type { UnaxisEnvironment }      from "./environment-store.ts";
 
 export interface InfraService {
   label:     string;   // short display name
@@ -49,9 +48,9 @@ export interface Machine {
 }
 
 export const MACHINES: Record<string, Machine> = {
-  INTERNET: { label: "INTERNET", ip: "public",         role: "DNS · DDNS · Routing"   },
-  LOVE:     { label: "L0VE",     ip: "192.168.50.75",  role: "NPM · Mail · AI"        },
-  POWER:    { label: "P0W3R",    ip: "192.168.50.204", role: "App · DB · Services"    },
+  INTERNET: { label: "INTERNET", ip: "public",       role: "DNS · DDNS · Routing" },
+  LOVE:     { label: "L0VE",     ip: NPM_IP_SAFE,    role: "NPM · Mail · AI"      },
+  POWER:    { label: "P0W3R",    ip: STACK_IP_SAFE,  role: "App · DB · Services"  },
 };
 
 // ── Service builder helpers ───────────────────────────────────────────────────
@@ -88,37 +87,78 @@ function doh(
   };
 }
 
-// ── Service list ──────────────────────────────────────────────────────────────
+// ── Service list builder ──────────────────────────────────────────────────────
+//
+// buildInfraServices() derives the checkable endpoints from an active
+// UnaxisEnvironment record.  This makes the infra panel automatically
+// retarget whenever the user switches environments via `unaxis env use`.
+//
+// The INTERNET tier (GoDaddy + DDNS) is always built from the environment's
+// domain and ddnsHostname fields.
+//
+// The LOVE tier (NPM host) and POWER tier (proxy/app host) are built from
+// the environment's npmHost and proxyHost fields respectively.
+//
+// Fixed well-known ports (Supabase :8000, DB UI :8001, etc.) are kept as
+// constants since they are architectural constants of the stack, not
+// per-environment variables.  If you need to vary them per-env, add
+// additional columns to the environments table and extend this builder.
 
+export function buildInfraServices(env: UnaxisEnvironment): InfraService[] {
+  const domain   = env.domain       || DNS_PROVIDER.domain;
+  const ddnsHost = env.ddnsHostname || DDNS_PROVIDER.hostname;
+  const npmIp    = env.npmHost      || NPM_IP_SAFE;
+  const npmPort  = env.npmPort      || 81;
+  const proxyIp  = env.proxyHost    || STACK_IP_SAFE;
+
+  return [
+    // ── INTERNET — DNS + DDNS (outermost routing layer) ─────────────────────
+    doh("GoDaddy",   domain,   "INTERNET", domain),
+    doh("ASUS DDNS", ddnsHost, "INTERNET", ddnsHost),
+
+    // ── NPM host (L0VE tier by default, configurable per env) ───────────────
+    s("NPM",       `npm.${domain}`,        `http://${npmIp}:${npmPort}`,  "LOVE"),
+    s("Supabase",  `supa.${domain}`,       `http://${npmIp}:8000`,        "LOVE"),
+    s("AI",        `ai.${domain}`,         `http://${npmIp}:3010`,        "LOVE"),
+    s("Mail",      `mail.${domain}`,       `http://${npmIp}:8082`,        "LOVE"),
+    s("Cool",      `cool.${domain}`,       `http://${npmIp}:9080`,        "LOVE"),
+
+    // ── Proxy/app host (P0W3R tier by default, configurable per env) ────────
+    s("App",       `www.${domain}`,         `http://${proxyIp}:3000`,  "POWER"),
+    s("DB UI",     `db.${domain}`,          `http://${proxyIp}:8001`,  "POWER"),
+    s("Portainer", `port.${domain}`,        `http://${proxyIp}:9000`,  "POWER"),
+    s("n8n",       `n8n.${domain}`,         `http://${proxyIp}:5678`,  "POWER"),
+    s("MC",        `mc.${domain}`,          `http://${proxyIp}:5012`,  "POWER"),
+    s("Acct",      `accounting.${domain}`,  `http://${proxyIp}:5007`,  "POWER"),
+    s("Retro",     `retro.${domain}`,       `http://${proxyIp}:3050`,  "POWER"),
+    s("Aud",       `aud.${domain}`,         `http://${proxyIp}:3000`,  "POWER"),
+    s("LinuxHelp", `linuxhelp.${domain}`,   `http://${proxyIp}:18088`, "POWER"),
+  ];
+}
+
+/**
+ * Static fallback used when no active environment is loaded from Supabase.
+ * Derives all coordinates from config.json via NPM_IP_SAFE / STACK_IP_SAFE /
+ * DNS_PROVIDER — no private IPs are hardcoded here.
+ * Prefer buildInfraServices(activeEnv) for environment-aware code.
+ */
 export const INFRA_SERVICES: InfraService[] = [
-  // ── INTERNET — DNS + DDNS (outermost routing layer) ───────────────────────
-  //
-  // GoDaddy DNS: resolves npm.unenter.live via DoH — proves the wildcard
-  // CNAME record is active.  If this fails, *.unenter.live is broken.
-  //
-  // ASUS DDNS: resolves unenter.asuscomm.com via DoH — proves the router's
-  // DDNS service is updating the record.  If this fails, the CNAME target
-  // returns NXDOMAIN and the entire domain chain collapses.
-  doh("GoDaddy",   DNS_PROVIDER.domain,        "INTERNET", DNS_PROVIDER.checkDomain),
-  doh("ASUS DDNS", DDNS_PROVIDER.hostname,     "INTERNET", DDNS_PROVIDER.hostname),
-
-  // ── L0VE  192.168.50.75 ──────────────────────────────────────────────────
-  s("NPM",       "npm.unenter.live",        "http://192.168.50.75:81",    "LOVE"),
-  s("Supabase",  "supa.unenter.live",       "http://192.168.50.75:8000",  "LOVE"),
-  s("AI",        "ai.unenter.live",         "http://192.168.50.75:3010",  "LOVE"),
-  s("Mail",      "mail.unenter.live",       "http://192.168.50.75:8082",  "LOVE"),
-  s("Cool",      "cool.unenter.live",       "http://192.168.50.75:9080",  "LOVE"),
-
-  // ── P0W3R  192.168.50.204 ─────────────────────────────────────────────────
-  s("App",       "www.unenter.live",         "http://192.168.50.204:3000", "POWER"),
-  s("DB UI",     "db.unenter.live",         "http://192.168.50.204:8001", "POWER"),
-  s("Portainer", "port.unenter.live",       "http://192.168.50.204:9000", "POWER"),
-  s("n8n",       "n8n.unenter.live",        "http://192.168.50.204:5678", "POWER"),
-  s("MC",        "mc.unenter.live",         "http://192.168.50.204:5012", "POWER"),
-  s("Acct",      "accounting.unenter.live", "http://192.168.50.204:5007", "POWER"),
-  s("Retro",     "retro.unenter.live",      "http://192.168.50.204:3050", "POWER"),
-  s("Aud",       "aud.unenter.live",        "http://192.168.50.204:3000", "POWER"),
-  s("LinuxHelp", "linuxhelp.unenter.live",  "http://192.168.50.204:18088","POWER"),
+  doh("GoDaddy",   DNS_PROVIDER.domain,    "INTERNET", DNS_PROVIDER.checkDomain),
+  doh("ASUS DDNS", DDNS_PROVIDER.hostname, "INTERNET", DDNS_PROVIDER.hostname),
+  s("NPM",       `npm.${DNS_PROVIDER.domain}`,        `http://${NPM_IP_SAFE}:81`,    "LOVE"),
+  s("Supabase",  `supa.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8000`,  "LOVE"),
+  s("AI",        `ai.${DNS_PROVIDER.domain}`,         `http://${NPM_IP_SAFE}:3010`,  "LOVE"),
+  s("Mail",      `mail.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8082`,  "LOVE"),
+  s("Cool",      `cool.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:9080`,  "LOVE"),
+  s("App",       `www.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "POWER"),
+  s("DB UI",     `db.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:8001`, "POWER"),
+  s("Portainer", `port.${DNS_PROVIDER.domain}`,       `http://${STACK_IP_SAFE}:9000`, "POWER"),
+  s("n8n",       `n8n.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:5678`, "POWER"),
+  s("MC",        `mc.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:5012`, "POWER"),
+  s("Acct",      `accounting.${DNS_PROVIDER.domain}`, `http://${STACK_IP_SAFE}:5007`, "POWER"),
+  s("Retro",     `retro.${DNS_PROVIDER.domain}`,      `http://${STACK_IP_SAFE}:3050`, "POWER"),
+  s("Aud",       `aud.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "POWER"),
+  s("LinuxHelp", `linuxhelp.${DNS_PROVIDER.domain}`,  `http://${STACK_IP_SAFE}:18088`, "POWER"),
 ];
 
 // ── DNS (GoDaddy) record reference ───────────────────────────────────────────
@@ -142,26 +182,33 @@ export const DNS_RECORDS: { type: string; name: string; value: string }[] = [
 
 // ── Port Forwards (GT-BE98 Pro) ───────────────────────────────────────────────
 
+// PORT_FORWARDS: reference table for the GT-BE98 Pro router rules.
+// Destinations use NPM_IP_SAFE / STACK_IP_SAFE so no private IPs are
+// hardcoded in the repo.  The school SSH rule's target is a separate
+// device — configure its IP in config.json or leave the placeholder.
+const _L = NPM_IP_SAFE   || "<NPM_HOST_IP>";
+const _P = STACK_IP_SAFE || "<PROXY_HOST_IP>";
+
 export const PORT_FORWARDS: {
   label: string; ports: string; dest: string; proto: string;
 }[] = [
-  { label: "NPM HTTPS",       ports: "443",        dest: "192.168.50.75:443",   proto: "TCP"  },
-  { label: "NPM HTTP",        ports: "80",         dest: "192.168.50.75:80",    proto: "TCP"  },
-  { label: "unenter.live",    ports: "3000",       dest: "192.168.50.204:3000", proto: "TCP"  },
-  { label: "n8n",             ports: "5678",       dest: "192.168.50.204:5678", proto: "BOTH" },
-  { label: "Mission Control", ports: "5012",       dest: "192.168.50.204:5012", proto: "TCP"  },
-  { label: "MC DB",           ports: "8000",       dest: "192.168.50.204:8000", proto: "TCP"  },
-  { label: "DB Studio",       ports: "8081",       dest: "192.168.50.204:8081", proto: "BOTH" },
-  { label: "Portainer",       ports: "9000,9100",  dest: "192.168.50.204",      proto: "TCP"  },
-  { label: "Power SSH",       ports: "2222",       dest: "192.168.50.204:22",   proto: "TCP"  },
-  { label: "Power RDP",       ports: "3390",       dest: "192.168.50.204:3389", proto: "TCP"  },
-  { label: "Love SSH",        ports: "2223",       dest: "192.168.50.75:22",    proto: "TCP"  },
-  { label: "Love RDP",        ports: "3391",       dest: "192.168.50.75:3389",  proto: "TCP"  },
-  { label: "SMTP",            ports: "25 / 587",   dest: "192.168.50.75",       proto: "TCP"  },
-  { label: "IMAPS / Sieve",   ports: "993 / 4190", dest: "192.168.50.75",       proto: "TCP"  },
-  { label: "Cool",            ports: "8002",       dest: "192.168.50.75:8002",  proto: "BOTH" },
-  { label: "FTP",             ports: "20 / 21",    dest: "192.168.50.204:21",   proto: "TCP"  },
-  { label: "ssh-school",      ports: "18088",      dest: "192.168.50.48:8080",  proto: "TCP"  },
+  { label: "NPM HTTPS",       ports: "443",        dest: `${_L}:443`,    proto: "TCP"  },
+  { label: "NPM HTTP",        ports: "80",         dest: `${_L}:80`,     proto: "TCP"  },
+  { label: `${DNS_PROVIDER.domain}`, ports: "3000", dest: `${_P}:3000`,  proto: "TCP"  },
+  { label: "n8n",             ports: "5678",       dest: `${_P}:5678`,   proto: "BOTH" },
+  { label: "Mission Control", ports: "5012",       dest: `${_P}:5012`,   proto: "TCP"  },
+  { label: "MC DB",           ports: "8000",       dest: `${_P}:8000`,   proto: "TCP"  },
+  { label: "DB Studio",       ports: "8081",       dest: `${_P}:8081`,   proto: "BOTH" },
+  { label: "Portainer",       ports: "9000,9100",  dest: _P,             proto: "TCP"  },
+  { label: "Power SSH",       ports: "2222",       dest: `${_P}:22`,     proto: "TCP"  },
+  { label: "Power RDP",       ports: "3390",       dest: `${_P}:3389`,   proto: "TCP"  },
+  { label: "Love SSH",        ports: "2223",       dest: `${_L}:22`,     proto: "TCP"  },
+  { label: "Love RDP",        ports: "3391",       dest: `${_L}:3389`,   proto: "TCP"  },
+  { label: "SMTP",            ports: "25 / 587",   dest: _L,             proto: "TCP"  },
+  { label: "IMAPS / Sieve",   ports: "993 / 4190", dest: _L,             proto: "TCP"  },
+  { label: "Cool",            ports: "8002",       dest: `${_L}:8002`,   proto: "BOTH" },
+  { label: "FTP",             ports: "20 / 21",    dest: `${_P}:21`,     proto: "TCP"  },
+  { label: "ssh-school",      ports: "18088",      dest: "<SSH_SCHOOL_IP>:8080", proto: "TCP" },
 ];
 
 // ── Live reachability checks ──────────────────────────────────────────────────

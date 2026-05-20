@@ -1,9 +1,3 @@
-// src/ink/components/design-system/MetricCard.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// High-density status card for dashboard metrics.
-// Displays label, value, trend sparkline, and footer note.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React from 'react';
 import { Box } from 'ink';
 import ThemedBox from './ThemedBox.js';
@@ -13,17 +7,23 @@ import type { Theme } from '../../utils/theme.js';
 export interface MetricCardProps {
   label: string;
   value: string;
-  note:  string;
-  /** Theme key for the label and trend highlights */
+  note: string;
+  /**
+   * Theme key for the label and trend highlights.
+   */
   tone?: keyof Theme;
-  /** Optional unicode trend graph (e.g. from sparkline()) */
+  /**
+   * Optional unicode trend graph, for example from sparkline().
+   */
   trend?: string;
-  /** Minimum width in characters */
+  /**
+   * Minimum width in terminal cells.
+   */
   minWidth?: number;
 }
 
 /**
- * MetricCard component for displaying key-value data with visual context.
+ * High-density status card for Unaxis dashboard metrics.
  */
 export function MetricCard({
   label,
@@ -32,7 +32,7 @@ export function MetricCard({
   tone = 'suggestion',
   trend,
   minWidth = 22,
-}: MetricCardProps) {
+}: MetricCardProps): React.ReactNode {
   return (
     <ThemedBox
       borderStyle="single"

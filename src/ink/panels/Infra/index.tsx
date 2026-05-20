@@ -2,28 +2,36 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Infrastructure panel — three sub-views toggled with [1] [2] [3].
 //
-//   [1] Hosts    — live reachability of all INFRA_SERVICES
+//   [1] Hosts    — live reachability of all services for the active environment
 //   [2] DNS      — GoDaddy DNS record reference for unenter.live
 //   [3] Ports    — GT-BE98 Pro router port-forward reference
 //
-// All keyboard handling and sub-view/cursor state live here.
-// App.tsx only passes the async check results + the checkInfra callback.
+// The service list in [1] is built from the activeEnv prop, so the displayed
+// hostnames always match what was actually checked.  When activeEnv is null
+// the panel falls back to the static INFRA_SERVICES list and says so.
 //
-//   [↑↓/jk]   navigate hosts (HostsView)
+// App.tsx owns the active environment state (via useEnvManager) and passes it
+// here.  This panel never fetches the active environment itself.
+//
+//   [↑↓/jk]   navigate hosts
 //   [r]        re-check focused service
 //   [R]        re-check all services
 //   [1/2/3]    switch sub-view
+//   [q/←]     go back
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from "react";
 import { Box, Text, useInput }                from "ink";
 import {
-  INFRA_SERVICES, DNS_RECORDS, PORT_FORWARDS, MACHINES,
+  INFRA_SERVICES, buildInfraServices, DNS_RECORDS, PORT_FORWARDS, MACHINES,
   type ServiceResult,
-} from "../../infra.ts";
+}                        from "../../infra.ts";
+import type { InfraSource } from "../../../ink/hooks/useEnvManager.ts";
+import type { UnaxisEnvironment } from "../../environment-store.ts";
+import { environmentTypeColor }   from "../../environment-store.ts";
 import { KeyHints }     from "../../components/KeyHint.tsx";
 import { Pane }         from "../../components/Pane.tsx";
-import { LoadingState } from "../../components/design-system/LoadingState.tsx";
+import { LoadingState } from "../../components/design-system/index.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,6 +40,13 @@ export type InfraView = "hosts" | "dns" | "ports";
 type InfraMap = Record<number, ServiceResult>;
 
 interface InfraPanelProps {
+  /** Pre-resolved active environment from useEnvManager.  Never null-fetch here. */
+  activeEnv:    UnaxisEnvironment | null;
+  infraSource:  InfraSource | null;
+  /** True when activeEnv data is stale (Supabase unreachable or > 2× TTL). */
+  envStale?:    boolean;
+  /** ms since last successful env fetch (Infinity = never). */
+  envDataAge?:  number;
   results:      InfraMap;
   checking:     boolean;
   onCheckInfra: (indices?: number[]) => void;
@@ -73,13 +88,65 @@ const HOSTS_HINTS = [
   { k: "R",     label: "check all"      },
 ];
 
-function HostsView({ results, selected, checking }: {
-  results: InfraMap; selected: number; checking: boolean;
+function ageLabel(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 90)  return `${secs}s old`;
+  const mins = Math.floor(secs / 60);
+  return `${mins}m old`;
+}
+
+function HostsView({
+  results, selected, checking, activeEnv, infraSource, envStale, envDataAge,
+}: {
+  results:     InfraMap;
+  selected:    number;
+  checking:    boolean;
+  activeEnv:   UnaxisEnvironment | null;
+  infraSource: InfraSource | null;
+  envStale?:   boolean;
+  envDataAge?: number;
 }) {
-  const machines = Array.from(new Set(INFRA_SERVICES.map((s) => s.machine)));
+  // Build the service list from the active environment — same list that was
+  // actually checked.  If no env, fall back to the static defaults.
+  const services = activeEnv ? buildInfraServices(activeEnv) : INFRA_SERVICES;
+  const machines = Array.from(new Set(services.map((s) => s.machine)));
 
   return (
     <Box flexDirection="column">
+
+      {/* ── Source label — always explicit, never silent ─────────────────── */}
+      <Box paddingX={1} marginBottom={1} gap={2}>
+        {infraSource?.kind === "env" && (
+          <>
+            <Text dimColor>Checking:</Text>
+            <Text bold color={environmentTypeColor(infraSource.type as any) as any}>
+              {infraSource.name}
+            </Text>
+            <Text dimColor>[{infraSource.type}]</Text>
+            {envStale && (
+              <>
+                <Text color="yellow">⚠</Text>
+                <Text color="yellow" dimColor>
+                  {envDataAge !== undefined && envDataAge !== Infinity
+                    ? `env data ${ageLabel(envDataAge)} — service list may be stale`
+                    : "env data stale — service list may be wrong"}
+                </Text>
+              </>
+            )}
+          </>
+        )}
+        {infraSource?.kind === "fallback" && (
+          <>
+            <Text dimColor>Checking:</Text>
+            <Text color="yellow">fallback config</Text>
+            <Text dimColor>— {infraSource.reason}</Text>
+          </>
+        )}
+        {!infraSource && (
+          <Text dimColor>Checking: — (press R to run checks)</Text>
+        )}
+      </Box>
+
       {checking && (
         <Box paddingX={1} marginBottom={1}>
           <LoadingState message="checking services…" />
@@ -88,14 +155,14 @@ function HostsView({ results, selected, checking }: {
 
       {machines.map((machine) => {
         const mInfo    = MACHINES[machine];
-        const services = INFRA_SERVICES.filter((s) => s.machine === machine);
+        const svcs     = services.filter((s) => s.machine === machine);
         const title    = [mInfo?.label ?? machine, mInfo?.ip, mInfo?.role]
           .filter(Boolean).join("  ·  ");
 
         return (
           <Pane key={machine} title={title} color="cyan" gap={1}>
-            {services.map((svc) => {
-              const idx     = INFRA_SERVICES.indexOf(svc);
+            {svcs.map((svc) => {
+              const idx     = services.indexOf(svc);
               const focused = idx === selected;
               const r       = results[idx];
               return (
@@ -167,10 +234,15 @@ function PortsView() {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function InfraPanel({ results, checking, onCheckInfra, onGoBack }: InfraPanelProps) {
+export function InfraPanel({
+  activeEnv, infraSource, envStale, envDataAge,
+  results, checking, onCheckInfra, onGoBack,
+}: InfraPanelProps) {
 
   const [view,     setView]     = useState<InfraView>("hosts");
   const [selected, setSelected] = useState(0);
+
+  const services = activeEnv ? buildInfraServices(activeEnv) : INFRA_SERVICES;
 
   // Run an initial check the first time this panel mounts.
   const didInit = useRef(false);
@@ -184,23 +256,20 @@ export function InfraPanel({ results, checking, onCheckInfra, onGoBack }: InfraP
 
   // ── Keyboard ────────────────────────────────────────────────────────────────
   useInput((input, key) => {
-    // Back navigation — owned here so root App.tsx never hijacks a sub-menu q
     if (input === "q" || key.leftArrow) { onGoBack(); return; }
 
-    // Sub-view switcher
     if (input === "1") { setView("hosts");  return; }
     if (input === "2") { setView("dns");    return; }
     if (input === "3") { setView("ports");  return; }
     if (input === "R") { onCheckInfra();    return; }
 
-    // Cursor navigation + single-service re-check (hosts only)
     if (view === "hosts") {
       if (key.upArrow   || input === "k") {
         setSelected((s) => Math.max(0, s - 1));
         return;
       }
       if (key.downArrow || input === "j") {
-        setSelected((s) => Math.min(INFRA_SERVICES.length - 1, s + 1));
+        setSelected((s) => Math.min(services.length - 1, s + 1));
         return;
       }
       if (input === "r") {
@@ -229,7 +298,15 @@ export function InfraPanel({ results, checking, onCheckInfra, onGoBack }: InfraP
 
       {/* ── Active sub-view ──────────────────────────────────────────────── */}
       {view === "hosts" && (
-        <HostsView results={results} selected={selected} checking={checking} />
+        <HostsView
+          results={results}
+          selected={selected}
+          checking={checking}
+          activeEnv={activeEnv}
+          infraSource={infraSource}
+          envStale={envStale}
+          envDataAge={envDataAge}
+        />
       )}
       {view === "dns"   && <DnsView />}
       {view === "ports" && <PortsView />}

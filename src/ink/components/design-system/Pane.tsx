@@ -3,25 +3,39 @@ import { Box } from 'ink';
 import type { Theme } from '../../utils/theme.js';
 import { Divider } from './Divider.js';
 
-type PaneProps = {
+export type PaneProps = {
   children: React.ReactNode;
   /**
    * Theme color for the top border line.
    */
   color?: keyof Theme;
+  /**
+   * Optional label centered in the divider.
+   */
+  title?: string;
+  /**
+   * Optional fixed divider width.
+   */
+  width?: number;
+  /**
+   * Gap between the divider and body content.
+   */
+  gap?: number;
 };
 
 /**
- * A pane — a region of the terminal that appears below the REPL prompt,
- * bounded by a colored top line with a one-row gap above and horizontal
- * padding.
+ * A control-plane pane bounded by a divider and grouped body content.
  */
-export function Pane({ children, color }: PaneProps): React.ReactNode {
-  // Simplified Pane without modal detection for now as it's a standalone engine.
-  // If modal context is added later, this can be restored.
+export function Pane({
+  children,
+  color,
+  title,
+  width,
+  gap = 0,
+}: PaneProps): React.ReactNode {
   return (
-    <Box flexDirection="column" paddingTop={1}>
-      <Divider color={color} />
+    <Box flexDirection="column" paddingTop={1} gap={gap}>
+      <Divider color={color} title={title} width={width} />
       <Box flexDirection="column" paddingX={2}>
         {children}
       </Box>

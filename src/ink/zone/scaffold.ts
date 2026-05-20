@@ -17,7 +17,7 @@ import { join }                from "path";
 import { existsSync }          from "fs";
 import { mkdir }               from "fs/promises";
 
-import { PROJECT_DIR }         from "../../config/stack.ts";
+import { PROJECT_DIR, ARTIFACT_STORE_DIR } from "../../config/stack.ts";
 import { pathExists, writeFileAtomic } from "../../utils/zoneScaffolding.ts";
 import {
   genDockerfile, genPackageJson, genPageTsx,
@@ -140,12 +140,16 @@ export async function scaffoldZone(
   // ── Patch routeClassifier.ts ─────────────────────────────────────────────
   await patchRouteClassifier(z, onLine);
 
-  // ── Write per-zone docker-compose.yml ────────────────────────────────────
-  await writeFileAtomic(
-    join(PROJECT_DIR, "zones", z.key, "docker-compose.yml"),
-    genZoneCompose(z),
-  );
-  onLine(`✓ Created zones/${z.key}/docker-compose.yml`);
+  // ── Write managed compose artifact ───────────────────────────────────────
+  // The compose file is a managed artifact — it lives outside the repo in the
+  // UNAXIS artifact store, not in the source tree.  This mirrors Portainer's
+  // /data/compose/{stack_id}/ pattern: the control plane owns compose state,
+  // the Git checkout stays clean.
+  const artifactDir  = join(ARTIFACT_STORE_DIR, z.key);
+  const artifactPath = join(artifactDir, "docker-compose.yml");
+  await mkdir(artifactDir, { recursive: true });
+  await writeFileAtomic(artifactPath, genZoneCompose(z));
+  onLine(`✓ Created artifact store: stacks/${z.key}/docker-compose.yml`);
 
   // ── Register route in proxy-config/routes.json ───────────────────────────
   // Proxy hot-reloads the file via fs.watch — no container restart needed.

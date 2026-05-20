@@ -1,24 +1,24 @@
 import React from 'react';
 import { Text } from 'ink';
 
-type Props = {
+export type ProgressBarProps = {
   /**
-   * How much progress to display, between 0 and 1 inclusive
+   * How much progress to display, between 0 and 1 inclusive.
    */
-  ratio: number; // [0, 1]
+  ratio: number;
 
   /**
-   * How many characters wide to draw the progress bar
+   * How many characters wide to draw the progress bar.
    */
-  width: number; // how many characters wide
+  width: number;
 
   /**
-   * Optional color for the filled portion of the bar
+   * Optional color for the filled portion of the bar.
    */
   fillColor?: string;
 
   /**
-   * Optional color for the empty portion of the bar
+   * Optional color for the empty portion of the bar.
    */
   emptyColor?: string;
 };
@@ -30,7 +30,7 @@ export function ProgressBar({
   width,
   fillColor,
   emptyColor,
-}: Props): React.ReactNode {
+}: ProgressBarProps): React.ReactNode {
   const ratio = Math.min(1, Math.max(0, inputRatio));
   const whole = Math.floor(ratio * width);
 

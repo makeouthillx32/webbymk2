@@ -30,97 +30,97 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput }                      from "ink";
-import { openBrowser }                              from "@/utils/browser.ts";
+import { Box, Text, useInput } from "ink";
+import { openBrowser } from "@/utils/browser.ts";
 import {
   KONG_URL, STUDIO_PROJECT_URL, ANON_KEY, SERVICE_KEY,
   postgresConnStr, instanceStudioUrl, instanceStudioMcpUrl,
   buildConnectionSheet, buildMcpConfig,
-}                                                   from "../../db-api.ts";
-import { loadRegistry }                             from "../../zone/supabase-factory.ts";
-import type { RuntimeInstance, HealthState }        from "../../zone/supabase-factory.ts";
-import { PROJECT_DIR }                              from "../../../config/stack.ts";
-import type { SnapshotBundle }                      from "../../zone/snapshot.ts";
-import { KeyHints }                                 from "../../components/KeyHint.tsx";
-import { Tabs }                                     from "../../components/Tabs.tsx";
-import { Divider }                                  from "../../components/Divider.tsx";
-import { SelectMenu, type SelectOption }            from "../../components/SelectMenu.tsx";
-import { SnapshotGalleryScreen }                    from "../../screens/SnapshotGalleryScreen.tsx";
-import { useHostMonitor }                           from "../../hooks/useHostMonitor.ts";
-import { sparkline }                                from "../../utils/sparkline.ts";
-import { MetricCard }                               from "../../components/design-system/MetricCard.tsx";
-import type { HostSnapshot }                        from "../../hooks/useHostMonitor.ts";
+} from "../../db-api.ts";
+import { loadRegistry } from "../../zone/supabase-factory.ts";
+import type { RuntimeInstance, HealthState } from "../../zone/supabase-factory.ts";
+import { PROJECT_DIR } from "../../../config/stack.ts";
+import type { SnapshotBundle } from "../../zone/snapshot.ts";
+import { KeyHints } from "../../components/KeyHint.tsx";
+import { Tabs } from "../../components/Tabs.tsx";
+import { Divider } from "../../components/Divider.tsx";
+import { SelectMenu, type SelectOption } from "../../components/SelectMenu.tsx";
+import { SnapshotGalleryScreen } from "../../../screens/SnapshotGalleryScreen.js";
+import { useHostMonitor } from "../../hooks/useHostMonitor.ts";
+import { sparkline } from "../../utils/sparkline.ts";
+import { MetricCard } from "../../components/design-system/index.ts";
+import type { HostSnapshot } from "../../hooks/useHostMonitor.ts";
 
 // ── Core service manifest ──────────────────────────────────────────────────────
 // Ordered: primary services first, infrastructure support last.
 
 const CORE_SERVICES = [
-  { label: "Postgres",  container: "unt_db",       desc: "primary database (pg 15)"  },
-  { label: "Kong",      container: "unt_kong",      desc: "API gateway  :8001"        },
-  { label: "Auth",      container: "unt_auth",      desc: "GoTrue authentication"     },
-  { label: "Storage",   container: "unt_storage",   desc: "object / file storage"     },
-  { label: "Realtime",  container: "unt_realtime",  desc: "WebSocket broadcast"       },
-  { label: "Studio",    container: "unt_studio",    desc: "dashboard  :3002"          },
-  { label: "PostgREST", container: "unt_rest",      desc: "auto REST API"             },
-  { label: "Meta",      container: "unt_meta",      desc: "postgres-meta"             },
-  { label: "Imgproxy",  container: "unt_imgproxy",  desc: "image processing"          },
+  { label: "Postgres", container: "unt_db", desc: "primary database (pg 15)" },
+  { label: "Kong", container: "unt_kong", desc: "API gateway  :8001" },
+  { label: "Auth", container: "unt_auth", desc: "GoTrue authentication" },
+  { label: "Storage", container: "unt_storage", desc: "object / file storage" },
+  { label: "Realtime", container: "unt_realtime", desc: "WebSocket broadcast" },
+  { label: "Studio", container: "unt_studio", desc: "dashboard  :3002" },
+  { label: "PostgREST", container: "unt_rest", desc: "auto REST API" },
+  { label: "Meta", container: "unt_meta", desc: "postgres-meta" },
+  { label: "Imgproxy", container: "unt_imgproxy", desc: "image processing" },
 ] as const;
 
 const CORE_OPTIONS: SelectOption[] = CORE_SERVICES.map((s) => ({
-  id:    s.container,
+  id: s.container,
   label: s.label,
-  desc:  s.desc,
+  desc: s.desc,
 }));
 
 // ── Virtual RuntimeInstance for core (not in instances.json) ──────────────────
 
 const CORE_INSTANCE: RuntimeInstance = {
-  id:            "core",
-  name:          "Core Supabase",
-  slug:          "core",
-  status:        "active",
-  createdAt:     "",
-  runtimePath:   PROJECT_DIR,
-  dockerPath:    PROJECT_DIR,
+  id: "core",
+  name: "Core Supabase",
+  slug: "core",
+  status: "active",
+  createdAt: "",
+  runtimePath: PROJECT_DIR,
+  dockerPath: PROJECT_DIR,
   ports: {
-    kong:      8001,
-    kongSSL:   8443,
-    postgres:  5432,
-    pooler:    0,
+    kong: 8001,
+    kongSSL: 8443,
+    postgres: 5432,
+    pooler: 0,
     analytics: 0,
-    studio:    3002,
+    studio: 3002,
   },
   secrets: {
-    postgresPassword:  "",
-    jwtSecret:         "",
-    anonKey:           ANON_KEY,
-    serviceRoleKey:    SERVICE_KEY,
+    postgresPassword: "",
+    jwtSecret: "",
+    anonKey: ANON_KEY,
+    serviceRoleKey: SERVICE_KEY,
     dashboardPassword: "",
   },
-  studioUrl:     STUDIO_PROJECT_URL,
-  healthState:   "unknown",
+  studioUrl: STUDIO_PROJECT_URL,
+  healthState: "unknown",
   snapshotState: "none",
 };
 
 // ── Prop types ────────────────────────────────────────────────────────────────
 
 export interface DbPanelProps {
-  onLogs:           (container: string) => void;
-  onBackup:         () => void;
-  onCopy:           (text: string) => void;
-  onStart:          () => void;
-  onStop:           () => void;
-  onRestart:        () => void;
-  onHeal:           () => void;
-  onVerify:         () => void;
-  onNewInstance:    () => void;
-  onRestore:        (bundle: SnapshotBundle, instance: RuntimeInstance) => void;
+  onLogs: (container: string) => void;
+  onBackup: () => void;
+  onCopy: (text: string) => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onHeal: () => void;
+  onVerify: () => void;
+  onNewInstance: () => void;
+  onRestore: (bundle: SnapshotBundle, instance: RuntimeInstance) => void;
   onInstanceAction: (
-    action:   "restart" | "stop" | "delete" | "snapshot" | "verify",
+    action: "restart" | "stop" | "delete" | "snapshot" | "verify",
     instance: RuntimeInstance,
   ) => void;
-  onGoBack:         () => void;
-  onSubCrumbs:      (crumbs: string[]) => void;
+  onGoBack: () => void;
+  onSubCrumbs: (crumbs: string[]) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -132,30 +132,30 @@ function truncKey(key: string, n = 42): string {
 
 function healthColor(h: HealthState): string {
   switch (h) {
-    case "healthy":  return "green";
+    case "healthy": return "green";
     case "degraded": return "yellow";
-    case "down":     return "red";
-    default:         return "gray";
+    case "down": return "red";
+    default: return "gray";
   }
 }
 
 function statusColor(s: RuntimeInstance["status"]): string {
   switch (s) {
-    case "active":   return "green";
+    case "active": return "green";
     case "creating": return "yellow";
-    case "stopped":  return "gray";
-    case "paused":   return "cyan";
-    case "error":    return "red";
+    case "stopped": return "gray";
+    case "paused": return "cyan";
+    case "error": return "red";
   }
 }
 
 function statusDot(s: RuntimeInstance["status"]): string {
   switch (s) {
-    case "active":   return "●";
+    case "active": return "●";
     case "creating": return "◌";
-    case "stopped":  return "○";
-    case "paused":   return "◎";
-    case "error":    return "✗";
+    case "stopped": return "○";
+    case "paused": return "◎";
+    case "error": return "✗";
   }
 }
 
@@ -197,14 +197,14 @@ function ActionGroup({ label, hints }: ActionGroupProps) {
 // Compact per-instance connection + metadata pane shown below the list.
 
 interface InstanceDetailProps {
-  inst:    RuntimeInstance;
+  inst: RuntimeInstance;
   didCopy: boolean;
 }
 
 function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
   const studioUrl = instanceStudioUrl(inst.ports.studio);
-  const apiUrl    = `http://localhost:${inst.ports.kong}`;
-  const pgConn    = postgresConnStr(inst.secrets.postgresPassword);
+  const apiUrl = `http://localhost:${inst.ports.kong}`;
+  const pgConn = postgresConnStr(inst.secrets.postgresPassword);
 
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
@@ -255,9 +255,9 @@ function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
         {didCopy
           ? <Text color="green">✓ copied to clipboard</Text>
           : <>
-              <Text dimColor>[c] copy connection sheet</Text>
-              <Text dimColor>[m] copy MCP config</Text>
-            </>
+            <Text dimColor>[c] copy connection sheet</Text>
+            <Text dimColor>[m] copy MCP config</Text>
+          </>
         }
       </Box>
 
@@ -269,22 +269,22 @@ function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
 
 const CORE_KEY_HINTS = [
   { k: "↑↓", label: "services" },
-  { k: "↵",  label: "logs"     },
-  { k: "2",  label: "→ instances" },
+  { k: "↵", label: "logs" },
+  { k: "2", label: "→ instances" },
 ];
 
 interface CoreSectionProps {
-  onLogs:        (container: string) => void;
-  onStart:       () => void;
-  onStop:        () => void;
-  onRestart:     () => void;
-  onHeal:        () => void;
-  onBackup:      () => void;
-  onVerify:      () => void;
-  onCopy:        (text: string) => void;
+  onLogs: (container: string) => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onHeal: () => void;
+  onBackup: () => void;
+  onVerify: () => void;
+  onCopy: (text: string) => void;
   onOpenGallery: () => void;
   onNewInstance: () => void;
-  hostSnapshot:  HostSnapshot;
+  hostSnapshot: HostSnapshot;
 }
 
 function CoreSection({
@@ -305,16 +305,16 @@ function CoreSection({
 
   useInput((input) => {
     if (input === "u") { void openBrowser(STUDIO_PROJECT_URL); return; }
-    if (input === "s") { onStart();                            return; }
-    if (input === "x") { onStop();                             return; }
-    if (input === "r") { onRestart();                          return; }
-    if (input === "h") { onHeal();                             return; }
-    if (input === "b") { onBackup();                           return; }
-    if (input === "v") { onVerify();                           return; }
-    if (input === "g") { onOpenGallery();                      return; }
-    if (input === "c") { doCopy(buildConnectionSheet());       return; }
-    if (input === "m") { doCopy(buildMcpConfig());             return; }
-    if (input === "n") { onNewInstance();                      return; }
+    if (input === "s") { onStart(); return; }
+    if (input === "x") { onStop(); return; }
+    if (input === "r") { onRestart(); return; }
+    if (input === "h") { onHeal(); return; }
+    if (input === "b") { onBackup(); return; }
+    if (input === "v") { onVerify(); return; }
+    if (input === "g") { onOpenGallery(); return; }
+    if (input === "c") { doCopy(buildConnectionSheet()); return; }
+    if (input === "m") { doCopy(buildMcpConfig()); return; }
+    if (input === "n") { onNewInstance(); return; }
   });
 
   return (
@@ -367,24 +367,24 @@ function CoreSection({
       {/* ── Action groups ─────────────────────────────────────────────────── */}
       <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
         <ActionGroup label="Operate" hints={[
-          { k: "s", label: "start"   },
-          { k: "x", label: "stop"    },
+          { k: "s", label: "start" },
+          { k: "x", label: "stop" },
           { k: "r", label: "restart" },
-          { k: "h", label: "heal"    },
-          { k: "v", label: "verify"  },
+          { k: "h", label: "heal" },
+          { k: "v", label: "verify" },
         ]} />
         <ActionGroup label="Protect" hints={[
-          { k: "b", label: "backup"  },
+          { k: "b", label: "backup" },
           { k: "g", label: "gallery" },
         ]} />
         <ActionGroup label="Connect" hints={[
-          { k: "u", label: "Studio"           },
+          { k: "u", label: "Studio" },
           { k: "c", label: "copy conn. sheet" },
-          { k: "m", label: "copy MCP config"  },
+          { k: "m", label: "copy MCP config" },
         ]} />
         <ActionGroup label="Branch" hints={[
           { k: "n", label: "new runtime instance" },
-          { k: "2", label: "→ Runtime Instances"  },
+          { k: "2", label: "→ Runtime Instances" },
         ]} />
       </Box>
 
@@ -416,9 +416,9 @@ function CoreSection({
         {didCopy
           ? <Text color="green">✓ copied to clipboard</Text>
           : <>
-              <Text dimColor>[c] copy connection sheet</Text>
-              <Text dimColor>[m] copy MCP config</Text>
-            </>
+            <Text dimColor>[c] copy connection sheet</Text>
+            <Text dimColor>[m] copy MCP config</Text>
+          </>
         }
       </Box>
 
@@ -431,27 +431,27 @@ function CoreSection({
 // ── Section 2 — Runtime Instances ─────────────────────────────────────────────
 
 const INSTANCE_KEY_HINTS = [
-  { k: "↑↓", label: "navigate"     },
-  { k: "u",  label: "open Studio"  },
-  { k: "r",  label: "restart"      },
-  { k: "x",  label: "stop"         },
-  { k: "d",  label: "delete"       },
-  { k: "s",  label: "snapshot"     },
-  { k: "g",  label: "gallery"      },
-  { k: "v",  label: "verify"       },
-  { k: "c",  label: "copy conn."   },
-  { k: "m",  label: "copy MCP"     },
-  { k: "n",  label: "new instance" },
-  { k: "1",  label: "→ Core"       },
+  { k: "↑↓", label: "navigate" },
+  { k: "u", label: "open Studio" },
+  { k: "r", label: "restart" },
+  { k: "x", label: "stop" },
+  { k: "d", label: "delete" },
+  { k: "s", label: "snapshot" },
+  { k: "g", label: "gallery" },
+  { k: "v", label: "verify" },
+  { k: "c", label: "copy conn." },
+  { k: "m", label: "copy MCP" },
+  { k: "n", label: "new instance" },
+  { k: "1", label: "→ Core" },
 ];
 
 interface InstancesSectionProps {
-  instances:        RuntimeInstance[];
+  instances: RuntimeInstance[];
   onInstanceAction: DbPanelProps["onInstanceAction"];
-  onNewInstance:    () => void;
-  onOpenGallery:    (inst: RuntimeInstance) => void;
-  onCopy:           (text: string) => void;
-  onRefresh:        () => void;
+  onNewInstance: () => void;
+  onOpenGallery: (inst: RuntimeInstance) => void;
+  onCopy: (text: string) => void;
+  onRefresh: () => void;
 }
 
 function InstancesSection({
@@ -478,9 +478,9 @@ function InstancesSection({
       ? new Date(inst.createdAt).toLocaleDateString()
       : "—";
     return {
-      id:    inst.id,
+      id: inst.id,
       label: inst.name,
-      desc:  `${statusDot(inst.status)} ${inst.status.padEnd(8)}  ports Kong:${inst.ports.kong} Studio:${inst.ports.studio}  created ${age}`,
+      desc: `${statusDot(inst.status)} ${inst.status.padEnd(8)}  ports Kong:${inst.ports.kong} Studio:${inst.ports.studio}  created ${age}`,
     };
   });
 
@@ -499,32 +499,32 @@ function InstancesSection({
     }
     if (input === "c") {
       doCopy(buildConnectionSheet({
-        label:        highlighted.name,
-        kongUrl:      `http://localhost:${highlighted.ports.kong}`,
-        studioUrl:    instanceStudioUrl(highlighted.ports.studio),
+        label: highlighted.name,
+        kongUrl: `http://localhost:${highlighted.ports.kong}`,
+        studioUrl: instanceStudioUrl(highlighted.ports.studio),
         studioMcpUrl: instanceStudioMcpUrl(highlighted.ports.studio),
-        anonKey:      highlighted.secrets.anonKey,
-        svcKey:       highlighted.secrets.serviceRoleKey,
-        pgConn:       postgresConnStr(highlighted.secrets.postgresPassword),
+        anonKey: highlighted.secrets.anonKey,
+        svcKey: highlighted.secrets.serviceRoleKey,
+        pgConn: postgresConnStr(highlighted.secrets.postgresPassword),
       }));
       return;
     }
     if (input === "m") {
       doCopy(buildMcpConfig({
         kongUrl: `http://localhost:${highlighted.ports.kong}`,
-        svcKey:  highlighted.secrets.serviceRoleKey,
-        pgConn:  postgresConnStr(highlighted.secrets.postgresPassword),
+        svcKey: highlighted.secrets.serviceRoleKey,
+        pgConn: postgresConnStr(highlighted.secrets.postgresPassword),
       }));
       return;
     }
-    if (input === "r") { onInstanceAction("restart",  highlighted); return; }
-    if (input === "x") { onInstanceAction("stop",     highlighted); return; }
-    if (input === "d") { onInstanceAction("delete",   highlighted); return; }
+    if (input === "r") { onInstanceAction("restart", highlighted); return; }
+    if (input === "x") { onInstanceAction("stop", highlighted); return; }
+    if (input === "d") { onInstanceAction("delete", highlighted); return; }
     if (input === "s") { onInstanceAction("snapshot", highlighted); return; }
-    if (input === "v") { onInstanceAction("verify",   highlighted); return; }
-    if (input === "g") { onOpenGallery(highlighted);                return; }
-    if (input === "n") { onNewInstance();                           return; }
-    if (input === "f") { onRefresh();                               return; }
+    if (input === "v") { onInstanceAction("verify", highlighted); return; }
+    if (input === "g") { onOpenGallery(highlighted); return; }
+    if (input === "n") { onNewInstance(); return; }
+    if (input === "f") { onRefresh(); return; }
   });
 
   return (
@@ -580,19 +580,19 @@ function InstancesSection({
           {/* ── Instance action groups ───────────────────────────────────────── */}
           <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
             <ActionGroup label="Operate" hints={[
-              { k: "r", label: "restart"  },
-              { k: "x", label: "stop"     },
-              { k: "v", label: "verify"   },
-              { k: "d", label: "delete"   },
+              { k: "r", label: "restart" },
+              { k: "x", label: "stop" },
+              { k: "v", label: "verify" },
+              { k: "d", label: "delete" },
             ]} />
             <ActionGroup label="Protect" hints={[
               { k: "s", label: "snapshot" },
-              { k: "g", label: "gallery"  },
+              { k: "g", label: "gallery" },
             ]} />
             <ActionGroup label="Connect" hints={[
-              { k: "u", label: "open Studio"       },
-              { k: "c", label: "copy conn. sheet"  },
-              { k: "m", label: "copy MCP config"   },
+              { k: "u", label: "open Studio" },
+              { k: "c", label: "copy conn. sheet" },
+              { k: "m", label: "copy MCP config" },
             ]} />
             <ActionGroup label="New" hints={[
               { k: "n", label: "new runtime instance" },
@@ -614,8 +614,8 @@ export function DbPanel({
   onNewInstance, onRestore, onInstanceAction, onGoBack, onSubCrumbs,
 }: DbPanelProps) {
 
-  const [section,         setSection]         = useState<"core" | "instances">("core");
-  const [instances,       setInstances]       = useState<RuntimeInstance[]>([]);
+  const [section, setSection] = useState<"core" | "instances">("core");
+  const [instances, setInstances] = useState<RuntimeInstance[]>([]);
   const [galleryInstance, setGalleryInstance] = useState<RuntimeInstance | null>(null);
 
   const hostSnapshot = useHostMonitor();
@@ -644,15 +644,15 @@ export function DbPanel({
     } else {
       onSubCrumbs([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryInstance, section]);
 
   // Section switch + back nav (gallery owns its own keyboard)
   useInput((input, key) => {
     if (galleryInstance !== null) return;
-    if (input === "1")                  { setSection("core");      return; }
-    if (input === "2")                  { setSection("instances"); return; }
-    if (input === "q" || key.leftArrow) { onGoBack();              return; }
+    if (input === "1") { setSection("core"); return; }
+    if (input === "2") { setSection("instances"); return; }
+    if (input === "q" || key.leftArrow) { onGoBack(); return; }
   });
 
   // ── Gallery overlay ────────────────────────────────────────────────────────

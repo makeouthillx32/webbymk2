@@ -1,14 +1,22 @@
 // src/config/stack.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Infrastructure topology — reads sensitive values from the local config file:
+// OWNERSHIP: bootstrap / fallback config only.
 //
-//   %APPDATA%\unenter\config.json     (Windows — primary)
-//   ~/.unenter/config.json            (macOS / Linux fallback)
+//   ✓  Static infrastructure constants read from config.json at startup
+//   ✓  Synchronous access — safe to call at module init time
+//   ✓  Fallback when Supabase is unreachable or environments table is empty
+//   ✗  Active environment resolution — that is environment-store.ts
+//   ✗  Per-environment coordinates — that is UnaxisEnvironment from Supabase
+//   ✗  Secret handling — that is vault.secrets via environment-store.ts
 //
-// To create the config file, run once from the project root:
-//   .\src\ink\setup.ps1
+// Rule: callers that need the LIVE infrastructure coordinates must get an
+// UnaxisEnvironment record from environment-store.ts and read from it directly.
+// They must NOT call this file for async resolution — this file is synchronous
+// by design.
 //
-// No IPs, passwords, or emails are stored in this source file.
+// Config file locations (read once at startup, never written):
+//   %APPDATA%\unenter\config.json  (Windows — primary)
+//   ~/.unenter/config.json         (macOS / Linux)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { resolve, join } from "path";
@@ -59,9 +67,7 @@ interface LocalConfig {
 }
 
 function loadLocalConfig(): LocalConfig | null {
-  // Resolve config path: %APPDATA%\unenter\config.json (Windows) or
-  // ~/.unenter/config.json (macOS / Linux)
-  const appData = process.env["APPDATA"] ?? join(homedir(), ".config");
+  const appData    = process.env["APPDATA"] ?? join(homedir(), ".config");
   const configPath = join(appData, "unenter", "config.json");
 
   if (!existsSync(configPath)) return null;
@@ -90,43 +96,44 @@ function requireConfig(): LocalConfig {
   );
 }
 
-// ── Root domain ───────────────────────────────────────────────────────────────
+// ── Root domain (bootstrap fallback) ─────────────────────────────────────────
 
 /**
- * Root domain for all zones — sourced from config.json `domain` field.
- * Set once during  .\src\ink\setup.ps1  and never committed to git.
+ * Synchronous domain accessor — reads from config.json.
+ *
+ * FALLBACK ONLY.  The live domain lives on the active UnaxisEnvironment record
+ * (env.domain).  Use this only when the active environment has not yet loaded
+ * or when bootstrapping the initial Supabase connection.
  */
 export const DOMAIN: string = (() => {
   const d = _local?.domain ?? process.env["DOMAIN"];
   if (!d) {
-    // Non-fatal — TUI still works; NPM registration / zone wizard will surface
-    // the missing value when they actually need it.
     process.stderr.write(
-      `[unt.ink] Warning: "domain" missing from config.json — run .\\src\\ink\\setup.ps1 to add it.\n`
+      `[stack.ts] Warning: "domain" missing from config.json — run .\\src\\ink\\setup.ps1 to add it.\n`
     );
     return "";
   }
   return d;
 })();
 
-// ── Stack host (P0W3R) ────────────────────────────────────────────────────────
+// ── Static fallback constants ─────────────────────────────────────────────────
+// All reads go to config.json.  These are the source of truth ONLY when
+// Supabase is unavailable.  For live coordinates, read from UnaxisEnvironment.
 
 export const STACK_HOST = {
-  label:     "P0W3R",
+  label:     "P0W3R (fallback)",
   get ip()        { return requireConfig().stack.ip; },
   get proxyPort() { return requireConfig().stack.proxyPort; },
 } as const;
 
-// ── NPM host (L0VE) ───────────────────────────────────────────────────────────
-
 export const NPM_HOST = {
-  label: "L0VE / NPM",
+  label:    "L0VE / NPM (fallback)",
   get ip()      { return requireConfig().npm.ip; },
   get port()    { return requireConfig().npm.port; },
   get apiUrl()  { const c = requireConfig().npm; return `http://${c.ip}:${c.port}/api`; },
   get uiUrl()   { const c = requireConfig().npm; return `http://${c.ip}:${c.port}`; },
-  // Env vars override config file — useful for CI / remote sessions
   get email()   { return process.env["NPM_EMAIL"]    ?? requireConfig().npm.email; },
+  /** @deprecated Use Vault via getActiveEnvironmentCredentials() — never store passwords in config.json. */
   get password(){ return process.env["NPM_PASSWORD"] ?? requireConfig().npm.password; },
   get letsencryptEmail() {
     return process.env["NPM_LE_EMAIL"]
@@ -135,7 +142,36 @@ export const NPM_HOST = {
   },
 } as const;
 
-// ── DNS / DDNS providers ──────────────────────────────────────────────────────
+// ── Safe IP accessors (never throw — return "" if config absent) ─────────────
+// Use these in module-level constants (e.g. INFRA_SERVICES, MACHINES) where
+// calling requireConfig() at import time would break cold-start without a
+// config.json.  Hot paths (NPM_HOST.ip, STACK_HOST.ip) still throw intentionally
+// so misconfigurations surface loudly at call time rather than silently.
+
+/** NPM host IP from config.json — "" if config absent. */
+export const NPM_IP_SAFE   = _local?.npm.ip    ?? "";
+/** Stack/proxy host IP from config.json — "" if config absent. */
+export const STACK_IP_SAFE = _local?.stack.ip  ?? "";
+
+// ── Artifact store ────────────────────────────────────────────────────────────
+// Compose YAML files are managed artifacts, NOT source repo files.
+// They live outside the project directory so they survive repo cleans and are
+// never accidentally committed.  Mirrors Portainer's /data/compose/{stack_id}/
+// pattern where the control plane owns compose state, not the Git checkout.
+//
+//   Windows:     %APPDATA%\unenter\stacks\
+//   macOS/Linux: ~/.unenter/stacks/
+
+const _artifactBase =
+  process.platform === "win32"
+    ? join(process.env["APPDATA"] ?? join(homedir(), ".config"), "unenter", "stacks")
+    : join(homedir(), ".unenter", "stacks");
+
+/**
+ * Root of the UNAXIS artifact store.
+ * Zone compose files live at:  join(ARTIFACT_STORE_DIR, zone.key, "docker-compose.yml")
+ */
+export const ARTIFACT_STORE_DIR = _artifactBase;
 
 export const DNS_PROVIDER = {
   label:       "GoDaddy DNS",
@@ -146,7 +182,5 @@ export const DNS_PROVIDER = {
 
 export const DDNS_PROVIDER = {
   label: "ASUS DDNS",
-  get hostname() {
-    return _local?.ddns?.hostname ?? "";
-  },
+  get hostname() { return _local?.ddns?.hostname ?? ""; },
 } as const;

@@ -29,8 +29,7 @@ import { buildZone, deployZone }               from "../zone-build.ts";
 
 import { useHostMonitor }      from "../hooks/useHostMonitor.ts";
 import { sparkline }           from "../utils/sparkline.ts";
-import { MetricCard }          from "../components/design-system/MetricCard.tsx";
-import { SectionFrame }        from "../components/design-system/SectionFrame.tsx";
+import { MetricCard, SectionFrame } from "../components/design-system/index.ts";
 import { Divider }             from "../components/Divider.tsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────

@@ -6,9 +6,9 @@ import { useZones } from "./zone-store.js";
 import { buildAll, deployAll, gitPush } from "./zone-build.js";
 import { backupDatabase } from "./db-api.js";
 
-import { WelcomeScreen } from "./screens/WelcomeScreen.js";
-import { SettingsScreen } from "./screens/SettingsScreen.js";
-import { ZoneWizardScreen } from "./screens/ZoneWizardScreen.js";
+import { WelcomeScreen } from "../screens/WelcomeScreen.js";
+import { SettingsScreen } from "../screens/SettingsScreen.js";
+import { ZoneWizardScreen } from "../screens/ZoneWizardScreen.js";
 import { NpmPanel } from "./panels/Npm/index.js";
 import { DbPanel } from "./panels/Db/index.js";
 import { InfraPanel } from "./panels/Infra/index.js";
@@ -50,7 +50,7 @@ export function TuiMain() {
     } = useBackgroundStack();
 
     const { runOp, runCreateZone, executeAction } = useTuiActions(
-        rawRunOp, _startOp, openLogs, refreshStatuses, 
+        rawRunOp, _startOp, openLogs, refreshStatuses,
         addNotification, reloadZones, setBgOps, zones
     );
 
@@ -61,11 +61,11 @@ export function TuiMain() {
         try {
             if (host.enabled) await npmDisableHost(host.id);
             else await npmEnableHost(host.id);
-        } catch {}
+        } catch { }
     }, []);
 
     useInput((input, key) => {
-        if (view === "wizard" || view === "zones") return; 
+        if (view === "wizard" || view === "zones") return;
 
         if (view === "welcome") {
             if (input === "q") { exit(); return; }

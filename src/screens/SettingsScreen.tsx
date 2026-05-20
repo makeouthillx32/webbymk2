@@ -21,42 +21,42 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Box, Text, useInput }        from "ink";
-import { spawn }                      from "child_process";
-import { existsSync }                 from "fs";
-import { join, resolve }              from "path";
+import { Box, Text, useInput } from "ink";
+import { spawn } from "child_process";
+import { existsSync } from "fs";
+import { join, resolve } from "path";
 
-import { NPM_HOST, STACK_HOST, DDNS_PROVIDER, DOMAIN } from "../../config/stack.ts";
-import type { Zone }                                   from "../../config/zones.ts";
-import { GHCR_USER, PROJECT_DIR }                      from "../../config/zones.ts";
-import { Divider }                                     from "../components/Divider.tsx";
-import { KeyHints }                                    from "../components/KeyHint.tsx";
-import { SearchInput }                                 from "../components/SearchBox.tsx";
-import { useWidths }                                   from "../hooks/useTermWidth.ts";
-import { Tabs }                                        from "../components/Tabs.tsx";
-import { SectionFrame }                                from "../components/design-system/SectionFrame.tsx";
-import { MetricCard }                                  from "../components/design-system/MetricCard.tsx";
-import { ProgressLine }                                from "../components/design-system/ProgressLine.tsx";
-import { sparkline }                                   from "../utils/sparkline.ts";
+import { NPM_HOST, STACK_HOST, DDNS_PROVIDER, DOMAIN } from "../config/stack.js";
+import type { Zone } from "../config/zones.js";
+import { GHCR_USER, PROJECT_DIR } from "../config/zones.js";
+import { Divider } from "../ink/components/Divider.jsx";
+import { KeyHints } from "../ink/components/KeyHint.jsx";
+import { SearchInput } from "../ink/components/SearchBox.jsx";
+import { useWidths } from "../ink/hooks/useTermWidth.js";
+import { Tabs } from "../ink/components/Tabs.jsx";
+import { SectionFrame } from "../ink/components/design-system/SectionFrame.jsx";
+import { MetricCard } from "../ink/components/design-system/MetricCard.jsx";
+import { ProgressLine } from "../ink/components/design-system/ProgressLine.jsx";
+import { sparkline } from "../ink/utils/sparkline.js";
 
-import { useNotifications }                           from "../components/Notifications.tsx";
+import { useNotifications } from "../ink/components/Notifications.jsx";
 
 import {
   getCredential, setCredential,
-  getSetting,    setSetting,
+  getSetting, setSetting,
   getSettingsPath, getCredentialsPath,
-} from "../../utils/secureStorage/index.js";
+} from "../utils/secureStorage/index.js";
 
 // ── Open file in system default editor ───────────────────────────────────────
 
 function openFileInEditor(filePath: string): void {
   const command =
     process.platform === "win32" ? "cmd.exe" :
-    process.platform === "darwin" ? "open" :
-    "xdg-open";
+      process.platform === "darwin" ? "open" :
+        "xdg-open";
   const args =
     process.platform === "win32" ? ["/c", "start", "", filePath] :
-    [filePath];
+      [filePath];
 
   try {
     const child = spawn(command, args, {
@@ -95,15 +95,15 @@ function daysLeft(setAtIso: string | null): number | null {
 
 function timerColor(days: number | null): string {
   if (days === null) return "gray";
-  if (days < 0)  return "error";
-  if (days < 7)  return "error";
+  if (days < 0) return "error";
+  if (days < 7) return "error";
   if (days < 14) return "warning";
   return "success";
 }
 
 function timerLabel(days: number | null): string {
   if (days === null) return "not configured";
-  if (days < 0)  return `expired ${Math.abs(days)}d ago`;
+  if (days < 0) return `expired ${Math.abs(days)}d ago`;
   if (days === 0) return "expires today";
   return `${days} days left`;
 }
@@ -130,8 +130,8 @@ function Row({ label, value, accent, dim }: { label: string; value: string; acce
 // ── Token state ───────────────────────────────────────────────────────────────
 
 interface TokenState {
-  value:   string | null;
-  setAt:   string | null;  // ISO timestamp stored alongside token
+  value: string | null;
+  setAt: string | null;  // ISO timestamp stored alongside token
   loading: boolean;
 }
 
@@ -144,9 +144,9 @@ type EditField = "ghcr_token" | "npm_token" | "default_project" | null;
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface SettingsScreenProps {
-  zones:            Zone[];
+  zones: Zone[];
   onTokenEditStart: () => void;
-  onTokenEditEnd:   () => void;
+  onTokenEditEnd: () => void;
 }
 
 export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: SettingsScreenProps) {
@@ -156,13 +156,13 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
   // box borders (4 cols). Floor at 20 so it's usable even on very narrow terms.
   const inputW = Math.max(20, iw - 20);
 
-  const [activeTab,  setTab]       = useState<"infra" | "identity" | "zones">("infra");
-  const [editField,  setEditField] = useState<EditField>(null);
-  const [saved,      setSaved]     = useState<string | null>(null);
+  const [activeTab, setTab] = useState<"infra" | "identity" | "zones">("infra");
+  const [editField, setEditField] = useState<EditField>(null);
+  const [saved, setSaved] = useState<string | null>(null);
 
   // ── Credential state ────────────────────────────────────────────────────────
-  const [ghcr,    setGhcr]    = useState<TokenState>(BLANK_TOKEN);
-  const [npm,     setNpm]     = useState<TokenState>(BLANK_TOKEN);
+  const [ghcr, setGhcr] = useState<TokenState>(BLANK_TOKEN);
+  const [npm, setNpm] = useState<TokenState>(BLANK_TOKEN);
 
   // ── Settings state ──────────────────────────────────────────────────────────
   const [defaultProject, setDefaultProject] = useState<string | null>(null);
@@ -235,21 +235,21 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (key.tab) {
       setTab((prev) =>
         prev === "infra" ? "identity" :
-        prev === "identity" ? "zones" : "infra"
+          prev === "identity" ? "zones" : "infra"
       );
       return;
     }
 
-    if (input === "1") { setTab("infra");    return; }
+    if (input === "1") { setTab("infra"); return; }
     if (input === "2") { setTab("identity"); return; }
-    if (input === "3") { setTab("zones");    return; }
+    if (input === "3") { setTab("zones"); return; }
 
-    if (input === "e") { openConfigInEditor();     return; }
+    if (input === "e") { openConfigInEditor(); return; }
     if (input === "c") { openCredentialsInEditor(); return; }
 
     if (activeTab === "identity") {
       if (input === "t") { startEdit("ghcr_token"); return; }
-      if (input === "n") { startEdit("npm_token");  return; }
+      if (input === "n") { startEdit("npm_token"); return; }
     }
 
     if (activeTab === "infra" && input === "p") {
@@ -259,31 +259,31 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
   });
 
   // ── Metrics ─────────────────────────────────────────────────────────────────
-  const ghcrDays   = daysLeft(ghcr.setAt);
-  const ghcrColor  = timerColor(ghcrDays);
-  const ghcrLabel  = timerLabel(ghcrDays);
-  const ghcrRatio  = ghcrDays !== null ? Math.max(0, Math.min(1, ghcrDays / 30)) : 0;
+  const ghcrDays = daysLeft(ghcr.setAt);
+  const ghcrColor = timerColor(ghcrDays);
+  const ghcrLabel = timerLabel(ghcrDays);
+  const ghcrRatio = ghcrDays !== null ? Math.max(0, Math.min(1, ghcrDays / 30)) : 0;
 
-  const npmDays    = daysLeft(npm.setAt);
-  const npmColor   = timerColor(npmDays);
-  const npmLabel   = timerLabel(npmDays);
-  const npmRatio   = npmDays !== null ? Math.max(0, Math.min(1, npmDays / 30)) : 0;
+  const npmDays = daysLeft(npm.setAt);
+  const npmColor = timerColor(npmDays);
+  const npmLabel = timerLabel(npmDays);
+  const npmRatio = npmDays !== null ? Math.max(0, Math.min(1, npmDays / 30)) : 0;
 
   const tokenHistory = useMemo(() =>
     [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], []);
 
   // ── Edit placeholder text ───────────────────────────────────────────────────
   const editPlaceholder =
-    editField === "ghcr_token"      ? "ghp_..." :
-    editField === "npm_token"       ? "npm_..." :
-    editField === "default_project" ? defaultProject ?? "/path/to/project" :
-    "";
+    editField === "ghcr_token" ? "ghp_..." :
+      editField === "npm_token" ? "npm_..." :
+        editField === "default_project" ? defaultProject ?? "/path/to/project" :
+          "";
 
   const editLabel =
-    editField === "ghcr_token"      ? "Paste GHCR PAT: " :
-    editField === "npm_token"       ? "Paste npm token: " :
-    editField === "default_project" ? "Project path: " :
-    "";
+    editField === "ghcr_token" ? "Paste GHCR PAT: " :
+      editField === "npm_token" ? "Paste npm token: " :
+        editField === "default_project" ? "Project path: " :
+          "";
 
   return (
     <Box
@@ -304,7 +304,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
         tabs={["infrastructure", "identity", "zones"]}
         active={
           activeTab === "infra" ? "infrastructure" :
-          activeTab === "identity" ? "identity" : "zones"
+            activeTab === "identity" ? "identity" : "zones"
         }
         marginBottom={1}
       />
@@ -330,15 +330,15 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
           </Box>
 
           <SectionFrame title="Nginx Proxy Manager" tone="suggestion">
-            <Row label="UI URL"        value={NPM_HOST.uiUrl}            accent="cyan" />
-            <Row label="API URL"       value={NPM_HOST.apiUrl}            accent="cyan" />
-            <Row label="Admin Email"   value={NPM_HOST.email}             />
-            <Row label="Let's Encrypt" value={NPM_HOST.letsencryptEmail}  />
+            <Row label="UI URL" value={NPM_HOST.uiUrl} accent="cyan" />
+            <Row label="API URL" value={NPM_HOST.apiUrl} accent="cyan" />
+            <Row label="Admin Email" value={NPM_HOST.email} />
+            <Row label="Let's Encrypt" value={NPM_HOST.letsencryptEmail} />
           </SectionFrame>
 
           <SectionFrame title="Network & DNS" tone="suggestion">
-            <Row label="Root Domain" value={DOMAIN}                accent="cyan" />
-            <Row label="DDNS Host"   value={DDNS_PROVIDER.hostname}              />
+            <Row label="Root Domain" value={DOMAIN} accent="cyan" />
+            <Row label="DDNS Host" value={DDNS_PROVIDER.hostname} />
           </SectionFrame>
 
           <SectionFrame title="Project Root" tone="suggestion">
@@ -495,19 +495,19 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
           editField
             ? [{ k: "↵", label: "save" }, { k: "esc/^C", label: "cancel" }]
             : [
-                ...(activeTab === "identity" ? [
-                  { k: "t", label: "edit GHCR token" },
-                  { k: "n", label: "edit npm token"  },
-                ] : []),
-                ...(activeTab === "infra" ? [
-                  { k: "p", label: "set project path" },
-                ] : []),
-                { k: "1-3",     label: "switch tabs"         },
-                { k: "Tab",     label: "cycle tabs"           },
-                { k: "e",       label: "open settings in editor"     },
-                { k: "c",       label: "open credentials in editor"  },
-                { k: "esc / q", label: "back"                 },
-              ]
+              ...(activeTab === "identity" ? [
+                { k: "t", label: "edit GHCR token" },
+                { k: "n", label: "edit npm token" },
+              ] : []),
+              ...(activeTab === "infra" ? [
+                { k: "p", label: "set project path" },
+              ] : []),
+              { k: "1-3", label: "switch tabs" },
+              { k: "Tab", label: "cycle tabs" },
+              { k: "e", label: "open settings in editor" },
+              { k: "c", label: "open credentials in editor" },
+              { k: "esc / q", label: "back" },
+            ]
         }
         marginTop={0}
         paddingX={0}

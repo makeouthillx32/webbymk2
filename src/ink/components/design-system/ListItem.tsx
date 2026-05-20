@@ -3,76 +3,41 @@ import React, { type ReactNode } from 'react';
 import { useDeclaredCursor } from '../../hooks/use-declared-cursor.js';
 import { Box, Text } from 'ink';
 
-type ListItemProps = {
+export type ListItemProps = {
   /**
-   * Whether this item is currently focused (keyboard selection).
-   * Shows the pointer indicator (❯) when true.
+   * Whether this item is currently focused.
    */
-  isFocused: boolean;
+  isFocused?: boolean;
 
   /**
-   * Whether this item is selected (chosen/checked).
-   * Shows the checkmark indicator (✓) when true.
-   * @default false
+   * Whether this item is selected.
    */
   isSelected?: boolean;
 
-  /**
-   * The content to display for this item.
-   */
   children: ReactNode;
-
-  /**
-   * Optional description text displayed below the main content.
-   */
   description?: string;
-
-  /**
-   * Show a down arrow indicator instead of pointer (for scroll hints).
-   * Only applies when not focused.
-   */
   showScrollDown?: boolean;
-
-  /**
-   * Show an up arrow indicator instead of pointer (for scroll hints).
-   * Only applies when not focused.
-   */
   showScrollUp?: boolean;
-
-  /**
-   * Whether to apply automatic styling to the children based on focus/selection state.
-   * - When true (default): children are wrapped in Text with state-based colors
-   * - When false: children are rendered as-is, allowing custom styling
-   * @default true
-   */
   styled?: boolean;
-
-  /**
-   * Whether this item is disabled. Disabled items show dimmed text and no indicators.
-   * @default false
-   */
   disabled?: boolean;
-
   /**
-   * Whether this ListItem should declare the terminal cursor position.
-   * Set false when a child (e.g. BaseTextInput) declares its own cursor.
-   * @default true
+   * Whether this item should declare the terminal cursor position.
    */
   declareCursor?: boolean;
+
+  /**
+   * Backward-compatible aliases used by older TUI components.
+   */
+  focused?: boolean;
+  selected?: boolean;
 };
 
 /**
- * A list item component for selection UIs (dropdowns, multi-selects, menus).
- *
- * Handles the common pattern of:
- * - Pointer indicator (❯) for focused items
- * - Checkmark indicator (✓) for selected items
- * - Scroll indicators (↓↑) for truncated lists
- * - Color states for focus/selection
+ * Common list row for keyboard-driven selection, menus, and pickers.
  */
 export function ListItem({
   isFocused,
-  isSelected = false,
+  isSelected,
   children,
   description,
   showScrollDown,
@@ -80,14 +45,18 @@ export function ListItem({
   styled = true,
   disabled = false,
   declareCursor = true,
+  focused,
+  selected,
 }: ListItemProps): React.ReactNode {
-  // Determine which indicator to show
+  const itemFocused = isFocused ?? focused ?? false;
+  const itemSelected = isSelected ?? selected ?? false;
+
   function renderIndicator(): ReactNode {
     if (disabled) {
       return <Text> </Text>;
     }
 
-    if (isFocused) {
+    if (itemFocused) {
       return <Text color="suggestion">{figures.pointer}</Text>;
     }
 
@@ -102,7 +71,6 @@ export function ListItem({
     return <Text> </Text>;
   }
 
-  // Determine text color based on state
   function getTextColor(): 'success' | 'suggestion' | 'inactive' | undefined {
     if (disabled) {
       return 'inactive';
@@ -112,11 +80,11 @@ export function ListItem({
       return undefined;
     }
 
-    if (isSelected) {
+    if (itemSelected) {
       return 'success';
     }
 
-    if (isFocused) {
+    if (itemFocused) {
       return 'suggestion';
     }
 
@@ -124,14 +92,10 @@ export function ListItem({
   }
 
   const textColor = getTextColor();
-
-  // Park the native terminal cursor on the pointer indicator so screen
-  // readers / magnifiers track the focused item. (0,0) is the top-left of
-  // this Box, where the pointer renders.
   const cursorRef = useDeclaredCursor({
     line: 0,
     column: 0,
-    active: isFocused && !disabled && declareCursor !== false,
+    active: itemFocused && !disabled && declareCursor !== false,
   });
 
   return (
@@ -145,7 +109,7 @@ export function ListItem({
         ) : (
           children
         )}
-        {isSelected && !disabled && <Text color="success">{figures.tick}</Text>}
+        {itemSelected && !disabled && <Text color="success">{figures.tick}</Text>}
       </Box>
       {description && (
         <Box paddingLeft={2}>

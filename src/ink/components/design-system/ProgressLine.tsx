@@ -1,9 +1,3 @@
-// src/ink/components/design-system/ProgressLine.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Labeled progress indicator for performance metrics.
-// Shows label, percentage, bar, and optional metadata.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React from 'react';
 import { Box, Text } from 'ink';
 import ThemedText from './ThemedText.js';
@@ -13,18 +7,27 @@ import { getTheme, type Theme } from '../../utils/theme.js';
 
 export interface ProgressLineProps {
   label: string;
-  /** Percentage value [0, 1] */
+  /**
+   * Percentage value between 0 and 1.
+   */
   ratio: number;
-  /** Secondary information (e.g. "8GB / 16GB") */
+  /**
+   * Secondary information, for example "8GB / 16GB".
+   */
   meta: string;
-  /** Theme key for the filled portion of the bar and label */
+  /**
+   * Theme key for the filled portion of the bar and label.
+   */
   tone?: keyof Theme;
-  /** Width of the progress bar in characters */
+  /**
+   * Width of the progress bar in terminal cells.
+   */
   width: number;
 }
 
 /**
- * ProgressLine displays a status bar with high-level labeling and precision percentage.
+ * Labeled progress indicator for runtime metrics, credential age,
+ * deployment progress, and other bounded control-plane values.
  */
 export function ProgressLine({
   label,
@@ -32,11 +35,12 @@ export function ProgressLine({
   meta,
   tone = 'suggestion',
   width,
-}: ProgressLineProps) {
+}: ProgressLineProps): React.ReactNode {
   const [themeName] = useTheme();
   const theme = getTheme(themeName);
-  
-  const percentage = (Math.min(1, Math.max(0, ratio)) * 100).toFixed(ratio * 100 >= 10 ? 0 : 1);
+
+  const clamped = Math.min(1, Math.max(0, ratio));
+  const percentage = (clamped * 100).toFixed(clamped * 100 >= 10 ? 0 : 1);
 
   return (
     <Box flexDirection="column">
@@ -49,9 +53,9 @@ export function ProgressLine({
       </Box>
       <Box gap={1}>
         <ProgressBar
-          ratio={ratio}
+          ratio={clamped}
           width={width}
-          fillColor={theme[tone as keyof Theme] as string || theme.suggestion}
+          fillColor={(theme[tone] as string) || theme.suggestion}
           emptyColor={themeName.includes('dark') ? '#2B3440' : '#D9DEE6'}
         />
         <ThemedText dimColor>{meta}</ThemedText>

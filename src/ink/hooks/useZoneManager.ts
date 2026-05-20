@@ -1,37 +1,32 @@
 // src/ink/hooks/useZoneManager.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Owns zone data, Docker status polling, and infra health checks.
+// OWNERSHIP: zone topology and Docker container polling only.
 //
-// Responsibilities:
-//   • Load zones from Supabase on mount (via zone-store.ts cache)
-//   • Poll Docker every 5 s for zone + proxy container status
-//   • Run ad-hoc infra health checks (checkInfra)
+//   ✓  Zone definitions — loaded from public.zones via zone-store.ts
+//   ✓  Docker container status polling (every STATUS_POLL_INTERVAL_MS)
+//   ✓  Proxy container status polling
+//   ✗  Active environment resolution — that is useEnvManager
+//   ✗  Infra health checks — that is useEnvManager
+//   ✗  Environment switching — that is EnvPanel / useEnvManager
 //
-// Zone list loading is managed by useResource — no manual useState/useEffect
-// for the fetch lifecycle.
-//
-// executeAction lives in ZonesView (closer to the UI that triggers it), so
-// this hook stays focused on data-fetching and background polling only.
-//
-// handleNpmToggle has moved into NpmPanel (self-contained now).
+// Zones = app deployments keyed by container identity.
+// Environments = infrastructure targets (host, domain, NPM, proxy).
+// These are different concepts and must not bleed into each other.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-import type { Zone }          from "../../config/zones.ts";
-import type { Status }        from "../docker.ts";
-import type { ServiceResult } from "../infra.ts";
+import type { Zone }   from "../../config/zones.ts";
+import type { Status } from "../docker.ts";
 
 import { loadZones, invalidateZoneCache } from "../zone-store.ts";
-import { pollAll }                      from "../docker.ts";
-import { INFRA_SERVICES, checkService } from "../infra.ts";
-import { useResource }                  from "./useResource.ts";
-import { isScrollActive }               from "../../bootstrap/state.js";
+import { pollAll }                         from "../docker.ts";
+import { useResource }                     from "./useResource.ts";
+import { isScrollActive }                  from "../../bootstrap/state.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type StatusMap = Record<string, Status>;
-type InfraMap  = Record<number, ServiceResult>;
 
 interface ZoneManagerParams {
   addNotification: (msg: string, type?: "success" | "error" | "info") => void;
@@ -86,34 +81,9 @@ export function useZoneManager({
     return () => clearInterval(id);
   }, [refreshZones, pollEnabled]);
 
-  // ── Infra health checks ────────────────────────────────────────────────────
-  const [infraResults,  setInfraResults]  = useState<InfraMap>({});
-  const [infraChecking, setInfraChecking] = useState(false);
-
-  const checkInfra = useCallback(async (indices?: number[]) => {
-    if (infraChecking) return;
-
-    const targets = indices ?? INFRA_SERVICES.map((_, i) => i);
-    setInfraChecking(true);
-    setInfraResults((prev) => {
-      const next = { ...prev };
-      for (const i of targets) next[i] = { status: "checking", ms: null, code: null };
-      return next;
-    });
-
-    await Promise.all(
-      targets.map(async (i) => {
-        const r = await checkService(INFRA_SERVICES[i]);
-        setInfraResults((prev) => ({ ...prev, [i]: r }));
-      })
-    );
-
-    setInfraChecking(false);
-  }, [infraChecking]);
-
-  // ── Force-refresh zone definitions — busts the module-level cache first ───
-  // Use this when you know the DB has changed (e.g. after a settings update)
-  // and don't want to wait out the 60-second TTL.
+  // ── Force-refresh zone definitions ───────────────────────────────────────
+  // Use this when the DB has changed (e.g. after a settings update) and you
+  // don't want to wait out the 60-second cache TTL.
   const forceRefreshZoneList = useCallback(() => {
     invalidateZoneCache();
     refreshZoneList();
@@ -125,6 +95,6 @@ export function useZoneManager({
     refreshZoneList,
     zoneStatuses, proxyStatus,
     refreshZones,
-    infraResults,  infraChecking, checkInfra,
+    forceRefreshZoneList,
   };
 }

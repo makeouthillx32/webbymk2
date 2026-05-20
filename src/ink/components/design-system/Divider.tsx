@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { stringWidth } from '../../stringWidth.js';
-import Ansi from '../../Ansi.js';
+import { Ansi } from '../../Ansi.js';
 import Text from '../Text.js';
 import type { Theme } from '../../utils/theme.js';
 
@@ -62,7 +62,7 @@ type DividerProps = {
  *
  * @example
  * // With centered title
- * <Divider title="3 new messages" />
+ * <Divider title="runtime" />
  */
 export function Divider({
   width,

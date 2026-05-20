@@ -240,12 +240,15 @@ services:
     ports:
       - "3080:3080"
       - "127.0.0.1:3081:3081"
+      - "127.0.0.1:8888:8888"   # UNAXIS agent API — localhost only
     volumes:
       - ./proxy-config:/proxy-config
       - ./proxy/server.js:/proxy/server.js:ro
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for agent proxy
     environment:
       PROXY_PORT:         "3080"
       CORE_DOMAIN:        "${CORE_DOMAIN:-unenter.live}"
+      AGENT_PORT:         "8888"                       # TOFU — no secret needed, first TUI to connect pairs automatically
       # Fallback env vars — used only if proxy-config/routes.json is missing.
       UPSTREAM_UNENTER:   "http://unt_app:3000"
       UPSTREAM_BLOG:      "http://blog:3000"

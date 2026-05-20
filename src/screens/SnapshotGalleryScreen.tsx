@@ -25,28 +25,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput }        from "ink";
-import { statSync, existsSync }       from "fs";
-import { listSnapshots }              from "../zone/snapshot.ts";
-import type { SnapshotBundle }        from "../zone/snapshot.ts";
-import type { RuntimeInstance }       from "../zone/supabase-factory.ts";
-import { Divider }                    from "../components/Divider.tsx";
-import { Spinner }                    from "../components/Spinner.tsx";
+import { Box, Text, useInput } from "ink";
+import { statSync, existsSync } from "fs";
+import { listSnapshots } from "../ink/zone/snapshot.js";
+import type { SnapshotBundle } from "../ink/zone/snapshot.js";
+import type { RuntimeInstance } from "../ink/zone/supabase-factory.js";
+import { Divider } from "../ink/components/Divider.jsx";
+import { Spinner } from "../ink/components/Spinner.jsx";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface SnapshotGalleryScreenProps {
-  instance:  RuntimeInstance;
+  instance: RuntimeInstance;
   onRestore: (bundle: SnapshotBundle) => void;
-  onBack:    () => void;
+  onBack: () => void;
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 function formatBytes(n: number): string {
-  if (n < 1_024)           return `${n} B`;
-  if (n < 1_048_576)       return `${(n / 1_024).toFixed(1)} KB`;
-  if (n < 1_073_741_824)   return `${(n / 1_048_576).toFixed(1)} MB`;
+  if (n < 1_024) return `${n} B`;
+  if (n < 1_048_576) return `${(n / 1_024).toFixed(1)} KB`;
+  if (n < 1_073_741_824) return `${(n / 1_048_576).toFixed(1)} MB`;
   return `${(n / 1_073_741_824).toFixed(2)} GB`;
 }
 
@@ -70,9 +70,9 @@ export function SnapshotGalleryScreen({
   instance, onRestore, onBack,
 }: SnapshotGalleryScreenProps) {
 
-  const [bundles,    setBundles]    = useState<SnapshotBundle[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [cursor,     setCursor]     = useState(0);
+  const [bundles, setBundles] = useState<SnapshotBundle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [cursor, setCursor] = useState(0);
   const [confirmIdx, setConfirmIdx] = useState<number | null>(null);
 
   // Load snapshot list on mount
@@ -158,7 +158,7 @@ export function SnapshotGalleryScreen({
         <Box flexDirection="column" paddingX={2}>
           {bundles.map((b, i) => {
             const isActive = i === cursor;
-            const size     = dumpSize(b);
+            const size = dumpSize(b);
             return (
               <Box key={b.id} gap={2}>
                 <Text color={isActive ? "yellow" : "gray"}>{isActive ? "▶" : " "}</Text>
@@ -189,9 +189,9 @@ export function SnapshotGalleryScreen({
         >
           {(
             [
-              ["Bundle",     selected.bundlePath],
-              ["Created",    formatDate(selected.createdAt)],
-              ["db.dump",    dumpSize(selected)],
+              ["Bundle", selected.bundlePath],
+              ["Created", formatDate(selected.createdAt)],
+              ["db.dump", dumpSize(selected)],
               ["schema.sql", existsSync(selected.files.schemaSql) ? "✓ present" : "—"],
               ["restore.sh", selected.files.restoreSh],
             ] as [string, string][]

@@ -1,49 +1,61 @@
 import figures from 'figures';
 import React from 'react';
-import { Text } from 'ink';
+import ThemedText from './ThemedText.js';
 
-type Status = 'success' | 'error' | 'warning' | 'info' | 'pending' | 'loading';
+type CoreStatus = 'success' | 'error' | 'warning' | 'info' | 'pending' | 'loading';
+type RuntimeStatus = 'running' | 'restarting' | 'checking' | 'missing';
 
-type Props = {
+export type IconStatus = CoreStatus | RuntimeStatus;
+
+export type StatusIconProps = {
   /**
    * The status to display. Determines both the icon and color.
    */
-  status: Status;
+  status: IconStatus;
   /**
-   * Include a trailing space after the icon. Useful when followed by text.
-   * @default false
+   * Include a trailing space after the icon.
    */
   withSpace?: boolean;
+  /**
+   * Backward-compatible alias used by older TUI components.
+   */
+  pad?: boolean;
 };
 
 const STATUS_CONFIG: Record<
-  Status,
+  IconStatus,
   {
     icon: string;
-    color: 'success' | 'error' | 'warning' | 'suggestion' | undefined;
+    color: 'success' | 'error' | 'warning' | 'suggestion' | 'inactive' | undefined;
   }
 > = {
   success: { icon: figures.tick, color: 'success' },
   error: { icon: figures.cross, color: 'error' },
   warning: { icon: figures.warning, color: 'warning' },
   info: { icon: figures.info, color: 'suggestion' },
-  pending: { icon: figures.circle, color: undefined },
-  loading: { icon: '…', color: undefined },
+  pending: { icon: figures.circle, color: 'inactive' },
+  loading: { icon: '...', color: undefined },
+  running: { icon: figures.circle, color: 'success' },
+  restarting: { icon: figures.circle, color: 'warning' },
+  checking: { icon: '...', color: 'warning' },
+  missing: { icon: figures.circle, color: 'inactive' },
 };
 
 /**
- * Renders a status indicator icon with appropriate color.
+ * Renders a compact status indicator for Unaxis runtime state.
  */
 export function StatusIcon({
   status,
   withSpace = false,
-}: Props): React.ReactNode {
-  const config = STATUS_CONFIG[status];
+  pad,
+}: StatusIconProps): React.ReactNode {
+  const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
+  const shouldPad = withSpace || pad || false;
 
   return (
-    <Text color={config.color} dimColor={!config.color}>
+    <ThemedText color={config.color} dimColor={!config.color}>
       {config.icon}
-      {withSpace && ' '}
-    </Text>
+      {shouldPad && ' '}
+    </ThemedText>
   );
 }

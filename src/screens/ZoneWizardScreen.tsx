@@ -20,17 +20,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef } from "react";
-import { Box, Text, useInput }     from "ink";
+import { Box, Text, useInput } from "ink";
 import {
   deriveZone, findNextDevPort,
   LAYOUT_OPTIONS, DS_CATALOG,
   type DerivedZone, type LayoutType, type AppFooterType, type DynamicSection,
-} from "../zone-scaffold.ts";
-import { Divider }          from "../components/Divider.tsx";
-import { SearchInput }      from "../components/SearchBox.tsx";
-import { SelectMenu }       from "../components/SelectMenu.tsx";
-import { MultiSelectMenu }  from "../components/MultiSelectMenu.tsx";
-import { useWidths }        from "../hooks/useTermWidth.ts";
+} from "../ink/zone-scaffold.js";
+import { Divider } from "../ink/components/Divider.jsx";
+import { SearchInput } from "../ink/components/SearchBox.jsx";
+import { SelectMenu } from "../ink/components/SelectMenu.jsx";
+import { MultiSelectMenu } from "../ink/components/MultiSelectMenu.jsx";
+import { useWidths } from "../ink/hooks/useTermWidth.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,13 +52,13 @@ function CompletedField({ label, value }: { label: string; value: string }) {
 
 function PreviewTable({ z }: { z: DerivedZone }) {
   const rows: [string, string][] = [
-    ["layout",    z.layoutType],
+    ["layout", z.layoutType],
     ...(z.layoutType === "app" ? [["footer", z.appFooter] as [string, string]] : []),
-    ["domain",    z.domain],
-    ["service",   z.service],
+    ["domain", z.domain],
+    ["service", z.service],
     ["container", z.container],
-    ["image",     z.image],
-    ["dev port",  `:${z.devPort}`],
+    ["image", z.image],
+    ["dev port", `:${z.devPort}`],
   ];
   return (
     <Box flexDirection="column" paddingLeft={2}>
@@ -79,12 +79,12 @@ function PreviewTable({ z }: { z: DerivedZone }) {
 }
 
 const PIPELINE_STEPS = [
-  { label: "scaffold",      desc: "create files + compose + register in DB"    },
-  { label: "build & push",  desc: "docker build → push to GHCR"                },
-  { label: "deploy",        desc: "docker compose pull + up"                    },
-  { label: "reload proxy",  desc: "force-recreate proxy with new UPSTREAM_*"   },
-  { label: "wait for live", desc: "poll container until healthy"                },
-  { label: "NPM cert",      desc: "create proxy host + Let's Encrypt cert"      },
+  { label: "scaffold", desc: "create files + compose + register in DB" },
+  { label: "build & push", desc: "docker build → push to GHCR" },
+  { label: "deploy", desc: "docker compose pull + up" },
+  { label: "reload proxy", desc: "force-recreate proxy with new UPSTREAM_*" },
+  { label: "wait for live", desc: "poll container until healthy" },
+  { label: "NPM cert", desc: "create proxy host + Let's Encrypt cert" },
 ];
 
 function PipelinePreview() {
@@ -134,24 +134,24 @@ function formatZoneSummaryCopy(z: DerivedZone): string {
 // ── Layout options shaped for SelectMenu ──────────────────────────────────────
 
 const LAYOUT_MENU = LAYOUT_OPTIONS.map((o) => ({
-  id:    o.type,
+  id: o.type,
   label: o.label,
-  desc:  o.desc,
+  desc: o.desc,
 }));
 
 // ── Footer options (only shown for "app" layout) ───────────────────────────────
 
 const FOOTER_MENU = [
-  { id: "none",    label: "None",    desc: "no footer"                },
-  { id: "shop",    label: "Shop",    desc: "ShopFooter (e-commerce)"  },
-  { id: "landing", label: "Landing", desc: "LandingFooter"            },
+  { id: "none", label: "None", desc: "no footer" },
+  { id: "shop", label: "Shop", desc: "ShopFooter (e-commerce)" },
+  { id: "landing", label: "Landing", desc: "LandingFooter" },
 ];
 
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
 interface ZoneWizardScreenProps {
   /** Called with the confirmed zone — App.tsx runs the detached pipeline */
-  onDone:   (zone: DerivedZone) => void;
+  onDone: (zone: DerivedZone) => void;
   /** Called when the user cancels (q or Esc from step 1) */
   onCancel: () => void;
   /** Shared clipboard helper from App.tsx */
@@ -163,12 +163,12 @@ interface ZoneWizardScreenProps {
 export function ZoneWizardScreen({ onDone, onCancel, copy, didCopy }: ZoneWizardScreenProps) {
   const { tw, dw, th } = useWidths();
 
-  const [step,        setStep]       = useState<WizardStep>("key");
-  const [keyVal,      setKeyVal]     = useState("");
-  const [labelVal,    setLabelVal]   = useState("");
-  const [layoutIdx,   setLayoutIdx]  = useState(0);
-  const [footerChoice,setFooterChoice] = useState<AppFooterType>("none");
-  const [preview,     setPreview]    = useState<DerivedZone | null>(null);
+  const [step, setStep] = useState<WizardStep>("key");
+  const [keyVal, setKeyVal] = useState("");
+  const [labelVal, setLabelVal] = useState("");
+  const [layoutIdx, setLayoutIdx] = useState(0);
+  const [footerChoice, setFooterChoice] = useState<AppFooterType>("none");
+  const [preview, setPreview] = useState<DerivedZone | null>(null);
 
   // Guard: prevent onDone from firing twice if user taps Enter rapidly.
   const launched = useRef(false);
@@ -184,7 +184,7 @@ export function ZoneWizardScreen({ onDone, onCancel, copy, didCopy }: ZoneWizard
 
     if (key.escape) {
       const chosenLayout = LAYOUT_OPTIONS[layoutIdx]!.type as LayoutType;
-      const catalog      = DS_CATALOG[chosenLayout] ?? [];
+      const catalog = DS_CATALOG[chosenLayout] ?? [];
       if (chosenLayout === "app") {
         setStep(catalog.length > 0 ? "sections" : "footer");
       } else {
@@ -206,16 +206,16 @@ export function ZoneWizardScreen({ onDone, onCancel, copy, didCopy }: ZoneWizard
   }, { isActive: step === "confirm" });
 
   // ── Render ────────────────────────────────────────────────────────────────
-  const chosenLayout   = LAYOUT_OPTIONS[layoutIdx]!.type as LayoutType;
+  const chosenLayout = LAYOUT_OPTIONS[layoutIdx]!.type as LayoutType;
   const catalogForView = DS_CATALOG[chosenLayout] ?? [];
 
   const stepLabel =
-    step === "key"      ? "step 1 · zone key"                                            :
-    step === "label"    ? "step 2 · display name"                                        :
-    step === "layout"   ? "step 3 · layout type"                                         :
-    step === "footer"   ? "step 4 · footer"                                              :
-    step === "sections" ? `step ${chosenLayout === "app" ? 5 : 4} · dynamic sections`   :
-                          "confirm";
+    step === "key" ? "step 1 · zone key" :
+      step === "label" ? "step 2 · display name" :
+        step === "layout" ? "step 3 · layout type" :
+          step === "footer" ? "step 4 · footer" :
+            step === "sections" ? `step ${chosenLayout === "app" ? 5 : 4} · dynamic sections` :
+              "confirm";
 
   return (
     <Box

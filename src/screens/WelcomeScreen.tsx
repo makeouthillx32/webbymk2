@@ -16,42 +16,42 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput }        from "ink";
-import type { Zone }                  from "../../config/zones.ts";
-import { STACK_HOST, NPM_HOST, DOMAIN } from "../../config/stack.ts";
-import { PROJECT_DIR }                from "../../config/zones.ts";
-import { type Status }                from "../docker.ts";
-import { ContainerDot }               from "../components/ContainerDot.tsx";
-import { Divider }                    from "../components/Divider.tsx";
-import { KeyHints }                   from "../components/KeyHint.tsx";
-import { useWidths }                  from "../hooks/useTermWidth.ts";
-import { useHostMonitor }             from "../hooks/useHostMonitor.ts";
-import { useUpdateCheck }             from "../hooks/useUpdateCheck.ts";
-import { MetricCard }                 from "../components/design-system/MetricCard.tsx";
-import { sparkline }                  from "../utils/sparkline.ts";
+import { Box, Text, useInput } from "ink";
+import type { Zone } from "../config/zones.js";
+import { STACK_HOST, NPM_HOST, DOMAIN } from "../config/stack.js";
+import { PROJECT_DIR } from "../config/zones.js";
+import { type Status } from "../ink/docker.js";
+import { ContainerDot } from "../ink/components/ContainerDot.jsx";
+import { Divider } from "../ink/components/Divider.jsx";
+import { KeyHints } from "../ink/components/KeyHint.jsx";
+import { useWidths } from "../ink/hooks/useTermWidth.js";
+import { useHostMonitor } from "../ink/hooks/useHostMonitor.js";
+import { useUpdateCheck } from "../ink/hooks/useUpdateCheck.js";
+import { MetricCard } from "../ink/components/design-system/MetricCard.jsx";
+import { sparkline } from "../ink/utils/sparkline.js";
 
 declare const UNAXIS_VERSION: string | undefined;
 
 // ── Color palette (terminal-safe) ─────────────────────────────────────────────
-const BRAND        = "#D4A27F";
-const BRAND_SEC    = "cyan";
-const SUCCESS      = "green";
-const WARNING      = "yellow";
-const INACTIVE     = "gray";
-const DEV_COLOR    = "magenta";
+const BRAND = "#D4A27F";
+const BRAND_SEC = "cyan";
+const SUCCESS = "green";
+const WARNING = "yellow";
+const INACTIVE = "gray";
+const DEV_COLOR = "magenta";
 
 type StatusMap = Record<string, Status>;
 
 // ── Menu definitions ──────────────────────────────────────────────────────────
 
 const MENU_BASE = [
-  { icon: "▶", label: "Manage",   desc: "zones · npm · db · infrastructure", action: "manage"   },
-  { icon: "⚙", label: "Settings", desc: "view & edit local config",           action: "settings" },
+  { icon: "▶", label: "Manage", desc: "zones · npm · db · infrastructure", action: "manage" },
+  { icon: "⚙", label: "Settings", desc: "view & edit local config", action: "settings" },
 ] as const;
 
 const MENU_DEV = [
-  { icon: "⚡", label: "Release",  desc: "build + bump + publish to npm",     action: "release"  },
-  { icon: "⬡", label: "Build",    desc: "local build only (no publish)",      action: "build"    },
+  { icon: "⚡", label: "Release", desc: "build + bump + publish to npm", action: "release" },
+  { icon: "⬡", label: "Build", desc: "local build only (no publish)", action: "build" },
 ] as const;
 
 type MenuAction = "manage" | "settings" | "release" | "build";
@@ -61,16 +61,16 @@ const isDev = process.env.NODE_ENV !== "production";
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface WelcomeScreenProps {
-  zones:        Zone[];
+  zones: Zone[];
   zoneStatuses: StatusMap;
-  proxyStatus:  Status;
-  busy?:        boolean;
-  onManage:     () => void;
-  onSettings:   () => void;
-  onQuit:       () => void;
-  onRelease?:   () => void;
-  onBuild?:     () => void;
-  isActive:     boolean;
+  proxyStatus: Status;
+  busy?: boolean;
+  onManage: () => void;
+  onSettings: () => void;
+  onQuit: () => void;
+  onRelease?: () => void;
+  onBuild?: () => void;
+  isActive: boolean;
 }
 
 export function WelcomeScreen({
@@ -80,9 +80,9 @@ export function WelcomeScreen({
   const MENU = isDev ? [...MENU_BASE, ...MENU_DEV] : [...MENU_BASE];
 
   const [selected, setSelected] = useState(0);
-  const [blink, setBlink]       = useState(true);
-  const { tw, dw, th }          = useWidths();
-  const host                    = useHostMonitor();
+  const [blink, setBlink] = useState(true);
+  const { tw, dw, th } = useWidths();
+  const host = useHostMonitor();
 
   const devUpdateCheckVersion = process.env.UNAXIS_UPDATE_CHECK_VERSION?.trim();
   const currentVersion =
@@ -92,28 +92,28 @@ export function WelcomeScreen({
   const { updateAvailable, latestVersion, isChecking } = useUpdateCheck(currentVersion);
 
   // ── Responsive breakpoints ────────────────────────────────────────────────
-  const narrow  = tw < 60;
+  const narrow = tw < 60;
   const vnarrow = tw < 40;
   const compact = th < 26;
-  const short   = th < 20;
+  const short = th < 20;
   const minimal = th < 14;
 
   const showDiagram = !narrow && !compact;
-  const showStatus  = !minimal;
-  const showDir     = !short && !minimal;
-  const showBusy    = busy && !minimal;
+  const showStatus = !minimal;
+  const showDir = !short && !minimal;
+  const showBusy = busy && !minimal;
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
   useInput((input, key) => {
-    if (input === "q")                   { onQuit();   return; }
-    if (key.upArrow   || input === "k")  { setSelected((s) => Math.max(0, s - 1)); return; }
-    if (key.downArrow || input === "j")  { setSelected((s) => Math.min(MENU.length - 1, s + 1)); return; }
+    if (input === "q") { onQuit(); return; }
+    if (key.upArrow || input === "k") { setSelected((s) => Math.max(0, s - 1)); return; }
+    if (key.downArrow || input === "j") { setSelected((s) => Math.min(MENU.length - 1, s + 1)); return; }
     if (key.return || key.rightArrow) {
       const action = MENU[selected]?.action as MenuAction;
-      if (action === "manage")   { onManage();    return; }
-      if (action === "settings") { onSettings();  return; }
-      if (action === "release")  { onRelease?.(); return; }
-      if (action === "build")    { onBuild?.();   return; }
+      if (action === "manage") { onManage(); return; }
+      if (action === "settings") { onSettings(); return; }
+      if (action === "release") { onRelease?.(); return; }
+      if (action === "build") { onBuild?.(); return; }
       return;
     }
     if (input === "s") { onSettings(); return; }
@@ -126,7 +126,7 @@ export function WelcomeScreen({
     }
     // Dev-only hotkeys
     if (isDev && input === "r") { onRelease?.(); return; }
-    if (isDev && input === "b") { onBuild?.();   return; }
+    if (isDev && input === "b") { onBuild?.(); return; }
   }, { isActive });
 
   useEffect(() => {
@@ -135,7 +135,7 @@ export function WelcomeScreen({
   }, []);
 
   const allLive = proxyStatus === "running" && zones.every((z) => zoneStatuses[z.key] === "running");
-  const anyUp   = proxyStatus === "running" || zones.some((z) => (zoneStatuses[z.key] ?? "missing") !== "missing");
+  const anyUp = proxyStatus === "running" || zones.some((z) => (zoneStatuses[z.key] ?? "missing") !== "missing");
 
   const formatBytes = (bytes: number) => {
     const k = 1024;
@@ -303,7 +303,7 @@ export function WelcomeScreen({
               <Text dimColor>{"  ─── dev ──────────────────────────"}</Text>
             </Box>
             {MENU_DEV.map((item, i) => {
-              const idx    = MENU_BASE.length + i;
+              const idx = MENU_BASE.length + i;
               const active = selected === idx;
               return (
                 <Box key={item.label} paddingX={1} gap={2}>
@@ -333,12 +333,12 @@ export function WelcomeScreen({
       <KeyHints
         hints={[
           { k: "↑↓", label: "navigate" },
-          { k: "↵",  label: "select"   },
-          { k: "q",  label: "quit"     },
+          { k: "↵", label: "select" },
+          { k: "q", label: "quit" },
           ...(updateAvailable ? [{ k: "u", label: "update" }] : []),
           ...(isDev ? [
             { k: "r", label: "release" },
-            { k: "b", label: "build"   },
+            { k: "b", label: "build" },
           ] : []),
         ]}
         marginTop={0}

@@ -91,8 +91,9 @@ async function rollbackZone(
 //                          NPM cert / proxy issues can be fixed via [f] doctor.
 
 export async function createZonePipeline(
-  zone:   DerivedZone,
-  onLine: (l: string) => void,
+  zone:       DerivedZone,
+  onLine:     (l: string) => void,
+  dockerUrl?: string,
 ): Promise<number> {
   const step = (name: string) => onLine(`\n── ${name} ──`);
 
@@ -122,7 +123,7 @@ export async function createZonePipeline(
     await rollbackZone(zone, onLine);
     return 1;
   }
-  const deployCode = await pullAndUp(zone, onLine);
+  const deployCode = await pullAndUp(zone, onLine, dockerUrl);
   if (deployCode !== 0) {
     onLine(`✗ Deploy failed (exit ${deployCode})`);
     await rollbackZone(zone, onLine);

@@ -9,6 +9,7 @@ import type { ChildProcess } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join }         from "path";
 import { PROJECT_DIR, PROXY, GHCR_USER, type Zone } from "../config/zones.ts";
+import { ARTIFACT_STORE_DIR }                        from "../config/stack.ts";
 import { getCredential } from "../utils/secureStorage/index.js";
 
 export type Status =
@@ -18,14 +19,29 @@ export type Status =
   | "stopped"    // container exists but not running
   | "missing";   // container doesn't exist
 
-// On Linux/Mac (or inside a container) we need to point at the Docker socket
-// explicitly. On Windows, Docker Desktop's CLI handles routing automatically.
-const DOCKER_ENV: Record<string, string> = {
-  ...(process.env as Record<string, string>),
-  ...(process.platform !== "win32"
-    ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
-    : {}),
-};
+// ── Docker environment helpers ─────────────────────────────────────────────────
+//
+// makeDockerEnv(dockerUrl?)
+//   Build the process env for any `docker` / `docker compose` subprocess.
+//
+//   - No argument  →  local socket (same behaviour as before)
+//   - With a URL   →  overrides DOCKER_HOST so the command targets that host.
+//                     Use this to drive a remote environment (remote-docker type).
+//
+// On Linux/Mac (or inside a container) we need to point at the local Docker
+// socket explicitly.  On Windows, Docker Desktop handles routing automatically.
+
+function makeDockerEnv(dockerUrl?: string): Record<string, string> {
+  const localSocket =
+    process.platform !== "win32"
+      ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
+      : {};
+  return {
+    ...(process.env as Record<string, string>),
+    ...localSocket,
+    ...(dockerUrl ? { DOCKER_HOST: dockerUrl } : {}),
+  };
+}
 
 // ── Primitives ────────────────────────────────────────────────────────────────
 
@@ -35,7 +51,7 @@ async function dockerRun(
 ): Promise<{ out: string; err: string; code: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, {
-      env:   DOCKER_ENV,
+      env:   makeDockerEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -64,7 +80,7 @@ function runConnectivityCommand(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const proc = spawn(command, args, {
-      env: DOCKER_ENV,
+      env: makeDockerEnv(),
       stdio: ["ignore", "ignore", "ignore"],
     });
 
@@ -239,12 +255,22 @@ export function classifyDockerError(message: string): string {
 
 // ── Zone-compose helpers ──────────────────────────────────────────────────────
 
-/** Absolute path to a zone's own compose file (zones/<key>/docker-compose.yml). */
+/**
+ * Absolute path to a zone's managed compose artifact.
+ *
+ * Compose files are managed artifacts — they live outside the source repo
+ * in the UNAXIS artifact store, mirroring Portainer's /data/compose/{id}/
+ * pattern.  The repo's zones/<key>/docker-compose.yml is a scaffold template
+ * only; the authoritative runtime copy lives here.
+ *
+ *   Windows:     %APPDATA%\unenter\stacks\<key>\docker-compose.yml
+ *   macOS/Linux: ~/.unenter/stacks/<key>/docker-compose.yml
+ */
 export function zoneComposePath(key: string): string {
-  return join(PROJECT_DIR, "zones", key, "docker-compose.yml");
+  return join(ARTIFACT_STORE_DIR, key, "docker-compose.yml");
 }
 
-/** True when the zone has its own per-zone compose file (new-style zone). */
+/** True when the zone's managed compose artifact exists in the artifact store. */
 export function zoneComposeExists(key: string): boolean {
   return existsSync(zoneComposePath(key));
 }
@@ -254,19 +280,23 @@ export function zoneComposeExists(key: string): boolean {
 /**
  * Run `docker compose <args>` from the project root, streaming lines.
  *
- * Pass `composeFile` to target a specific compose file instead of the
- * default docker-compose.yml (e.g. a per-zone file).
+ * @param args        Arguments after `docker compose`
+ * @param onLine      Callback for each output line
+ * @param composeFile Explicit compose file path (defaults to `docker-compose.yml` in cwd)
+ * @param dockerUrl   Override DOCKER_HOST — e.g. `tcp://<host>:2375` for a remote
+ *                    environment.  Omit to target the local Docker socket.
  */
 export async function composeRun(
   args: string[],
   onLine?: (line: string) => void,
   composeFile?: string,
+  dockerUrl?: string,
 ): Promise<number> {
   const cb       = onLine ?? (() => {});
   const fileFlag = composeFile ? ["-f", composeFile] : [];
   const proc = spawn("docker", ["compose", ...fileFlag, ...args], {
     cwd:   PROJECT_DIR,
-    env:   DOCKER_ENV,
+    env:   makeDockerEnv(dockerUrl),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -540,7 +570,7 @@ async function ensureGhcrLogin(onLine?: (l: string) => void): Promise<void> {
     const proc = spawn(
       "docker",
       ["login", "ghcr.io", "--username", GHCR_USER, "--password-stdin"],
-      { env: DOCKER_ENV, stdio: ["pipe", "pipe", "pipe"] },
+      { env: makeDockerEnv(), stdio: ["pipe", "pipe", "pipe"] },
     );
     let out = "";
     proc.stdout!.on("data", (d: Buffer) => { out += d.toString(); });
@@ -572,8 +602,9 @@ async function ensureGhcrLogin(onLine?: (l: string) => void): Promise<void> {
  * newly-pulled image — prevents "stale container" confusion.
  */
 export async function pullAndUp(
-  zone: Zone,
-  onLine?: (l: string) => void
+  zone:      Zone,
+  onLine?:   (l: string) => void,
+  dockerUrl?: string,
 ): Promise<number> {
   const newStyle = zoneComposeExists(zone.key);
   const file     = newStyle ? zoneComposePath(zone.key) : undefined;
@@ -587,7 +618,7 @@ export async function pullAndUp(
     // Docker Desktop's credential store is stale after a push from the TUI.
     await ensureGhcrLogin(onLine);
     onLine?.(`Pulling ${zone.image}...`);
-    const pullCode = await composeRun(["pull", zone.service], onLine, file);
+    const pullCode = await composeRun(["pull", zone.service], onLine, file, dockerUrl);
     if (pullCode !== 0) return pullCode;
   } else {
     onLine?.("No internet connectivity detected; skipping pull and using cached image if available.");
@@ -595,7 +626,7 @@ export async function pullAndUp(
   }
 
   onLine?.(`Starting ${zone.service} (force-recreate)...`);
-  return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file);
+  return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file, dockerUrl);
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────

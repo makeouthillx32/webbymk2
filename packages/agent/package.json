@@ -1,0 +1,18 @@
+{
+  "name": "@untsystems/unaxis-agent",
+  "version": "0.1.0",
+  "description": "UNAXIS infrastructure agent — HTTP proxy to local Docker socket",
+  "private": false,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start":  "bun run src/index.ts",
+    "dev":    "bun --watch src/index.ts",
+    "build":  "bun build src/index.ts --outdir dist --target bun",
+    "docker:build": "docker build -t unaxis/agent:v0 .",
+    "docker:run":   "docker run -d --name unaxis_agent --restart unless-stopped -p 8001:8001 -v /var/run/docker.sock:/var/run/docker.sock -e AGENT_SECRET=changeme unaxis/agent:v0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

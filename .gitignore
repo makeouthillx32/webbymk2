@@ -70,7 +70,7 @@ tuibuildlogs.md
 
 # scratch / temp / runtime state
 scratch/
-state/
+/state/
 sandbox/
 
 # backup & generated files
