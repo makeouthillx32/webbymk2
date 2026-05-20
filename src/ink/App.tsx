@@ -26,65 +26,73 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useCallback, useState, useEffect, useRef } from "react";
-import { useInput, useApp, render }              from "ink";
-import { unstable_batchedUpdates }               from "react-dom";
+import { useInput, useApp, render } from "ink";
+import { unstable_batchedUpdates } from "react-dom";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 import { useNotifications, NotificationsProvider } from "./components/Notifications.tsx";
-import { useAppRouter, PANEL_TABS }        from "./hooks/useAppRouter.ts";
-import type { PanelTab }                   from "./hooks/useAppRouter.ts";
-import { useZoneManager }                  from "./hooks/useZoneManager.ts";
-import { useBackgroundOps }                from "./hooks/useBackgroundOps.ts";
-import { useCopyOnSelect }                 from "./hooks/useCopyOnSelect.ts";
+import { useAppRouter, PANEL_TABS } from "./hooks/useAppRouter.ts";
+import type { PanelTab } from "./hooks/useAppRouter.ts";
+import { useZoneManager } from "./hooks/useZoneManager.ts";
+import { useEnvManager } from "./hooks/useEnvManager.ts";
+import { useBackgroundOps } from "./hooks/useBackgroundOps.ts";
+import { useCopyOnSelect } from "./hooks/useCopyOnSelect.ts";
 
 // ── Layout / chrome ───────────────────────────────────────────────────────────
-import { AppShell }                        from "./components/AppShell.tsx";
-import { AlternateScreen }                 from "./components/AlternateScreen.tsx";
+import { AppShell } from "./components/AppShell.tsx";
+import { AlternateScreen } from "./components/AlternateScreen.tsx";
 
 // ── Screens ───────────────────────────────────────────────────────────────────
-import { WelcomeScreen }                   from "./screens/WelcomeScreen.tsx";
+import { WelcomeScreen } from "./screens/WelcomeScreen.tsx";
 import { SettingsScreen, openConfigInEditor } from "./screens/SettingsScreen.tsx";
-import { ZoneWizardScreen }                from "./screens/ZoneWizardScreen.tsx";
+import { ZoneWizardScreen } from "./screens/ZoneWizardScreen.tsx";
 
 // ── Views ─────────────────────────────────────────────────────────────────────
-import { CoreView }                        from "./views/CoreView.tsx";
-import { ZonesView }                       from "./views/ZonesView.tsx";
+import { CoreView } from "./views/CoreView.tsx";
+import { ZonesView } from "./views/ZonesView.tsx";
 
 // ── Panels ────────────────────────────────────────────────────────────────────
-import { NpmPanel }                        from "./panels/Npm/index.tsx";
-import { DbPanel }                         from "./panels/Db/index.tsx";
-import { InfraPanel }                      from "./panels/Infra/index.tsx";
-import { NotesScreen }                     from "./screens/NotesScreen.tsx";
+import { NpmPanel } from "./panels/Npm/index.tsx";
+import { DbPanel } from "./panels/Db/index.tsx";
+import { InfraPanel } from "./panels/Infra/index.tsx";
+import { EnvPanel } from "./panels/Env/index.tsx";
+import { NotesScreen } from "./screens/NotesScreen.tsx";
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
-import { OperationOverlay }                from "./OperationOverlay.tsx";
-import { KeybindingWire }                  from "./KeybindingWire.tsx";
-import { StartupScreen }                   from "./components/StartupScreen.tsx";
+import { OperationOverlay } from "./OperationOverlay.tsx";
+import { KeybindingWire } from "./KeybindingWire.tsx";
+import { StartupScreen } from "./components/StartupScreen.tsx";
 
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 import { setupGracefulShutdown, gracefulShutdownSync } from '../utils/gracefulShutdown.js';
-import { linesToClipboard }                from "./utils.ts";
+import { linesToClipboard } from "./utils.ts";
 import { popoutOpOutput, popoutLogTail } from "../utils/terminalPopout.ts";
-import { backupDatabase }                  from "./db-api.ts";
+import { backupDatabase } from "./db-api.ts";
 import {
   startCoreStack, stopCoreStack, restartCoreStack,
   healCoreStack, verifyCoreStack, deleteRuntimeInstance,
-}                                          from "./db-api.ts";
-import { spawn }                           from "child_process";
-import { join }                            from "path";
-import { resolveRuntimeProjectRoot }       from "../utils/runtimeEnv.js";
+} from "./db-api.ts";
+import { spawn } from "child_process";
+import { join } from "path";
+import { resolveRuntimeProjectRoot } from "../utils/runtimeEnv.js";
 import { snapshotInstance, restoreInstance } from "./zone/snapshot.ts";
-import { loadRegistry }                     from "./zone/supabase-factory.ts";
-import type { RuntimeInstance }            from "./zone/supabase-factory.ts";
-import { InstanceWizardScreen }            from "./screens/InstanceWizardScreen.tsx";
-import { StackManagerScreen }              from "./screens/StackManagerScreen.tsx";
+import { loadRegistry } from "./zone/supabase-factory.ts";
+import type { RuntimeInstance } from "./zone/supabase-factory.ts";
+import { InstanceWizardScreen } from "./screens/InstanceWizardScreen.tsx";
+import { StackManagerScreen } from "./screens/StackManagerScreen.tsx";
 import { devContainerName, startDevContainer, stopDevContainer } from "./dev-container.ts";
-import { startIpcServer }                  from "./ipc-server.ts";
-import { getStatus }                       from "./docker.ts";
-import { captureDockerLogs, parseTail }    from "./log-snapshot.ts";
-import { loadZones }                       from "./zone-store.ts";
-import { reconcileProxyRoutes }            from "./proxy-config.ts";
+import { startIpcServer } from "./ipc-server.ts";
+import { getStatus } from "./docker.ts";
+import { captureDockerLogs, parseTail } from "./log-snapshot.ts";
+import { loadZones } from "./zone-store.ts";
+import {
+  loadEnvironments,
+  getActiveEnvironment,
+  setActiveEnvironment,
+  environmentTypeLabel,
+} from "./environment-store.ts";
+import { reconcileProxyRoutes } from "./proxy-config.ts";
 import {
   appendTimeline,
   appendWatchText,
@@ -95,11 +103,11 @@ import {
   watchRoot,
   writeWatchText,
   type WatchMode,
-}                                          from "./watch-session.ts";
+} from "./watch-session.ts";
 import { parseLogTail, snapshotContainerLogs } from "./log-snapshot.ts";
-import { PROXY }                          from "../config/zones.ts";
-import type { Zone }                       from "../config/zones.ts";
-import { TerminalWriteProvider }           from "./useTerminalNotification.ts";
+import { PROXY } from "../config/zones.ts";
+import type { Zone } from "../config/zones.ts";
+import { TerminalWriteProvider } from "./useTerminalNotification.ts";
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -116,7 +124,7 @@ export function App() {
   const [splashDone, setSplashDone] = useState(noSplash);
 
   // ── Cross-cutting utilities ────────────────────────────────────────────────
-  const { copy, didCopy }          = useCopyOnSelect();
+  const { copy, didCopy } = useCopyOnSelect();
   const { notifications, addNotification } = useNotifications();
 
   const {
@@ -132,18 +140,26 @@ export function App() {
     zones, setZones, zonesLoading,
     zoneStatuses, proxyStatus, refreshZones,
     forceRefreshZoneList,
-    infraResults,  infraChecking, checkInfra,
   } = useZoneManager({ addNotification, pollEnabled: statusPollingActive });
+
+  // ── Environment + infra health (env topology, not zone topology) ──────────
+  const {
+    activeEnv,
+    envStale, envDataAge, lastEnvError,
+    infraResults, infraChecking, infraSource,
+    checkInfra,
+    refreshEnvs,
+  } = useEnvManager();
 
   // ── Background operations ──────────────────────────────────────────────────
   const {
-    bgOps,        setBgOps,
-    overlayOpId,  setOverlayOpId,  overlayOp,
-    stackOpen,    setStackOpen,
+    bgOps, setBgOps,
+    overlayOpId, setOverlayOpId, overlayOp,
+    stackOpen, setStackOpen,
     stackFocusId, setStackFocusId,
     anyBusy,
-    logProcRef,   logOpIdRef,
-    runOp,        runOpQueued,     runCreateZone,   openLogs,
+    logProcRef, logOpIdRef,
+    runOp, runOpQueued, runCreateZone, openLogs,
     runDevModeOp, triggerDismissHook, triggerRestartHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
@@ -170,12 +186,19 @@ export function App() {
     ipcStateRef.current = { view, bgOps, proxyStatus };
   }, [view, bgOps, proxyStatus]);
 
+  // Stable ref so the IPC env-switch handler (defined once in useEffect) can
+  // call refreshEnvs without closing over a stale version.
+  const refreshEnvsRef = useRef(refreshEnvs);
+  useEffect(() => { refreshEnvsRef.current = refreshEnvs; }, [refreshEnvs]);
+
   // ── Stack focus — separate from visibility ────────────────────────────────
   // stackOpen        = strip is rendered (auto-set when ops start)
   // stackFocused     = strip owns keyboard; panels stay active when this is false
   // stackManagerOpen = full-screen op manager overlay (shows ALL ops + preview)
-  const [stackFocused,     setStackFocused]     = useState(false);
+  const [stackFocused, setStackFocused] = useState(false);
   const [stackManagerOpen, setStackManagerOpen] = useState(false);
+
+  // activeEnv and its polling now live in useEnvManager above.
 
   // ── Auto-exit focus when all ops drain away ───────────────────────────────
   // If bgOps empties while stackFocused is true (e.g. all ops finish or are
@@ -227,10 +250,10 @@ export function App() {
       const stackLines = currentOps.length === 0
         ? ["  stack empty"]
         : currentOps.map((op) => {
-            const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
-            const last = op.lines[op.lines.length - 1];
-            return `  #${op.id} ${state.padEnd(7)} ${op.title}${last ? ` · ${last}` : ""}`;
-          });
+          const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
+          const last = op.lines[op.lines.length - 1];
+          return `  #${op.id} ${state.padEnd(7)} ${op.title}${last ? ` · ${last}` : ""}`;
+        });
 
       return [
         `UNAXIS watch snapshot`,
@@ -310,15 +333,109 @@ export function App() {
         return 0;
       },
 
+      // unaxis envs  — list all configured environments
+      envs: async (_args, onLine) => {
+        const all = await loadEnvironments();
+        if (all.length === 0) { onLine("(no environments configured)"); return 0; }
+        for (const e of all) {
+          const activeMarker = e.active ? "●" : "○";
+          const statusColor = e.status === "up" ? "up" : e.status === "down" ? "down" : "unk";
+          onLine(
+            `  ${activeMarker} ${e.name.padEnd(16)} ${statusColor.padEnd(5)} ${environmentTypeLabel(e.type).padEnd(14)} ${e.domain}`
+          );
+        }
+        const activeEnv = all.find((e) => e.active);
+        onLine(`✓ ${all.length} environment${all.length !== 1 ? "s" : ""}${activeEnv ? ` (active: ${activeEnv.name})` : ""}`);
+        return 0;
+      },
+
+      // unaxis env status|use|list  — inspect or switch active environment
+      env: async (args, onLine) => {
+        const sub = args[0] ?? "status";
+
+        // unaxis env status  — show the active environment
+        if (sub === "status") {
+          const active = await getActiveEnvironment();
+          if (!active) {
+            onLine("✗ no active environment");
+            onLine("  run: unaxis envs   to see all environments");
+            return 1;
+          }
+          onLine(`✓ active environment: ${active.name}`);
+          onLine(`  type      : ${environmentTypeLabel(active.type)}`);
+          onLine(`  domain    : ${active.domain}`);
+          onLine(`  npm       : ${active.npmHost}:${active.npmPort}`);
+          onLine(`  proxy     : ${active.proxyHost}:${active.proxyPort}`);
+          onLine(`  ddns      : ${active.ddnsHostname}`);
+          onLine(`  public    : ${active.publicUrl}`);
+          onLine(`  status    : ${active.status}`);
+          if (active.npmSecretId) onLine(`  npm-secret : configured`);
+          if (active.azureAppIdSecretId) onLine(`  azure-cred : configured`);
+          return 0;
+        }
+
+        // unaxis env use <name>  — switch the active environment
+        if (sub === "use") {
+          const targetName = args[1];
+          if (!targetName) {
+            onLine("✗ usage: env use <environment-name>");
+            return 2;
+          }
+          const all = await loadEnvironments();
+          const target = all.find((e) => e.name === targetName);
+          if (!target) {
+            onLine(`✗ environment not found: "${targetName}"`);
+            onLine(`  available: ${all.map((e) => e.name).join(", ")}`);
+            return 1;
+          }
+          if (target.active) {
+            onLine(`○ already active: ${target.name}`);
+            return 0;
+          }
+          onLine(`• switching to environment: ${target.name}…`);
+          const result = await setActiveEnvironment(target.id);
+          if (!result) {
+            onLine("✗ failed to switch environment — check TUI logs");
+            return 1;
+          }
+          // Bust cache and push the new active env into TUI state immediately.
+          refreshEnvsRef.current();
+          onLine(`✓ switched to: ${result.name}`);
+          onLine(`  type   : ${environmentTypeLabel(result.type)}`);
+          onLine(`  domain : ${result.domain}`);
+          onLine(`  proxy  : ${result.proxyHost}:${result.proxyPort}`);
+          return 0;
+        }
+
+        // unaxis env list  — alias for unaxis envs
+        if (sub === "list") {
+          const all = await loadEnvironments();
+          if (all.length === 0) { onLine("(no environments configured)"); return 0; }
+          for (const e of all) {
+            const marker = e.active ? "● (active)" : "○";
+            onLine(`  ${marker.padEnd(12)} ${e.name.padEnd(16)} ${environmentTypeLabel(e.type).padEnd(14)} ${e.domain}`);
+          }
+          return 0;
+        }
+
+        onLine(`✗ unknown env command: "${sub}"`);
+        onLine("  usage: env status | env use <name> | env list");
+        return 2;
+      },
+
       // unaxis session  — agent-friendly snapshot of the attached TUI
       session: async (_args, onLine) => {
-        const all = await loadZones();
+        const [all, activeEnv] = await Promise.all([loadZones(), getActiveEnvironment()]);
         const { view: currentView, bgOps: currentOps, proxyStatus: currentProxy } = ipcStateRef.current;
         const running = currentOps.filter((o) => o.busy && !o.dismissable).length;
         const live = currentOps.filter((o) => o.busy && o.dismissable).length;
         const done = currentOps.filter((o) => !o.busy).length;
         onLine("✓ UNAXIS TUI is running");
         onLine(`  cwd    : ${process.cwd()}`);
+        if (activeEnv) {
+          onLine(`  env    : ${activeEnv.name} (${environmentTypeLabel(activeEnv.type)})`);
+          onLine(`  domain : ${activeEnv.domain}`);
+        }
         onLine(`  view   : ${currentView}`);
         onLine(`  proxy  : ${currentProxy}`);
         onLine(`  zones  : ${all.length}`);
@@ -669,7 +786,7 @@ export function App() {
     });
 
     return () => { server.close(); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Proxy reconciliation on startup ───────────────────────────────────────
@@ -680,7 +797,7 @@ export function App() {
     loadZones()
       .then((zones) => reconcileProxyRoutes(zones, (name) => getStatus(name)))
       .catch(() => { /* Supabase or proxy unreachable at boot — leave routes as-is */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── goHome — overlay emergency exit: kills log, collapses to welcome ──────
@@ -863,7 +980,7 @@ export function App() {
 
   const handleStackUp = useCallback(() => {
     setBgOps((prev) => {
-      const idx  = prev.findIndex((o) => o.id === stackFocusId);
+      const idx = prev.findIndex((o) => o.id === stackFocusId);
       const next = (idx - 1 + prev.length) % prev.length;
       setStackFocusId(prev[next]?.id ?? null);
       return prev;
@@ -872,7 +989,7 @@ export function App() {
 
   const handleStackDown = useCallback(() => {
     setBgOps((prev) => {
-      const idx  = prev.findIndex((o) => o.id === stackFocusId);
+      const idx = prev.findIndex((o) => o.id === stackFocusId);
       const next = (idx + 1) % prev.length;
       setStackFocusId(prev[next]?.id ?? null);
       return prev;
@@ -970,15 +1087,15 @@ export function App() {
   const handleRelease = useCallback(() => {
     const root = resolveRuntimeProjectRoot();
     if (!root) { addNotification("Project root not found — cannot release"); return; }
-    const inkDir     = join(root, "src", "ink");
+    const inkDir = join(root, "src", "ink");
     const scriptPath = join(inkDir, "release.ts");
     runOpQueued("Release UNAXIS", (onLine) => new Promise((resolve) => {
       // process.execPath = absolute path to the currently-running Bun binary.
       // Never rely on "bun" string + PATH lookup — on Windows, shell: false
       // uses uv_spawn which can't find bun.exe via PATH in all launch contexts.
       const child = spawn(process.execPath, [scriptPath, "--publish"], {
-        cwd:   inkDir,
-        env:   { ...process.env, FORCE_COLOR: "0" },
+        cwd: inkDir,
+        env: { ...process.env, FORCE_COLOR: "0" },
         shell: false,
       });
       const pipe = (data: Buffer) =>
@@ -993,12 +1110,12 @@ export function App() {
   const handleBuild = useCallback(() => {
     const root = resolveRuntimeProjectRoot();
     if (!root) { addNotification("Project root not found — cannot build"); return; }
-    const inkDir     = join(root, "src", "ink");
+    const inkDir = join(root, "src", "ink");
     const scriptPath = join(inkDir, "build.ts");
     runOpQueued("Build UNAXIS (local)", (onLine) => new Promise((resolve) => {
       const child = spawn(process.execPath, [scriptPath], {
-        cwd:   inkDir,
-        env:   { ...process.env, FORCE_COLOR: "0" },
+        cwd: inkDir,
+        env: { ...process.env, FORCE_COLOR: "0" },
         shell: false,
       });
       const pipe = (data: Buffer) =>
@@ -1092,6 +1209,8 @@ export function App() {
           stackFocusId={stackFocusId}
           notifications={notifications}
           didCopy={didCopy}
+          activeEnvName={activeEnv?.name}
+          activeEnvType={activeEnv?.type}
           onStackUp={handleStackUp}
           onStackDown={handleStackDown}
           onStackEnter={handleStackEnter}
@@ -1110,12 +1229,13 @@ export function App() {
               zoneStatuses={zoneStatuses}
               proxyStatus={proxyStatus}
               busy={anyBusy}
-              onManage={()   => navigate("zones")}
+              onManage={() => navigate("zones")}
               onSettings={() => navigate("settings")}
               onQuit={() => gracefulShutdownSync(0)}
               onRelease={handleRelease}
               onBuild={handleBuild}
               isActive={!stackFocused}
+              activeEnv={activeEnv}
             />
           )}
 
@@ -1123,7 +1243,7 @@ export function App() {
             <SettingsScreen
               zones={zones}
               onTokenEditStart={() => setTokenEditing(true)}
-              onTokenEditEnd={()   => setTokenEditing(false)}
+              onTokenEditEnd={() => setTokenEditing(false)}
             />
           )}
 
@@ -1279,10 +1399,24 @@ export function App() {
 
           {view === "infra" && (
             <InfraPanel
+              activeEnv={activeEnv}
+              infraSource={infraSource}
+              envStale={envStale}
+              envDataAge={envDataAge}
               results={infraResults}
               checking={infraChecking}
               onCheckInfra={checkInfra}
               onGoBack={goBack}
+            />
+          )}
+
+          {view === "env" && (
+            <EnvPanel
+              onGoBack={goBack}
+              addNotification={addNotification}
+              envStale={envStale}
+              lastEnvError={lastEnvError}
+              envDataAge={envDataAge}
             />
           )}
 
@@ -1305,6 +1439,6 @@ render(
   </TerminalWriteProvider>,
   {
     patchConsole: false,   // don't hijack console.log (use onLine callbacks)
-    exitOnCtrlC:  false,   // App handles Ctrl-C / q itself via useApp().exit()
+    exitOnCtrlC: false,   // App handles Ctrl-C / q itself via useApp().exit()
   },
 )
