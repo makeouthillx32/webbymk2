@@ -138,7 +138,7 @@ export async function agentFetch(
 
 /**
  * Signed fetch to the Docker proxy prefix on the agent.
- * path should be the Docker API path, e.g. "/v1.43/containers/json".
+ * path should be the Docker API path, e.g. "/containers/json".
  */
 export async function dockerFetch(
   env:   UnaxisEnvironment,
@@ -259,9 +259,35 @@ export interface ContainerSummary {
   ImageID: string;
   Status:  string;
   State:   string;   // "running" | "exited" | "paused" | "restarting" | "dead" | "created"
+  Created: number;   // unix timestamp — mirrors containers.go Created field
   Mounts:  { Name?: string; Type: string }[];
   Labels:  Record<string, string>;
   Ports:   { IP?: string; PrivatePort: number; PublicPort?: number; Type: string }[];
+  // NetworkSettings is present in /containers/json when NetworkMode is set
+  NetworkSettings?: {
+    Networks?: Record<string, { IPAddress?: string; GlobalIPv6Address?: string }>;
+  };
+}
+
+/** Raw inspect response — full container detail. Typed as unknown; callers display as JSON. */
+export type ContainerInspect = Record<string, unknown>;
+
+// ── Container create spec ─────────────────────────────────────────────────────
+// Mirrors the body sent to POST /containers/create (Docker Engine API)
+
+export interface PortBinding {
+  hostIp?:   string;
+  hostPort:  string;
+}
+
+export interface ContainerCreateSpec {
+  name:   string;
+  image:  string;
+  ports:  { container: string; host: string; protocol: "tcp" | "udp" }[];
+  env:    string[];   // "KEY=value" pairs
+  cmd?:   string[];
+  labels: Record<string, string>;
+  restartPolicy: "no" | "always" | "unless-stopped" | "on-failure";
 }
 
 export interface ImageSummary {
@@ -280,6 +306,8 @@ export interface VolumeSummary {
   Labels:     Record<string, string> | null;
   Scope:      string;
   CreatedAt:  string;
+  // Appended by fetchVolumes after two-call dangling detection (mirrors Portainer images_list.go)
+  dangling:   boolean;
 }
 
 export interface VolumesListResponse {
@@ -297,10 +325,11 @@ export interface NetworkSummary {
   Name:       string;
   Driver:     string;
   Scope:      string;
+  Attachable: boolean;
+  Internal:   boolean;
   IPAM:       { Driver: string; Config: NetworkIPAMConfig[] };
   Labels:     Record<string, string> | null;
   Containers: Record<string, unknown> | null;
-  Internal:   boolean;
 }
 
 // ── Resource list fetchers ────────────────────────────────────────────────────
@@ -311,7 +340,7 @@ export async function fetchContainers(
 ): Promise<ContainerSummary[] | null> {
   if (!env.agentUrl) return null;
   try {
-    const res = await dockerFetch(env, "/v1.43/containers/json?all=1", {
+    const res = await dockerFetch(env, "/containers/json?all=1", {
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;
@@ -327,7 +356,7 @@ export async function fetchImages(
 ): Promise<ImageSummary[] | null> {
   if (!env.agentUrl) return null;
   try {
-    const res = await dockerFetch(env, "/v1.43/images/json", {
+    const res = await dockerFetch(env, "/images/json", {
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;
@@ -337,18 +366,35 @@ export async function fetchImages(
   }
 }
 
-/** Fetch all volumes. */
+/**
+ * Fetch all volumes with dangling detection.
+ *
+ * Mirrors Portainer's two-call approach (images_list.go imageUsageSet pattern):
+ *   1. GET /volumes?filters={"dangling":["false"]}  → in-use volumes
+ *   2. GET /volumes?filters={"dangling":["true"]}   → orphaned volumes
+ * Both sets are merged and each volume tagged with dangling: true/false.
+ * This is more reliable than cross-referencing container mounts manually.
+ */
 export async function fetchVolumes(
   env: UnaxisEnvironment,
 ): Promise<VolumeSummary[] | null> {
   if (!env.agentUrl) return null;
   try {
-    const res = await dockerFetch(env, "/v1.43/volumes", {
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as VolumesListResponse;
-    return body.Volumes ?? [];
+    const inUseFilter  = encodeURIComponent('{"dangling":["false"]}');
+    const danglingFilter = encodeURIComponent('{"dangling":["true"]}');
+
+    const [inUseRes, danglingRes] = await Promise.all([
+      dockerFetch(env, `/volumes?filters=${inUseFilter}`,   { signal: AbortSignal.timeout(12_000) }),
+      dockerFetch(env, `/volumes?filters=${danglingFilter}`, { signal: AbortSignal.timeout(12_000) }),
+    ]);
+
+    const inUse    = inUseRes.ok    ? ((await inUseRes.json())    as VolumesListResponse).Volumes ?? [] : [];
+    const dangling = danglingRes.ok ? ((await danglingRes.json()) as VolumesListResponse).Volumes ?? [] : [];
+
+    return [
+      ...inUse.map((v)    => ({ ...v, dangling: false })),
+      ...dangling.map((v) => ({ ...v, dangling: true })),
+    ];
   } catch {
     return null;
   }
@@ -360,7 +406,7 @@ export async function fetchNetworks(
 ): Promise<NetworkSummary[] | null> {
   if (!env.agentUrl) return null;
   try {
-    const res = await dockerFetch(env, "/v1.43/networks", {
+    const res = await dockerFetch(env, "/networks", {
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;
@@ -381,7 +427,7 @@ export async function containerAction(
   action: ContainerActionVerb,
 ): Promise<boolean> {
   try {
-    const res = await dockerFetch(env, `/v1.43/containers/${id}/${action}`, {
+    const res = await dockerFetch(env, `/containers/${id}/${action}`, {
       method: "POST",
       signal: AbortSignal.timeout(15_000),
     });
@@ -400,7 +446,7 @@ export async function removeContainer(
 ): Promise<boolean> {
   try {
     const qs  = force ? "?force=true" : "";
-    const res = await dockerFetch(env, `/v1.43/containers/${id}${qs}`, {
+    const res = await dockerFetch(env, `/containers/${id}${qs}`, {
       method: "DELETE",
       signal: AbortSignal.timeout(15_000),
     });
@@ -416,7 +462,7 @@ export async function removeImage(
   id:   string,
 ): Promise<boolean> {
   try {
-    const res = await dockerFetch(env, `/v1.43/images/${encodeURIComponent(id)}`, {
+    const res = await dockerFetch(env, `/images/${encodeURIComponent(id)}`, {
       method: "DELETE",
       signal: AbortSignal.timeout(15_000),
     });
@@ -432,7 +478,7 @@ export async function removeVolume(
   name: string,
 ): Promise<boolean> {
   try {
-    const res = await dockerFetch(env, `/v1.43/volumes/${encodeURIComponent(name)}`, {
+    const res = await dockerFetch(env, `/volumes/${encodeURIComponent(name)}`, {
       method: "DELETE",
       signal: AbortSignal.timeout(15_000),
     });
@@ -448,12 +494,347 @@ export async function removeNetwork(
   id:  string,
 ): Promise<boolean> {
   try {
-    const res = await dockerFetch(env, `/v1.43/networks/${id}`, {
+    const res = await dockerFetch(env, `/networks/${id}`, {
       method: "DELETE",
       signal: AbortSignal.timeout(15_000),
     });
     return res.ok;
   } catch {
+    return false;
+  }
+}
+
+// ── Container stats ───────────────────────────────────────────────────────────
+// Mirrors Portainer's containerStatsController.js delta formula exactly.
+
+export interface ContainerStatsRaw {
+  cpu_stats: {
+    cpu_usage:        { total_usage: number; percpu_usage?: number[] };
+    system_cpu_usage: number;
+    online_cpus?:     number;
+  };
+  precpu_stats: {
+    cpu_usage:        { total_usage: number };
+    system_cpu_usage: number;
+  };
+  memory_stats: {
+    usage:  number;
+    limit:  number;
+    stats?: { cache?: number };
+  };
+}
+
+export interface ContainerStats {
+  cpuPercent: number;   // 0–100 per core (can exceed 100 on multi-core)
+  memUsed:    number;   // bytes (usage minus cache)
+  memLimit:   number;   // bytes
+  memPercent: number;   // 0–100
+}
+
+/**
+ * Fetch a one-shot stats snapshot for a container.
+ * Uses stream=false so Docker returns a single JSON object immediately.
+ * Applies Portainer's exact delta formula for CPU %.
+ */
+export async function fetchContainerStats(
+  env: UnaxisEnvironment,
+  id:  string,
+): Promise<ContainerStats | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const res = await dockerFetch(
+      env,
+      `/containers/${id}/stats?stream=false`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (!res.ok) return null;
+    const raw = (await res.json()) as ContainerStatsRaw;
+
+    // CPU % — Portainer delta formula (containerStatsController.js)
+    const cpuDelta    = raw.cpu_stats.cpu_usage.total_usage
+                      - raw.precpu_stats.cpu_usage.total_usage;
+    const systemDelta = raw.cpu_stats.system_cpu_usage
+                      - raw.precpu_stats.system_cpu_usage;
+    const cores       = raw.cpu_stats.online_cpus
+                      ?? raw.cpu_stats.cpu_usage.percpu_usage?.length
+                      ?? 1;
+    const cpuPercent  = systemDelta > 0 && cpuDelta > 0
+      ? (cpuDelta / systemDelta) * cores * 100
+      : 0;
+
+    // Memory — subtract page cache to match what Portainer shows
+    const cache      = raw.memory_stats.stats?.cache ?? 0;
+    const memUsed    = Math.max(0, raw.memory_stats.usage - cache);
+    const memLimit   = raw.memory_stats.limit;
+    const memPercent = memLimit > 0 ? (memUsed / memLimit) * 100 : 0;
+
+    return { cpuPercent, memUsed, memLimit, memPercent };
+  } catch {
+    return null;
+  }
+}
+
+// ── Container logs ────────────────────────────────────────────────────────────
+// Mirrors Portainer's containerLogsController.js fetch params exactly:
+//   stdout=1 stderr=1 timestamps=0 tail=100
+//
+// Docker multiplexes stdout+stderr with an 8-byte header when TTY=false.
+// Portainer strips it with: logs.substring(8).replace(/\r?\n(.{8})/g, '\n')
+// We apply the same strip so raw log lines come through cleanly.
+
+/**
+ * Fetch the last N log lines for a container.
+ * Returns raw text with ANSI codes intact (Ink renders them).
+ * Strips Docker's 8-byte multiplex header (as Portainer does).
+ */
+export async function fetchContainerLogs(
+  env:    UnaxisEnvironment,
+  id:     string,
+  tail = 100,
+): Promise<string | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const qs  = `stdout=1&stderr=1&timestamps=0&tail=${tail}`;
+    const res = await dockerFetch(env, `/containers/${id}/logs?${qs}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const raw = await res.text();
+    // Strip Docker 8-byte multiplex header — same regex Portainer uses
+    return raw.substring(8).replace(/\r?\n(.{8})/g, "\n");
+  } catch {
+    return null;
+  }
+}
+
+// ── Container inspect ─────────────────────────────────────────────────────────
+// Mirrors: Portainer containerController.js inspectContainer()
+// GET /containers/{id}/json — full container detail
+
+export async function inspectContainer(
+  env: UnaxisEnvironment,
+  id:  string,
+): Promise<ContainerInspect | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const res = await dockerFetch(env, `/containers/${id}/json`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ContainerInspect;
+  } catch {
+    return null;
+  }
+}
+
+// ── Container create ──────────────────────────────────────────────────────────
+// Mirrors: Portainer createContainerController.js
+// Two-step: POST /containers/create  →  POST /containers/{id}/start
+
+export async function createContainer(
+  env:  UnaxisEnvironment,
+  spec: ContainerCreateSpec,
+): Promise<{ Id: string } | null> {
+  if (!env.agentUrl) return null;
+  try {
+    // Build ExposedPorts + PortBindings (Docker API format)
+    const ExposedPorts: Record<string, object> = {};
+    const PortBindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
+    for (const { container, host, protocol } of spec.ports) {
+      const key = `${container}/${protocol}`;
+      ExposedPorts[key] = {};
+      PortBindings[key] = [{ HostIp: "0.0.0.0", HostPort: host }];
+    }
+
+    const body = JSON.stringify({
+      name:         undefined,   // name goes in query string
+      Image:        spec.image,
+      Env:          spec.env,
+      Cmd:          spec.cmd ?? undefined,
+      Labels:       spec.labels,
+      ExposedPorts,
+      HostConfig: {
+        PortBindings,
+        RestartPolicy: { Name: spec.restartPolicy },
+      },
+    });
+
+    const createRes = await dockerFetch(
+      env,
+      `/containers/create?name=${encodeURIComponent(spec.name)}`,
+      {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal:  AbortSignal.timeout(15_000),
+      },
+    );
+    if (!createRes.ok) return null;
+    const created = (await createRes.json()) as { Id: string };
+
+    // Start the container
+    await dockerFetch(env, `/containers/${created.Id}/start`, {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    return created;
+  } catch {
+    return null;
+  }
+}
+
+// ── Volume create ─────────────────────────────────────────────────────────────
+// Mirrors: Portainer volumeController.js createVolume()
+// POST /volumes/create
+
+export async function createVolume(
+  env:     UnaxisEnvironment,
+  name:    string,
+  driver = "local",
+  labels:  Record<string, string> = {},
+): Promise<VolumeSummary | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const res = await dockerFetch(env, "/volumes/create", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ Name: name, Driver: driver, Labels: labels }),
+      signal:  AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const vol = (await res.json()) as VolumeSummary;
+    return { ...vol, dangling: true }; // brand-new volume has no containers yet
+  } catch {
+    return null;
+  }
+}
+
+// ── Network create ────────────────────────────────────────────────────────────
+// Mirrors: Portainer networkController.js createNetwork()
+// POST /networks/create
+
+export interface NetworkCreateSpec {
+  name:       string;
+  driver:     string;             // "bridge" | "overlay" | "macvlan" | "host" | "none"
+  internal?:  boolean;
+  attachable?: boolean;
+  subnet?:    string;             // e.g. "192.168.10.0/24"
+  gateway?:   string;             // e.g. "192.168.10.1"
+  ipv6?:      boolean;
+  labels?:    Record<string, string>;
+}
+
+export async function createNetwork(
+  env:  UnaxisEnvironment,
+  spec: NetworkCreateSpec,
+): Promise<{ Id: string } | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const ipamConfig: { Subnet?: string; Gateway?: string }[] = [];
+    if (spec.subnet || spec.gateway) {
+      ipamConfig.push({ Subnet: spec.subnet, Gateway: spec.gateway });
+    }
+
+    const res = await dockerFetch(env, "/networks/create", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        Name:       spec.name,
+        Driver:     spec.driver,
+        Internal:   spec.internal  ?? false,
+        Attachable: spec.attachable ?? false,
+        EnableIPv6: spec.ipv6      ?? false,
+        IPAM:       { Driver: "default", Config: ipamConfig },
+        Labels:     spec.labels    ?? {},
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as { Id: string };
+  } catch {
+    return null;
+  }
+}
+
+// ── Image pull ────────────────────────────────────────────────────────────────
+// Mirrors: Portainer imageController.js pullImage()
+// POST /images/create?fromImage={image}:{tag}
+//
+// NOTE: embed the tag directly in fromImage ("image:tag") rather than using a
+// separate &tag= parameter.  Docker returns "invalid tag format" 400 when the
+// image reference contains a registry hostname (ghcr.io/...) and the tag is
+// supplied via the separate query param — the two-param form is only reliable
+// for Docker Hub short names.  The "name may include a tag" form is what the
+// Docker CLI itself sends for fully-qualified references.
+//
+// Also do NOT use encodeURIComponent here — the agent's proxy already decodes
+// percent-encoded slashes before forwarding to Docker.
+export async function pullImage(
+  env:    UnaxisEnvironment,
+  image:  string,
+  tag:    string,
+  onLine: (line: string) => void,
+): Promise<boolean> {
+  if (!env.agentUrl) return false;
+  try {
+    const ref = tag ? `${image}:${tag}` : image;
+    const res = await dockerFetch(
+      env,
+      `/images/create?fromImage=${ref}`,
+      { method: "POST", signal: AbortSignal.timeout(120_000) },
+    );
+    if (!res.ok) {
+      onLine(`✗ HTTP ${res.status}`);
+      return false;
+    }
+    // Docker streams newline-delimited JSON progress events
+    const text = await res.text();
+    for (const chunk of text.split("\n").filter(Boolean)) {
+      try {
+        const evt = JSON.parse(chunk) as { status?: string; error?: string; progressDetail?: unknown; id?: string };
+        if (evt.error) { onLine(`✗ ${evt.error}`); return false; }
+        if (evt.status && !evt.progressDetail) {
+          onLine(evt.id ? `  [${evt.id}] ${evt.status}` : `  ${evt.status}`);
+        }
+      } catch {
+        onLine(`  ${chunk}`);
+      }
+    }
+    return true;
+  } catch (err) {
+    onLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+// ── Stack deploy ──────────────────────────────────────────────────────────────
+// POST /stacks/deploy  { name, yaml }
+// Agent runs: docker compose -f /tmp/.../docker-compose.yml -p name up -d
+// Returns { ok, logs } — streams output via onLine callback.
+
+export async function deployStack(
+  env:    UnaxisEnvironment,
+  name:   string,
+  yaml:   string,
+  onLine: (line: string) => void,
+): Promise<boolean> {
+  if (!env.agentUrl) return false;
+  try {
+    const res = await agentFetch(env, "/stacks/deploy", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ name, yaml }),
+      signal:  AbortSignal.timeout(120_000),
+    });
+    const data = (await res.json()) as { ok: boolean; logs?: string; error?: string; code?: number };
+    const logText = data.logs ?? data.error ?? "";
+    for (const line of logText.split("\n").filter(Boolean)) {
+      onLine(line);
+    }
+    return data.ok === true;
+  } catch (err) {
+    onLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
 }

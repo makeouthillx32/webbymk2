@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput }                     from "ink";
+import { Box, Text, useInput }                     from "../../runtimeInk.js";
 
 import { fetchDashboard }              from "../../agent-client.ts";
 import type { DashboardResponse }      from "../../agent-client.ts";
@@ -28,11 +28,11 @@ import { Spinner }                     from "../../components/Spinner.tsx";
 import { Divider }                     from "../../components/Divider.tsx";
 import { KeyHints }                    from "../../components/KeyHint.tsx";
 import type { UnaxisEnvironment }      from "../../environment-store.ts";
-import { ContainersView }              from "./views/ContainersView.tsx";
-import { StacksView }                  from "./views/StacksView.tsx";
-import { ImagesView }                  from "./views/ImagesView.tsx";
-import { VolumesView }                 from "./views/VolumesView.tsx";
-import { NetworksView }                from "./views/NetworksView.tsx";
+import { ContainersView }              from "./views/containers/ContainersView.tsx";
+import { StacksView }                  from "./views/stacks/StacksView.tsx";
+import { ImagesView }                  from "./views/images/ImagesView.tsx";
+import { VolumesView }                 from "./views/volumes/VolumesView.tsx";
+import { NetworksView }                from "./views/networks/NetworksView.tsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,9 @@ function StatCard({
           <Text bold color={focused ? "cyan" : "white"}>{value}</Text>
           {note && <Text color="cyan" dimColor>{note}</Text>}
         </Box>
-        <Text dimColor paddingLeft={focused ? 2 : 0}>{label}</Text>
+        <Box paddingLeft={focused ? 2 : 0}>
+          <Text dimColor>{label}</Text>
+        </Box>
       </Box>
 
       {/* Right: sub-stats */}
@@ -104,75 +106,15 @@ function StatCard({
   );
 }
 
-// ── Resource shim screens ─────────────────────────────────────────────────────
+// ── Resource subview titles ───────────────────────────────────────────────────
 
-const SHIM_INFO: Record<OverviewCard, { title: string; description: string }> = {
-  stacks:     { title: "Stacks",     description: "Compose stacks running on this environment." },
-  containers: { title: "Containers", description: "All containers — running, stopped, and paused." },
-  images:     { title: "Images",     description: "Docker images available on this node." },
-  volumes:    { title: "Volumes",    description: "Named and anonymous volumes on this node." },
-  networks:   { title: "Networks",   description: "Docker networks (bridge, host, overlay, etc.)." },
+const SUBVIEW_TITLES: Record<OverviewCard, string> = {
+  stacks:     "Stacks",
+  containers: "Containers",
+  images:     "Images",
+  volumes:    "Volumes",
+  networks:   "Networks",
 };
-
-function ResourceShim({
-  card, env, stats,
-}: {
-  card:  OverviewCard;
-  env:   UnaxisEnvironment;
-  stats: DockerStats | null;
-}) {
-  const info  = SHIM_INFO[card];
-  const count = stats
-    ? card === "stacks"     ? stats.stacks
-    : card === "containers" ? stats.containers.total
-    : card === "images"     ? stats.images.total
-    : card === "volumes"    ? stats.volumes
-    :                         stats.networks
-    : null;
-
-  return (
-    <Box flexDirection="column" flexGrow={1} gap={1} paddingX={2} paddingY={1}>
-
-      {/* Header */}
-      <Box gap={2} alignItems="center">
-        <Text bold color="cyan">{info.title}</Text>
-        {count !== null && (
-          <Box borderStyle="round" borderColor="gray" paddingX={1}>
-            <Text color="white" bold>{count}</Text>
-          </Box>
-        )}
-        <Text dimColor>on {env.name}</Text>
-      </Box>
-
-      <Divider />
-
-      {/* Shim body */}
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor="gray"
-        paddingX={2}
-        paddingY={1}
-        gap={1}
-      >
-        <Text dimColor>{info.description}</Text>
-        <Text dimColor>
-          Full {info.title.toLowerCase()} management is coming soon — pending
-          Portainer analysis.
-        </Text>
-      </Box>
-
-      <Box paddingX={1}>
-        <Text dimColor>
-          Press <Text color="cyan">[q]</Text> or{" "}
-          <Text color="cyan">[←]</Text> to go back.
-        </Text>
-      </Box>
-
-    </Box>
-  );
-}
-
 // ── Overview tab ──────────────────────────────────────────────────────────────
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -498,18 +440,18 @@ export function EnvDetailScreen({ env, onBack }: EnvDetailScreenProps) {
 
   // ── Sub-view active ────────────────────────────────────────────────────────
   if (subView) {
-    const hints = [{ k: "q/←", label: "back to overview" }];
     return (
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
-        {/* Breadcrumb */}
         <Box paddingX={1} gap={1} marginBottom={0}>
           <Text dimColor>{env.name}</Text>
           <Text dimColor>›</Text>
-          <Text bold color="cyan">{SHIM_INFO[subView].title}</Text>
+          <Text bold color="cyan">{SUBVIEW_TITLES[subView]}</Text>
         </Box>
-        <Divider />
-        <ResourceShim card={subView} env={env} stats={stats} />
-        <KeyHints hints={hints} />
+        {subView === "containers" && <ContainersView env={env} onBack={() => setSubView(null)} />}
+        {subView === "stacks"     && <StacksView     env={env} onBack={() => setSubView(null)} />}
+        {subView === "images"     && <ImagesView     env={env} onBack={() => setSubView(null)} />}
+        {subView === "volumes"    && <VolumesView    env={env} onBack={() => setSubView(null)} />}
+        {subView === "networks"   && <NetworksView   env={env} onBack={() => setSubView(null)} />}
       </Box>
     );
   }

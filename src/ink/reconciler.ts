@@ -19,6 +19,7 @@ import {
 } from './dom.js';
 import { getFocusManager, getRootNode } from './focus.js';
 import { LayoutDisplay } from './layout/node.js';
+import { EVENT_HANDLER_PROPS } from './events/event-handlers.js';
 import applyStyles, { type Styles, type TextStyles } from './styles.js';
 
 type AnyObject = Record<string, unknown>;
@@ -60,6 +61,19 @@ const dispatcher = {
 
 function applyProp(node: DOMElement, key: string, value: unknown): void {
   if (key === 'children') return;
+  if (EVENT_HANDLER_PROPS.has(key)) {
+    if (!node._eventHandlers) {
+      node._eventHandlers = {};
+    }
+
+    if (typeof value === 'function') {
+      node._eventHandlers[key] = value;
+    } else {
+      delete node._eventHandlers[key];
+    }
+
+    return;
+  }
   if (key === 'style') {
     setStyle(node, value as Styles);
     if (node.yogaNode) applyStyles(node.yogaNode, value as Styles);

@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect } from "react";
-import { Box, Text }                  from "ink";
+import { Box, Text }                  from "../runtimeInk.js";
 import type { StackOp }               from "./DetachedStack.tsx";
 import type { EnvironmentType }       from "../environment-store.ts";
 import { environmentTypeColor }       from "../environment-store.ts";

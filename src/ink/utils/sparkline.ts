@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Unicode Sparkline Builder.
 // Generates compact trend visualizations using block characters.
-// Adapted from Claude Code kit dashboard examples.
+// Compact sparkline helpers for Unaxis dashboard views.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BLOCKS = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];

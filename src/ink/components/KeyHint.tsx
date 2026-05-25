@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React        from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../runtimeInk.js";
 
 export interface HintDef {
   k:     string;

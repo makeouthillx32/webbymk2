@@ -34,8 +34,8 @@ export function useSearchHighlight(): {
     } | null,
   ) => void
 } {
-  useContext(StdinContext) // anchor to App subtree for hook rules
-  const ink = instances.get(process.stdout)
+  const { stdout } = useContext(StdinContext)
+  const ink = instances.get(stdout)
   return useMemo(() => {
     if (!ink) {
       return {

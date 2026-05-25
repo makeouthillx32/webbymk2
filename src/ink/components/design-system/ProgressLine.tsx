@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text } from '../../runtimeInk.js';
 import ThemedText from './ThemedText.js';
 import { ProgressBar } from './ProgressBar.js';
 import { useTheme } from './ThemeProvider.js';

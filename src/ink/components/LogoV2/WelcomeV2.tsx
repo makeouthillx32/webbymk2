@@ -6,8 +6,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
-import { AnimatedClawd } from "./AnimatedClawd.js";
+import { Box, Text } from "../../runtimeInk.js";
+import { AnimatedUnaxisMark } from "./AnimatedUnaxisMark.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ export function WelcomeV2({
     <Box flexDirection="column" gap={1} width={maxWidth}>
       {/* ── Animated star mark ──────────────────────────────────────────── */}
       <Box paddingLeft={1}>
-        <AnimatedClawd />
+        <AnimatedUnaxisMark />
       </Box>
 
       {/* ── Wordmark ────────────────────────────────────────────────────── */}

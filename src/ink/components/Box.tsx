@@ -54,7 +54,6 @@ function Box({
   flexDirection = 'row',
   flexGrow = 0,
   flexShrink = 1,
-  ref,
   tabIndex,
   autoFocus,
   onClick,
@@ -67,7 +66,7 @@ function Box({
   onKeyDown,
   onKeyDownCapture,
   ...style
-}: PropsWithChildren<Props>): React.ReactNode {
+}: PropsWithChildren<Props>, ref: Ref<DOMElement>): React.ReactNode {
   // Warn if spacing values are not integers to prevent fractional layout dimensions
   warn.ifNotInteger(style.margin, 'margin');
   warn.ifNotInteger(style.marginX, 'marginX');
@@ -116,4 +115,4 @@ function Box({
   );
 }
 
-export default Box;
+export default React.forwardRef<DOMElement, PropsWithChildren<Props>>(Box);

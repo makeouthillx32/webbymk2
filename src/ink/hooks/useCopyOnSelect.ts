@@ -22,8 +22,9 @@
 //   {didCopy && <Text color="green">copied</Text>}
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useContext } from "react";
 import { spawn }                 from "child_process";
+import { TerminalWriteContext }  from "../useTerminalNotification.js";
 
 // ── Unicode → ASCII sanitization ──────────────────────────────────────────────
 // Replaces common Unicode symbols used in the TUI with plain-ASCII equivalents
@@ -111,7 +112,7 @@ function sanitizeForClipboard(text: string): string {
 
 // ── Platform clipboard write ──────────────────────────────────────────────────
 
-function writeClipboard(text: string): void {
+function writeClipboard(text: string, writeRaw?: (data: string) => void): void {
   const clean = text.trim();
   if (!clean) return;
 
@@ -134,14 +135,14 @@ function writeClipboard(text: string): void {
 
     } else {
       // Linux or WSL — try xclip, then xsel, then fall back to OSC 52.
-      spawnClipboard(clean);
+      spawnClipboard(clean, writeRaw);
     }
   } catch {
     // Best-effort — silently ignore clipboard errors so the TUI keeps running.
   }
 }
 
-function spawnClipboard(text: string): void {
+function spawnClipboard(text: string, writeRaw?: (data: string) => void): void {
   try {
     const proc = spawn("xclip", ["-selection", "clipboard"], {
       stdio: ["pipe", "ignore", "ignore"],
@@ -162,7 +163,7 @@ function spawnClipboard(text: string): void {
 
   // OSC 52 — supported by most modern terminals (kitty, WezTerm, iTerm2, etc.)
   const b64 = Buffer.from(text, "utf8").toString("base64");
-  process.stdout.write(`\x1b]52;c;${b64}\x07`);
+  writeRaw?.(`\x1b]52;c;${b64}\x07`);
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -173,13 +174,14 @@ function spawnClipboard(text: string): void {
  */
 export function useCopyOnSelect() {
   const [didCopy, setDidCopy] = useState(false);
+  const writeRaw = useContext(TerminalWriteContext);
 
   const copy = useCallback((text: string) => {
     if (!text.trim()) return;
-    writeClipboard(text.trim());
+    writeClipboard(text.trim(), writeRaw ?? undefined);
     setDidCopy(true);
     setTimeout(() => setDidCopy(false), 1500);
-  }, []);
+  }, [writeRaw]);
 
   return { copy, didCopy };
 }

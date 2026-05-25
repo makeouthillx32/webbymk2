@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React              from "react";
-import { Box, Text }      from "ink";
+import { Box, Text }      from "../../runtimeInk.js";
 import type { Zone }      from "../../../config/zones.ts";
 import type { Status }    from "../../docker.ts";
 import { statusColor }    from "../../components/StatusBadge.tsx";
@@ -60,13 +60,35 @@ export function buildCoreActions(zone: Zone): Action[] {
     { id: "build",   label: "Build + push",       desc: "docker build + push to GHCR",                    key: "b", disabled: !zone.dockerfile },
     { id: "rebuild", label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)",         key: "R", disabled: !zone.dockerfile },
     { id: "logs",    label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
-    { id: "dev",      label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
+    { id: "dev",     label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
+  ];
+}
+
+/**
+ * Actions available on the proxy (key="proxy").
+ * Proxy is permanent infrastructure — dedicated action set.
+ */
+export function buildProxyActions(): Action[] {
+  return [
+    { id: "restart",       label: "Restart",            desc: "reload proxy container",                          key: "r", disabled: false },
+    { id: "build-proxy",   label: "Build image",        desc: "docker build + recreate  (Dockerfile changed)",   key: "b", disabled: false },
+    { id: "rebuild-proxy", label: "Rebuild (no cache)", desc: "docker build --no-cache + recreate  (clean)",     key: "R", disabled: false },
+    { id: "push-agent",    label: "Push agent",         desc: "build agent.js → ghcr.io/…/unaxis-agent:v0",     key: "p", disabled: false },
+    { id: "logs",          label: "Logs",               desc: "tail -f proxy container output",                  key: "l", disabled: false },
+    { id: "agent-reset",   label: "Reset pairing",      desc: "clear TOFU state — agent re-pairs on next start", key: "a", disabled: false },
+    { id: "sync-routes",   label: "Sync routes",        desc: "rebuild routes.json for all deployable zones",    key: "s", disabled: false },
+    { id: "audit-npm",     label: "Audit NPM",          desc: "verify all NPM proxy hosts forward correctly",    key: "N", disabled: false },
   ];
 }
 
 /** True if this zone entry represents the core monolith, not a deployable zone. */
 export function isCoreZone(zone: Zone): boolean {
   return zone.key === "unenter";
+}
+
+/** True if this zone entry represents the proxy, not a deployable zone. */
+export function isProxyZone(zone: Zone): boolean {
+  return zone.key === "proxy";
 }
 
 /** Index of the first non-disabled action — used to pre-select the cursor. */
@@ -86,7 +108,11 @@ const HINTS = [
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
-  const actions = isCoreZone(zone) ? buildCoreActions(zone) : buildActions(zone);
+  const actions = isCoreZone(zone)
+    ? buildCoreActions(zone)
+    : isProxyZone(zone)
+      ? buildProxyActions()
+      : buildActions(zone);
 
   return (
     <Box flexDirection="column">

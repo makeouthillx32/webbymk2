@@ -19,73 +19,26 @@
 
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join }                                           from 'path'
+import { makeBuildConfig, outdir, outfile }               from './bun-build-config.js'
 
 // ── Version ────────────────────────────────────────────────────────────────────
 
 const pkgJson  = JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf-8'))
 const version  = pkgJson.version as string
 
-// ── Paths ──────────────────────────────────────────────────────────────────────
-
-const outdir   = join(import.meta.dir, 'dist')
-const outfile  = join(outdir, 'cli.js')
-const entry    = join(import.meta.dir, '../entrypoints/cli.tsx')
-
-const tuiNodeModules = join(import.meta.dir, 'node_modules')
-const tuiInkBuild    = join(tuiNodeModules, 'ink', 'build')
-
 // ── Clean ──────────────────────────────────────────────────────────────────────
 
 try { rmSync(outdir, { recursive: true }) } catch {}
 mkdirSync(outdir, { recursive: true })
 
-console.log('\u2699  Bundling UNAXIS v' + version + '...')
+console.log('⚙  Bundling UNAXIS v' + version + '...')
 
 // ── Bundle ─────────────────────────────────────────────────────────────────────
 
-const result = await Bun.build({
-  entrypoints: [entry],
-  outdir,
-  naming:      'cli.js',
-  target:      'node',
-  format:      'esm',
-  bundle:      true,
-  minify:      false,
-  sourcemap:   'none',
-  external:    ['yoga-wasm-web'],
-  plugins: [
-    {
-      name: 'unaxis-tui-runtime-aliases',
-      setup(builder) {
-        builder.onResolve({ filter: /^ink$/ }, () => ({
-          path: join(tuiInkBuild, 'index.js'),
-        }))
-        builder.onResolve({ filter: /^ink\/(.+)$/ }, ({ path }) => ({
-          path: join(tuiInkBuild, path.slice('ink/'.length)),
-        }))
-        builder.onResolve({ filter: /^react$/ }, () => ({
-          path: join(tuiNodeModules, 'react', 'index.js'),
-        }))
-        builder.onResolve({ filter: /^react\/(.+)$/ }, ({ path }) => ({
-          path: join(tuiNodeModules, 'react', path.slice('react/'.length) + '.js'),
-        }))
-        builder.onResolve({ filter: /^react-dom$/ }, () => ({
-          path: join(tuiNodeModules, 'react-dom', 'index.js'),
-        }))
-        builder.onResolve({ filter: /^react-dom\/(.+)$/ }, ({ path }) => ({
-          path: join(tuiNodeModules, 'react-dom', path.slice('react-dom/'.length) + '.js'),
-        }))
-      },
-    },
-  ],
-  define: {
-    'process.env.NODE_ENV': '"production"',
-    'UNAXIS_VERSION':       '"' + version + '"',
-  },
-})
+const result = await Bun.build(makeBuildConfig(version))
 
 if (!result.success) {
-  console.error('\u2717  Build failed:')
+  console.error('✗  Build failed:')
   for (const log of result.logs) console.error('  ', log)
   process.exit(1)
 }
@@ -104,7 +57,7 @@ if (!bundled.startsWith('#!')) {
 const bytes = readFileSync(outfile).length
 const kb    = (bytes / 1024).toFixed(0)
 
-console.log('\u2713  dist/cli.js  (' + kb + ' KB)  UNAXIS v' + version)
+console.log('✓  dist/cli.js  (' + kb + ' KB)  UNAXIS v' + version)
 console.log('')
 console.log('   Run locally:   node ./src/ink/dist/cli.js')
 console.log('   Publish:       npm publish --access public  (from src/ink/)')

@@ -11,6 +11,8 @@ export const getConfigHomeDir = memoize(
   () => process.env.UNENTER_CONFIG_DIR,
 )
 
+export const getUnaxisConfigHomeDir = getConfigHomeDir
+
 export function isEnvTruthy(envVar: string | boolean | undefined): boolean {
   if (!envVar) return false
   if (typeof envVar === 'boolean') return envVar

@@ -25,7 +25,6 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { unstable_batchedUpdates }       from "react-dom";
 import type { ChildProcess }             from "child_process";
 
 import type { Zone }       from "../../config/zones.ts";
@@ -100,16 +99,14 @@ export function useBackgroundOps({
   ): { id: number; addLine: (l: string) => void } => {
     const id = ++opIdRef.current;
 
-    unstable_batchedUpdates(() => {
-      setBgOps((prev) => [...prev, { id, title, lines: [], busy: true, isLog }]);
-      setStackFocusId(id);
-      if (autoOverlay) {
-        setOverlayOpId(id);
-        setStackOpen(false);
-      } else {
-        setStackOpen(true);
-      }
-    });
+    setBgOps((prev) => [...prev, { id, title, lines: [], busy: true, isLog }]);
+    setStackFocusId(id);
+    if (autoOverlay) {
+      setOverlayOpId(id);
+      setStackOpen(false);
+    } else {
+      setStackOpen(true);
+    }
 
     const addLine = (l: string) => {
       setBgOps((prev) =>

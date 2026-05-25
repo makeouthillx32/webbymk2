@@ -10,7 +10,7 @@
 //   <Text dimColor><KeyboardShortcutHint shortcut="Tab" action="switch panel" parens /></Text>
 
 import React    from "react";
-import { Text } from "ink";
+import { Text } from "../runtimeInk.js";
 
 export interface KeyboardShortcutHintProps {
   shortcut: string;

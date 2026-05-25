@@ -161,6 +161,7 @@ export default class App extends PureComponent<Props, State> {
       }}>
           <StdinContext.Provider value={{
           stdin: this.props.stdin,
+          stdout: this.props.stdout,
           setRawMode: this.handleSetRawMode,
           isRawModeSupported: this.isRawModeSupported(),
           internal_exitOnCtrlC: this.props.exitOnCtrlC,
@@ -182,6 +183,10 @@ export default class App extends PureComponent<Props, State> {
     // In accessibility mode, keep the native cursor visible for screen magnifiers and other tools
     if (this.props.stdout.isTTY && !isEnvTruthy(process.env.UNT_TERM_ACCESSIBILITY)) {
       this.props.stdout.write(HIDE_CURSOR);
+    }
+
+    if (this.isRawModeSupported()) {
+      this.handleSetRawMode(true);
     }
   }
   override componentWillUnmount() {

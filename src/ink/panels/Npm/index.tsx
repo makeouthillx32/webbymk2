@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, useInput }                   from "ink";
+import { Box, Text, useInput }                   from "../../runtimeInk.js";
 import {
   npmGetStatus, npmListHosts,
   npmEnableHost, npmDisableHost,

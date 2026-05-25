@@ -13,7 +13,7 @@
 //   suggestion -> cyan   (focus cursor, info icons)
 //   inactive   -> gray   (disabled, muted)
 //   permission -> magenta
-//   claude     -> #D4A27F (brand accent)
+//   unaxis     -> #D4A27F (brand accent)
 //
 // Raw color strings (hex, rgb(), named Ink colors) pass through unchanged.
 
@@ -24,7 +24,7 @@ export type ThemeToken =
   | "suggestion"
   | "inactive"
   | "permission"
-  | "claude";
+  | "unaxis";
 
 export type TuiColor = ThemeToken | string | undefined;
 
@@ -35,7 +35,7 @@ const TOKEN_MAP: Record<ThemeToken, string> = {
   suggestion: "cyan",
   inactive:   "gray",
   permission: "magenta",
-  claude:     "#D4A27F",
+  unaxis:     "#D4A27F",
 };
 
 export function resolveColor(c: TuiColor): string | undefined {

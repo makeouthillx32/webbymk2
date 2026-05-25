@@ -14,7 +14,7 @@
  */
 
 import React from 'react'
-import { Box, Text } from 'ink'
+import { Box, Text } from '../ink/runtimeInk.js'
 
 export type ExitFlowProps = {
   message?: string

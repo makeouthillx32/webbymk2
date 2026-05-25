@@ -69,6 +69,7 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis --help                           show this message\n' +
     '\n' +
     '  TUI commands (requires TUI to be running):\n' +
+    '    unaxis version                          TUI version + live agent versions on all envs\n' +
     '    unaxis dev <zone>                       start/stop dev container for zone\n' +
     '    unaxis restart <zone>                   hard restart dev container for zone\n' +
     '    unaxis list                             list zones and their dev status\n' +
@@ -91,6 +92,12 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis db backup --reason <text>        run DB backup through the TUI\n' +
     '    unaxis preflight edit --zone <zone>     validate before editing a zone\n' +
     '    unaxis status                           confirm TUI is alive\n' +
+    '    unaxis envs                             list all configured environments\n' +
+    '    unaxis ping-envs                        ping /health on every environment agent\n' +
+    '    unaxis env list                         list environments\n' +
+    '    unaxis env ping [<name>]                ping one or all environment agents\n' +
+    '    unaxis env containers [<name>] [--all]  list containers (default env, unt_* only)\n' +
+    '    unaxis env update <name>                self-update agent on named environment\n' +
     '\n' +
     '  Config (non-secret settings):\n' +
     '    unaxis config set default_project <path>   set default project root\n' +
@@ -115,7 +122,19 @@ if (args.includes('--help') || args.includes('-h')) {
 // Must be checked BEFORE the config/credentials subcommands so short-circuit
 // exits work correctly.
 
-const IPC_COMMANDS = ['dev', 'restart', 'list', 'zones', 'logs', 'zone', 'session', 'stack', 'watch', 'db', 'preflight', 'status'] as const
+// ── unaxis version — special case: falls back to package version if TUI is down
+if (args[0] === 'version') {
+  const { sendIpcCommand } = await import('../ink/ipc-client.js')
+  // quiet=true suppresses "UNAXIS is not running" — we handle the offline case below.
+  const code = await sendIpcCommand(args, { quiet: true })
+  if (code === 0) process.exit(0)
+  // TUI not running — print package version only
+  process.stdout.write(`\nUNAXIS  ${UNAXIS_VERSION}\n`)
+  process.stdout.write(`  agents  unavailable  (TUI not running)\n\n`)
+  process.exit(0)
+}
+
+const IPC_COMMANDS = ['dev', 'restart', 'list', 'zones', 'logs', 'zone', 'session', 'stack', 'watch', 'db', 'preflight', 'status', 'env', 'envs', 'ping-envs', 'open'] as const
 if (args.length > 0 && IPC_COMMANDS.includes(args[0] as typeof IPC_COMMANDS[number])) {
   const { sendIpcCommand } = await import('../ink/ipc-client.js')
   process.exit(await sendIpcCommand(args))

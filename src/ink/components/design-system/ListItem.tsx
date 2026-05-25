@@ -1,7 +1,7 @@
 import figures from 'figures';
 import React, { type ReactNode } from 'react';
 import { useDeclaredCursor } from '../../hooks/use-declared-cursor.js';
-import { Box, Text } from 'ink';
+import { Box, Text } from '../../runtimeInk.js';
 
 export type ListItemProps = {
   /**

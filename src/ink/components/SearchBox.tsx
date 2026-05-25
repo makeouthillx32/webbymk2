@@ -23,7 +23,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text }                  from '../../ink.js';
-import { useInput }                   from 'ink';
+import { useInput }                   from '../runtimeInk.js';
 
 type Props = {
   query: string;

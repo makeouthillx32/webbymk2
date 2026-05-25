@@ -14,8 +14,12 @@ import { IPC_PORT, IPC_HOST } from "./ipc-server.ts";
 /**
  * Connect to the running TUI, send `args` as a structured argv command, stream
  * its output to stdout, and return 0 (success) or 1 (failure/not-running).
+ *
+ * opts.quiet — suppress the "UNAXIS is not running" stderr message on
+ *              ECONNREFUSED.  Use this when the caller handles the offline
+ *              case itself (e.g. `unaxis version` falling back to pkg version).
  */
-export function sendIpcCommand(args: string[]): Promise<number> {
+export function sendIpcCommand(args: string[], opts?: { quiet?: boolean }): Promise<number> {
   return new Promise((resolve) => {
     const cmd    = JSON.stringify({ argv: args });
     const socket = net.connect(IPC_PORT, IPC_HOST);
@@ -50,9 +54,11 @@ export function sendIpcCommand(args: string[]): Promise<number> {
         return;
       }
       if (err.code === "ECONNREFUSED") {
-        process.stderr.write(
-          "✗ UNAXIS is not running — start it first with: unaxis\n"
-        );
+        if (!opts?.quiet) {
+          process.stderr.write(
+            "✗ UNAXIS is not running — start it first with: unaxis\n"
+          );
+        }
       } else {
         process.stderr.write(`✗ IPC error: ${err.message}\n`);
       }

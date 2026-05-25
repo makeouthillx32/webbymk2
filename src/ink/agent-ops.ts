@@ -8,28 +8,52 @@
 //   Mirrors the pullAndUp() pattern from docker.ts.
 //
 // updateRemoteAgent(env, onLine)
-//   Uses the signed agent HTTP API (dockerFetch) to:
-//     1. Pull the new image on the remote machine
-//     2. Stop + remove the running unaxis_agent container
-//     3. Recreate + start it with the same flags
-//     4. Poll /health until the new version responds
+//   Bootstrap-safe agent self-update via the signed agent HTTP API:
+//     1. Stop + remove the running unaxis_agent container (simple proxy paths)
+//     2. Redeploy via /stacks/deploy with a compose YAML (pull_policy: always)
+//        → docker compose runs `docker pull` via CLI, bypassing the proxy
+//     3. Poll /health until the new version responds
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { spawn } from "child_process";
-import { join }  from "path";
+import { spawn }        from "child_process";
+import { readFileSync } from "fs";
+import { join }         from "path";
 import { PROJECT_DIR, GHCR_USER } from "../config/zones.ts";
 import { getCredential }          from "../utils/secureStorage/index.js";
-import { dockerFetch, pingAgent } from "./agent-client.ts";
+import { agentFetch, dockerFetch, pingAgent } from "./agent-client.ts";
 import type { UnaxisEnvironment } from "./environment-store.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const AGENT_IMAGE   = `ghcr.io/${GHCR_USER}/unaxis-agent`;
-export const AGENT_TAG     = "v0";
-export const AGENT_FULL    = `${AGENT_IMAGE}:${AGENT_TAG}`;
-export const AGENT_CONTEXT = join(PROJECT_DIR, "packages", "agent-node");
+export const AGENT_IMAGE      = `ghcr.io/${GHCR_USER}/unaxis-agent`;
+export const AGENT_TAG        = "v0";
+export const AGENT_FULL       = `${AGENT_IMAGE}:${AGENT_TAG}`;
+// Build context is repo root so the Dockerfile can COPY proxy/agent.js.
+// Dockerfile path is passed explicitly via -f.
+export const AGENT_CONTEXT    = PROJECT_DIR;
+export const AGENT_DOCKERFILE = join(PROJECT_DIR, "packages", "agent-node", "Dockerfile");
+// Canonical agent source — single file shared by embedded proxy + standalone image.
+export const AGENT_SOURCE     = join(PROJECT_DIR, "proxy", "agent.js");
+
+export const UPDATER_IMAGE   = `ghcr.io/${GHCR_USER}/unaxis-updater`;
+export const UPDATER_TAG     = "v0";
+export const UPDATER_FULL    = `${UPDATER_IMAGE}:${UPDATER_TAG}`;
+export const UPDATER_CONTEXT = join(PROJECT_DIR, "packages", "agent-updater");
 
 const AGENT_CONTAINER = "unaxis_agent";
+
+// ── Version reader ────────────────────────────────────────────────────────────
+// Reads AGENT_VERSION from agent.js source so the TUI knows what version it
+// just built — used for pinned tags and post-update version verification.
+function readAgentVersion(): string {
+  try {
+    const src = readFileSync(AGENT_SOURCE, "utf8");
+    const m   = src.match(/const AGENT_VERSION\s*=\s*["']([^"']+)["']/);
+    return m?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -123,31 +147,76 @@ async function ensureGhcrLogin(onLine: (line: string) => void): Promise<void> {
 export async function buildAndPushAgent(
   onLine: (line: string) => void,
 ): Promise<number> {
-  // ── 1. Build ─────────────────────────────────────────────────────────────
-  onLine(`Building ${AGENT_FULL} from ${AGENT_CONTEXT} ...`);
-  const buildCode = await spawnDocker(
-    ["build", "-t", AGENT_FULL, AGENT_CONTEXT],
+  // ── 1. Build agent ────────────────────────────────────────────────────────
+  onLine(`Building ${AGENT_FULL} from ${AGENT_SOURCE} ...`);
+  const agentBuildCode = await spawnDocker(
+    ["build", "-f", AGENT_DOCKERFILE, "-t", AGENT_FULL, AGENT_CONTEXT],
     onLine,
   );
-
-  if (buildCode !== 0) {
-    onLine(`✗ Build failed (exit ${buildCode})`);
-    return buildCode;
+  if (agentBuildCode !== 0) {
+    onLine(`✗ Agent build failed (exit ${agentBuildCode})`);
+    return agentBuildCode;
   }
-  onLine(`✓ Build complete`);
+  onLine(`✓ Agent build complete`);
 
-  // ── 2. GHCR login ────────────────────────────────────────────────────────
+  // ── 2. Build updater ──────────────────────────────────────────────────────
+  onLine(`Building ${UPDATER_FULL} from ${UPDATER_CONTEXT} ...`);
+  const updaterBuildCode = await spawnDocker(
+    ["build", "-t", UPDATER_FULL, UPDATER_CONTEXT],
+    onLine,
+  );
+  if (updaterBuildCode !== 0) {
+    onLine(`✗ Updater build failed (exit ${updaterBuildCode})`);
+    return updaterBuildCode;
+  }
+  onLine(`✓ Updater build complete`);
+
+  // ── 3. GHCR login ────────────────────────────────────────────────────────
   await ensureGhcrLogin(onLine);
 
-  // ── 3. Push ──────────────────────────────────────────────────────────────
+  // ── 4. Push agent :v0 ────────────────────────────────────────────────────
   onLine(`Pushing ${AGENT_FULL} ...`);
-  const pushCode = await spawnDocker(["push", AGENT_FULL], onLine);
-
-  if (pushCode !== 0) {
-    onLine(`✗ Push failed (exit ${pushCode})`);
-    return pushCode;
+  const agentPushCode = await spawnDocker(["push", AGENT_FULL], onLine);
+  if (agentPushCode !== 0) {
+    onLine(`✗ Agent push failed (exit ${agentPushCode})`);
+    return agentPushCode;
   }
-  onLine(`✓ Push complete — ${AGENT_FULL}`);
+  onLine(`✓ Agent push complete — ${AGENT_FULL}`);
+
+  // ── 5. Push agent pinned version tag ─────────────────────────────────────
+  const agentVersion = readAgentVersion();
+  if (agentVersion) {
+    const pinnedAgent = `${AGENT_IMAGE}:${agentVersion}`;
+    await spawnDocker(["tag", AGENT_FULL, pinnedAgent], onLine);
+    const pinnedAgentCode = await spawnDocker(["push", pinnedAgent], onLine);
+    if (pinnedAgentCode !== 0) {
+      onLine(`⚠ Pinned agent tag push failed — continuing`);
+    } else {
+      onLine(`✓ Pinned agent tag pushed — ${pinnedAgent}`);
+    }
+  }
+
+  // ── 6. Push updater :v0 ───────────────────────────────────────────────────
+  onLine(`Pushing ${UPDATER_FULL} ...`);
+  const updaterPushCode = await spawnDocker(["push", UPDATER_FULL], onLine);
+  if (updaterPushCode !== 0) {
+    onLine(`✗ Updater push failed (exit ${updaterPushCode})`);
+    return updaterPushCode;
+  }
+  onLine(`✓ Updater push complete — ${UPDATER_FULL}`);
+
+  // ── 7. Push updater pinned version tag ───────────────────────────────────
+  if (agentVersion) {
+    const pinnedUpdater = `${UPDATER_IMAGE}:${agentVersion}`;
+    await spawnDocker(["tag", UPDATER_FULL, pinnedUpdater], onLine);
+    const pinnedUpdaterCode = await spawnDocker(["push", pinnedUpdater], onLine);
+    if (pinnedUpdaterCode !== 0) {
+      onLine(`⚠ Pinned updater tag push failed — continuing`);
+    } else {
+      onLine(`✓ Pinned updater tag pushed — ${pinnedUpdater}`);
+    }
+  }
+
   return 0;
 }
 
@@ -176,139 +245,73 @@ export async function updateRemoteAgent(
     return 1;
   }
 
-  // ── 1. Pull new image on remote ──────────────────────────────────────────
-  onLine(`Pulling ${AGENT_FULL} on ${env.name} ...`);
+  // Self-update via POST /self-update (requires agent v0.1.4+).
+  //
+  // The agent can't be updated via the proxy-based Docker API because
+  // stopping the container kills the proxy mid-flow.  The /self-update
+  // endpoint sidesteps this:
+  //   1. Agent pulls the new image (synchronous, while still alive)
+  //   2. Agent responds 202 so we can start polling
+  //   3. Agent spawns a detached `docker run -d --name … --replace …`
+  //      The Docker daemon handles stop+rm+create+start atomically.
+  //      The agent process is killed when the daemon stops the container,
+  //      but the daemon continues and the new container starts anyway.
+  //
+  // Note: `docker run --replace` requires Docker Engine 25.0+.
+  // If the agent is older than v0.1.4 this returns 404 — rebuild and
+  // deploy the agent manually, then all future TUI updates work.
+
+  onLine(`Initiating self-update to ${AGENT_FULL} on ${env.name} ...`);
   try {
-    // fromImage and tag must NOT be percent-encoded — Docker's API returns 400
-    // if slashes in the image name are encoded as %2F.
-    const pullRes = await dockerFetch(
-      env,
-      `/v1.43/images/create?fromImage=${AGENT_IMAGE}&tag=${AGENT_TAG}`,
-      { method: "POST" },
-    );
+    const res = await agentFetch(env, "/self-update", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ ref: AGENT_FULL }),
+      signal:  AbortSignal.timeout(120_000),  // pull can take time
+    });
 
-    // Docker image pull streams newline-delimited JSON progress events.
-    // Consume and surface each status line.
-    const text = await pullRes.text();
-    for (const chunk of text.split("\n").filter(Boolean)) {
-      try {
-        const evt = JSON.parse(chunk) as { status?: string; error?: string; progressDetail?: unknown };
-        if (evt.error) {
-          onLine(`✗ Pull error: ${evt.error}`);
-          return 1;
-        }
-        if (evt.status && !evt.progressDetail) onLine(`  ${evt.status}`);
-      } catch {
-        // Non-JSON chunk — emit as-is
-        onLine(`  ${chunk}`);
-      }
-    }
-
-    if (!pullRes.ok && pullRes.status !== 200) {
-      onLine(`✗ Pull failed: HTTP ${pullRes.status}`);
+    if (res.status === 404) {
+      onLine(`✗ Agent does not support /self-update (requires v0.1.4+)`);
+      onLine(`  Bootstrap manually: rebuild the agent on L0V3, then TUI updates will work.`);
       return 1;
     }
-  } catch (err) {
-    onLine(`✗ Pull request failed: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
-  }
-  onLine(`✓ Image pulled`);
-
-  // ── 2. Stop container ────────────────────────────────────────────────────
-  onLine(`Stopping ${AGENT_CONTAINER} ...`);
-  try {
-    await dockerFetch(
-      env,
-      `/v1.43/containers/${AGENT_CONTAINER}/stop?t=10`,
-      { method: "POST" },
-    );
-    // 204 = stopped, 304 = already stopped, 404 = not found — all acceptable here
-  } catch {
-    // Non-fatal: container may not exist yet
-  }
-  onLine(`✓ Stopped`);
-
-  // ── 3. Remove container ──────────────────────────────────────────────────
-  onLine(`Removing ${AGENT_CONTAINER} ...`);
-  try {
-    await dockerFetch(
-      env,
-      `/v1.43/containers/${AGENT_CONTAINER}?force=true`,
-      { method: "DELETE" },
-    );
-  } catch {
-    // Non-fatal
-  }
-  onLine(`✓ Removed`);
-
-  // ── 4. Recreate + start ──────────────────────────────────────────────────
-  onLine(`Creating ${AGENT_CONTAINER} ...`);
-
-  const createBody = JSON.stringify({
-    Image:        AGENT_FULL,
-    ExposedPorts: { "8888/tcp": {} },
-    HostConfig: {
-      // Bind the Docker socket so the agent can proxy to it.
-      // Also bind a named volume for /data so TOFU pairing survives restarts.
-      Binds: [
-        "/var/run/docker.sock:/var/run/docker.sock",
-        "unaxis_agent_data:/data",
-      ],
-      PortBindings: { "8888/tcp": [{ HostIp: "0.0.0.0", HostPort: "8888" }] },
-      RestartPolicy: { Name: "unless-stopped" },
-    },
-  });
-
-  let createOk = false;
-  try {
-    const createRes = await dockerFetch(
-      env,
-      `/v1.43/containers/create?name=${AGENT_CONTAINER}`,
-      {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    createBody,
-      },
-    );
-    if (createRes.ok || createRes.status === 201) {
-      createOk = true;
-    } else {
-      const body = await createRes.text();
-      onLine(`✗ Create failed: HTTP ${createRes.status} — ${body}`);
+    if (!res.ok) {
+      const text = await res.text();
+      onLine(`✗ Self-update failed: HTTP ${res.status} — ${text}`);
       return 1;
     }
+    const data = (await res.json()) as { ok: boolean; ref?: string; status?: string };
+    if (!data.ok) {
+      onLine(`✗ Agent rejected self-update`);
+      return 1;
+    }
+    onLine(`✓ Agent acknowledged — pulling new image and replacing container`);
   } catch (err) {
-    onLine(`✗ Create request failed: ${err instanceof Error ? err.message : String(err)}`);
+    onLine(`✗ Self-update request failed: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
 
-  if (createOk) {
-    onLine(`✓ Container created`);
-    onLine(`Starting ${AGENT_CONTAINER} ...`);
-    try {
-      await dockerFetch(
-        env,
-        `/v1.43/containers/${AGENT_CONTAINER}/start`,
-        { method: "POST" },
-      );
-    } catch (err) {
-      onLine(`✗ Start failed: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
-    }
-    onLine(`✓ Started`);
-  }
+  // ── Poll health — agent is restarting, longer timeout ────────────────────
+  // Also allow time for the updater's health-check loop (up to 100s) before
+  // the new container is confirmed healthy and the rollback container is removed.
+  onLine(`Waiting for new agent to come online ...`);
 
-  // ── 5. Poll health ───────────────────────────────────────────────────────
-  onLine(`Waiting for agent to come online ...`);
-
+  const expectedVersion  = readAgentVersion();
   const POLL_INTERVAL_MS = 2_000;
-  const POLL_TIMEOUT_MS  = 30_000;
+  const POLL_TIMEOUT_MS  = 120_000;   // 2 min — covers updater health loop (100s)
   const deadline = Date.now() + POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     const health = await pingAgent(env);
     if (health.online) {
+      // ── Version verification ──────────────────────────────────────────────
+      if (expectedVersion && health.version !== expectedVersion) {
+        onLine(`⚠ Version mismatch — agent responded with ${health.version}, expected ${expectedVersion}`);
+        onLine(`  The updater may have rolled back to the previous version.`);
+        onLine(`  Check L0V3 agent logs for updater details.`);
+        return 1;
+      }
       onLine(`✓ Agent online — version ${health.version}`);
       return 0;
     }

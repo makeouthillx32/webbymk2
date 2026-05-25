@@ -1,8 +1,8 @@
-// src/ink/components/LogoV2/AnimatedClawd.tsx
+// src/ink/components/LogoV2/AnimatedUnaxisMark.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Clawd (UNAXIS star mark) with click-triggered pose animations.
+// UNAXIS star mark with click-triggered pose animations.
 // Container height is fixed at MARK_HEIGHT rows — identical footprint to a
-// bare <Clawd /> — so surrounding layout never shifts on click.
+// bare <UnaxisMark /> so surrounding layout never shifts on click.
 //
 // Two click animations:
 //   BURST    — dims → bright burst (arms-up) twice
@@ -10,15 +10,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useEffect, useRef, useState } from "react";
-import { Box } from "ink";
-import { Clawd, type ClawdPose } from "./Clawd.js";
+import { Box } from "../../runtimeInk.js";
+import { UnaxisMark, type UnaxisMarkPose } from "./UnaxisMark.js";
 
 // ── Frame type ────────────────────────────────────────────────────────────────
 
-type Frame = { pose: ClawdPose; offset: number };
+type Frame = { pose: UnaxisMarkPose; offset: number };
 
 /** Repeat a pose for `n` 60ms frames. */
-function hold(pose: ClawdPose, offset: number, n: number): Frame[] {
+function hold(pose: UnaxisMarkPose, offset: number, n: number): Frame[] {
   return Array.from({ length: n }, () => ({ pose, offset }));
 }
 
@@ -43,12 +43,12 @@ const ANIMATIONS: readonly (readonly Frame[])[] = [BURST, LOOK];
 
 const IDLE: Frame     = { pose: "default", offset: 0 };
 const FRAME_MS        = 60;
-const MARK_HEIGHT     = 3;    // rows — must match Clawd's row count
+const MARK_HEIGHT     = 3;    // rows must match UnaxisMark's row count
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 function useMarkAnimation(): {
-  pose: ClawdPose;
+  pose: UnaxisMarkPose;
   offset: number;
   onClick: () => void;
 } {
@@ -79,13 +79,13 @@ function useMarkAnimation(): {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function AnimatedClawd(): React.ReactNode {
+export function AnimatedUnaxisMark(): React.ReactNode {
   const { pose, offset, onClick } = useMarkAnimation();
 
   return (
     <Box height={MARK_HEIGHT} flexDirection="column" onClick={onClick}>
       <Box marginTop={offset} flexShrink={0}>
-        <Clawd pose={pose} />
+        <UnaxisMark pose={pose} />
       </Box>
     </Box>
   );

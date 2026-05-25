@@ -31,7 +31,7 @@ import React, {
   createContext, useContext, useRef, useState, useCallback, useEffect,
   type ReactNode,
 } from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../runtimeInk.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

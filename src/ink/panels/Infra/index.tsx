@@ -21,7 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from "react";
-import { Box, Text, useInput }                from "ink";
+import { Box, Text, useInput }                from "../../runtimeInk.js";
 import {
   INFRA_SERVICES, buildInfraServices, DNS_RECORDS, PORT_FORWARDS, MACHINES,
   type ServiceResult,

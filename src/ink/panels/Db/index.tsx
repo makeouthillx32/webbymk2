@@ -30,7 +30,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "../../runtimeInk.js";
 import { openBrowser } from "@/utils/browser.ts";
 import {
   KONG_URL, STUDIO_PROJECT_URL, ANON_KEY, SERVICE_KEY,

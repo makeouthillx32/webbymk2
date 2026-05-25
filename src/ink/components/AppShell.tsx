@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React                         from "react";
-import { Box }                       from "ink";
+import { Box }                       from "../runtimeInk.js";
 import { useTermHeight }             from "../hooks/useTermWidth.ts";
 
 import type { StackOp }              from "./DetachedStack.tsx";

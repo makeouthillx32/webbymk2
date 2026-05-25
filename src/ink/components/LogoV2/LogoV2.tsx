@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 import { FeedColumn }     from "./FeedColumn.js";
 import { WelcomeV2 }      from "./WelcomeV2.js";
 import { CondensedLogo }  from "./CondensedLogo.js";

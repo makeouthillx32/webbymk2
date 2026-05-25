@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box } from 'ink';
+import { Box } from '../../runtimeInk.js';
 import ThemedBox from './ThemedBox.js';
 import ThemedText from './ThemedText.js';
 import type { Theme } from '../../utils/theme.js';

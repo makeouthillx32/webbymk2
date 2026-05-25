@@ -29,7 +29,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React                from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "./runtimeInk.js";
 import { useWidths }        from "./hooks/useTermWidth.ts";
 import { useTermHeight }    from "./hooks/useTermWidth.ts";
 import { LogViewer }        from "./components/LogViewer.tsx";

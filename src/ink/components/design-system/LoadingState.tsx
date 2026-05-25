@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text } from '../../runtimeInk.js';
 import { Spinner } from '../Spinner.tsx';
 
 export type LoadingStateProps = {

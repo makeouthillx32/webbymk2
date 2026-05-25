@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 import { stringWidth } from "../../stringWidth.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────

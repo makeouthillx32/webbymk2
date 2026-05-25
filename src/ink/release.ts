@@ -28,6 +28,7 @@ import { join }                                                        from 'pat
 import { tmpdir }                                                      from 'os'
 import { spawnSync }                                                   from 'child_process'
 import { resolveNpmToken }                                             from '../utils/secureStorage/index.js'
+import { makeBuildConfig, outdir, outfile }                            from './bun-build-config.js'
 
 // ── I/O helpers ────────────────────────────────────────────────────────────────
 // Bun buffers process.stdout when running as a piped child process (non-TTY).
@@ -62,10 +63,7 @@ function bumpVersion(current: string, kind: 'patch' | 'minor' | 'major'): string
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
 
-const pkgPath  = join(import.meta.dir, 'package.json')
-const outdir   = join(import.meta.dir, 'dist')
-const outfile  = join(outdir, 'cli.js')
-const entry    = join(import.meta.dir, '../entrypoints/cli.tsx')
+const pkgPath = join(import.meta.dir, 'package.json')
 
 // ── Load current version ───────────────────────────────────────────────────────
 
@@ -103,21 +101,7 @@ mkdirSync(outdir, { recursive: true })
 
 print('  Bundling...')
 
-const result = await Bun.build({
-  entrypoints: [entry],
-  outdir,
-  naming:      'cli.js',
-  target:      'node',
-  format:      'esm',
-  bundle:      true,
-  minify:      false,
-  sourcemap:   'none',
-  external:    ['yoga-wasm-web'],
-  define: {
-    'process.env.NODE_ENV': '"production"',
-    'UNAXIS_VERSION':       '"' + current + '"',
-  },
-})
+const result = await Bun.build(makeBuildConfig(current))
 
 if (!result.success) {
   printerr('  Build failed:')

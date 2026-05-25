@@ -2,13 +2,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # UNAXIS Agent — standalone Docker socket proxy.
 #
-# Pure Node.js, zero npm dependencies.
-# Deploy on any remote machine to give the UNAXIS TUI full Docker control.
+# Single source of truth: proxy/agent.js (shared with the embedded proxy agent).
+# Build context must be the repo root so we can COPY from proxy/:
 #
-# Build:
-#   docker build -t ghcr.io/makeouthillx32/unaxis-agent:v0 .
+#   docker build -f packages/agent-node/Dockerfile \
+#                -t ghcr.io/makeouthillx32/unaxis-agent:v0 .
 #
-# Deploy on a remote machine (e.g. L0VE):
+# (TUI handles this automatically via buildAndPushAgent in agent-ops.ts.)
+#
+# Deploy on a remote machine (e.g. L0V3):
 #   docker run -d \
 #     --name unaxis_agent \
 #     --restart unless-stopped \
@@ -27,11 +29,17 @@
 
 FROM node:22-alpine
 
+# Install Docker CLI + Compose plugin so the agent can:
+#   - docker pull / docker run   (POST /self-update self-replacement)
+#   - docker compose up -d       (POST /stacks/deploy)
+# Only the CLI client is installed — no daemon, no overhead.
+RUN apk add --no-cache docker-cli docker-cli-compose
+
 WORKDIR /app
 
-# Copy agent source — no deps, no install step needed.
-COPY agent.js ./
-COPY handler/ ./handler/
+# Copy unified agent source from proxy/ (single source of truth).
+# Build context must be the repo root — see comment at top.
+COPY proxy/agent.js ./agent.js
 
 # /data stores the TOFU pairing state (paired TUI public key).
 # Mount a named volume to survive container restarts:
@@ -42,8 +50,8 @@ VOLUME ["/data"]
 
 EXPOSE 8888
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:${AGENT_PORT:-8888}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:${AGENT_PORT:-8888}/health || exit 1
 
 ENV NODE_ENV=production
 

@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../runtimeInk.js";
 import type { View } from "../hooks/useAppRouter.ts";
 
 // ── Label map ─────────────────────────────────────────────────────────────────

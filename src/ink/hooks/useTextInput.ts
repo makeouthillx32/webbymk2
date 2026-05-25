@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useCallback } from "react";
-import { useInput }              from "ink";
+import { useInput }              from "../runtimeInk.js";
 
 interface Options {
   /** Only capture input when true — lets parent control focus */

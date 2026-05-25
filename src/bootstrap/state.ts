@@ -1,6 +1,6 @@
 /**
  * Lightweight state management for the TUI engine.
- * Decoupled from claude-code's global state.
+ * Decoupled from donor global state.
  */
 
 let lastInteractionTime = Date.now();

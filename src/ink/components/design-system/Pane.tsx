@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box } from 'ink';
+import { Box } from '../../runtimeInk.js';
 import type { Theme } from '../../utils/theme.js';
 import { Divider } from './Divider.js';
 

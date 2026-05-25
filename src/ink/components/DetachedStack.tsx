@@ -24,7 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React                                   from "react";
-import { Box, Text, useInput }                 from "ink";
+import { Box, Text, useInput }                 from "../runtimeInk.js";
 import { Divider }                             from "./Divider.tsx";
 import { Spinner }                             from "./Spinner.tsx";
 import { LoadingState }                        from "./design-system/LoadingState.tsx";

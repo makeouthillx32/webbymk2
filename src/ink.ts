@@ -9,8 +9,6 @@ import inkRender, {
 
 export type { RenderOptions, Instance, Root }
 
-// Wrap all Unenter.live render calls with ThemeProvider so ThemedBox/ThemedText work
-// without every call site having to mount it. Ink itself is theme-agnostic.
 function withTheme(node: ReactNode): ReactNode {
   return createElement(ThemeProvider, null, node)
 }

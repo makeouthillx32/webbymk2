@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useRef } from "react";
-import { Box, Text, useInput }               from "ink";
+import { Box, Text, useInput }               from "../runtimeInk.js";
 import { LoadingState }                       from "./design-system/LoadingState.tsx";
 import type { OpView }                        from "../OperationOverlay.tsx";
 import { initWheelAccel, computeWheelStep }  from "../utils/wheelAccel.ts";

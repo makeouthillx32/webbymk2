@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Text } from "ink";
+import { Text } from "../runtimeInk.js";
 import type { Status } from "../docker.ts";
 
 interface ContainerDotProps {

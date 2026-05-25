@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useInput } from "ink";
+import { useInput } from "../../runtimeInk.js";
 
 import type { Key } from "../../events/input-event.js";
 import { useTextInput } from "../../hooks/useTextInput.js";

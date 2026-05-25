@@ -1,8 +1,8 @@
 /**
  * KeybindingWire — TUI-native keybinding provider.
  *
- * Drop-in replacement for the broken KeybindingProviderSetup (which imports
- * Claude Code infrastructure that doesn't exist in this runtime).
+ * Drop-in replacement for older keybinding setup paths that imported
+ * infrastructure that does not exist in this runtime.
  *
  * Wraps children in <KeybindingProvider> and registers a <ChordInterceptor>
  * that fires FIRST (before any child useInput) so chord prefix keystrokes

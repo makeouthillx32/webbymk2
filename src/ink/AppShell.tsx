@@ -1,5 +1,5 @@
-﻿import React from "react";
-import { Box } from "ink";
+import React from "react";
+import { Box } from "./runtimeInk.js";
 import { Header } from "./components/Header.js";
 import { Tabs } from "./components/Tabs.js";
 import { NotificationsPane } from "./components/Notifications.js";
@@ -19,10 +19,10 @@ export function AppShell({ view, tw, th, children }: AppShellProps) {
 
   return (
     <Box flexDirection="column" width={tw} height={th} overflow="hidden">
-      {/* ── App header ────────────────────────────────────────────────── */}
+      {/* -- App header -------------------------------------------------- */}
       <Header />
 
-      {/* ── Panel tabs (only when on a panel view) ────────────────────── */}
+      {/* -- Panel tabs (only when on a panel view) ---------------------- */}
       {isPanelView && (
         <Tabs
           tabs={[...PANEL_TABS]}
@@ -31,15 +31,15 @@ export function AppShell({ view, tw, th, children }: AppShellProps) {
         />
       )}
 
-      {/* ── Active view ───────────────────────────────────────────────── */}
+      {/* -- Active view ------------------------------------------------- */}
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {children}
       </Box>
 
-      {/* ── Notifications ─────────────────────────────────────────────── */}
+      {/* -- Notifications ----------------------------------------------- */}
       <NotificationsPane />
 
-      {/* ── Background operation stack ────────────────────────────────── */}
+      {/* -- Background operation stack ---------------------------------- */}
       <DetachedStack />
     </Box>
   );

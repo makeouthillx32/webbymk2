@@ -187,7 +187,7 @@ export function buildConnectionSheet(opts: {
 }
 
 /**
- * Build just the MCP config block — for quick paste into claude_desktop_config.json.
+ * Build just the MCP config block for quick paste into a desktop MCP config.
  */
 export function buildMcpConfig(opts: {
   kongUrl?: string;

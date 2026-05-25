@@ -25,15 +25,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, useInput }          from "ink";
+import { Box, Text, useInput }          from "../runtimeInk.js";
+import { unlinkSync }                   from "fs";
+import { join }                         from "path";
 import { useActionNav }                 from "../hooks/useActionNav.ts";
+import { PROJECT_DIR }                  from "../../config/stack.ts";
 
 import type { Zone }    from "../../config/zones.ts";
 import type { Status }  from "../docker.ts";
 import type { LayoutType } from "../zone-scaffold.ts";
 
 import { ZonesPanel }                                              from "../panels/Zones/index.tsx";
-import { ActionPanel, buildActions, firstEnabled, isCoreZone }    from "../panels/Action/index.tsx";
+import { ActionPanel, buildActions, buildProxyActions, firstEnabled, isCoreZone, isProxyZone } from "../panels/Action/index.tsx";
 import { Dialog }                                                  from "../components/design-system/Dialog.tsx";
 import { MultiSelectMenu }                                         from "../components/MultiSelectMenu.tsx";
 import { SearchInput }                                             from "../components/SearchBox.tsx";
@@ -120,10 +123,11 @@ export function ZonesView({
   // Active actions depend on which zone is selected — must come after
   // visibleZones so the reference is already initialized.
   const activeZone    = visibleZones[selected];
-  const activeActions = useMemo(
-    () => activeZone ? buildActions(activeZone) : [],
-    [activeZone],
-  );
+  const activeActions = useMemo(() => {
+    if (!activeZone) return [];
+    if (isProxyZone(activeZone)) return buildProxyActions();
+    return buildActions(activeZone);
+  }, [activeZone]);
   const actionNav = useActionNav(activeActions);
 
   const handleSearchChange = useCallback((query: string) => {
@@ -254,10 +258,34 @@ export function ZonesView({
       case "delete":
         // Core zone is permanent — guard here in addition to the action list.
         if (isCoreZone(zone)) { addNotification("Core cannot be deleted", "error"); break; }
+        // Proxy is permanent infrastructure — guard here too.
+        if (isProxyZone(zone)) { addNotification("Proxy cannot be deleted", "error"); break; }
         // Close the action panel and show the confirmation dialog.
         // The actual delete runs only after the user confirms with [y].
         setActionOpen(false);
         setConfirmDelete(zone);
+        break;
+
+      case "agent-reset":
+        // Clear the TOFU pairing state so the proxy agent re-pairs on next TUI connect.
+        // The state file lives in the bind-mounted proxy-config/ directory.
+        runOp("Reset agent pairing  (unt_proxy)", async (o) => {
+          const stateFile = join(PROJECT_DIR, "proxy-config", "agent-state.json");
+          try {
+            unlinkSync(stateFile);
+            o("✓ TOFU pairing state cleared — agent will pair on next TUI connect");
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("ENOENT")) {
+              o("✓ No pairing state found — agent is already unpaired");
+            } else {
+              o(`✗ Could not remove state file: ${msg}`);
+              return 1;
+            }
+          }
+          o("Restarting proxy to apply...");
+          return restartZone(zone, o);
+        });
         break;
     }
   }, [runOp, openLogs, addNotification, setZones, setConfirmDelete]);

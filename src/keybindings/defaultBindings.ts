@@ -5,7 +5,7 @@ import { getPlatform } from '../utils/platform.js'
 import type { KeybindingBlock } from './types.js'
 
 /**
- * Default keybindings that match current Claude Code behavior.
+ * Default keybindings for the current Unaxis TUI behavior.
  * These are loaded first, then user keybindings.json overrides them.
  */
 

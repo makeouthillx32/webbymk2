@@ -2,6 +2,7 @@ import React, { type PropsWithChildren, useContext, useInsertionEffect } from 'r
 import instances from '../instances.js';
 import { DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, ENTER_ALT_SCREEN, EXIT_ALT_SCREEN } from '../termio/dec.js';
 import { TerminalWriteContext } from '../useTerminalNotification.js';
+import StdinContext from './StdinContext.js';
 import Box from './Box.js';
 import { TerminalSizeContext } from './TerminalSizeContext.js';
 import { useTermHeight } from '../hooks/useTermWidth.js';
@@ -39,6 +40,7 @@ export function AlternateScreen({
   const liveRows  = useTermHeight();           // updates on every resize via SIGWINCH
   const rows      = liveRows || size?.rows || 24;
   const writeRaw  = useContext(TerminalWriteContext);
+  const { stdout } = useContext(StdinContext);
 
   // useInsertionEffect (not useLayoutEffect): react-reconciler calls
   // resetAfterCommit between the mutation and layout commit phases, and
@@ -51,7 +53,7 @@ export function AlternateScreen({
   // Cleanup timing is unchanged: both insertion and layout effect cleanup
   // run in the mutation phase on unmount, before resetAfterCommit.
   useInsertionEffect(() => {
-    const ink = instances.get(process.stdout);
+    const ink = instances.get(stdout);
     if (!writeRaw) return;
 
     writeRaw(

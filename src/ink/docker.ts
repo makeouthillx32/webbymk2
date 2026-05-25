@@ -640,20 +640,51 @@ export async function pullAndUp(
  * never inject that new var, so requests for <key>.unenter.live fall through
  * to the default upstream (core's app) and serve the WRONG content.
  *
- * Using `up -d --build --force-recreate` rebuilds the proxy image from
- * proxy/server.js, then recreates the container with the current env.
+ * Using `up -d --no-build --force-recreate` recreates the container with the
+ * current compose env without triggering a Docker image build.
  *
- * NOTE: --build (not --no-build) is intentional here.  The proxy is a local
- * build (proxy/Dockerfile copies server.js) — NOT a GHCR-pulled image.
- * --no-build would lock in a stale image every time, so any changes to
- * proxy/server.js would never take effect until someone manually rebuilt.
- * Docker's layer cache makes the rebuild nearly instant when server.js is
- * unchanged, so --build is safe to use unconditionally.
+ * NOTE: --no-build (not --build) is intentional here.  proxy/server.js and
+ * proxy/agent.js are BIND-MOUNTED into the container at runtime, so node --watch
+ * inside the container picks up file changes instantly — no image rebuild ever
+ * needed.  Using --build caused docker compose to also rebuild the app image
+ * (a 10-min Next.js build) because proxy depends_on app.
  */
 export async function reloadProxy(onLine?: (l: string) => void): Promise<number> {
-  onLine?.("Building + recreating proxy (unt_proxy)...");
+  onLine?.("Recreating proxy (unt_proxy)...");
   return composeRun(
-    ["up", "-d", "--build", "--force-recreate", PROXY.service],
+    ["up", "-d", "--no-build", "--force-recreate", PROXY.service],
+    onLine,
+  );
+}
+
+/**
+ * Rebuild the proxy Docker image from proxy/Dockerfile and recreate the container.
+ *
+ * Used by the explicit [b] Build action — handles cases where the proxy image
+ * itself needs updating (e.g. new npm packages in proxy/Dockerfile, base image
+ * update).  Distinct from reloadProxy() which skips the image build and is
+ * used for env-var-only refreshes triggered by zone scaffolding.
+ *
+ * noCache: pass true for [R] Rebuild (no cache) to force a clean image build.
+ */
+export async function rebuildProxy(
+  onLine?:  (l: string) => void,
+  noCache?: boolean,
+): Promise<number> {
+  // Two-step: build then recreate.
+  // `docker compose up --build` requires a service-level `image:` tag for
+  // schema validation in Compose v2 — the proxy uses only `build:` (local
+  // image, not pushed to GHCR), so we separate the steps to avoid the error.
+  onLine?.(`Building proxy image${noCache ? " (no cache)" : ""}...`);
+  const buildCode = await composeRun(
+    ["build", ...(noCache ? ["--no-cache"] : []), PROXY.service],
+    onLine,
+  );
+  if (buildCode !== 0) return buildCode;
+
+  onLine?.("Recreating proxy container (unt_proxy)...");
+  return composeRun(
+    ["up", "-d", "--no-build", "--force-recreate", PROXY.service],
     onLine,
   );
 }

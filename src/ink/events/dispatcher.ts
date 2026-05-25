@@ -2,7 +2,6 @@ import {
   ContinuousEventPriority,
   DefaultEventPriority,
   DiscreteEventPriority,
-  NoEventPriority,
 } from 'react-reconciler/constants.js'
 import { logError } from '../../utils/log.js'
 import { HANDLER_FOR_EVENT } from './event-handlers.js'
@@ -169,7 +168,7 @@ export class Dispatcher {
    * when no explicit priority has been set.
    */
   resolveEventPriority(): number {
-    if (this.currentUpdatePriority !== (NoEventPriority as number)) {
+    if (this.currentUpdatePriority) {
       return this.currentUpdatePriority
     }
     if (this.currentEvent) {

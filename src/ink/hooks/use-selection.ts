@@ -47,8 +47,8 @@ export function useSelection(): {
   // StdinContext is available (it's always provided), and the Ink instance
   // is keyed by stdout which we can get from process.stdout since there's
   // only one Ink instance per process in practice.
-  useContext(StdinContext) // anchor to App subtree for hook rules
-  const ink = instances.get(process.stdout)
+  const { stdout } = useContext(StdinContext)
+  const ink = instances.get(stdout)
   // Memoize so callers can safely use the return value in dependency arrays.
   // ink is a singleton per stdout — stable across renders.
   return useMemo(() => {
@@ -95,8 +95,8 @@ const ALWAYS_FALSE = () => false
  * fullscreen mode (selection is only available in alt-screen).
  */
 export function useHasSelection(): boolean {
-  useContext(StdinContext)
-  const ink = instances.get(process.stdout)
+  const { stdout } = useContext(StdinContext)
+  const ink = instances.get(stdout)
   return useSyncExternalStore(
     ink ? ink.subscribeToSelectionChange : NO_SUBSCRIBE,
     ink ? ink.hasTextSelection : ALWAYS_FALSE,

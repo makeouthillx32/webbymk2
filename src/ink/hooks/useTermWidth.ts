@@ -1,108 +1,106 @@
-// src/ink/hooks/useTermWidth.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Returns the actual terminal column / row count, updated live on every resize.
-// Listens for SIGWINCH so the TUI re-flows when the user resizes their window
-// or connects from a narrow client (e.g. iOS SSH).
-//
-// No upper-bound — the layout adapts to whatever width the terminal reports,
-// whether that is 40 or 400 columns.  A floor of 20 guards against the
-// pathological zero-width reports some terminal emulators emit briefly during
-// a resize event before settling on the final size.
-//
-// ── Singleton design ──────────────────────────────────────────────────────────
-//
-// PROBLEM: when multiple components each call useTermWidth() they each register
-// an independent "resize" listener on process.stdout.  On every resize event N
-// separate setState calls fire, triggering N separate Ink re-renders.  Ink
-// repaints by moving the cursor up and overwriting — rapid sequential repaints
-// leave stale lines visible ("screen duplicating").
-//
-// FIX: one module-level listener notifies all subscribers inside a single
-// unstable_batchedUpdates() call so the whole tree re-renders exactly once per
-// resize event regardless of how many components are mounted.
-// ─────────────────────────────────────────────────────────────────────────────
+import { useContext, useEffect, useMemo, useState } from 'react'
+import StdinContext from '../components/StdinContext.js'
 
-import { useState, useEffect }     from "react";
-import { unstable_batchedUpdates } from "react-dom";
+const MIN_WIDTH = 20
+const FALLBACK_WIDTH = 80
+const FALLBACK_HEIGHT = 24
 
-const MIN_WIDTH = 20; // guard against transient zero-width reports
-
-function currentWidth(): number {
-  return Math.max(MIN_WIDTH, process.stdout.columns ?? 80);
+type Size = {
+  width: number
+  height: number
 }
 
-// ── Module-level singleton ────────────────────────────────────────────────────
-// One "resize" listener batches ALL subscriber updates (width + height) into a
-// single unstable_batchedUpdates call → one React render, one Ink repaint.
+type SizeSubscriber = (size: Size) => void
 
-type ValueSetter = (n: number) => void;
-
-const widthSubs  = new Set<ValueSetter>();
-const heightSubs = new Set<ValueSetter>();
-let listenerActive = false;
-
-function currentHeight(): number {
-  return process.stdout.rows ?? 24;
+type TerminalSizeChannel = {
+  stdout: NodeJS.WriteStream
+  subscribers: Set<SizeSubscriber>
+  listener: () => void
 }
 
-function ensureListener(): void {
-  if (listenerActive) return;
-  listenerActive = true;
-  process.stdout.on("resize", () => {
-    const w = currentWidth();
-    const h = currentHeight();
-    // Batch ALL subscriber updates → single React render, single Ink repaint.
-    unstable_batchedUpdates(() => {
-      widthSubs.forEach((set)  => set(w));
-      heightSubs.forEach((set) => set(h));
-    });
-  });
+const channels = new WeakMap<NodeJS.WriteStream, TerminalSizeChannel>()
+
+function readSize(stdout: NodeJS.WriteStream): Size {
+  return {
+    width: Math.max(MIN_WIDTH, stdout.columns ?? FALLBACK_WIDTH),
+    height: stdout.rows ?? FALLBACK_HEIGHT,
+  }
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────────
+function getChannel(stdout: NodeJS.WriteStream): TerminalSizeChannel {
+  let channel = channels.get(stdout)
 
-export function useTermWidth(): number {
-  const [width, setWidth] = useState(currentWidth);
+  if (channel) {
+    return channel
+  }
+
+  channel = {
+    stdout,
+    subscribers: new Set<SizeSubscriber>(),
+    listener: () => {
+      const size = readSize(stdout)
+      channel?.subscribers.forEach(subscriber => subscriber(size))
+    },
+  }
+
+  channels.set(stdout, channel)
+  return channel
+}
+
+function subscribeToTerminalSize(
+  stdout: NodeJS.WriteStream,
+  subscriber: SizeSubscriber,
+): () => void {
+  const channel = getChannel(stdout)
+  const shouldAttachListener = channel.subscribers.size === 0
+
+  channel.subscribers.add(subscriber)
+
+  if (shouldAttachListener) {
+    channel.stdout.on('resize', channel.listener)
+  }
+
+  subscriber(readSize(stdout))
+
+  return () => {
+    channel.subscribers.delete(subscriber)
+
+    if (channel.subscribers.size === 0) {
+      channel.stdout.off('resize', channel.listener)
+    }
+  }
+}
+
+function useTerminalSize(): Size {
+  const { stdout } = useContext(StdinContext)
+  const [size, setSize] = useState<Size>(() => readSize(stdout))
 
   useEffect(() => {
-    ensureListener();
-    widthSubs.add(setWidth);
-      // Re-sync in case terminal size changed between render and effect commit
-    setWidth(currentWidth());
-    return () => { widthSubs.delete(setWidth); };
-  }, []);
+    return subscribeToTerminalSize(stdout, setSize)
+  }, [stdout])
 
-  return width;
+  return size
+}
+
+export function useTermWidth(): number {
+  return useTerminalSize().width
 }
 
 export function useTermHeight(): number {
-  const [height, setHeight] = useState(currentHeight);
-
-  useEffect(() => {
-    ensureListener();
-    heightSubs.add(setHeight);
-    setHeight(currentHeight());
-    return () => { heightSubs.delete(setHeight); };
-  }, []);
-
-  return height;
+  return useTerminalSize().height
 }
 
-/**
- * Common terminal measurements for layout components.
- *
- *   tw   — full outer box width  (border + padding included)
- *   iw   — inner content width   tw - 4  (2 border + 1 paddingX each side)
- *   dw   — divider width         tw - 6  (iw - 2 for a tiny side gap)
- *   th   — terminal row count    (used by AppShell to clamp content height)
- */
 export function useWidths() {
-  const tw = useTermWidth();
-  const th = useTermHeight();
-  return {
-    tw,
-    iw: tw - 4,
-    dw: tw - 6,
-    th,
-  } as const;
+  const size = useTerminalSize()
+
+  return useMemo(
+    () =>
+      ({
+        tw: size.width,
+        iw: size.width - 4,
+        dw: size.width - 6,
+        th: size.height,
+      }) as const,
+    [size.height, size.width],
+  )
 }

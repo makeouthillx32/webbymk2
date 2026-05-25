@@ -12,9 +12,49 @@ import renderNodeToOutput from './render-node-to-output.js';
 import createRenderer, { type Renderer } from './renderer.js';
 import { createScreen, StylePool, CharPool, HyperlinkPool } from './screen.js';
 import { writeDiffToTerminal } from './terminal.js';
-import { ERASE_SCREEN, CURSOR_HOME } from './termio/csi.js';
+import {
+  CURSOR_HOME,
+  ENABLE_KITTY_KEYBOARD,
+  ENABLE_MODIFY_OTHER_KEYS,
+  ERASE_SCREEN,
+} from './termio/csi.js';
 import { LogUpdate } from './log-update.js';
 import { emptyFrame } from './frame.js';
+import {
+  captureScrolledRows,
+  clearSelection,
+  createSelectionState,
+  extendSelection,
+  getSelectedText,
+  hasSelection,
+  moveFocus,
+  applySelectionOverlay,
+  selectLineAt,
+  selectWordAt,
+  shiftSelection,
+  updateSelection,
+  type FocusMove,
+  type SelectionState,
+} from './selection.js';
+import type { DOMElement } from './dom.js';
+import { dispatchClick, dispatchHover } from './hit-test.js';
+import { CellWidth, cellAt, cellAtIndex } from './screen.js';
+import {
+  applyPositionedHighlight,
+  type MatchPosition,
+} from './render-to-screen.js';
+import { applySearchHighlight } from './searchHighlight.js';
+import { Dispatcher } from './events/dispatcher.js';
+import { KeyboardEvent } from './events/keyboard-event.js';
+import type { ParsedKey } from './parse-keypress.js';
+import { nodeCache } from './node-cache.js';
+import {
+  EBP,
+  EFE,
+  ENABLE_MOUSE_TRACKING,
+  ENTER_ALT_SCREEN,
+} from './termio/dec.js';
+import { supportsExtendedKeys } from './terminal.js';
 
 export type Options = {
   stdout: NodeJS.WriteStream;
@@ -32,6 +72,7 @@ export default class Ink {
   private readonly rootNode: dom.DOMElement;
   private readonly renderer: Renderer;
   private readonly container: any;
+  private readonly dispatcher = new Dispatcher();
   private readonly focusManager: FocusManager;
   private readonly logUpdate: LogUpdate;
   private terminalColumns: number;
@@ -39,8 +80,19 @@ export default class Ink {
   private currentNode: ReactNode = null;
   private isUnmounted = false;
   private frontFrame: any = null;
-  private isAltScreenActive = false;
+  isAltScreenActive = false;
+  private isMouseTrackingActive = false;
+  private selectionSubscribers = new Set<() => void>();
+  private searchHighlightQuery = '';
+  private searchPositions: {
+    positions: MatchPosition[];
+    rowOffset: number;
+    currentIdx: number;
+  } | null = null;
+  private previousFrameHadOverlay = false;
+  private hoveredNodes = new Set<DOMElement>();
   private hasRenderedFullFrame = false;
+  readonly selection: SelectionState = createSelectionState();
 
   constructor(options: Options) {
     autoBind(this);
@@ -54,7 +106,9 @@ export default class Ink {
     });
 
     this.rootNode = dom.createNode('ink-root');
-    this.focusManager = new FocusManager(() => true);
+    this.focusManager = new FocusManager((target, event) =>
+      this.dispatcher.dispatchDiscrete(target, event),
+    );
     this.rootNode.focusManager = this.focusManager;
     
     this.container = reconciler.createContainer(this.rootNode, LegacyRoot, null, false, null, 'id', () => {});
@@ -89,6 +143,16 @@ export default class Ink {
         onExit={this.unmount}
         terminalColumns={this.terminalColumns}
         terminalRows={this.terminalRows}
+        selection={this.selection}
+        onSelectionChange={this.notifySelectionChange}
+        onClickAt={this.dispatchClickAt}
+        onHoverAt={this.dispatchHoverAt}
+        getHyperlinkAt={this.getHyperlinkAt}
+        onOpenHyperlink={() => {}}
+        onMultiClick={this.handleMultiClickSelection}
+        onSelectionDrag={this.handleSelectionDrag}
+        dispatchKeyboardEvent={this.dispatchKeyboardEvent}
+        onStdinResume={this.handleStdinResume}
       >
         {node}
       </App>
@@ -99,15 +163,327 @@ export default class Ink {
     });
   }
 
-  setAltScreenActive(isActive: boolean): void {
+  setAltScreenActive(isActive: boolean, mouseTracking = false): void {
     this.isAltScreenActive = isActive;
+    this.isMouseTrackingActive = isActive && mouseTracking;
     this.hasRenderedFullFrame = false;
     this.onRender();
   }
 
-  clearTextSelection(): void {
-    // No-op for compatibility with AlternateScreen component
+  drainStdin(): void {
+    const { stdin } = this.options;
+    if (!stdin.readable || !stdin.read) {
+      return;
+    }
+
+    try {
+      while (stdin.read() !== null) {
+        // Drain pending terminal bytes before returning to cooked mode.
+      }
+    } catch {
+      // The terminal may already be gone during shutdown.
+    }
   }
+
+  detachForShutdown(): void {
+    this.isUnmounted = true;
+    this.isAltScreenActive = false;
+    this.isMouseTrackingActive = false;
+    instances.delete(this.options.stdout);
+  }
+
+  clearTextSelection(): void {
+    clearSelection(this.selection);
+    this.notifySelectionChange();
+    this.onRender();
+  }
+
+  hasTextSelection(): boolean {
+    return hasSelection(this.selection);
+  }
+
+  copySelectionNoClear(): string {
+    const screen = this.frontFrame?.screen;
+    if (!screen || !hasSelection(this.selection)) {
+      return '';
+    }
+    return getSelectedText(this.selection, screen);
+  }
+
+  copySelection(): string {
+    const selected = this.copySelectionNoClear();
+    this.clearTextSelection();
+    return selected;
+  }
+
+  subscribeToSelectionChange = (subscriber: () => void): (() => void) => {
+    this.selectionSubscribers.add(subscriber);
+    return () => {
+      this.selectionSubscribers.delete(subscriber);
+    };
+  };
+
+  shiftSelectionForScroll(dRow: number, minRow: number, maxRow: number): void {
+    shiftSelection(
+      this.selection,
+      dRow,
+      minRow,
+      maxRow,
+      Math.max(1, this.terminalColumns),
+    );
+    this.notifySelectionChange();
+    this.onRender();
+  }
+
+  moveSelectionFocus(move: FocusMove): void {
+    const focus = this.selection.focus;
+    if (!focus) {
+      return;
+    }
+
+    const maxCol = Math.max(0, this.terminalColumns - 1);
+    const maxRow = Math.max(0, this.terminalRows - 1);
+    let col = focus.col;
+    let row = focus.row;
+
+    switch (move) {
+      case 'left':
+        col = col > 0 ? col - 1 : 0;
+        break;
+      case 'right':
+        col = col < maxCol ? col + 1 : maxCol;
+        break;
+      case 'up':
+        row = row > 0 ? row - 1 : 0;
+        break;
+      case 'down':
+        row = row < maxRow ? row + 1 : maxRow;
+        break;
+      case 'lineStart':
+        col = 0;
+        break;
+      case 'lineEnd':
+        col = maxCol;
+        break;
+    }
+
+    moveFocus(this.selection, col, row);
+    this.notifySelectionChange();
+    this.onRender();
+  }
+
+  captureScrolledRows(
+    firstRow: number,
+    lastRow: number,
+    side: 'above' | 'below',
+  ): void {
+    const screen = this.frontFrame?.screen;
+    if (!screen) {
+      return;
+    }
+
+    captureScrolledRows(this.selection, screen, firstRow, lastRow, side);
+    this.notifySelectionChange();
+  }
+
+  setSelectionBgColor(_color: string): void {
+    // Selection theming is a renderer overlay concern; keep this as a stable
+    // compatibility point until the overlay path is wired into this engine.
+  }
+
+  setSearchHighlight(query: string): void {
+    this.searchHighlightQuery = query;
+    this.onRender();
+  }
+
+  scanElementSubtree(el: DOMElement): MatchPosition[] {
+    const screen = this.frontFrame?.screen;
+    const rect = nodeCache.get(el);
+    const query = this.searchHighlightQuery.toLowerCase();
+
+    if (!screen || !rect || !query) {
+      return [];
+    }
+
+    const positions: MatchPosition[] = [];
+    const queryLength = query.length;
+    const minRow = Math.max(0, rect.y);
+    const maxRow = Math.min(screen.height, rect.y + rect.height);
+    const minCol = Math.max(0, rect.x);
+    const maxCol = Math.min(screen.width, rect.x + rect.width);
+
+    for (let row = minRow; row < maxRow; row++) {
+      let text = '';
+      const colOf: number[] = [];
+      const codeUnitToCell: number[] = [];
+
+      for (let col = minCol; col < maxCol; col++) {
+        const idx = row * screen.width + col;
+        const cell = cellAtIndex(screen, idx);
+        if (
+          cell.width === CellWidth.SpacerTail ||
+          cell.width === CellWidth.SpacerHead ||
+          screen.noSelect[idx] === 1
+        ) {
+          continue;
+        }
+
+        const lower = cell.char.toLowerCase();
+        const cellIndex = colOf.length;
+        for (let i = 0; i < lower.length; i++) {
+          codeUnitToCell.push(cellIndex);
+        }
+        text += lower;
+        colOf.push(col);
+      }
+
+      let foundAt = text.indexOf(query);
+      while (foundAt >= 0) {
+        const startCellIndex = codeUnitToCell[foundAt]!;
+        const endCellIndex = codeUnitToCell[foundAt + queryLength - 1]!;
+        const col = colOf[startCellIndex]!;
+        const endCol = colOf[endCellIndex]! + 1;
+        positions.push({
+          row: row - rect.y,
+          col: col - rect.x,
+          len: endCol - col,
+        });
+        foundAt = text.indexOf(query, foundAt + queryLength);
+      }
+    }
+
+    return positions;
+  }
+
+  setSearchPositions(
+    state: {
+      positions: MatchPosition[];
+      rowOffset: number;
+      currentIdx: number;
+    } | null,
+  ): void {
+    this.searchPositions = state;
+    this.onRender();
+  }
+
+  private notifySelectionChange = (): void => {
+    this.selectionSubscribers.forEach(subscriber => subscriber());
+  }
+
+  private handleSelectionDrag = (col: number, row: number): void => {
+    const screen = this.frontFrame?.screen;
+    if (screen && this.selection.anchorSpan) {
+      extendSelection(this.selection, screen, col, row);
+    } else {
+      updateSelection(this.selection, col, row);
+    }
+    this.notifySelectionChange();
+    this.onRender();
+  };
+
+  private handleMultiClickSelection = (
+    col: number,
+    row: number,
+    count: 2 | 3,
+  ): void => {
+    const screen = this.frontFrame?.screen;
+    if (!screen) {
+      return;
+    }
+
+    if (count === 2) {
+      selectWordAt(this.selection, screen, col, row);
+    } else {
+      selectLineAt(this.selection, screen, row);
+    }
+
+    this.notifySelectionChange();
+    this.onRender();
+  };
+
+  private dispatchClickAt = (col: number, row: number): boolean => {
+    if (!this.isAltScreenActive) {
+      return false;
+    }
+
+    const screen = this.frontFrame?.screen;
+    const cellIsBlank = !screen || cellAt(screen, col, row)?.char === ' ';
+    return dispatchClick(this.rootNode, col, row, cellIsBlank);
+  };
+
+  private dispatchHoverAt = (col: number, row: number): void => {
+    if (!this.isAltScreenActive) {
+      return;
+    }
+
+    dispatchHover(this.rootNode, col, row, this.hoveredNodes);
+  };
+
+  private getHyperlinkAt = (col: number, row: number): string | undefined => {
+    const screen = this.frontFrame?.screen;
+    return screen ? cellAt(screen, col, row)?.hyperlink : undefined;
+  };
+
+  private dispatchKeyboardEvent = (parsedKey: ParsedKey): void => {
+    if (!this.focusManager.activeElement) {
+      const firstFocusable = this.findFirstFocusable(this.rootNode);
+      if (firstFocusable) {
+        this.focusManager.focus(firstFocusable);
+      }
+    }
+
+    const target = this.focusManager.activeElement ?? this.rootNode;
+    const event = new KeyboardEvent(parsedKey);
+    const shouldRunDefault = this.dispatcher.dispatchDiscrete(target, event);
+
+    if (!shouldRunDefault || event.key !== 'tab') {
+      return;
+    }
+
+    if (event.shift) {
+      this.focusManager.focusPrevious(this.rootNode);
+    } else {
+      this.focusManager.focusNext(this.rootNode);
+    }
+  };
+
+  private findFirstFocusable(node: DOMElement): DOMElement | null {
+    if (typeof node.attributes['tabIndex'] === 'number') {
+      return node;
+    }
+
+    for (const child of node.childNodes) {
+      if (child.nodeName === '#text') {
+        continue;
+      }
+
+      const match = this.findFirstFocusable(child);
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
+  }
+
+  private handleStdinResume = (): void => {
+    if (!this.options.stdout.isTTY) {
+      return;
+    }
+
+    this.options.stdout.write(EBP + EFE);
+    if (supportsExtendedKeys()) {
+      this.options.stdout.write(ENABLE_KITTY_KEYBOARD + ENABLE_MODIFY_OTHER_KEYS);
+    }
+    if (this.isAltScreenActive) {
+      this.options.stdout.write(
+        ENTER_ALT_SCREEN +
+          (this.isMouseTrackingActive ? ENABLE_MOUSE_TRACKING : ''),
+      );
+      this.hasRenderedFullFrame = false;
+      this.onRender();
+    }
+  };
 
   onRender() {
     if (this.isUnmounted) return;
@@ -121,8 +497,34 @@ export default class Ink {
       terminalWidth: this.terminalColumns,
       terminalRows: this.terminalRows,
       altScreen: this.isAltScreenActive,
-      prevFrameContaminated: this.isAltScreenActive && !this.hasRenderedFullFrame
+      prevFrameContaminated:
+        (this.isAltScreenActive && !this.hasRenderedFullFrame) ||
+        this.previousFrameHadOverlay
     });
+
+    const selectionOverlayApplied = hasSelection(this.selection);
+    if (selectionOverlayApplied) {
+      applySelectionOverlay(frame.screen, this.selection, this.stylePool);
+    }
+
+    const searchOverlayApplied = applySearchHighlight(
+      frame.screen,
+      this.searchHighlightQuery,
+      this.stylePool,
+    );
+
+    const positionedSearchApplied = this.searchPositions
+      ? applyPositionedHighlight(
+          frame.screen,
+          this.stylePool,
+          this.searchPositions.positions,
+          this.searchPositions.rowOffset,
+          this.searchPositions.currentIdx,
+        )
+      : false;
+
+    this.previousFrameHadOverlay =
+      selectionOverlayApplied || searchOverlayApplied || positionedSearchApplied;
 
     this.frontFrame = frame;
 

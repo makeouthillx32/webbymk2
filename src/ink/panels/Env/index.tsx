@@ -22,7 +22,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Box, Text, useInput }                             from "ink";
+import { Box, Text, useInput }                             from "../../runtimeInk.js";
 
 import {
   loadEnvironments,
@@ -261,14 +261,26 @@ export function EnvPanel({
       return;
     }
 
-    // Local env (POWER): build + push the new image.
-    // Remote env with agent_url: build + push locally, then update remotely.
+    // ── Update routing ─────────────────────────────────────────────────────────
+    //
+    // remote-docker (L0V3): standalone unaxis_agent — two-phase update.
+    //   Phase 1: build + push agent-node + updater images to GHCR (on POWER)
+    //   Phase 2: POST /self-update → agent pulls new image, spawns updater container,
+    //            updater replaces running container with rollback safety,
+    //            TUI polls /health until new version responds (120s timeout)
+    //
+    // local-docker (POWER): agent is embedded inside unt_proxy (proxy/server.js).
+    //   proxy/server.js is bind-mounted + node --watch → code changes deploy instantly.
+    //   Proxy image rebuild/update is handled via [b] in the core panel (home → core).
+    //   [u] here builds + pushes the standalone agent image for use on remote nodes.
+    //   TODO: wire [u] on local-docker to buildAndPushProxy() + proxy self-update
+    //         once unt_proxy has a GHCR image and POST /self-update endpoint.
+    //
     const isRemote = !!target.agentUrl && target.type === "remote-docker";
 
     if (isRemote) {
-      // Two-phase op: build+push on local machine, then update on remote
       runOp(`Update agent → ${target.name}`, async (onLine) => {
-        onLine(`Phase 1/2 — build + push ${target.name} ...`);
+        onLine(`Phase 1/2 — build + push ...`);
         const buildCode = await buildAndPushAgent(onLine);
         if (buildCode !== 0) return buildCode;
 
@@ -276,7 +288,8 @@ export function EnvPanel({
         return updateRemoteAgent(target, onLine);
       });
     } else {
-      // Local/embedded: just build + push (proxy carries the agent server)
+      // POWER: build + push the standalone agent image (keeps GHCR up to date
+      // for deploying to new remote nodes). Proxy version is managed via core panel.
       runOp("Build + push agent image", (onLine) => buildAndPushAgent(onLine));
     }
   }, [envs, selected, runOp, addNotification]);

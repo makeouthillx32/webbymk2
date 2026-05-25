@@ -1,7 +1,7 @@
-// src/ink/components/LogoV2/Clawd.tsx
+// src/ink/components/LogoV2/UnaxisMark.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // UNAXIS logo mark — a 5×3 terminal glyph built from block characters.
-// Replaces the Claude Code cat mascot. Poses animate the star's glow state.
+// Poses animate the star's glow state.
 //
 // Poses:
 //   default   — ✻ at mid-brightness
@@ -13,12 +13,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 
 // ── Pose types ────────────────────────────────────────────────────────────────
 
-/** Pose names match AnimatedClawd's original API so callers need no changes. */
-export type ClawdPose =
+export type UnaxisMarkPose =
   | "default"
   | "arms-up"    // bright burst
   | "look-left"  // dim-left ray
@@ -41,7 +40,7 @@ type PoseStyle = {
 //   row1  ─ ✻ ─       horizontal rays + star
 //   row2   ╲   ╱       bottom rays
 
-const POSES: Record<ClawdPose, PoseStyle> = {
+const POSES: Record<UnaxisMarkPose, PoseStyle> = {
   default: {
     starColor: "#999999",
     dimColor:  false,
@@ -79,10 +78,10 @@ const POSES: Record<ClawdPose, PoseStyle> = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 type Props = {
-  pose?: ClawdPose;
+  pose?: UnaxisMarkPose;
 };
 
-export function Clawd({ pose = "default" }: Props = {}): React.ReactNode {
+export function UnaxisMark({ pose = "default" }: Props = {}): React.ReactNode {
   const p = POSES[pose];
   return (
     <Box flexDirection="column">

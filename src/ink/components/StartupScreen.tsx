@@ -13,9 +13,9 @@
 //   • iTerm2 tab:    OSC 9;4;1 on mount → 9;4;0 on unmount
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useEffect, useRef, useState } from "react";
-import { Box, Text }                           from "ink";
-import { writeSync }                           from "fs";
+import React, { useContext, useEffect, useRef, useState } from "react";
+import { Box, Text }                           from "../runtimeInk.js";
+import StdinContext                            from "./StdinContext.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -71,6 +71,7 @@ interface Props {
 }
 
 export function StartupScreen({ onDone, instant = false }: Props) {
+  const { stdout } = useContext(StdinContext);
   const startRef     = useRef(Date.now());
   const [tick, setTick]       = useState(0);         // drives all animations
   const [glyphIdx, setGlyph]  = useState(0);
@@ -80,15 +81,15 @@ export function StartupScreen({ onDone, instant = false }: Props) {
   // ── iTerm2 progress bar ────────────────────────────────────────────────────
   useEffect(() => {
     if (instant) return;
-    if (process.stdout.isTTY) {
-      try { writeSync(1, ITERM2_PROGRESS_START); } catch { /* ignore */ }
+    if (stdout.isTTY) {
+      try { stdout.write(ITERM2_PROGRESS_START); } catch { /* ignore */ }
     }
     return () => {
-      if (process.stdout.isTTY) {
-        try { writeSync(1, ITERM2_PROGRESS_STOP); } catch { /* ignore */ }
+      if (stdout.isTTY) {
+        try { stdout.write(ITERM2_PROGRESS_STOP); } catch { /* ignore */ }
       }
     };
-  }, [instant]);
+  }, [instant, stdout]);
 
   // ── Main animation tick (16ms — drives hue + done check) ──────────────────
   useEffect(() => {

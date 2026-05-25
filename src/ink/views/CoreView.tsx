@@ -6,14 +6,15 @@
 //   Proxy   (unt_proxy) — the custom multi-zone reverse proxy
 //
 // Actions differ from zones:
-//   App   → deploy / pull+up / restart / build / rebuild / logs
-//   Proxy → restart / rebuild / logs / sync routes
+//   App   → deploy / pull+up / restart / build / rebuild / logs / dev
+//   Proxy → restart / build / rebuild / push-agent / logs / reset-pairing
+//           sync-routes / audit-npm
 //
-// Neither can be deleted or NPM-registered from here.
+// Neither can be deleted from here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, useInput }          from "ink";
+import { Box, Text, useInput }          from "../runtimeInk.js";
 import { useActionNav }                 from "../hooks/useActionNav.ts";
 
 import type { Zone }   from "../../config/zones.ts";
@@ -21,11 +22,16 @@ import type { Status } from "../docker.ts";
 
 import { StatusBadge }   from "../components/StatusBadge.tsx";
 import { KeyHints }      from "../components/KeyHint.tsx";
-import { ActionPanel, buildCoreActions, isCoreZone } from "../panels/Action/index.tsx";
-import type { Action }   from "../panels/Action/index.tsx";
+import { ActionPanel, buildCoreActions, buildProxyActions, isCoreZone } from "../panels/Action/index.tsx";
 
-import { restartZone, pullAndUp, reloadProxy } from "../docker.ts";
+import { restartZone, pullAndUp, reloadProxy, rebuildProxy } from "../docker.ts";
 import { buildZone, deployZone }               from "../zone-build.ts";
+import { buildAndPushAgent }                   from "../agent-ops.ts";
+import { PROJECT_DIR }                         from "../../config/zones.ts";
+import { addZoneRoute }                        from "../proxy-config.ts";
+import { npmAddZone }                          from "../npm/index.ts";
+import { unlinkSync }                          from "fs";
+import { join }                                from "path";
 
 import { useHostMonitor }      from "../hooks/useHostMonitor.ts";
 import { sparkline }           from "../utils/sparkline.ts";
@@ -64,11 +70,6 @@ const PROXY_ZONE: Zone = {
   upstreamEnvKey: "UPSTREAM_PROXY",
 };
 
-const PROXY_ACTIONS: Action[] = [
-  { id: "restart", label: "Restart",            desc: "docker compose restart",              key: "r", disabled: false },
-  { id: "rebuild", label: "Rebuild (no cache)", desc: "rebuild proxy image (no cache)",      key: "R", disabled: false },
-  { id: "logs",    label: "Logs",               desc: "tail -f proxy container output",      key: "l", disabled: false },
-];
 
 // ── CoreView ──────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export function CoreView({
   const activeActions = useMemo(
     () => selected === 0
       ? (coreApp ? buildCoreActions(coreApp) : [])
-      : PROXY_ACTIONS,
+      : buildProxyActions(),
     [selected, coreApp],
   );
   const actionNav = useActionNav(activeActions);
@@ -114,6 +115,30 @@ export function CoreView({
           runOp(`Restart  ${zone.label}`, (o) => restartZone(zone, o));
         }
         break;
+      // ── Proxy-specific actions ─────────────────────────────────────────────────
+      case "build-proxy":
+        // Rebuild the proxy Docker image + recreate the container.
+        // Use when proxy/Dockerfile changes (new npm package, base image update).
+        // Code changes to server.js / agent.js don't need this — node --watch
+        // hot-reloads them automatically via the bind-mounts.
+        runOp("Build proxy image + recreate", (o) => rebuildProxy(o));
+        break;
+      case "rebuild-proxy":
+        runOp("Rebuild proxy image (clean) + recreate", (o) => rebuildProxy(o, true));
+        break;
+      case "push-agent":
+        // Build proxy/agent.js into the GHCR agent image and push.
+        // This is the publish step — after this, go to Environments → [u] on
+        // the target node to pull the new image and deploy it there.
+        runOp("Push agent → GHCR  (ghcr.io/…/unaxis-agent:v0)", async (o) => {
+          const code = await buildAndPushAgent(o);
+          if (code === 0) {
+            o("✓ Agent image pushed — go to Environments → [u] on L0V3 to deploy");
+          }
+          return code;
+        });
+        break;
+      // ── Generic zone actions (app + future zones) ──────────────────────────
       case "build":
         runOp(`Build + Deploy  ${zone.label}`, async (o) => {
           if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
@@ -124,17 +149,13 @@ export function CoreView({
         });
         break;
       case "rebuild":
-        if (zone.key === "proxy") {
-          runOp("Rebuild proxy  (no cache)", (o) => reloadProxy(o));
-        } else {
-          runOp(`Rebuild + Deploy  ${zone.label}  (no cache)`, async (o) => {
-            if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
-            const code = await buildZone(zone, o, { noCache: true });
-            if (code !== 0) return code;
-            o("--- pull + up ---");
-            return pullAndUp(zone, o);
-          });
-        }
+        runOp(`Rebuild + Deploy  ${zone.label}  (no cache)`, async (o) => {
+          if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
+          const code = await buildZone(zone, o, { noCache: true });
+          if (code !== 0) return code;
+          o("--- pull + up ---");
+          return pullAndUp(zone, o);
+        });
         break;
       case "logs":
         openLogs(zone);
@@ -142,9 +163,69 @@ export function CoreView({
       case "dev":
         runDevMode(zone);
         break;
+      case "agent-reset":
+        runOp("Reset agent pairing  (unt_proxy)", async (o) => {
+          const stateFile = join(PROJECT_DIR, "proxy-config", "agent-state.json");
+          try {
+            unlinkSync(stateFile);
+            o("✓ TOFU pairing state cleared — agent will pair on next TUI connect");
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("ENOENT")) {
+              o("✓ No pairing state found — agent is already unpaired");
+            } else {
+              o(`✗ Could not remove state file: ${msg}`);
+              return 1;
+            }
+          }
+          o("Restarting proxy to apply...");
+          return reloadProxy(o);
+        });
+        break;
+      // ── Proxy routing management ───────────────────────────────────────────
+      case "sync-routes": {
+        // Rebuild routes.json for all deployable zones.
+        // The proxy hot-reloads this file — no restart needed.
+        const deployableZones = zones.filter((z) => !isCoreZone(z) && z.key !== "proxy");
+        runOp("Sync proxy routes", async (o) => {
+          if (deployableZones.length === 0) {
+            o("No deployable zones found — routes.json unchanged");
+            return 0;
+          }
+          for (const z of deployableZones) {
+            await addZoneRoute(z.key, `http://${z.service}:3000`, o);
+          }
+          o(`\n✓ routes.json synced  (${deployableZones.length} zone${deployableZones.length !== 1 ? "s" : ""})`);
+          return 0;
+        });
+        break;
+      }
+
+      case "audit-npm": {
+        // Verify that every zone's NPM proxy host forwards to the correct upstream.
+        // npmAddZone is idempotent — creates the host if missing, updates if stale.
+        const deployableZones = zones.filter((z) => !isCoreZone(z) && z.key !== "proxy");
+        runOp("Audit NPM hosts", async (o) => {
+          if (deployableZones.length === 0) {
+            o("No deployable zones found");
+            return 0;
+          }
+          let failed = 0;
+          for (const z of deployableZones) {
+            o(`\n── ${z.label}  (${z.domain}) ──`);
+            const code = await npmAddZone(z, o);
+            if (code !== 0) failed++;
+          }
+          o(failed === 0
+            ? `\n✓ All ${deployableZones.length} NPM hosts verified`
+            : `\n⚠ ${failed} host${failed !== 1 ? "s" : ""} had errors — see above`);
+          return failed === 0 ? 0 : 1;
+        });
+        break;
+      }
     }
     setActionOpen(false);
-  }, [runOp, openLogs]);
+  }, [runOp, openLogs, addNotification, zones]);
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
   useInput((input, key) => {

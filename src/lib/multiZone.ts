@@ -131,8 +131,15 @@ export function normalizeHost(host: string | null | undefined): string {
   return stripPort(host);
 }
 
-/** Returns the zone for a given public host. Defaults to "unenter". */
-export function getZoneFromHost(host: string | null | undefined): ZoneName {
+/**
+ * Returns the zone key for a given public host.
+ *
+ * For zones in the static ZONES map, returns the ZoneName.
+ * For dynamically scaffolded zones (not in ZONES but on *.unenter.live),
+ * returns the subdomain key — e.g. "logs" for logs.unenter.live.
+ * Falls back to "unenter" for anything unrecognised.
+ */
+export function getZoneFromHost(host: string | null | undefined): string {
   const h = normalizeHost(host);
 
   // Direct match against known zone hosts
@@ -157,7 +164,33 @@ export function getZoneFromHost(host: string | null | undefined): ZoneName {
     if (stripped === CORE_DOMAIN) return "unenter";
   }
 
+  // Dynamic zone: any *.unenter.live subdomain not in the static map is a
+  // scaffolded zone. Return the subdomain key so the zone header is accurate.
+  if (h.endsWith(`.${CORE_DOMAIN}`)) {
+    const key = h.slice(0, h.length - CORE_DOMAIN.length - 1);
+    if (key && key !== "www") return key;
+  }
+
   return "unenter";
+}
+
+/**
+ * Returns the ZoneConfig for a known zone, or a safe default config for
+ * dynamically scaffolded zones not in the static ZONES map.
+ *
+ * Use this instead of ZONES[key] wherever code must handle any zone —
+ * middleware, layout resolution, auth checks, etc.
+ */
+export function getZoneConfig(key: string): ZoneConfig {
+  if (key in ZONES) return ZONES[key as ZoneName];
+  // Dynamic zone default: public, root-mounted, no auth required.
+  return {
+    name:          key as ZoneName,
+    host:          `${key}.${CORE_DOMAIN}`,
+    port:          3000,
+    routePrefixes: ["/"],
+    requiresAuth:  false,
+  };
 }
 
 /**
@@ -175,6 +208,10 @@ export function getCanonicalHost(host: string | null | undefined): string {
   for (const zone of Object.values(ZONES)) {
     if (h === zone.host) return h;
   }
+  // Any other subdomain of the core domain is canonical for itself —
+  // handles dynamically scaffolded zones that aren't in the static ZONES map.
+  // Without this, new zones redirect to www.unenter.live on their first request.
+  if (h.endsWith(`.${CORE_DOMAIN}`)) return h;
   return `www.${CORE_DOMAIN}`;
 }
 

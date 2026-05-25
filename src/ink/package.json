@@ -1,6 +1,6 @@
 {
   "name": "@untsystems/unaxis",
-  "version": "0.0.13",
+  "version": "0.0.21",
   "description": "UNAXIS — unenter infrastructure manager. Terminal UI for zone orchestration.",
   "type": "module",
   "bin": {
@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "bun --tsconfig-override tsconfig.json --watch ../main.tsx",
     "build": "bun build.ts",
+    "engine:smoke": "bun engine-smoke.tsx",
     "start": "node dist/cli.js"
   },
   "dependencies": {

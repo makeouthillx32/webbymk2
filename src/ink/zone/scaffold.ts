@@ -29,6 +29,7 @@ import { insertZoneToDb }      from "./registry.ts";
 import { patchRouteClassifier } from "./route-classifier.ts";
 import { addZoneRoute }        from "../proxy-config.ts";
 import { deriveZone, findNextDevPort } from "./derive.ts";
+import { validateScaffoldOutput, formatValidationIssues } from "./validate.ts";
 import type { DerivedZone, NewZoneParams, OnLine } from "./types.ts";
 
 export type { OnLine };
@@ -154,6 +155,17 @@ export async function scaffoldZone(
   // ── Register route in proxy-config/routes.json ───────────────────────────
   // Proxy hot-reloads the file via fs.watch — no container restart needed.
   await addZoneRoute(z.key, `http://${z.service}:3000`, onLine);
+
+  // ── Validate scaffold outputs before handing off to Docker ───────────────
+  // Checks run against the files just written — catches known failure modes
+  // (missing COPY, relative env_file, etc.) before a 20–30s build attempt.
+  const issues = validateScaffoldOutput(z);
+  if (issues.length > 0) {
+    for (const line of formatValidationIssues(issues)) {
+      onLine(line);
+    }
+    return { zone: z, exitCode: 1 };
+  }
 
   onLine("");
   onLine(`✓ Zone "${z.key}" scaffolded — pipeline will build, deploy, and cert automatically`);

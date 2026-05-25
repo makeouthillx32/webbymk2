@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 
 import { Dialog } from "../design-system/Dialog.js";
 import { useWidths } from "../../hooks/useTermWidth.js";

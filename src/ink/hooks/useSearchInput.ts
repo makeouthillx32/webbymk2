@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { KeyboardEvent } from '../events/keyboard-event.js'
 // eslint-disable-next-line custom-rules/prefer-use-keybindings -- backward-compat bridge until consumers wire handleKeyDown to <Box onKeyDown>
-import { useInput } from 'ink'
+import { useInput } from '../runtimeInk.js'
 
 type UseSearchInputOptions = {
   isActive: boolean

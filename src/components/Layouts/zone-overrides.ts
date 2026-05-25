@@ -30,4 +30,6 @@ export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   running:  { layoutType: "minimal", appFooter: "none" },
   rappers:  { layoutType: "minimal", appFooter: "none" },
   onemore:  { layoutType: "app", appFooter: "none" },
+  logs:     { layoutType: "minimal", appFooter: "none" },
+  logz:     { layoutType: "minimal", appFooter: "none" },
 };

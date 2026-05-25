@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React         from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 import type { Zone } from "../../../config/zones.ts";
 import type { Status } from "../../docker.ts";
 import { StatusBadge } from "../../components/StatusBadge.tsx";

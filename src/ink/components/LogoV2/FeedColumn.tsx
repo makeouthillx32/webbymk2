@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../../runtimeInk.js";
 import type { FeedConfig } from "./Feed.js";
 import { calculateFeedWidth, Feed } from "./Feed.js";
 

@@ -11,6 +11,8 @@
     "yayy": "http://unt_yayy:3000",
     "running": "http://unt_running:3000",
     "rappers": "http://unt_rappers:3000",
-    "onemore": "http://unt_onemore:3000"
+    "onemore": "http://unt_onemore:3000",
+    "logs": "http://unt_logs:3000",
+    "logz": "http://unt_logz:3000"
   }
 }

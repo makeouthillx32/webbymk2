@@ -15,14 +15,13 @@ import { NextResponse, type NextRequest }            from "next/server";
 import {
   getCanonicalHost,
   getZoneFromHost,
+  getZoneConfig,
   getZoneFromPathname,
   isLocalDevelopmentHost,
   normalizeHost,
   CORE_DOMAIN,
-  ZONES,
   ZONE_HEADER,
   SITE_HOST_HEADER,
-  type ZoneName,
 } from "@/lib/multiZone";
 import { isProtectedRoute } from "@/lib/protectedRoutes";
 
@@ -75,7 +74,8 @@ export async function middleware(request: NextRequest) {
   // ── 2. Determine zone ─────────────────────────────────────────────────────
   // In production, zone comes from the Host header (subdomain routing).
   // In local dev the monolith serves all zones, so fall back to path-based detection.
-  const zoneFromHost: ZoneName = isLocal
+  // getZoneFromHost returns the subdomain key for dynamic zones not in ZONES.
+  const zoneFromHost: string = isLocal
     ? getZoneFromPathname(url.pathname)
     : getZoneFromHost(normalizedHost);
 
@@ -107,7 +107,11 @@ export async function middleware(request: NextRequest) {
   // When a zone is accessed via its own subdomain (e.g. blog.unenter.live/my-post)
   // but the Next.js pages live under a path prefix (/blog/my-post), rewrite the
   // request so Next.js finds the right route without a redirect.
-  const zoneConfig = ZONES[zoneFromHost];
+  // getZoneConfig returns the static ZoneConfig for known zones, or a safe
+  // default (requiresAuth:false, routePrefixes:["/"]) for dynamically scaffolded
+  // zones not in the static ZONES map — prevents spurious auth redirects and
+  // zone-prefix rewrites on zones the static map doesn't know about.
+  const zoneConfig = getZoneConfig(zoneFromHost);
   const zonePrimaryPrefix =
     zoneConfig.routePrefixes.find((p) => p !== "/") ?? null;
 

@@ -16,7 +16,7 @@
  */
 
 import React from 'react'
-import { Box, Text } from 'ink'
+import { Box, Text } from '../ink/runtimeInk.js'
 import { getRuntime } from '../bootstrap/state.js'
 
 export function WelcomeScreen() {

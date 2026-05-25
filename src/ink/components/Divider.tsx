@@ -5,7 +5,7 @@
 // Differences from core: defaults to 72 cols instead of terminal width
 
 import React            from "react";
-import { Box, Text }    from "ink";
+import { Box, Text }    from "../runtimeInk.js";
 import { resolveColor } from "../theme.ts";
 
 export interface DividerProps {

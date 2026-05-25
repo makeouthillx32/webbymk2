@@ -27,7 +27,6 @@
 
 import React, { useCallback, useState, useEffect, useRef } from "react";
 import { useInput, useApp, render } from "ink";
-import { unstable_batchedUpdates } from "react-dom";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 import { useNotifications, NotificationsProvider } from "./components/Notifications.tsx";
@@ -88,11 +87,18 @@ import { startIpcServer } from "./ipc-server.ts";
 import { getStatus } from "./docker.ts";
 import { captureDockerLogs, parseTail } from "./log-snapshot.ts";
 import { loadZones } from "./zone-store.ts";
+import { fetchContainers } from "./agent-client.ts";
+import { updateRemoteAgent } from "./agent-ops.ts";
+
+// Injected by build.ts via Bun.build define — same constant as cli.tsx entry point.
+declare const UNAXIS_VERSION: string;
 import {
   loadEnvironments,
   getActiveEnvironment,
   setActiveEnvironment,
   environmentTypeLabel,
+  pingAgentHealth,
+  saveAgentStatus,
 } from "./environment-store.ts";
 import { reconcileProxyRoutes } from "./proxy-config.ts";
 import {
@@ -292,6 +298,38 @@ export function App() {
 
     const server = startIpcServer({
 
+      // unaxis version  — TUI version + live agent ping on every registered environment
+      // Returns package version immediately, then pings agents concurrently.
+      // Offline fallback is handled in cli.tsx (prints pkg version if TUI is down).
+      version: async (_args, onLine) => {
+        onLine(`\nUNAXIS  ${UNAXIS_VERSION}\n`);
+        const all = await loadEnvironments();
+        if (all.length === 0) {
+          onLine("  (no environments configured)");
+          onLine("✓ version");
+          return 0;
+        }
+        // Ping all environments concurrently for speed
+        const results = await Promise.all(
+          all.map(async (env) => {
+            if (!env.agentUrl) return { env, online: false, version: "", detail: "no agent url" };
+            const result = await pingAgentHealth(env);
+            await saveAgentStatus(env.id, result);
+            return { env, ...result };
+          })
+        );
+        for (const r of results) {
+          const dot     = r.online ? "●" : "○";
+          const status  = r.online ? "online " : "offline";
+          const ver     = r.online && r.version ? `agent v${r.version}` : (r.detail ?? "unreachable");
+          const def     = r.env.isDefaultTarget ? "  (default)" : "";
+          const host    = r.env.agentUrl.replace(/^https?:\/\//, "").replace(/:8888\/?$/, "");
+          onLine(`  ${dot} ${r.env.name.padEnd(8)} ${host.padEnd(18)} ${status}  ${ver}${def}`);
+        }
+        onLine(`\n✓ version`);
+        return 0;
+      },
+
       // unaxis dev <zone>  — toggle dev container on/off
       dev: async (args, onLine) => {
         const zoneName = args[0];
@@ -357,6 +395,41 @@ export function App() {
         return 0;
       },
 
+      // unaxis ping-envs  — ping /health on every registered environment's agent
+      // Zero-keystroke equivalent of navigating to Environments → [p] on each node.
+      // Returns name, agentUrl, version, online/offline for every environment.
+      "ping-envs": async (_args, onLine) => {
+        const all = await loadEnvironments();
+        if (all.length === 0) { onLine("(no environments configured)"); return 0; }
+
+        onLine(`Pinging ${all.length} environment${all.length !== 1 ? "s" : ""}…`);
+        let failed = 0;
+
+        for (const env of all) {
+          if (!env.agentUrl) {
+            onLine(`  ○ ${env.name.padEnd(16)} no agent configured`);
+            continue;
+          }
+
+          onLine(`  … ${env.name.padEnd(16)} ${env.agentUrl}`);
+          const result = await pingAgentHealth(env);
+          await saveAgentStatus(env.id, result);
+
+          if (result.online) {
+            const version = result.version ? `v${result.version}` : "version unknown";
+            onLine(`  ✓ ${env.name.padEnd(16)} online   ${version}   ${env.agentUrl}`);
+          } else {
+            failed++;
+            const detail = result.detail ?? "unreachable";
+            onLine(`  ✗ ${env.name.padEnd(16)} offline  ${detail}`);
+          }
+        }
+
+        const passed = all.filter((e) => !!e.agentUrl).length - failed;
+        onLine(`\n✓ ping-envs complete  —  ${passed} online, ${failed} failed`);
+        return failed > 0 ? 1 : 0;
+      },
+
       // unaxis env status|use|list  — inspect or switch active environment
       env: async (args, onLine) => {
         const sub = args[0] ?? "status";
@@ -420,14 +493,125 @@ export function App() {
           const all = await loadEnvironments();
           if (all.length === 0) { onLine("(no environments configured)"); return 0; }
           for (const e of all) {
-            const marker = e.active ? "● (active)" : "○";
-            onLine(`  ${marker.padEnd(12)} ${e.name.padEnd(16)} ${environmentTypeLabel(e.type).padEnd(14)} ${e.domain}`);
+            const marker = e.isDefaultTarget ? "● (default)" : "○";
+            onLine(`  ${marker.padEnd(13)} ${e.name.padEnd(16)} ${environmentTypeLabel(e.type).padEnd(14)} ${e.domain}`);
           }
           return 0;
         }
 
+        // unaxis env ping [<name>]
+        // Ping one named environment, or all environments if no name given.
+        if (sub === "ping") {
+          const targetName = args[1];
+          const all        = await loadEnvironments();
+          if (all.length === 0) { onLine("(no environments configured)"); return 0; }
+
+          const targets = targetName
+            ? all.filter((e) => e.name.toLowerCase() === targetName.toLowerCase())
+            : all;
+
+          if (targets.length === 0) {
+            onLine(`✗ environment not found: "${targetName}"`);
+            onLine(`  available: ${all.map((e) => e.name).join(", ")}`);
+            return 1;
+          }
+
+          let failed = 0;
+          for (const env of targets) {
+            if (!env.agentUrl) {
+              onLine(`  ○ ${env.name.padEnd(16)} no agent configured`);
+              continue;
+            }
+            const result = await pingAgentHealth(env);
+            await saveAgentStatus(env.id, result);
+            if (result.online) {
+              const ver = result.version ? `v${result.version}` : "version unknown";
+              onLine(`  ✓ ${env.name.padEnd(16)} online   ${ver}   ${env.agentUrl}`);
+            } else {
+              failed++;
+              onLine(`  ✗ ${env.name.padEnd(16)} offline  ${result.detail ?? "unreachable"}`);
+            }
+          }
+          const passed = targets.filter((e) => !!e.agentUrl).length - failed;
+          onLine(`✓ ping complete  —  ${passed} online, ${failed} failed`);
+          return failed > 0 ? 1 : 0;
+        }
+
+        // unaxis env containers [<name>] [--all]
+        // List containers on a named environment (or the default env).
+        // By default shows only unt_* containers; --all shows everything.
+        if (sub === "containers") {
+          // Disambiguate: is the next arg an env name or a flag?
+          const showAll    = args.includes("--all");
+          const nameArg    = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const all        = await loadEnvironments();
+
+          let env = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+
+          if (!env) {
+            onLine(nameArg
+              ? `✗ environment not found: "${nameArg}"`
+              : "✗ no environments configured");
+            return 1;
+          }
+          if (!env.agentUrl) {
+            onLine(`✗ ${env.name} has no agent configured`);
+            return 1;
+          }
+
+          onLine(`Fetching containers on ${env.name} (${env.agentUrl})…`);
+          const containers = await fetchContainers(env);
+          if (!containers) {
+            onLine(`✗ Could not reach agent — is ${env.name} online?`);
+            return 1;
+          }
+
+          const visible = showAll
+            ? containers
+            : containers.filter((c) => c.Names.some((n) => n.replace(/^\//, "").startsWith("unt_")));
+
+          if (visible.length === 0) {
+            onLine(showAll ? "  (no containers)" : "  (no unt_* containers — try --all)");
+            onLine(`✓ ${env.name}`);
+            return 0;
+          }
+
+          for (const c of visible) {
+            const dot   = c.State === "running" ? "●" : "○";
+            const name  = c.Names[0]?.replace(/^\//, "") ?? c.Id.slice(0, 12);
+            const state = c.State.padEnd(8);
+            onLine(`  ${dot} ${name.padEnd(22)} ${state}  ${c.Image}`);
+          }
+          const running = visible.filter((c) => c.State === "running").length;
+          onLine(`\n✓ ${visible.length} container${visible.length !== 1 ? "s" : ""}  (${running} running)  —  ${env.name}`);
+          return 0;
+        }
+
+        // unaxis env update <name>
+        // Trigger a self-update on the named environment's agent.
+        // The agent pulls the latest image, spawns the updater container,
+        // and atomically replaces itself. Returns 202 immediately then dies —
+        // poll with `unaxis env ping <name>` to confirm the new version is up.
+        if (sub === "update") {
+          const targetName = args[1];
+          if (!targetName) {
+            onLine("✗ usage: env update <environment-name>");
+            return 2;
+          }
+          const all    = await loadEnvironments();
+          const target = all.find((e) => e.name.toLowerCase() === targetName.toLowerCase());
+          if (!target) {
+            onLine(`✗ environment not found: "${targetName}"`);
+            onLine(`  available: ${all.map((e) => e.name).join(", ")}`);
+            return 1;
+          }
+          return updateRemoteAgent(target, onLine);
+        }
+
         onLine(`✗ unknown env command: "${sub}"`);
-        onLine("  usage: env status | env use <name> | env list");
+        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env update <name> | env status | env use <name>");
         return 2;
       },
 
@@ -823,11 +1007,9 @@ export function App() {
         logOpIdRef.current = null;
       }
     }
-    unstable_batchedUpdates(() => {
-      setOverlayOpId(null);
-      goRoot();
-      if (anyBusy) setStackOpen(true);
-    });
+    setOverlayOpId(null);
+    goRoot();
+    if (anyBusy) setStackOpen(true);
   }, [overlayOp, anyBusy, logProcRef, logOpIdRef, setBgOps, setOverlayOpId, goRoot, setStackOpen]);
 
   // ── Global keyboard handler ────────────────────────────────────────────────
@@ -901,10 +1083,8 @@ export function App() {
         logOpIdRef.current = null;
       }
     }
-    unstable_batchedUpdates(() => {
-      if (bgOps.length > 0) setStackOpen(true);
-      setOverlayOpId(null);
-    });
+    if (bgOps.length > 0) setStackOpen(true);
+    setOverlayOpId(null);
   }, [overlayOp, bgOps, logProcRef, logOpIdRef, setBgOps, setStackOpen, setOverlayOpId]);
 
   const handleOverlayEsc = useCallback(() => {
@@ -919,12 +1099,10 @@ export function App() {
         logOpIdRef.current = null;
       }
     }
-    unstable_batchedUpdates(() => {
-      // Always show the strip on detach if any ops remain — covers busy ops,
-      // done ops, and dev-mode ops that are dismissable (busy:false) but still live.
-      if (bgOps.length > 0) setStackOpen(true);
-      setOverlayOpId(null);
-    });
+    // Always show the strip on detach if any ops remain — covers busy ops,
+    // done ops, and dev-mode ops that are dismissable (busy:false) but still live.
+    if (bgOps.length > 0) setStackOpen(true);
+    setOverlayOpId(null);
   }, [overlayOp, bgOps, logProcRef, logOpIdRef, setBgOps, setStackOpen, setOverlayOpId]);
 
   // ── Overlay [esc] on a dismissable op (dev mode) ─────────────────────────────
@@ -935,12 +1113,10 @@ export function App() {
   const handleOverlayKill = useCallback(() => {
     if (!overlayOp) return;
     triggerDismissHook(overlayOp.id);
-    unstable_batchedUpdates(() => {
-      setOverlayOpId(null);
-      // Always show the strip — cleanup messages will appear there while
-      // stopDevContainer removes the container + NPM host + proxy route.
-      setStackOpen(true);
-    });
+    setOverlayOpId(null);
+    // Always show the strip — cleanup messages will appear there while
+    // stopDevContainer removes the container + NPM host + proxy route.
+    setStackOpen(true);
   }, [overlayOp, triggerDismissHook, setOverlayOpId, setStackOpen]);
 
   const handleOverlayEnter = useCallback(() => {
@@ -1006,10 +1182,8 @@ export function App() {
 
   const handleStackEnter = useCallback(() => {
     if (stackFocusId === null) return;
-    unstable_batchedUpdates(() => {
-      setOverlayOpId(stackFocusId);
-      setStackOpen(false);
-    });
+    setOverlayOpId(stackFocusId);
+    setStackOpen(false);
   }, [stackFocusId, setOverlayOpId, setStackOpen]);
 
   const handleStackDismiss = useCallback(() => {
@@ -1081,10 +1255,8 @@ export function App() {
   const handleStackHide = useCallback(() => {
     // Collapse the strip without dismissing any ops.  [o] or a new op start
     // will bring it back.  Distinct from dismiss — ops survive, just not visible.
-    unstable_batchedUpdates(() => {
-      setStackOpen(false);
-      setStackFocused(false);
-    });
+    setStackOpen(false);
+    setStackFocused(false);
   }, [setStackOpen, setStackFocused]);
 
   const handleStackManagerClose = useCallback(() => {

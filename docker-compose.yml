@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   unenter:
     driver: bridge
@@ -231,7 +229,11 @@ services:
   # routes.json is hot-reloaded via fs.watch inside the server. Zone creation
   # and proxy code changes both take effect with zero container rebuilds.
   # UPSTREAM_* env vars below are kept as a cold-start fallback only.
+  #
+  # Port 8888 hosts the embedded UNAXIS agent API (TOFU ECDSA P-256).
+  # docker.sock is mounted so the agent can proxy Docker API calls to the TUI.
   proxy:
+    image: webbymk2-proxy          # local tag — not pushed to GHCR
     build:
       context: ./proxy
       dockerfile: Dockerfile
@@ -244,11 +246,13 @@ services:
     volumes:
       - ./proxy-config:/proxy-config
       - ./proxy/server.js:/proxy/server.js:ro
+      - ./proxy/agent.js:/proxy/agent.js:ro           # unified agent — node --watch hot-reloads on save
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for agent proxy
     environment:
       PROXY_PORT:         "3080"
       CORE_DOMAIN:        "${CORE_DOMAIN:-unenter.live}"
       AGENT_PORT:         "8888"                       # TOFU — no secret needed, first TUI to connect pairs automatically
+      AGENT_STATE_FILE:   "/proxy-config/agent-state.json"  # embedded context — state in proxy-config volume
       # Fallback env vars — used only if proxy-config/routes.json is missing.
       UPSTREAM_UNENTER:   "http://unt_app:3000"
       UPSTREAM_BLOG:      "http://blog:3000"
