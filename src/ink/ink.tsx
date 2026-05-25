@@ -19,7 +19,7 @@ import {
   ERASE_SCREEN,
 } from './termio/csi.js';
 import { LogUpdate } from './log-update.js';
-import { emptyFrame } from './frame.js';
+import { emptyFrame, type FrameEvent } from './frame.js';
 import {
   captureScrolledRows,
   clearSelection,
@@ -62,6 +62,7 @@ export type Options = {
   stderr: NodeJS.WriteStream;
   exitOnCtrlC: boolean;
   patchConsole: boolean;
+  onFrame?: (event: FrameEvent) => void;
 };
 
 export default class Ink {
@@ -92,11 +93,19 @@ export default class Ink {
   private previousFrameHadOverlay = false;
   private hoveredNodes = new Set<DOMElement>();
   private hasRenderedFullFrame = false;
+  private exitError: Error | undefined;
+  private readonly exitPromise: Promise<void>;
+  private resolveExitPromise!: () => void;
+  private rejectExitPromise!: (error: Error) => void;
   readonly selection: SelectionState = createSelectionState();
 
   constructor(options: Options) {
     autoBind(this);
     this.options = options;
+    this.exitPromise = new Promise((resolve, reject) => {
+      this.resolveExitPromise = resolve;
+      this.rejectExitPromise = reject;
+    });
     this.terminalColumns = options.stdout.columns || 80;
     this.terminalRows = options.stdout.rows || 24;
 
@@ -190,6 +199,7 @@ export default class Ink {
     this.isAltScreenActive = false;
     this.isMouseTrackingActive = false;
     instances.delete(this.options.stdout);
+    this.resolveExitPromise();
   }
 
   clearTextSelection(): void {
@@ -488,6 +498,7 @@ export default class Ink {
   onRender() {
     if (this.isUnmounted) return;
 
+    const frameStartedAt = performance.now();
     const prevFrame = this.frontFrame || emptyFrame(this.terminalRows, this.terminalColumns, this.stylePool, this.charPool, this.hyperlinkPool);
 
     const frame = this.renderer({
@@ -540,15 +551,28 @@ export default class Ink {
       const diff = this.logUpdate.render(prevFrame, frame, this.isAltScreenActive, true);
       writeDiffToTerminal({ stdout: this.options.stdout, stderr: this.options.stderr } as any, diff, true);
     }
+
+    this.options.onFrame?.({
+      durationMs: performance.now() - frameStartedAt,
+      flickers: [],
+    });
   }
 
-  unmount = () => {
+  unmount = (error?: Error) => {
     if (this.isUnmounted) return;
     this.isUnmounted = true;
+    this.exitError = error;
     reconciler.updateContainer(null, this.container, null, () => {
         instances.delete(this.options.stdout);
+        if (this.exitError) {
+          this.rejectExitPromise(this.exitError);
+        } else {
+          this.resolveExitPromise();
+        }
     });
   };
 
-  waitUntilExit() { return new Promise(() => {}); }
+  waitUntilExit() {
+    return this.exitPromise;
+  }
 }

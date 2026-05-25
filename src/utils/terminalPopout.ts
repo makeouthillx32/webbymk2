@@ -29,7 +29,7 @@ import { homedir } from "os";
 
 // ── Temp file for operation output ────────────────────────────────────────────
 
-const POPOUT_DIR = join(homedir(), ".unenter", "popout");
+const POPOUT_DIR = join(homedir(), ".unaxis", "unenter", "popout");
 
 function ensurePopoutDir(): void {
   if (!existsSync(POPOUT_DIR)) {

@@ -33,10 +33,33 @@ const ROUTES_FILE = join(PROJECT_DIR, "proxy-config", "routes.json");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * A registered Supabase database instance for proxy + NPM routing.
+ * Stored in routes.json under "databases" for TUI display and reconciliation.
+ * Actual HTTP routing is done by NPM pointing directly at the host ports.
+ */
+export interface DatabaseRouteEntry {
+  /** Kong API gateway upstream — http://{stackIp}:{kongPort} */
+  apiUpstream:    string;
+  /** Studio upstream — http://{stackIp}:{studioPort} */
+  studioUpstream: string;
+  /** Public domain for the API gateway — db.{slug}.{coreDomain} */
+  apiDomain:      string;
+  /** Public domain for Studio — studio.{slug}.{coreDomain} */
+  studioDomain:   string;
+  /** NPM proxy host ID for apiDomain, null until registered */
+  npmApiHostId?:    number | null;
+  /** NPM proxy host ID for studioDomain, null until registered */
+  npmStudioHostId?: number | null;
+  registeredAt:   string;   // ISO-8601
+}
+
 export interface ProxyRoutes {
   coreDomain:   string;
   coreUpstream: string;
   zones:        Record<string, string>;
+  /** Registered Supabase database instances, keyed by slug. */
+  databases?:   Record<string, DatabaseRouteEntry>;
 }
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
@@ -88,6 +111,91 @@ export async function removeZoneRoute(
 
 export function getRoutes(): ProxyRoutes {
   return read();
+}
+
+// ── Database instance routing ─────────────────────────────────────────────────
+//
+// Each Supabase database instance gets two public subdomains:
+//   db.{slug}.{coreDomain}      → Kong API gateway (port kong)
+//   studio.{slug}.{coreDomain}  → Supabase Studio   (port studio)
+//
+// Routing is handled by NPM pointing directly at the stack host ports —
+// traffic never flows through the internal zone proxy for database instances.
+// These entries in routes.json are metadata for TUI display and reconciliation.
+
+/**
+ * Register a database instance in routes.json.
+ * Stores upstream URLs and public domains for TUI display.
+ * Does NOT register in NPM — call npmAddDatabaseHosts() separately.
+ */
+export async function addDatabaseRoutes(
+  slug:     string,
+  ports:    { kong: number; studio: number },
+  stackIp:  string,
+  onLine?:  (l: string) => void,
+): Promise<DatabaseRouteEntry> {
+  const routes     = read();
+  const coreDomain = routes.coreDomain || "unenter.live";
+
+  const entry: DatabaseRouteEntry = {
+    apiUpstream:    `http://${stackIp}:${ports.kong}`,
+    studioUpstream: `http://${stackIp}:${ports.studio}`,
+    apiDomain:      `db.${slug}.${coreDomain}`,
+    studioDomain:   `studio.${slug}.${coreDomain}`,
+    registeredAt:   new Date().toISOString(),
+  };
+
+  routes.databases        = routes.databases ?? {};
+  routes.databases[slug]  = entry;
+  write(routes);
+  await signalProxyReload();
+
+  onLine?.(`✓ database routes registered:`);
+  onLine?.(`  ${entry.apiDomain}  →  ${entry.apiUpstream}`);
+  onLine?.(`  ${entry.studioDomain}  →  ${entry.studioUpstream}`);
+
+  return entry;
+}
+
+/**
+ * Update the NPM host IDs for a registered database instance after NPM
+ * registration completes.
+ */
+export async function setDatabaseNpmIds(
+  slug:         string,
+  npmApiId:     number | null,
+  npmStudioId:  number | null,
+): Promise<void> {
+  const routes = read();
+  if (!routes.databases?.[slug]) return;
+  routes.databases[slug].npmApiHostId    = npmApiId;
+  routes.databases[slug].npmStudioHostId = npmStudioId;
+  write(routes);
+  // No proxy reload needed — NPM IDs are metadata only.
+}
+
+/**
+ * Remove a database instance from routes.json.
+ */
+export async function removeDatabaseRoutes(
+  slug:    string,
+  onLine?: (l: string) => void,
+): Promise<void> {
+  const routes = read();
+  if (!routes.databases?.[slug]) {
+    onLine?.(`  No database route for "${slug}" — nothing to remove`);
+    return;
+  }
+  const entry = routes.databases[slug];
+  delete routes.databases[slug];
+  write(routes);
+  await signalProxyReload();
+  onLine?.(`✓ database routes removed: ${entry.apiDomain}, ${entry.studioDomain}`);
+}
+
+/** Return all registered database instances. */
+export function getDatabaseRoutes(): Record<string, DatabaseRouteEntry> {
+  return read().databases ?? {};
 }
 
 // ── Startup reconciliation ────────────────────────────────────────────────────

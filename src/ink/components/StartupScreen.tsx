@@ -1,84 +1,80 @@
 // src/ink/components/StartupScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Startup splash — plays once when the TUI first mounts, then calls onDone().
+// Startup splash + project picker coordinator.
 //
 // Phases:
-//   0 → SWEEP_TOTAL_MS   ✻ hue sweeps 2 full rotations; UNAXIS title shimmers
-//   SWEEP_TOTAL_MS       onDone() fires — yields to the main app
+//   "animating"  ✻ hue sweeps 2 rotations; UNAXIS shimmers; spinner ticks
+//   "picking"    animation settles → project list appears below the wordmark
+//                user selects a project → onDone() fires → welcome screen
 //
-// Animation details:
-//   • ✻ teardrop:   HSL hue 0→360 twice over 3 000ms, settles to #999
-//   • Glyph spinner: ['·','✢','✳','✶','✻','✽','✻','✶','✳','✢','·'] at 120ms
-//   • Title shimmer: 2-char highlight sweeps across "UNAXIS" every 150ms
-//   • iTerm2 tab:    OSC 9;4;1 on mount → 9;4;0 on unmount
+// Dynamic Overlays (under "picking" phase):
+//   • "key"      PairingKeyOverlay (invoked with capital K)
+//   • "wizard"   NewProjectWizard (invoked via "Create new project…" list item)
+//
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useContext, useEffect, useRef, useState } from "react";
-import { Box, Text }                           from "../runtimeInk.js";
-import StdinContext                            from "./StdinContext.js";
+import React, { useContext, useEffect, useState, useCallback } from "react";
+import { Box, Text, useInput }                            from "../runtimeInk.js";
+import StdinContext                                        from "./StdinContext.js";
+import {
+  getKnownProjects,
+  ensureCurrentProjectRegistered,
+  type KnownProject,
+} from "../../utils/projectRegistry.js";
+import { PROJECT_DIR } from "../../config/stack.js";
+import { StartupSplash } from "./StartupSplash.tsx";
+import { PairingKeyOverlay } from "./PairingKeyOverlay.tsx";
+import { NewProjectWizard } from "./NewProjectWizard.tsx";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-const TEARDROP = "✻";
-const TITLE    = "UNAXIS";
+const TEARDROP     = "✻";
+const TITLE        = "UNAXIS";
+const SETTLED_GREY = "#999999";
 
-const SWEEP_DURATION_MS  = 1500;                        // one rotation
-const SWEEP_COUNT        = 2;                           // two rotations
-const SWEEP_TOTAL_MS     = SWEEP_DURATION_MS * SWEEP_COUNT;
-const SETTLED_GREY       = "#999999";
-
-const GLYPH_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢", "·"] as const;
-const GLYPH_TICK_MS   = 120;
-
-const SHIMMER_TICK_MS  = 150;
-const SHIMMER_WIDTH    = 2;                             // chars lit at once
-
-// iTerm2 progress indicator (no-op on other terminals)
 const ITERM2_PROGRESS_START = "\x1b]9;4;1\x07";
 const ITERM2_PROGRESS_STOP  = "\x1b]9;4;0\x07";
 
-// ── Color helpers ─────────────────────────────────────────────────────────────
+// ── Color palette (picker phase) ───────────────────────────────────────────────
 
-function hslToHex(h: number, s = 1, l = 0.62): string {
-  const a = s * Math.min(l, 1 - l);
-  const f = (n: number) => {
-    const k = (n + h / 30) % 12;
-    const val = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
-    return Math.round(val * 255).toString(16).padStart(2, "0");
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}
+const ACTIVE  = "cyanBright";
+const DIM     = "gray";
 
-// ── Shimmer segments helper ────────────────────────────────────────────────────
+// ── Stub sentinel ──────────────────────────────────────────────────────────────
 
-function shimmerSegments(
-  text: string,
-  pos: number,
-): { before: string; lit: string; after: string } {
-  const start  = pos % (text.length + SHIMMER_WIDTH);
-  const before = text.slice(0, Math.max(0, start));
-  const lit    = text.slice(Math.max(0, start), start + SHIMMER_WIDTH);
-  const after  = text.slice(start + SHIMMER_WIDTH);
-  return { before, lit, after };
-}
+const CREATE_NEW_SLUG = "__create_new__";
 
-// ── Component ─────────────────────────────────────────────────────────────────
+type PickerItem =
+  | KnownProject
+  | { slug: typeof CREATE_NEW_SLUG; path: ""; name: "Create new project…" };
+
+// ── Props ──────────────────────────────────────────────────────────────────────
 
 interface Props {
-  onDone: () => void;
-  /** Skip animation (e.g. CI, reduced-motion env). */
+  onDone:   () => void;
+  onQuit:   () => void;
+  /** Skip animation + picker (CI / no-splash mode). */
   instant?: boolean;
 }
 
-export function StartupScreen({ onDone, instant = false }: Props) {
-  const { stdout } = useContext(StdinContext);
-  const startRef     = useRef(Date.now());
-  const [tick, setTick]       = useState(0);         // drives all animations
-  const [glyphIdx, setGlyph]  = useState(0);
-  const [shimPos, setShimPos] = useState(0);
-  const [done, setDone]       = useState(instant);
+// ── Coordinator Component ──────────────────────────────────────────────────────
 
-  // ── iTerm2 progress bar ────────────────────────────────────────────────────
+export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
+  const { stdout } = useContext(StdinContext);
+
+  // ── Coordinator States ─────────────────────────────────────────────────────
+  type Phase = "animating" | "picking";
+  type Overlay = "none" | "key" | "wizard";
+
+  const [phase, setPhase]     = useState<Phase>("animating");
+  const [overlay, setOverlay] = useState<Overlay>("none");
+
+  // ── Picker States ──────────────────────────────────────────────────────────
+  const [items, setItems]           = useState<PickerItem[]>([]);
+  const [selected, setSelected]     = useState(0);
+  const [pickerLoading, setPickerLoading] = useState(true);
+
+  // ── iTerm2 progress bar integration ────────────────────────────────────────
   useEffect(() => {
     if (instant) return;
     if (stdout.isTTY) {
@@ -91,79 +87,165 @@ export function StartupScreen({ onDone, instant = false }: Props) {
     };
   }, [instant, stdout]);
 
-  // ── Main animation tick (16ms — drives hue + done check) ──────────────────
+  // ── Instant mode bypass ────────────────────────────────────────────────────
   useEffect(() => {
-    if (done) return;
-    const id = setInterval(() => {
-      const elapsed = Date.now() - startRef.current;
-      setTick(elapsed);
-      if (elapsed >= SWEEP_TOTAL_MS) {
-        clearInterval(id);
-        setDone(true);
+    if (instant) onDone();
+  }, [instant, onDone]);
+
+  // ── Load projects function ─────────────────────────────────────────────────
+  const loadProjects = useCallback(async (selectPath = PROJECT_DIR) => {
+    setPickerLoading(true);
+    await ensureCurrentProjectRegistered(PROJECT_DIR);
+    const known = await getKnownProjects();
+    const list: PickerItem[] = [
+      ...known,
+      { slug: CREATE_NEW_SLUG, path: "", name: "Create new project…" } as any,
+    ];
+    setItems(list);
+
+    // Pre-select the matching path
+    const idx = known.findIndex((p) => p.path === selectPath);
+    setSelected(idx >= 0 ? idx : 0);
+    setPickerLoading(false);
+  }, []);
+
+  // ── Load projects when phase flips to picking ──────────────────────────────
+  useEffect(() => {
+    if (phase === "picking") {
+      loadProjects();
+    }
+  }, [phase, loadProjects]);
+
+  // ── Keyboard handling (when no overlay is active) ──────────────────────────
+  useInput((input, key) => {
+    if (phase !== "picking" || pickerLoading || overlay !== "none") return;
+
+    const maxIdx = items.length - 1;
+
+    if (key.upArrow || input === "k") {
+      setSelected((s) => Math.max(0, s - 1));
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      setSelected((s) => Math.min(maxIdx, s + 1));
+      return;
+    }
+
+    if (key.return || key.rightArrow) {
+      const item = items[selected];
+      if (!item) return;
+      if (item.slug === CREATE_NEW_SLUG) {
+        setOverlay("wizard");
+        return;
       }
-    }, 16);
-    return () => clearInterval(id);
-  }, [done]);
+      onDone();
+      return;
+    }
 
-  // ── Glyph spinner tick (120ms) ─────────────────────────────────────────────
-  useEffect(() => {
-    if (done) return;
-    const id = setInterval(
-      () => setGlyph((g) => (g + 1) % GLYPH_FRAMES.length),
-      GLYPH_TICK_MS,
-    );
-    return () => clearInterval(id);
-  }, [done]);
+    // K — pairing key overlay
+    if (input === "K") {
+      setOverlay("key");
+      return;
+    }
 
-  // ── Shimmer tick (150ms) ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (done) return;
-    const id = setInterval(
-      () => setShimPos((p) => p + 1),
-      SHIMMER_TICK_MS,
-    );
-    return () => clearInterval(id);
-  }, [done]);
+    if (input === "q" || key.escape) {
+      onQuit();
+      return;
+    }
+  });
 
-  // ── Fire onDone after done state settles ──────────────────────────────────
-  useEffect(() => {
-    if (done) onDone();
-  }, [done, onDone]);
-
-  // ── If instant, skip render ────────────────────────────────────────────────
+  // ── Instant mode check ─────────────────────────────────────────────────────
   if (instant) return null;
 
-  // ── Derive current frame values ────────────────────────────────────────────
-  const elapsed  = tick;
-  const hue      = (elapsed / SWEEP_DURATION_MS) * 360 % 360;
-  const starColor = elapsed >= SWEEP_TOTAL_MS ? SETTLED_GREY : hslToHex(hue);
-  const glyph    = GLYPH_FRAMES[glyphIdx] ?? "·";
-  const { before, lit, after } = shimmerSegments(TITLE, shimPos);
+  // ── PHASE 1: animating (Splash Animation) ──────────────────────────────────
+  if (phase === "animating") {
+    return <StartupSplash onComplete={() => setPhase("picking")} />;
+  }
+
+  // ── PHASE 2: picking (Project Picker & Active Overlays) ────────────────────
+
+  // ── Overlay: Connection Pairing Key ──
+  if (overlay === "key") {
+    const knownProjects = items.filter((i) => i.slug !== CREATE_NEW_SLUG) as KnownProject[];
+    return (
+      <PairingKeyOverlay
+        knownProjects={knownProjects}
+        projectDir={PROJECT_DIR}
+        onClose={() => setOverlay("none")}
+      />
+    );
+  }
+
+  // ── Overlay: New Project Wizard ──
+  if (overlay === "wizard") {
+    return (
+      <NewProjectWizard
+        onCancel={() => setOverlay("none")}
+        onDone={(newProj) => {
+          setOverlay("none");
+          loadProjects(newProj.path); // reload and auto-select new project path!
+        }}
+      />
+    );
+  }
+
+  // ── Standard selection list ──
+  const knownProjects = items.filter((i) => i.slug !== CREATE_NEW_SLUG) as KnownProject[];
+  const stubIdx       = items.length - 1;
 
   return (
-    <Box
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-      paddingY={2}
-    >
-      {/* ── Teardrop sweep ──────────────────────────────────────────────── */}
+    <Box flexDirection="column" alignItems="center" justifyContent="center" paddingY={2}>
+
+      {/* ── Settled wordmark ── */}
       <Box marginBottom={1}>
-        <Text color={starColor}>{TEARDROP}</Text>
+        <Text color={SETTLED_GREY}>{TEARDROP}</Text>
+      </Box>
+      <Box marginBottom={2}>
+        <Text bold color="white">{TITLE}</Text>
       </Box>
 
-      {/* ── Title shimmer ───────────────────────────────────────────────── */}
-      <Box marginBottom={1}>
-        <Text bold color="white">{before}</Text>
-        <Text bold color="cyanBright">{lit}</Text>
-        <Text bold color="white">{after}</Text>
+      {/* ── Project list ── */}
+      {pickerLoading ? (
+        <Box marginBottom={1}>
+          <Text dimColor>Loading…</Text>
+        </Box>
+      ) : knownProjects.length === 0 ? (
+        <Box marginBottom={1}>
+          <Text dimColor>No projects registered yet.</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="column" marginBottom={1}>
+          {knownProjects.map((proj, i) => {
+            const isCursor = selected === i;
+            return (
+              <Box key={proj.slug} gap={2}>
+                <Text color={isCursor ? ACTIVE : DIM}>{isCursor ? "▶" : " "}</Text>
+                <Text bold={isCursor} color={isCursor ? ACTIVE : "white"}>{proj.slug}</Text>
+                <Text dimColor>
+                  {proj.path.replace(/\\/g, "/").replace(/^.*\/([^/]+\/[^/]+)$/, "…/$1")}
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+
+      {/* ── Create new project list option ── */}
+      <Box gap={2} marginBottom={2}>
+        <Text color={selected === stubIdx ? ACTIVE : DIM}>{selected === stubIdx ? "▶" : " "}</Text>
+        <Text bold={selected === stubIdx} color={selected === stubIdx ? ACTIVE : "white"}>
+          ⊕  create new project…
+        </Text>
       </Box>
 
-      {/* ── Glyph spinner + status ──────────────────────────────────────── */}
-      <Box gap={1} marginTop={1}>
-        <Text color="magenta">{glyph}</Text>
-        <Text dimColor>Starting up…</Text>
+      {/* ── Key hints ── */}
+      <Box gap={3}>
+        <Text dimColor>↑↓ navigate</Text>
+        <Text dimColor>↵ open</Text>
+        <Text dimColor>K key</Text>
+        <Text dimColor>q quit</Text>
       </Box>
+
     </Box>
   );
 }

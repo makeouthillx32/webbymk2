@@ -14,16 +14,16 @@
 //   generateJWT()            — local JWT bootstrap (anon / service_role)
 //
 // Registry location (consistent with stack.ts config pattern):
-//   Windows:      %APPDATA%\unenter\instances.json
-//   macOS/Linux:  ~/.unenter/instances.json
+//   Windows:      %APPDATA%\unaxis\unenter\instances.json
+//   macOS/Linux:  ~/.unaxis/unenter/instances.json
 //
 // Instances live at:
 //   PROJECT_DIR/supabase-instances/{slug}/docker/
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { promises as fs } from "fs";
-import { existsSync }      from "fs";
-import { join, resolve }   from "path";
+import { promises as fs }                    from "fs";
+import { existsSync, mkdirSync, copyFileSync } from "fs";
+import { join, resolve }                       from "path";
 import { homedir }         from "os";
 import { randomBytes }     from "crypto";
 import { createServer }    from "net";
@@ -58,26 +58,41 @@ export type HealthState   = "healthy"  | "degraded" | "down"  | "unknown";
 export type SnapshotState = "none"     | "pending"  | "complete" | "error";
 
 export interface RuntimeInstance {
-  id:            string;        // UUID v4
-  name:          string;        // human label
-  slug:          string;        // filesystem-safe; used as compose project + container prefix
-  status:        RuntimeStatus;
-  createdAt:     string;        // ISO-8601
-  runtimePath:   string;        // absolute path — supabase-instances/{slug}/
-  dockerPath:    string;        // absolute path — supabase-instances/{slug}/docker/
-  ports:         RuntimePorts;
-  secrets:       RuntimeSecrets;
-  studioUrl:     string;        // http://127.0.0.1:{studio}
-  healthState:   HealthState;
-  snapshotState: SnapshotState;
-  lastSnapshot?: string;        // ISO-8601 | undefined
+  id:               string;        // UUID v4
+  name:             string;        // human label
+  slug:             string;        // filesystem-safe; used as compose project name
+  containerPrefix?: string;        // Docker container name prefix (incl. separator).
+                                   // Set to "unt_" for core (containers: unt_db, unt_storage…).
+                                   // Omit for runtime instances — defaults to "${slug}-".
+  status:           RuntimeStatus;
+  createdAt:        string;        // ISO-8601
+  runtimePath:      string;        // absolute path — supabase-instances/{slug}/
+  dockerPath:       string;        // absolute path — supabase-instances/{slug}/docker/
+  ports:            RuntimePorts;
+  secrets:          RuntimeSecrets;
+  studioUrl:        string;        // http://127.0.0.1:{studio}
+  healthState:      HealthState;
+  snapshotState:    SnapshotState;
+  lastSnapshot?:    string;        // ISO-8601 | undefined
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 function registryPath(): string {
-  const appData = process.env["APPDATA"] ?? join(homedir(), ".config");
-  return join(appData, "unenter", "instances.json");
+  const appData   = process.env["APPDATA"] ?? join(homedir(), ".config");
+  const newPath    = join(appData, "unaxis", "unenter", "instances.json");
+  const legacyPath = join(appData, "unenter", "instances.json");
+
+  // One-time auto-migration: if new path is absent but legacy exists, copy it over.
+  // Runs silently on first access after an update — no user action needed.
+  if (!existsSync(newPath) && existsSync(legacyPath)) {
+    try {
+      mkdirSync(join(appData, "unaxis", "unenter"), { recursive: true });
+      copyFileSync(legacyPath, newPath);
+    } catch { /* best-effort — falls back to empty registry if copy fails */ }
+  }
+
+  return newPath;
 }
 
 export async function loadRegistry(): Promise<RuntimeInstance[]> {

@@ -39,6 +39,16 @@ export interface UnaxisCredentials {
   ghcr_token_set_at?:   string
   /** OpenAI API key — sk-xxx */
   openai_api_key?:      string
+
+  /**
+   * Active remote IPC bridge bearer token (hex-encoded 32 random bytes).
+   * Set when the user generates a pairing key from the TUI project picker.
+   * The remote bridge (port 50506) validates incoming AUTH headers against this.
+   * Cleared when the key expires or the user revokes access.
+   */
+  remote_bridge_token?:     string
+  /** Unix timestamp (seconds) when remote_bridge_token expires. */
+  remote_bridge_token_exp?: string
 }
 
 // ── Settings shape (non-secret global config) ─────────────────────────────────
@@ -63,6 +73,13 @@ export interface UnaxisSettings {
    * Used to throttle checks to once per 24 hours.
    */
   last_update_check?: string
+
+  /**
+   * JSON-encoded array of KnownProject objects — the list of UNAXIS project
+   * roots shown in the TUI project picker.
+   * Managed via `unaxis project add|remove` or auto-populated on first run.
+   */
+  known_projects?: string
 }
 
 // ── Config directory resolution ───────────────────────────────────────────────

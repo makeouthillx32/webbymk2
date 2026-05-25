@@ -66,6 +66,10 @@ Covered now:
 - detached local-runtime active input smoke for `CoreView`
 - detached local-runtime active input smoke for `OperationOverlay`
 - detached local-runtime active input smoke for nested Env `ContainersView`
+- local lifecycle smoke for `useApp().exit()` and `waitUntilExit()` settling
+- local `onFrame` callback support through `renderSync` / `createRoot` options
+- detached local-engine preview assembly via `LocalEnginePreviewRoot` and
+  `renderLocalEnginePreview`, covered under `UNAXIS_LOCAL_INK_RUNTIME=1`
 
 Important fixes made:
 
@@ -106,6 +110,16 @@ Important fixes made:
   smoke harnesses. Without the flag, they stay on npm Ink for production.
 - The smoke harness can mark cases as local-runtime-only, so production-safe
   default smoke and local-engine preview smoke can be verified separately.
+- The local `Ink` instance now exposes the shutdown contract expected by
+  terminal cleanup code: `isAltScreenActive`, `drainStdin()`, and
+  `detachForShutdown()`.
+- `waitUntilExit()` now settles when the local app exits or unmounts instead
+  of returning a forever-pending promise.
+- The local `Ink` class now honors `onFrame`, allowing detached preview
+  harnesses to observe frame timing/nonblank rendering without boot wiring.
+- `src/ink/localEnginePreview.tsx` now provides an owned detached preview
+  assembly around terminal write/size providers, theme, notifications,
+  alternate screen, `AppShell`, and a representative `ZonesView`.
 - The smoke harness runs against the isolated TUI dependency set under
   `src/ink/node_modules`.
 
@@ -128,12 +142,15 @@ Not covered yet:
 
 - full `src/ink/App.tsx`
 - production boot wiring
-- full production panel keybinding flows
-- active keybinding flows inside full-frame panels
-- shutdown cleanup still intentionally targets process-level stdout/stdin
+- full production panel keybinding flows beyond the currently smoke-covered
+  representative set
+- full shutdown through production `gracefulShutdown` remains process-level;
+  the local instance contract is implemented and smoke-tested, but production
+  boot has not switched to it
 
 Next safe engine targets:
 
-1. Replace remaining process-level shutdown assumptions only when a local
-   engine preview path exists.
-2. Only after those pass, consider a launcher flag for local-engine preview.
+1. Add more local-runtime panel smokes only when a panel has unique behavior
+   not represented by the current set.
+2. Only after the user explicitly approves it, consider a launcher flag for
+   local-engine preview.

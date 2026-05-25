@@ -61,53 +61,56 @@ if (args.includes('--version') || args.includes('-v')) {
 if (args.includes('--help') || args.includes('-h')) {
   process.stdout.write(
     '\n' +
-    '  UNAXIS — unenter infrastructure manager\n' +
+    '  UNAXIS — unified infrastructure manager\n' +
     '\n' +
     '  Usage:\n' +
-    '    unaxis                                  launch the TUI\n' +
-    '    unaxis --version                        print version\n' +
-    '    unaxis --help                           show this message\n' +
+    '    unaxis                                       launch the TUI\n' +
+    '    unaxis --version                             print version\n' +
+    '    unaxis --help                                show this message\n' +
     '\n' +
-    '  TUI commands (requires TUI to be running):\n' +
-    '    unaxis version                          TUI version + live agent versions on all envs\n' +
-    '    unaxis dev <zone>                       start/stop dev container for zone\n' +
-    '    unaxis restart <zone>                   hard restart dev container for zone\n' +
-    '    unaxis list                             list zones and their dev status\n' +
-    '    unaxis zones                            list zones and their dev status\n' +
-    '    unaxis logs proxy --tail 120            show bounded proxy logs\n' +
-    '    unaxis logs db --tail 120               show bounded db logs\n' +
-    '    unaxis zone <zone> status               show one zone status\n' +
-    '    unaxis zone <zone> logs --tail 120      show bounded zone logs\n' +
-    '    unaxis zone <zone> dev start            start one zone dev container\n' +
-    '    unaxis zone <zone> dev stop             stop one zone dev container\n' +
-    '    unaxis zone <zone> dev restart          restart one zone dev container\n' +
-    '    unaxis zone <zone> dev logs --tail 120  show bounded zone dev logs\n' +
-    '    unaxis session                          show attached TUI session snapshot\n' +
-    '    unaxis stack                            show current TUI stack items\n' +
-    '    unaxis watch begin --label <text>       start an agent watch session\n' +
-    '    unaxis watch status                     show active watch session\n' +
-    '    unaxis watch note <text>                add a note to active watch\n' +
-    '    unaxis watch snapshot --reason <text>   record session/stack/zone snapshot\n' +
-    '    unaxis watch end                        end active watch session\n' +
-    '    unaxis db backup --reason <text>        run DB backup through the TUI\n' +
-    '    unaxis preflight edit --zone <zone>     validate before editing a zone\n' +
-    '    unaxis status                           confirm TUI is alive\n' +
-    '    unaxis envs                             list all configured environments\n' +
-    '    unaxis ping-envs                        ping /health on every environment agent\n' +
-    '    unaxis env list                         list environments\n' +
-    '    unaxis env ping [<name>]                ping one or all environment agents\n' +
-    '    unaxis env containers [<name>] [--all]  list containers (default env, unt_* only)\n' +
-    '    unaxis env update <name>                self-update agent on named environment\n' +
+    '  Project commands  (requires TUI to be running):\n' +
+    '    unaxis <slug>                                show project info\n' +
+    '    unaxis <slug> status                         confirm TUI is alive\n' +
+    '    unaxis <slug> version                        TUI + agent versions\n' +
+    '    unaxis <slug> zones list                     list zones\n' +
+    '    unaxis <slug> dev <zone>                     start/stop dev container\n' +
+    '    unaxis <slug> restart <zone>                 hard restart dev container\n' +
+    '    unaxis <slug> logs proxy --tail 120          proxy logs\n' +
+    '    unaxis <slug> logs db --tail 120             db logs\n' +
+    '    unaxis <slug> zone <zone> status             one zone status\n' +
+    '    unaxis <slug> zone <zone> logs --tail 120    zone logs\n' +
+    '    unaxis <slug> zone <zone> dev start|stop     zone dev container\n' +
+    '    unaxis <slug> session                        TUI session snapshot\n' +
+    '    unaxis <slug> stack                          TUI stack items\n' +
+    '    unaxis <slug> watch begin --label <text>     start watch session\n' +
+    '    unaxis <slug> watch note <text>              add watch note\n' +
+    '    unaxis <slug> watch snapshot                 record snapshot\n' +
+    '    unaxis <slug> watch end                      end watch session\n' +
+    '    unaxis <slug> db backup --reason <text>      DB backup\n' +
+    '    unaxis <slug> preflight edit --zone <zone>   pre-edit validation\n' +
+    '    unaxis <slug> env list                       list environments\n' +
+    '    unaxis <slug> env ping [<name>]              ping environment agents\n' +
+    '    unaxis <slug> env containers [<name>]        list containers\n' +
+    '    unaxis <slug> env update <name>              update agent\n' +
     '\n' +
-    '  Config (non-secret settings):\n' +
-    '    unaxis config set default_project <path>   set default project root\n' +
-    '    unaxis config get default_project          show current project root\n' +
-    '    unaxis config list                         show all settings\n' +
+    '  UNAXIS global commands:\n' +
+    '    unaxis project list                          list known project roots\n' +
+    '    unaxis project add [<path>]                  register a project\n' +
+    '    unaxis project remove <slug>                 remove from registry\n' +
+    '    unaxis connect <uaxc_key>                    connect to remote TUI\n' +
+    '                                                   (generate key: press K in picker)\n' +
+    '    unaxis disconnect                            remove remote session\n' +
+    '    unaxis version                               print installed version\n' +
     '\n' +
-    '  Credentials (secrets, stored in ~/.unaxis/.credentials.json):\n' +
-    '    unaxis credentials set npm_token <token>   store npm publish token\n' +
-    '    unaxis credentials get npm_token           show masked token value\n' +
-    '    unaxis credentials list                    list credential keys\n' +
+    '  Config:\n' +
+    '    unaxis config set default_project <path>     set default project root\n' +
+    '    unaxis config get default_project            show current project root\n' +
+    '    unaxis config list                           show all settings\n' +
+    '\n' +
+    '  Credentials:\n' +
+    '    unaxis credentials set npm_token <token>     store npm publish token\n' +
+    '    unaxis credentials get npm_token             show masked token value\n' +
+    '    unaxis credentials list                      list credential keys\n' +
     '\n' +
     '  Storage paths:\n' +
     '    settings:     ' + getSettingsPath() + '\n' +
@@ -122,22 +125,200 @@ if (args.includes('--help') || args.includes('-h')) {
 // Must be checked BEFORE the config/credentials subcommands so short-circuit
 // exits work correctly.
 
-// ── unaxis version — special case: falls back to package version if TUI is down
+// ── unaxis version — installed package version (no TUI required) ─────────────
 if (args[0] === 'version') {
-  const { sendIpcCommand } = await import('../ink/ipc-client.js')
-  // quiet=true suppresses "UNAXIS is not running" — we handle the offline case below.
-  const code = await sendIpcCommand(args, { quiet: true })
-  if (code === 0) process.exit(0)
-  // TUI not running — print package version only
-  process.stdout.write(`\nUNAXIS  ${UNAXIS_VERSION}\n`)
-  process.stdout.write(`  agents  unavailable  (TUI not running)\n\n`)
+  process.stdout.write(`UNAXIS  ${UNAXIS_VERSION}\n`)
   process.exit(0)
 }
 
-const IPC_COMMANDS = ['dev', 'restart', 'list', 'zones', 'logs', 'zone', 'session', 'stack', 'watch', 'db', 'preflight', 'status', 'env', 'envs', 'ping-envs', 'open'] as const
-if (args.length > 0 && IPC_COMMANDS.includes(args[0] as typeof IPC_COMMANDS[number])) {
-  const { sendIpcCommand } = await import('../ink/ipc-client.js')
-  process.exit(await sendIpcCommand(args))
+// ── project subcommand ────────────────────────────────────────────────────────
+// Manages the known-projects registry used by the TUI project picker.
+//
+// Future: `unaxis <project-slug> <command>` will route IPC commands to the
+// TUI session for that specific project.  For now, project management is
+// handled here and the picker lives inside the TUI at startup.
+
+if (args[0] === 'project') {
+  const { getKnownProjects, addKnownProject, removeKnownProject } =
+    await import('../utils/projectRegistry.js')
+
+  const sub = args[1]   // list | add | remove
+
+  if (!sub || sub === 'list') {
+    const list = await getKnownProjects()
+    if (list.length === 0) {
+      console.log('  (no projects registered)')
+      console.log(`  Add one: unaxis project add [<path>]`)
+    } else {
+      console.log('')
+      for (const p of list) {
+        console.log(`  ${p.slug.padEnd(20)}  ${p.path}`)
+      }
+      console.log('')
+    }
+    process.exit(0)
+  }
+
+  if (sub === 'add') {
+    const rawPath = args[2] ?? process.cwd()
+    const { resolve } = await import('path')
+    const abs = resolve(rawPath)
+    if (!isProjectRoot(abs)) {
+      console.error(`  Error: not a UNAXIS project root: ${abs}`)
+      console.error('  Expected: docker-compose.yml and src/ink')
+      process.exit(1)
+    }
+    const entry = await addKnownProject(abs)
+    console.log(`  Added: ${entry.slug}  →  ${entry.path}`)
+    process.exit(0)
+  }
+
+  if (sub === 'remove') {
+    const slugOrPath = args[2]
+    if (!slugOrPath) {
+      console.error('  Usage: unaxis project remove <slug>')
+      console.error('  Run "unaxis project list" to see registered projects.')
+      process.exit(1)
+    }
+    const removed = await removeKnownProject(slugOrPath)
+    if (removed) {
+      console.log(`  Removed: ${slugOrPath}`)
+    } else {
+      console.error(`  Not found: ${slugOrPath}`)
+      console.error('  Run "unaxis project list" to see registered projects.')
+      process.exit(1)
+    }
+    process.exit(0)
+  }
+
+  console.error(`  Unknown project subcommand: ${sub}`)
+  console.error('  Try: unaxis project list|add|remove')
+  process.exit(1)
+}
+
+// ── connect subcommand ────────────────────────────────────────────────────────
+// Decode a uaxc_ pairing key and write ~/.unaxis/remote-session.json so that
+// subsequent `unaxis <command>` calls route to the remote TUI via the bridge.
+
+if (args[0] === 'connect') {
+  const raw = args[1]
+  if (!raw) {
+    console.error('  Usage: unaxis connect <uaxc_key>')
+    console.error('  Generate a key: press K in the UNAXIS project picker.')
+    process.exit(1)
+  }
+
+  const { parsePairingKey, describePairingKey } = await import('../utils/pairingKey.js')
+  const payload = parsePairingKey(raw)
+  if (!payload) {
+    console.error('  Error: invalid or expired pairing key.')
+    console.error('  Generate a fresh key in the UNAXIS project picker (K).')
+    process.exit(1)
+  }
+
+  const { host, port, slug, expiresAt, ttlLabel } = describePairingKey(payload)
+
+  // Write the remote session file
+  const { writeFileSync, mkdirSync } = await import('fs')
+  const { join } = await import('path')
+  const { homedir } = await import('os')
+  const sessionDir  = join(homedir(), '.unaxis')
+  const sessionPath = join(sessionDir, 'remote-session.json')
+  mkdirSync(sessionDir, { recursive: true })
+  writeFileSync(sessionPath, JSON.stringify({
+    host:        payload.host,
+    port:        payload.port,
+    token:       payload.token,
+    slug:        payload.slug,
+    exp:         payload.exp,
+    connectedAt: new Date().toISOString(),
+  }, null, 2), 'utf8')
+
+  console.log('')
+  console.log(`  ✓ Connected to  ${slug}  at  ${host}:${port}`)
+  console.log(`    expires  ${expiresAt.toLocaleString()}  (${ttlLabel})`)
+  console.log(`    session  ${sessionPath}`)
+  console.log('')
+  console.log('  All unaxis commands now route to the remote TUI.')
+  console.log('  To disconnect:  unaxis disconnect')
+  console.log('')
+  process.exit(0)
+}
+
+// ── disconnect subcommand ─────────────────────────────────────────────────────
+
+if (args[0] === 'disconnect') {
+  const { existsSync, unlinkSync } = await import('fs')
+  const { join } = await import('path')
+  const { homedir } = await import('os')
+  const sessionPath = join(homedir(), '.unaxis', 'remote-session.json')
+
+  if (!existsSync(sessionPath)) {
+    console.log('  (no active remote session)')
+    process.exit(0)
+  }
+
+  unlinkSync(sessionPath)
+  console.log('  ✓ Disconnected — commands now route to local TUI.')
+  process.exit(0)
+}
+
+// ── <slug> <command…> — project-scoped IPC routing ───────────────────────────
+// All TUI commands are namespaced under the project slug:
+//   unaxis unenter status
+//   unaxis unenter zones list
+//   unaxis unenter dev <zone>
+//
+// The slug is resolved against the known-projects registry.  If a remote
+// session is active (unaxis connect <key>), commands route through the bridge.
+
+const GLOBAL_SUBCOMMANDS = new Set([
+  'project', 'connect', 'disconnect', 'config', 'credentials', 'creds', 'version',
+])
+
+if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMANDS.has(args[0])) {
+  const potentialSlug = args[0]
+
+  // Resolve the slug against:
+  //   1. The active remote session (if connected, its slug is authoritative)
+  //   2. The local known-projects registry
+  const { loadRemoteSession } = await import('../ink/ipc-client.js')
+  const session = loadRemoteSession()
+
+  const { getKnownProjects } = await import('../utils/projectRegistry.js')
+  const projects = await getKnownProjects()
+  const localProject = projects.find((p) => p.slug === potentialSlug)
+
+  const isRemoteSlug = session !== null && session.slug === potentialSlug
+  const isKnownSlug  = localProject !== null || isRemoteSlug
+
+  if (isKnownSlug) {
+    const subArgs = args.slice(1)
+    if (subArgs.length === 0) {
+      // No subcommand — show project summary
+      if (isRemoteSlug) {
+        process.stdout.write(`\n  Project  ${potentialSlug}  (remote — ${session!.host})\n`)
+      } else if (localProject) {
+        process.stdout.write(`\n  Project  ${localProject.slug}\n`)
+        process.stdout.write(`  Path     ${localProject.path}\n`)
+        process.stdout.write(`  Added    ${new Date(localProject.addedAt).toLocaleDateString()}\n`)
+      }
+      process.stdout.write(`\n  unaxis ${potentialSlug} status\n`)
+      process.stdout.write(`  unaxis ${potentialSlug} zones list\n`)
+      process.stdout.write(`  unaxis ${potentialSlug} dev <zone>\n\n`)
+      process.exit(0)
+    }
+    const { sendIpcCommand } = await import('../ink/ipc-client.js')
+    process.exit(await sendIpcCommand(subArgs))
+  }
+
+  // Not a known slug and not a global command — give a clear error
+  process.stderr.write(`  ✗  Unknown project: "${potentialSlug}"\n`)
+  process.stderr.write(`  Run  unaxis project list  to see registered projects.\n`)
+  if (session) {
+    process.stderr.write(`  Active remote session: ${session.slug}  →  try  unaxis ${session.slug} <command>\n`)
+  }
+  process.exit(1)
 }
 
 // ── config subcommand ─────────────────────────────────────────────────────────

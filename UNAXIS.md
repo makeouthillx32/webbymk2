@@ -1,312 +1,231 @@
-# UNAXIS — Architecture & Current State
-> Unified Next App eXecution & Infrastructure System  
-> Last updated: 2026-05-24
+# UNAXIS — Definitive Architectural Spec & Operations Manual
+
+> **Unified Next App eXecution & Infrastructure System**  
+> *System Version: 0.2.0* · *Last Hardening Review: 2026-05-25*
 
 ---
 
-## What UNAXIS Is
+```mermaid
+graph TD
+    subgraph L0V3 Node (Remote / Public IP)
+        NPM["Nginx Proxy Manager (:80/:443)"]
+        AgentL0V3["Unaxis Standalone Agent (:8888)"]
+        NPM -.->|SSL Term. & Forward| Proxy
+    end
 
-UNAXIS is the control plane for the unenter.live multi-zone production stack.
-It is a TUI (terminal UI) built in Ink/React that runs on POWER (the dev machine)
-and manages the entire lifecycle of the stack: zones, proxy, database, NPM,
-environments, and infrastructure agents — all through a single keyboard-driven
-interface with a live status overlay.
+    subgraph POWER Node (Local / Dev Machine)
+        TUI["UNAXIS TUI (React / Ink)"]
+        Proxy["unt_proxy (:3080)"]
+        App["unt_app (:3000)"]
+        DB["unt_db (:5432)"]
+        Storage["unt_storage (:5000)"]
+        Studio["unt_studio (:3002)"]
+        
+        TUI -->|IPC / TCP 50505| Proxy
+        Proxy -->|Host-Header Route| App
+        Proxy -->|Storage Redirect| Storage
+        Proxy -->|Database Sync| DB
+    end
 
-The philosophy: **no invisible ops**. Every action taken by UNAXIS is a visible
-stack item in the TUI. The human sees what is happening in real time.
-
----
-
-## Two-Machine Setup
-
-| Machine | Role | IP |
-|---------|------|-----|
-| **POWER** | Dev machine. Runs the TUI, Docker Desktop (Windows), core containers, proxy, app, DB. | `192.168.50.204` |
-| **L0V3** | Remote agent host. Runs NPM (Nginx Proxy Manager), Mail, AI services, and the standalone agent container. | `192.168.50.75` |
-
-Both machines are on the same LAN. POWER is the default deployment target.
-L0V3 handles SSL termination and public DNS routing via NPM.
-
----
-
-## Stack Overview
-
-```
-Internet
-  │
-  ▼
-L0V3 — Nginx Proxy Manager (:80/:443)
-  │  SSL termination + Let's Encrypt certs
-  │  Proxy host per zone → http://192.168.50.204:3080
-  │
-  ▼
-POWER — unt_proxy container (:3080)
-  │  Node.js reverse proxy (proxy/server.js)
-  │  Routes by Host header from routes.json (hot-reload, no restart)
-  │  Admin API on :3081 (route reload, health)
-  │  Agent embedded: proxy/agent.js (bind-mounted, node --watch)
-  │
-  ├── unt_app:3000        unenter.live / www.unenter.live
-  ├── unt_blog:3000       blog.unenter.live
-  ├── unt_shop:3000       shop.unenter.live
-  ├── unt_auth_zone:3000  auth.unenter.live
-  ├── unt_min:3000        min.unenter.live
-  ├── unt_apptest1:3000   apptest1.unenter.live
-  ├── unt_yayy:3000       yayy.unenter.live
-  ├── unt_running:3000    running.unenter.live
-  ├── unt_rappers:3000    rappers.unenter.live
-  ├── unt_onemore:3000    onemore.unenter.live
-  └── unt_logs:3000       logs.unenter.live
-  │
-  └── unt_db:5432         Supabase (PostgreSQL + API + Studio)
+    classDef host fill:#2d3748,stroke:#4a5568,color:#fff;
+    classDef service fill:#1a202c,stroke:#2b6cb0,color:#fff;
+    class NPM,Proxy,App,DB,Storage,Studio service;
 ```
 
 ---
 
-## Agent System
+## 1. The Core Paradigm: Project Names & Slugs
 
-The agent is the bridge between the TUI and remote Docker environments.
-It exposes a signed HTTP API that the TUI uses to issue Docker commands,
-deploy stacks, and self-update without requiring SSH.
+The control plane enforces strict directory isolation to support multiple independent environments on a single developer machine.
 
-### Unified Agent — One Source of Truth
-
-`proxy/agent.js` is the **single source of truth** for the agent.
-There are two deployment modes — both run identical code:
-
-| Mode | Where | How |
-|------|-------|-----|
-| **Embedded** | POWER inside `unt_proxy` | Bind-mounted from `proxy/agent.js`. `node --watch` hot-reloads on save. No image rebuild needed. |
-| **Standalone** | L0V3 as `unaxis_agent` container | Built into GHCR image `ghcr.io/makeouthillx32/unaxis-agent:v0` via `packages/agent-node/Dockerfile`. Deployed via `/self-update`. |
-
-**Why one source?** Before unification, the proxy had its own version counter and
-the standalone agent had its own. Version parity was impossible to verify.
-Now when both nodes ping `:8888/health`, they return the same `AGENT_VERSION`
-constant from the same file.
-
-**Current version:** `v1.0.0`
-
-### Agent Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Returns `{ status, version, platform }`. Used by TUI `[p]` ping. |
-| `/docker/*` | * | Proxied to Docker daemon socket. Full Docker API access. |
-| `/docker/dashboard` | GET | Aggregated container + image stats for TUI infra panel. |
-| `/stacks/deploy` | POST | Deploy a compose YAML string (pull + up). Used by zone deploy pipeline. |
-| `/self-update` | POST | Pull new agent image and atomically replace own container. |
-
-### Agent Updater
-
-`packages/agent-updater/` — a helper container (`unaxis-updater`) that the agent
-spawns during a self-update. It handles:
-
-1. Pulls the new agent image from GHCR
-2. Verifies the new container starts healthy (HTTP poll on `:8888/health`)
-3. Removes the old (rollback) container on success
-4. Rolls back to the previous image if the new container fails health checks
-
-### TOFU Pairing
-
-The TUI pairs with each agent using TOFU (Trust On First Use) ECDSA P-256.
-The first TUI to connect to an agent claims it by exchanging a signed challenge.
-State is persisted to:
-- POWER: `/proxy-config/agent-state.json` (inside `unt_proxy`)
-- L0V3: `/data/agent-state.json` (inside `unaxis_agent`)
-
-Pairing can be reset from the proxy action panel with `[k] Reset pairing`.
-
-### Build & Push Flow
-
-TUI `home › core` → Proxy → `[a] Push agent`:
-1. Builds `ghcr.io/makeouthillx32/unaxis-agent:v0` from `proxy/agent.js`
-2. Builds `ghcr.io/makeouthillx32/unaxis-updater:v0` from `packages/agent-updater/`
-3. Pushes both with versioned tags: `:v0`, `:YYYY-MM-DD-HHmm`, `:semver`
-4. After push, go to `home › env` → highlight L0V3 → `[u]` to deploy the new agent
+### 1.1 The Project Name and Slug Contracts
+*   **The Project Name (`unenter`)**: This is the canonical name of the active project topology. It is declared as the explicit network namespace (`unenter`) and the Docker Compose project tag (`-p unenter`). This ensures that containers, networks, and volumes carry a consistent, predictable prefix across all machines.
+*   **The Directory Namespace (`webbymk2`)**: This is the physical Git repository and root folder name on the host filesystem. The TUI completely separates the folder name (`webbymk2`) from the runtime identity (`unenter`), ensuring that if the folder is renamed or cloned into a worktree (e.g. `webbymk2-debug`), the Docker infrastructure continues to resolve under the canonical project slug `"unenter"`.
+*   **Decoupled Host Registry Namespace**: All system configurations, known registries, and credential files are isolated using **Option A Namespace Architecture** (`%APPDATA%\unaxis\unenter\`). If a developer launches the TUI on a second project, the control plane automatically provisions a sibling namespace (e.g. `%APPDATA%\unaxis\other-project\`), keeping all environments isolated.
 
 ---
 
-## Environment System
+## 2. Core Runtime Topology ("Template of a Core")
 
-Inspired by Portainer's environment model. Each environment is a live node
-with its own agent, Docker socket, and set of services.
-
-Environments are stored in the Supabase `environments` table.
-`is_default_target` marks which environment POWER's TUI targets by default.
-
-| Environment | Type | Agent URL | Services |
-|-------------|------|-----------|---------|
-| **POWER** | Local | `http://127.0.0.1:8888` | App · DB · Proxy · Zones |
-| **L0V3** | Remote | `http://192.168.50.75:8888` | NPM · Mail · AI |
-
-TUI panel: `home › env`
-- `[p]` Ping agent — shows version + online status
-- `[u]` Update agent — triggers `/self-update` on that environment's agent
-- `[d]` Set default — changes `is_default_target`
-
----
-
-## Proxy
-
-The proxy is `unt_proxy` — a Node.js HTTP server (`proxy/server.js`) that:
-
-- Routes by `x-forwarded-host` (set by NPM) or `Host` header
-- Loads routes from `proxy-config/routes.json` (hot-reload via poll + fs.watch)
-- Falls back to `UPSTREAM_*` env vars if routes.json is absent
-- Preserves original Host header (`changeOrigin: false`) so zone middleware can read it
-- Sets `x-forwarded-host` if not already present (direct connections)
-
-### routes.json
-
-Lives at `proxy-config/routes.json` (bind-mounted into `unt_proxy`).
-Shape:
-```json
-{
-  "coreDomain":   "unenter.live",
-  "coreUpstream": "http://unt_app:3000",
-  "zones": {
-    "blog":  "http://unt_blog:3000",
-    "logs":  "http://unt_logs:3000"
-  }
-}
-```
-
-The TUI writes this file directly when zones are added or removed.
-The proxy hot-reloads in ~100ms with zero downtime.
-
-### Proxy Action Panel (`home › core` → Proxy → `↵`)
-
-| Key | Action | Description |
-|-----|--------|-------------|
-| `[r]` | Restart | Recreate container — picks up env changes |
-| `[b]` | Build proxy | Rebuild proxy Docker image + recreate |
-| `[R]` | Rebuild proxy (clean) | `--no-cache` rebuild |
-| `[a]` | Push agent | Build `proxy/agent.js` → push both images to GHCR |
-| `[l]` | Logs | Tail container output |
-| `[k]` | Reset pairing | Clear TOFU state |
-| `[s]` | Sync routes | Rebuild routes.json from all active zone containers |
-| `[f]` | Audit NPM | Verify all zone NPM hosts point to correct upstream |
-
-`[b]` and `[a]` are deliberately separate — building the proxy image does not
-touch the agent, and pushing the agent does not rebuild the proxy image.
-
----
-
-## Dev Mode
-
-Each zone can run a dev container alongside its production container.
-Dev zones are accessible at `dev.{zone}.unenter.live`.
-
-The middleware detects `dev.*` subdomains via `isLocalDevelopmentHost()` and
-uses path-based zone detection instead of host-based, so the dev container
-runs the same middleware logic without spurious canonical redirects.
-
-Dev containers are managed from the zones panel:
-- Highlight a zone → `↵` → dev container actions (start / stop / restart)
-- Dev containers mount the source directly for hot-reload
-- Dev containers do not go through NPM — they are LAN-accessible only
-
----
-
-## Zone System
-
-### Zone Pipeline
-
-When a new zone is created via the TUI wizard:
-
-1. **Scaffold** — generate Dockerfile, package.json, page.tsx, layout.tsx,
-   build.env, compose artifact, core page module
-2. **Validate** — check generated files for known failure modes before
-   handing off to Docker (fail fast, no 23s build waste)
-3. **Build** — `docker build` from project root, push to GHCR with 3 tags
-4. **Deploy** — `docker compose pull + up --force-recreate` via artifact store compose
-5. **Health wait** — poll container until healthy or timeout
-6. **NPM cert** — register proxy host in L0V3 NPM with Let's Encrypt
-7. **Proxy restart** — hot-reload routes.json + force-recreate proxy
-
-### Zone Scaffold Templates (`src/ink/zone-templates.ts`)
-
-Generated per zone:
-- `zones/{key}/Dockerfile` — multi-stage build with layout-aware core dir list
-- `zones/{key}/package.json` — zone identity + dev port
-- `zones/{key}/build.env` — explicit list of NEXT_PUBLIC_* build args
-- `zones/{key}/src/app/page.tsx` — thin re-export wrapper
-- `zones/{key}/src/app/layout.tsx` — zone root layout (Providers + ClientLayout)
-- `stacks/{key}/docker-compose.yml` — UNAXIS artifact store compose file
-- `src/zones/{key}/Page.tsx` — editable zone root page
-
-### Scaffold Validator (`src/ink/zone/validate.ts`)
-
-Runs after template generation, before Docker build. Checks:
-
-| Rule | What it catches |
-|------|----------------|
-| `middleware-copy` | Missing `COPY middleware.ts ./` in Dockerfile → build fails with "Module not found" |
-| `env-file-absolute` | Relative `../../.env` in compose artifact → deploy fails, wrong path |
-| `dynamic-zone-guard` | `getCanonicalHost` missing subdomain fallback → zone 301-redirects to www |
-| `service-name` | Generated compose doesn't reference the expected service name |
-| `image-name` | Generated compose doesn't reference the expected image |
-
-### Artifact Store
-
-Zone compose files live **outside the repo** in the UNAXIS artifact store,
-mirroring Portainer's `/data/compose/{id}/` pattern.
+The "Core Runtime" is the primary application stack that runs the platform. It is defined in the root [docker-compose.yml](file:///z:/WEBSITES/webbymk2/docker-compose.yml) and consists of 11 tightly coupled services connected via the `unenter` bridge network.
 
 ```
-Windows:     %APPDATA%\unenter\stacks\{key}\docker-compose.yml
-macOS/Linux: ~/.unenter/stacks/{key}/docker-compose.yml
++-------------------------------------------------------------------------+
+|                               unenter Network                           |
+|                                                                         |
+|  +------------+   +-------------+   +------------+   +---------------+  |
+|  | unt_proxy  |==>|   unt_app   |==>|   unt_db   |<==|  unt_storage  |  |
+|  |   (Proxy)  |   | (Next Zone) |   | (Postgres) |   | (Storage API) |  |
+|  +------------+   +-------------+   +------------+   +---------------+  |
+|         ||                 ||              ||               ||          |
+|  +------------+   +-------------+   +------------+   +---------------+  |
+|  |  unt_kong  |   | unt_realtime|   | unt_studio |   | unt_imgproxy  |  |
+|  |  (Gateway) |   | (WebSockets)|   |  (Studio)  |   | (Image Proc)  |  |
+|  +------------+   +-------------+   +------------+   +---------------+  |
++-------------------------------------------------------------------------+
 ```
 
-The repo stays clean. Compose state is owned by the control plane.
-
-### GHCR Image Naming
-
-Every zone build produces three tags:
-- `:latest` — mutable, always the most recent build
-- `:YYYY-MM-DD-HHmm` — immutable date snapshot (rollback target)
-- `:v{semver}` — immutable UNAXIS version tag
-
----
-
-## Multi-Zone Middleware
-
-`middleware.ts` (root) → re-exported from `src/middleware.ts` into every zone build.
-
-Responsibilities (in order):
-1. `www → canonical` redirect — any unknown host redirects to www.unenter.live,
-   UNLESS it is a `*.unenter.live` subdomain (dynamic zones pass through)
-2. Zone detection — from `x-forwarded-host` in production, path in local dev
-3. Locale stripping — `en`/`de` prefix handling
-4. Zone prefix rewrite — for zones that own a path prefix on a subdomain
-5. Supabase auth + protected route enforcement
-
-### Dynamic Zone Support
-
-`getZoneFromHost()` in `src/lib/multiZone.ts` returns the subdomain key for
-any `*.unenter.live` host not in the static `ZONES` map — e.g. `"logs"` for
-`logs.unenter.live`. `getZoneConfig(key)` returns a safe default config
-(requiresAuth:false, routePrefixes:["/"]) for those zones so middleware never
-misidentifies or wrongly redirects a dynamically scaffolded zone.
+### 2.1 Core Services Inventory
+1.  **`unt_proxy` (Reverse Proxy)**:
+    *   *Role:* Custom Node.js routing gateway (`proxy/server.js`) that hot-reloads domains in `~100ms` via `routes.json`.
+    *   *Ports:* Public HTTP `:3080`, Admin API `:3081`, Embedded Agent API `:8888`.
+2.  **`unt_app` (Next.js Mothership)**:
+    *   *Role:* Primary domain router and canonical page boundary for `unenter.live`.
+    *   *Port:* `:3000` (mapped to host).
+3.  **`unt_kong` (API Gateway)**:
+    *   *Role:* Supabase's HTTP proxy gateway. Translates internal service paths.
+    *   *Port:* `:8001` (mapped to Kong port `8000`).
+4.  **`unt_auth` (GoTrue API)**:
+    *   *Role:* Decoupled user session, JWT generation, and OAuth validation.
+5.  **`unt_rest` (PostgREST API)**:
+    *   *Role:* Generates instantaneous RESTful endpoints directly from Postgres schemas.
+6.  **`unt_realtime` (Phoenix WebSockets)**:
+    *   *Role:* Listens to Postgres write-ahead logs (WAL) and broadcasts database mutations to subscribers.
+    *   *Port:* `:4001` (mapped to `:4000`).
+7.  **`unt_storage` (Supabase Storage API)**:
+    *   *Role:* File and binary object storage, utilizing a local volume directory backup.
+    *   *Port:* `:5000` (mapped to host).
+8.  **`unt_imgproxy` (Image Transformation)**:
+    *   *Role:* WebP optimization, resizing, and caching helper.
+9.  **`unt_meta` (Postgres Management)**:
+    *   *Role:* Translates database structure queries to JSON for the admin Studio dashboard.
+10. **`unt_studio` (Admin Dashboard)**:
+    *   *Role:* Supabase Studio UI. Accessible locally at `http://localhost:3002`.
+    *   *Port:* `:3002` (mapped to `:3000`).
 
 ---
 
-## Key Files
+## 3. Database Subsystem Spec ("Template of a Database")
 
-| File | Purpose |
-|------|---------|
-| `proxy/agent.js` | Unified agent — single source of truth for both POWER and L0V3 |
-| `proxy/server.js` | Multi-zone reverse proxy with hot-reload |
-| `proxy-config/routes.json` | Live routing table (bind-mounted, hot-reloaded) |
-| `docker-compose.yml` | Core stack: app, db, kong, proxy |
-| `packages/agent-node/Dockerfile` | Builds standalone agent image from `proxy/agent.js` |
-| `packages/agent-updater/` | Self-update helper: pulls new image, health-checks, rollback |
-| `src/ink/zone-templates.ts` | All zone scaffold template generators |
-| `src/ink/zone/scaffold.ts` | Zone scaffold orchestrator |
-| `src/ink/zone/validate.ts` | Scaffold output validator |
-| `src/ink/zone-pipeline.ts` | Full zone lifecycle: scaffold → build → deploy → NPM → proxy |
-| `src/ink/agent-ops.ts` | Build + push agent and updater images |
-| `src/ink/environment-store.ts` | Environment model, agent health, Supabase sync |
-| `src/lib/multiZone.ts` | Zone registry, host resolution, canonical redirect logic |
-| `middleware.ts` | Multi-zone Next.js middleware (shared by all zone builds) |
-| `SMOKE-TEST.md` | Manual TUI smoke test targeting proxy/agent changes |
-| `HARDENING.md` | Forward-looking hardening plan |
+The database layer runs on **PostgreSQL 15** inside the `unt_db` container. It represents the ultimate single source of truth for the stack.
+
+### 3.1 Host and Mount Specifications
+*   **Host Port:** Mapped to `:5433` on the developer machine (Postgres standard `5432` internally).
+*   **Persistent Storage Volume:** `unt-db-data` volume, bound to `/var/lib/postgresql/data` inside the container.
+*   **SQL Schema Migrations:** Bootstrap schema and realtime configurations are loaded synchronously on startup from `supabase/realtime.sql` (bind-mounted read-only).
+
+### 3.2 The Two-Track Backup System
+
+To protect database integrity, UNAXIS implements two distinct backup mechanisms:
+
+```
+                            [ Backup Action ]
+                                    │
+         ┌──────────────────────────┴──────────────────────────┐
+         ▼                                                     ▼
+[ CLI / Quick-Backup ]                               [ Snapshot Gallery ]
+ - Command: unaxis db backup                          - Command: snapshotInstance()
+ - Tool: pg_dump | gzip                               - Tool: pg_dump binary custom
+ - Scope: SQL Dump Only                               - Scope: SQL + Schema + Env + Storage + Compose
+ - Path: Volume Internal                              - Path: Host File System
+   (/var/lib/postgresql/data/backups/)                 (backups/supabase-core/unenter/)
+```
+
+1.  **Fast Volume-Internal Backups (`[b]` key / `backupDatabase()`)**:
+    *   *Format:* SQL plain-text, piped through `gzip` for compression.
+    *   *Location:* `/var/lib/postgresql/data/backups/dump_*.sql.gz` inside the `unt_db` container (persisted on the host Docker volume).
+    *   *Use Case:* Immediate disaster recovery checkpoints before applying local migrations or editing code.
+2.  **Portable Host Snapshot Bundles (`[s]` key / `snapshotInstance()`)**:
+    *   *Format:* PostgreSQL custom binary directory format (`pg_dump -Fc`).
+    *   *Location:* Host filesystem at `PROJECT_DIR/backups/supabase-core/unenter/{timestamp}/`.
+    *   *Contents:*
+        *   `db.dump`: Binary compressed database backup.
+        *   `schema.sql`: Human-readable schema reference.
+        *   `storage/`: Complete binary copy of all Supabase storage files.
+        *   `env.redacted`: Injected environment keys (secrets replaced).
+        *   `compose.yml`: Hard snapshot copy of active `docker-compose.yml`.
+        *   `metadata.json`: Full manifest detailing container names, ports, and sizes.
+        *   `restore.sh`/`restore.ps1`: Automated, cross-platform recovery scripts.
+
+---
+
+## 4. Secrets & Token Cryptography ("Tokens")
+
+All system security hinges on standard, cryptographically secure keys and environment tokens.
+
+### 4.1 Token Inventory & Secure Storage
+
+| Token Key | Format / Length | Purpose | Target Storage |
+|:---|:---|:---|:---|
+| `POSTGRES_PASSWORD` | Cryptographic string (32 chars) | Root PostgreSQL admin credentials | Local `.env` |
+| `JWT_SECRET` | HS256 Secret (64 chars) | Cryptographic signature validation for GoTrue JWTs | Local `.env` |
+| `ANON_KEY` | HS256 signed JWT | Public read-only client token | Local `.env` & Frontend |
+| `SERVICE_ROLE_KEY` | HS256 signed JWT | Bypass Postgres RLS policies (super-user authorization) | Local `.env` & Backend |
+| `remote_bridge_token` | Secure Token (64 chars) | Authentication key for remote node connection | `%APPDATA%\unaxis\unenter\.credentials.json` |
+
+### 4.2 Credentials Pathing
+Secrets must never be written to Git or standard configurations. The TUI manages a localized secure storage JSON file at `%APPDATA%\unaxis\.credentials.json` (created with strict `0o600` permissions on Unix hosts). 
+
+---
+
+## 5. Automation & Lifecycle Script Suites ("Automation Scripts")
+
+UNAXIS packages five primary automation scripts to orchestrate system operations.
+
+### 5.1 `bun run scripts/do-backup.ts`
+*   **Purpose:** Executes the comprehensive 6-step snapshot pipeline directly from the shell.
+*   **Execution Flow:**
+    1.  Attaches to `unt_db` and executes `pg_dump -Fc` to write `db.dump`.
+    2.  Executes schema-only dump to `schema.sql`.
+    3.  Runs `docker cp unt_storage:/var/lib/storage/.` to sync all user assets locally to `storage/`.
+    4.  Generates `env.redacted` stripping sensitive password/API keys.
+    5.  Saves a hard copy of `docker-compose.yml`.
+    6.  Compiles the `metadata.json` manifest and outputs the PowerShell and Bash restore files.
+    7.  Renders a visual directory tree showing captured folder sizes.
+
+### 5.2 `setup.ps1`
+*   **Purpose:** Bootstraps the development environment on Windows.
+*   **Execution Flow:**
+    *   Validates Python, Git, and Bun installations.
+    *   Generates a fresh local `config.json` with random port mappings if absent.
+    *   Creates template `.env` and `.env.local` files, generating secure cryptographic secrets.
+
+### 5.3 `run.ps1`
+*   **Purpose:** Compiles and launches the interactive React/Ink Terminal UI (TUI) in the local shell.
+*   **Flags:**
+    *   `-Dev`: Starts in hot-reload mode, automatically rebuilding the bundle when source code files are modified.
+    *   `-NoSplash`: Bypasses the initial splash animations, booting directly into the Welcome screen.
+
+### 5.4 `build-and-push.ps1`
+*   **Purpose:** Compiles Next.js dynamic zones into Docker containers and uploads them to the GitHub Container Registry (GHCR).
+*   **Execution Flow:**
+    *   Reads `zones/{key}/build.env` to inject required build-time environment arguments.
+    *   Compiles the Docker container utilizing multi-stage cache layers.
+    *   Tags the target image with `:latest`, `:YYYY-MM-DD-HHmm`, and the semver version tag.
+    *   Pushes the target bundle to GHCR.
+
+### 5.5 `smoke-test.ps1`
+*   **Purpose:** Triggers a series of automated health checks to verify proxy and network health.
+*   **Validation Steps:**
+    *   Pings `/health` endpoints of local agents.
+    *   Issues mock requests with custom `Host` headers to `:3080` to verify routing tables.
+    *   Asserts container health states and queries database accessibility.
+
+---
+
+## 6. Environment Orchestration ("Explanations for Environments")
+
+UNAXIS is designed to manage workloads across a distributed topology, splitting responsibilities between a local development environment and a remote production environment.
+
+```
+                    [ TUI Control Plane ]
+                              │
+         ┌────────────────────┴────────────────────┐
+         ▼                                         ▼
+   ( POWER Environment )                     ( L0V3 Environment )
+   - Node Type: Local                        - Node Type: Remote
+   - Agent: http://127.0.0.1:8888            - Agent: http://192.168.50.75:8888
+   - Workload: Dev Zones & Supabase Core     - Workload: Public NPM Router & Mail
+```
+
+### 6.1 Node Responsibilities
+1.  **POWER (Local Developer Environment - `192.168.50.204`)**:
+    *   Runs the interactive TUI, Docker engine, core database stack (`unt_db`), API gateways, and active zone dev containers (e.g. `dev-blog`).
+2.  **L0V3 (Remote Production Environment - `192.168.50.75`)**:
+    *   Acts as the public gateway. Handles SSL termination (Nginx Proxy Manager) and provides external routing from public domains to the dev stack.
+    *   Runs infrastructure supporting utilities (Mail, AI services, standalone agent containers).
+
+### 6.2 Agent Pairing & Health Pings
+*   **HTTP Health Pings:** The TUI continuously pings `/health` on all registered nodes. An agent is reported as offline if it fails to respond within `4s`.
+*   **Self-Updating Operations (`/self-update`)**:
+    When a new agent build is pushed, the TUI issues a signed payload to the target agent. The agent starts a detached helper container (`unaxis-updater`) which pulls the updated image, swaps the running container, verifies `/health` returns `v1.0.0`, and cleans up the deprecated rollback image—ensuring completely hands-free remote administration.

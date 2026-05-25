@@ -75,13 +75,14 @@ const CORE_OPTIONS: SelectOption[] = CORE_SERVICES.map((s) => ({
 // ── Virtual RuntimeInstance for core (not in instances.json) ──────────────────
 
 const CORE_INSTANCE: RuntimeInstance = {
-  id: "core",
-  name: "Core Supabase",
-  slug: "core",
-  status: "active",
-  createdAt: "",
-  runtimePath: PROJECT_DIR,
-  dockerPath: PROJECT_DIR,
+  id:              "core",
+  name:            "Core Supabase",
+  slug:            "unenter",   // matches Docker compose project name: unenter
+  containerPrefix: "unt_",      // containers: unt_db, unt_storage, unt_kong, …
+  status:          "active",
+  createdAt:       "",
+  runtimePath:     PROJECT_DIR,
+  dockerPath:      PROJECT_DIR,
   ports: {
     kong: 8001,
     kongSSL: 8443,
@@ -97,8 +98,8 @@ const CORE_INSTANCE: RuntimeInstance = {
     serviceRoleKey: SERVICE_KEY,
     dashboardPassword: "",
   },
-  studioUrl: STUDIO_PROJECT_URL,
-  healthState: "unknown",
+  studioUrl:     STUDIO_PROJECT_URL,
+  healthState:   "unknown",
   snapshotState: "none",
 };
 

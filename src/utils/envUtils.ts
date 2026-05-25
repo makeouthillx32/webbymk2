@@ -4,11 +4,14 @@ import { join } from 'path'
 
 export const getConfigHomeDir = memoize(
   (): string => {
+    // UNAXIS_CONFIG_DIR takes priority; UNENTER_CONFIG_DIR is kept for backwards compat.
     return (
-      process.env.UNENTER_CONFIG_DIR ?? join(homedir(), '.unenter')
+      process.env.UNAXIS_CONFIG_DIR ??
+      process.env.UNENTER_CONFIG_DIR ??
+      join(homedir(), '.unaxis', 'unenter')
     ).normalize('NFC')
   },
-  () => process.env.UNENTER_CONFIG_DIR,
+  () => process.env.UNAXIS_CONFIG_DIR ?? process.env.UNENTER_CONFIG_DIR,
 )
 
 export const getUnaxisConfigHomeDir = getConfigHomeDir

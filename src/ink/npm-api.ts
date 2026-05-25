@@ -540,6 +540,192 @@ export async function npmAddDevHost(
   }
 }
 
+// ── Database instance registration ───────────────────────────────────────────
+
+export interface DatabaseNpmResult {
+  dbHostId:     number | null;
+  studioHostId: number | null;
+  errors:       string[];
+}
+
+/**
+ * Register two NPM proxy hosts for a Supabase database instance:
+ *   db.{slug}.{baseDomain}     → stackIp:{kongPort}     (API gateway)
+ *   studio.{slug}.{baseDomain} → stackIp:{studioPort}   (Studio)
+ *
+ * Both hosts reuse any existing wildcard cert covering *.{slug}.{baseDomain}
+ * or *.{baseDomain} so we never exceed the LE 5-cert/week rate limit.
+ * Falls back to HTTP-only if no cert is available.
+ *
+ * Idempotent: if a host already exists with the correct target, it is skipped.
+ *
+ * @returns IDs of created/found hosts (null on failure). Errors are logged via
+ *          onLine and accumulated in `errors` — registration failure is never
+ *          fatal so the caller's workflow continues.
+ */
+export async function npmAddDatabaseHosts(
+  slug:       string,
+  baseDomain: string,
+  stackIp:    string,
+  kongPort:   number,
+  studioPort: number,
+  onLine:     OnLine,
+): Promise<DatabaseNpmResult> {
+  const result: DatabaseNpmResult = { dbHostId: null, studioHostId: null, errors: [] };
+
+  const reachable = await npmPing();
+  if (!reachable) {
+    const msg = `NPM unreachable at ${NPM_HOST.apiUrl} — skipping database host registration`;
+    onLine(`⚠ ${msg}`);
+    result.errors.push(msg);
+    return result;
+  }
+
+  let token: string;
+  try {
+    token = await npmGetToken();
+  } catch (e) {
+    const msg = `NPM auth failed — ${String(e)}`;
+    onLine(`⚠ ${msg}`);
+    result.errors.push(msg);
+    return result;
+  }
+
+  const hostConfigs: Array<{
+    domain:      string;
+    forwardPort: number;
+    key:         "dbHostId" | "studioHostId";
+    label:       string;
+  }> = [
+    {
+      domain:      `db.${slug}.${baseDomain}`,
+      forwardPort: kongPort,
+      key:         "dbHostId",
+      label:       "API gateway",
+    },
+    {
+      domain:      `studio.${slug}.${baseDomain}`,
+      forwardPort: studioPort,
+      key:         "studioHostId",
+      label:       "Studio",
+    },
+  ];
+
+  for (const cfg of hostConfigs) {
+    onLine(`Registering NPM host: ${cfg.domain}  →  ${stackIp}:${cfg.forwardPort}`);
+
+    // Check for existing cert (wildcard *.{slug}.{baseDomain} or *.{baseDomain})
+    const reusableCert = await npmFindCertForDomain(cfg.domain, token, onLine);
+
+    const existing = await npmFindHost(cfg.domain, token).catch(() => null);
+
+    if (existing) {
+      const correctHost = existing.forward_host === stackIp;
+      const correctPort = existing.forward_port === cfg.forwardPort;
+      if (correctHost && correctPort) {
+        onLine(`✓ NPM host already registered (id #${existing.id})`);
+        result[cfg.key] = existing.id;
+        continue;
+      }
+
+      // Update stale entry
+      onLine(`  Updating stale entry #${existing.id}...`);
+      try {
+        const base = await resolveProxyHostsBase(token);
+        const patchPayload = {
+          domain_names:            [cfg.domain],
+          forward_scheme:          "http",
+          forward_host:            stackIp,
+          forward_port:            cfg.forwardPort,
+          certificate_id:          reusableCert ? reusableCert.id : (existing.certificate_id ?? 0),
+          ssl_forced:              reusableCert ? true : !!existing.ssl_forced,
+          http2_support:           reusableCert ? true : !!existing.http2_support,
+          allow_websocket_upgrade: true,
+          block_exploits:          false,
+          caching_enabled:         false,
+          hsts_enabled:            false,
+          hsts_subdomains:         false,
+          access_list_id:          0,
+          advanced_config:         "",
+          locations:               [],
+        };
+        const res = await npmFetch(`${base}/${existing.id}`, {
+          method: "PUT",
+          body:   JSON.stringify(patchPayload),
+        }, token, TIMEOUT_MS);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+        const certNote = reusableCert ? `, SSL cert #${reusableCert.id}` : "";
+        onLine(`✓ Updated #${existing.id}  ${cfg.label}${certNote}`);
+        result[cfg.key] = existing.id;
+      } catch (e) {
+        const msg = `Failed to update host #${existing.id}: ${String(e)}`;
+        onLine(`⚠ ${msg}`);
+        result.errors.push(msg);
+      }
+      continue;
+    }
+
+    // Create new host
+    const certId     = reusableCert ? reusableCert.id : 0;
+    const sslEnabled = reusableCert != null;
+    const certMeta   = !reusableCert && NPM_HOST.letsencryptEmail
+      ? { letsencrypt_email: NPM_HOST.letsencryptEmail, letsencrypt_agree: true, dns_challenge: false }
+      : undefined;
+    const finalCertId = !reusableCert && certMeta ? "new" : certId;
+    const slowPath    = finalCertId === "new";
+
+    if (slowPath) {
+      onLine("  (requesting new Let's Encrypt cert — may take 30-60s)");
+    }
+
+    const payload: Record<string, unknown> = {
+      domain_names:            [cfg.domain],
+      forward_scheme:          "http",
+      forward_host:            stackIp,
+      forward_port:            cfg.forwardPort,
+      certificate_id:          finalCertId,
+      ...(certMeta ? { meta: certMeta } : {}),
+      ssl_forced:              sslEnabled || slowPath,
+      http2_support:           sslEnabled || slowPath,
+      allow_websocket_upgrade: true,
+      block_exploits:          false,
+      caching_enabled:         false,
+      hsts_enabled:            false,
+      hsts_subdomains:         false,
+      access_list_id:          0,
+      advanced_config:         "",
+      locations:               [],
+    };
+
+    try {
+      const base     = await resolveProxyHostsBase(token);
+      const timeout  = slowPath ? SLOW_TIMEOUT_MS : TIMEOUT_MS;
+      const res      = await npmFetch(base, {
+        method: "POST",
+        body:   JSON.stringify(payload),
+      }, token, timeout);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+
+      const created = await res.json() as NpmProxyHost;
+      const sslNote = reusableCert
+        ? `SSL via cert #${reusableCert.id}`
+        : slowPath ? "Let's Encrypt cert" : "HTTP-only";
+      onLine(`✓ Created NPM host #${created.id}  (${sslNote})`);
+      result[cfg.key] = created.id;
+    } catch (e) {
+      const msg = `Failed to create ${cfg.label} host: ${String(e)}`;
+      onLine(`⚠ ${msg}`);
+      result.errors.push(msg);
+    }
+  }
+
+  return result;
+}
+
 // ── Zone registration ─────────────────────────────────────────────────────────
 
 /**

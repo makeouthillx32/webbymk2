@@ -74,6 +74,7 @@ scratch/
 sandbox/
 
 # backup & generated files
+backups/
 *.bak
 snapshopts.txt
 RUNTIME_PRIMITIVES_PREP_REPORT.md

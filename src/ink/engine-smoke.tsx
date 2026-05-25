@@ -26,6 +26,7 @@ import { useTerminalTitle } from './hooks/use-terminal-title.js'
 import { useHasSelection, useSelection } from './hooks/use-selection.js'
 import { useSearchHighlight } from './hooks/use-search-highlight.js'
 import useInput from './hooks/use-input.js'
+import useApp from './hooks/use-app.js'
 import { ActionPanel } from './panels/Action/index.tsx'
 import { ZonesView } from './views/ZonesView.tsx'
 import { CoreView } from './views/CoreView.tsx'
@@ -40,6 +41,7 @@ import type { Status } from './docker.js'
 import type { DOMElement } from './dom.js'
 import type { UnaxisEnvironment } from './environment-store.js'
 import { ContainersView } from './panels/Env/views/containers/ContainersView.js'
+import { LocalEnginePreviewRoot } from './localEnginePreview.js'
 
 class MemoryWriteStream extends Writable {
   columns = 80
@@ -197,6 +199,18 @@ function LocalInputProbe() {
   })
 
   return <Text>{`input:${lastInput}`}</Text>
+}
+
+function LocalExitProbe() {
+  const { exit } = useApp()
+
+  useInput(input => {
+    if (input === 'x') {
+      exit()
+    }
+  })
+
+  return <Text>exit-probe</Text>
 }
 
 function LocalKeyboardEventProbe() {
@@ -825,6 +839,16 @@ const cases: SmokeCase[] = [
       stdin.send('q')
     },
   },
+  {
+    name: 'local-engine-preview-assembly',
+    expected: 'Localenginepreview',
+    expectedRaw: ENTER_ALT_SCREEN,
+    expectedRawAfterUnmount: EXIT_ALT_SCREEN,
+    element: (
+      <LocalEnginePreviewRoot terminalWrite={data => stdoutWriteForSmoke(data)} />
+    ),
+    localRuntimeOnly: true,
+  },
 ]
 
 function runMouseDispatchSmoke(): void {
@@ -1023,6 +1047,66 @@ async function runSmokeCase(smokeCase: SmokeCase): Promise<void> {
   }
 }
 
+async function runWaitUntilExitSmoke(): Promise<void> {
+  const stdout = new MemoryWriteStream()
+  const stderr = new MemoryWriteStream()
+  const stdin = new EmptyReadStream()
+  const instance = renderSync(<SmokeApp element={<LocalExitProbe />} />, {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stderr as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  })
+
+  await settleEffects()
+  stdin.send('x')
+
+  try {
+    await Promise.race([
+      instance.waitUntilExit(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('waitUntilExit did not settle after exit')),
+          1000,
+        ),
+      ),
+    ])
+  } finally {
+    instance.cleanup()
+  }
+}
+
+async function runOnFrameSmoke(): Promise<void> {
+  const stdout = new MemoryWriteStream()
+  const stderr = new MemoryWriteStream()
+  const stdin = new EmptyReadStream()
+  let frames = 0
+  let lastDuration = -1
+  const instance = renderSync(<SmokeApp element={<Text>frame-probe</Text>} />, {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stderr as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    patchConsole: false,
+    exitOnCtrlC: false,
+    onFrame: event => {
+      frames++
+      lastDuration = event.durationMs
+    },
+  })
+
+  try {
+    await settleEffects()
+    if (frames === 0 || lastDuration < 0) {
+      throw new Error('onFrame was not called by the local Ink engine')
+    }
+  } finally {
+    instance.unmount()
+    await settleEffects()
+    instance.cleanup()
+  }
+}
+
 const previousUserType = process.env.USER_TYPE
 process.env.USER_TYPE = 'ant'
 
@@ -1038,6 +1122,8 @@ try {
     await runSmokeCase(smokeCase)
   }
   runMouseDispatchSmoke()
+  await runWaitUntilExitSmoke()
+  await runOnFrameSmoke()
 } finally {
   if (previousUserType === undefined) {
     delete process.env.USER_TYPE

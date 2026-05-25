@@ -15,8 +15,8 @@
 // by design.
 //
 // Config file locations (read once at startup, never written):
-//   %APPDATA%\unenter\config.json  (Windows — primary)
-//   ~/.unenter/config.json         (macOS / Linux)
+//   %APPDATA%\unaxis\unenter\config.json  (Windows — primary)
+//   ~/.unaxis/unenter/config.json         (macOS / Linux)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { resolve, join } from "path";
@@ -43,7 +43,14 @@ function deriveProjectDir(): string {
   return process.cwd();
 }
 
-export const PROJECT_DIR = deriveProjectDir();
+export const PROJECT_DIR  = deriveProjectDir();
+
+/**
+ * Canonical slug for this project — used in the project picker, pairing keys,
+ * and CLI routing.  Overrides the directory-name auto-slug so the TUI always
+ * shows "unenter" regardless of where the repo is cloned.
+ */
+export const PROJECT_SLUG = "unenter";
 
 // ── Local config loader ───────────────────────────────────────────────────────
 
@@ -67,10 +74,16 @@ interface LocalConfig {
 }
 
 function loadLocalConfig(): LocalConfig | null {
-  const appData    = process.env["APPDATA"] ?? join(homedir(), ".config");
-  const configPath = join(appData, "unenter", "config.json");
+  const appData     = process.env["APPDATA"] ?? join(homedir(), ".config");
+  const newPath     = join(appData, "unaxis", "unenter", "config.json");
+  const legacyPath  = join(appData, "unenter", "config.json");
 
-  if (!existsSync(configPath)) return null;
+  // Auto-migrate from legacy path on first run after update.
+  const configPath  = existsSync(newPath)    ? newPath
+                    : existsSync(legacyPath) ? legacyPath   // legacy fallback
+                    : null;
+
+  if (!configPath) return null;
 
   try {
     return JSON.parse(readFileSync(configPath, "utf-8")) as LocalConfig;
@@ -90,7 +103,7 @@ function requireConfig(): LocalConfig {
   const appData = process.env["APPDATA"] ?? join(homedir(), ".config");
   throw new Error(
     `Local infrastructure config not found.\n` +
-    `  Expected: ${join(appData, "unenter", "config.json")}\n\n` +
+    `  Expected: ${join(appData, "unaxis", "unenter", "config.json")}\n\n` +
     `  Run once to create it:\n` +
     `    .\\src\\ink\\setup.ps1\n`
   );
@@ -159,13 +172,13 @@ export const STACK_IP_SAFE = _local?.stack.ip  ?? "";
 // never accidentally committed.  Mirrors Portainer's /data/compose/{stack_id}/
 // pattern where the control plane owns compose state, not the Git checkout.
 //
-//   Windows:     %APPDATA%\unenter\stacks\
-//   macOS/Linux: ~/.unenter/stacks/
+//   Windows:     %APPDATA%\unaxis\unenter\stacks\
+//   macOS/Linux: ~/.unaxis/unenter/stacks/
 
 const _artifactBase =
   process.platform === "win32"
-    ? join(process.env["APPDATA"] ?? join(homedir(), ".config"), "unenter", "stacks")
-    : join(homedir(), ".unenter", "stacks");
+    ? join(process.env["APPDATA"] ?? join(homedir(), ".config"), "unaxis", "unenter", "stacks")
+    : join(homedir(), ".unaxis", "unenter", "stacks");
 
 /**
  * Root of the UNAXIS artifact store.

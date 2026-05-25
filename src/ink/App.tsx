@@ -8,6 +8,8 @@
 //
 // Navigation model (history stack in useAppRouter):
 //
+//   [StartupScreen] ──onDone──▶ welcome  (project picked inside StartupScreen)
+//
 //   welcome ──navigate──▶ zones ──navigate──▶ wizard
 //          └──navigate──▶ settings
 //
@@ -77,13 +79,46 @@ import {
 import { spawn } from "child_process";
 import { join } from "path";
 import { resolveRuntimeProjectRoot } from "../utils/runtimeEnv.js";
-import { snapshotInstance, restoreInstance } from "./zone/snapshot.ts";
+import {
+  snapshotInstance,
+  restoreInstance,
+  listSnapshots,
+  captureTemplate,
+  listTemplates,
+} from "./zone/snapshot.ts";
+import {
+  provisionDatabase,
+  createBlankDatabase,
+  smokeTestDatabase,
+} from "./zone/database-manager.ts";
 import { loadRegistry } from "./zone/supabase-factory.ts";
 import type { RuntimeInstance } from "./zone/supabase-factory.ts";
+import { PROJECT_DIR } from "../config/stack.ts";
+
+// ── Core Supabase instance descriptor ────────────────────────────────────────
+// Static — no registry lookup needed for the core stack.
+// slug "unenter" matches the Docker compose project name declared in
+// docker-compose.yml as `name: unenter`.  All lifecycle ops that pass
+// --project-name use this slug; cwd is the project root where the file lives.
+const CORE_DOCKER_INSTANCE: RuntimeInstance = {
+  id:              "core",
+  name:            "Core Supabase",
+  slug:            "unenter",
+  containerPrefix: "unt_",    // containers: unt_db, unt_storage, unt_kong, …
+  status:          "active",
+  createdAt:       "",
+  runtimePath:     PROJECT_DIR,
+  dockerPath:      PROJECT_DIR,
+  ports:           { kong: 8001, kongSSL: 8443, postgres: 5432, pooler: 0, analytics: 0, studio: 3002 },
+  secrets:         { postgresPassword: "", jwtSecret: "", anonKey: "", serviceRoleKey: "", dashboardPassword: "" },
+  studioUrl:       "",
+  healthState:     "unknown",
+  snapshotState:   "none",
+};
 import { InstanceWizardScreen } from "../screens/InstanceWizardScreen.js";
 import { StackManagerScreen } from "../screens/StackManagerScreen.js";
 import { devContainerName, startDevContainer, stopDevContainer } from "./dev-container.ts";
-import { startIpcServer } from "./ipc-server.ts";
+import { startIpcServer, startRemoteIpcBridge } from "./ipc-server.ts";
 import { getStatus } from "./docker.ts";
 import { captureDockerLogs, parseTail } from "./log-snapshot.ts";
 import { loadZones } from "./zone-store.ts";
@@ -729,9 +764,22 @@ export function App() {
         return 2;
       },
 
-      // unaxis db backup [--reason "..."]
+      // unaxis db <sub> [args…]
+      //
+      // Subcommands:
+      //   backup [--reason <text>]                 — pg_dump into core backup dir
+      //   logs [--tail <n>]                        — stream unt_db container logs
+      //   snapshot [--slug <slug>]                 — full snapshot bundle + compress
+      //   restore --bundle <path>                  — restore an instance from bundle
+      //   snapshots [--slug <slug>]                — list snapshot bundles for instance
+      //   template-capture [--force]               — capture fresh vanilla template
+      //   templates                                — list available templates
+      //   provision <slug> --kong <n> --studio <n> --pg <n> --ssl <n> --dir <path>
+      //                                            — full provision: clone + proxy + NPM + MCP
       db: async (args, onLine) => {
         const sub = args[0];
+
+        // ── db logs ──────────────────────────────────────────────────────────
         if (sub === "logs") {
           const tail = parseTail(args);
           const result = await captureDockerLogs({
@@ -743,23 +791,154 @@ export function App() {
           return result.code;
         }
 
-        if (sub !== "backup") {
-          onLine("✗ usage: db backup [--reason <text>] | db logs [--tail <lines>]");
-          return 2;
+        // ── db backup ────────────────────────────────────────────────────────
+        if (sub === "backup") {
+          const reason = argValue(args, "--reason") ?? "manual CLI backup";
+          const session = getActiveWatch();
+          if (session) appendTimeline(session, "db.backup.start", { reason });
+          const lines: string[] = [];
+          const code = await backupDatabase((line) => {
+            lines.push(line);
+            onLine(line);
+          });
+          if (session) {
+            appendWatchText(session, "backups.txt", `# ${new Date().toISOString()} ${reason}\n${lines.join("\n")}\n`);
+            appendTimeline(session, "db.backup.end", { reason, exitCode: code });
+          }
+          return code;
         }
-        const reason = argValue(args, "--reason") ?? "manual CLI backup";
-        const session = getActiveWatch();
-        if (session) appendTimeline(session, "db.backup.start", { reason });
-        const lines: string[] = [];
-        const code = await backupDatabase((line) => {
-          lines.push(line);
-          onLine(line);
-        });
-        if (session) {
-          appendWatchText(session, "backups.txt", `# ${new Date().toISOString()} ${reason}\n${lines.join("\n")}\n`);
-          appendTimeline(session, "db.backup.end", { reason, exitCode: code });
+
+        // ── db snapshot [--slug <slug>] ───────────────────────────────────────
+        if (sub === "snapshot") {
+          const targetSlug = argValue(args, "--slug");
+          const registry   = await loadRegistry();
+          const inst: RuntimeInstance | undefined =
+            targetSlug
+              ? (registry.find((i) => i.slug === targetSlug) ?? CORE_DOCKER_INSTANCE)
+              : CORE_DOCKER_INSTANCE;
+
+          if (!inst) { onLine(`✗ no instance with slug "${targetSlug}"`); return 1; }
+          await snapshotInstance(inst, onLine);
+          return 0;
         }
-        return code;
+
+        // ── db snapshots [--slug <slug>] ──────────────────────────────────────
+        if (sub === "snapshots") {
+          const targetSlug = argValue(args, "--slug");
+          const registry   = await loadRegistry();
+          const inst: RuntimeInstance =
+            (targetSlug ? registry.find((i) => i.slug === targetSlug) : undefined) ?? CORE_DOCKER_INSTANCE;
+
+          const bundles = await listSnapshots(inst);
+          if (bundles.length === 0) {
+            onLine(`  (no snapshots for ${inst.slug})`);
+            return 0;
+          }
+          for (const b of bundles) {
+            const archTag = b.archivePath ? " ✓ .tar.gz" : "";
+            onLine(`  ${b.id}  ${new Date(b.createdAt).toLocaleString()}${archTag}`);
+          }
+          onLine(`✓ ${bundles.length} snapshot${bundles.length !== 1 ? "s" : ""} for ${inst.slug}`);
+          return 0;
+        }
+
+        // ── db restore --bundle <path> ────────────────────────────────────────
+        if (sub === "restore") {
+          const bundlePath = argValue(args, "--bundle");
+          if (!bundlePath) { onLine("✗ usage: db restore --bundle <path-to-bundle-dir>"); return 1; }
+          return await restoreInstance(bundlePath, onLine);
+        }
+
+        // ── db template-capture [--force] ─────────────────────────────────────
+        if (sub === "template-capture") {
+          const force     = args.includes("--force");
+          const maxAge    = force ? 0 : 30;
+          const template  = await captureTemplate(onLine, maxAge);
+          onLine(`\n✓ Template ready: ${template.archivePath}`);
+          return 0;
+        }
+
+        // ── db templates ──────────────────────────────────────────────────────
+        if (sub === "templates") {
+          const templates = await listTemplates();
+          if (templates.length === 0) {
+            onLine("  (no templates — run: db template-capture)");
+            return 0;
+          }
+          for (const t of templates) {
+            const ageDays = ((Date.now() - new Date(t.createdAt).getTime()) / 86_400_000).toFixed(0);
+            onLine(`  fresh-${t.version}.tar.gz  (${ageDays}d old)  →  ${t.archivePath}`);
+          }
+          onLine(`✓ ${templates.length} template${templates.length !== 1 ? "s" : ""}`);
+          return 0;
+        }
+
+        // ── db provision <slug> ───────────────────────────────────────────────
+        // Usage: db provision <slug> --kong <n> --studio <n> --pg <n> --ssl <n> --dir <path>
+        //        [--bundle <path>]  (omit to use fresh template)
+        //        [--no-npm]         (skip NPM SSL registration)
+        if (sub === "provision") {
+          const slug = args[1];
+          if (!slug || slug.startsWith("--")) {
+            onLine("✗ usage: db provision <slug> --kong <port> --studio <port> --pg <port> --ssl <port> --dir <path>");
+            onLine("         [--bundle <path>]  — source bundle (omit = fresh template)");
+            onLine("         [--no-npm]         — skip NPM SSL registration");
+            return 1;
+          }
+
+          const kongPort   = parseInt(argValue(args, "--kong")   ?? "", 10);
+          const studioPort = parseInt(argValue(args, "--studio") ?? "", 10);
+          const pgPort     = parseInt(argValue(args, "--pg")     ?? "", 10);
+          const sslPort    = parseInt(argValue(args, "--ssl")    ?? `${kongPort + 443}`, 10);
+          const targetDir  = argValue(args, "--dir");
+          const bundlePath = argValue(args, "--bundle");
+          const noNpm      = args.includes("--no-npm");
+
+          if (!kongPort || !studioPort || !pgPort || !targetDir) {
+            onLine("✗ --kong, --studio, --pg, and --dir are all required");
+            return 1;
+          }
+
+          await provisionDatabase(
+            slug,
+            {
+              bundlePath: bundlePath ?? undefined,
+              targetDir,
+              ports: { kong: kongPort, studio: studioPort, postgres: pgPort, kongSSL: sslPort },
+              registerNpm: !noNpm,
+            },
+            null,   // keys: will be in mcp-config.json as placeholders
+            onLine,
+          );
+          return 0;
+        }
+
+        // ── db blank <slug> [--no-npm] ────────────────────────────────────────
+        // Fastest path: scaffold + start a fresh empty Supabase instance.
+        // MCP config is written with real keys immediately.
+        // Usage: db blank <slug> [--no-npm] [--name "Human Label"]
+        if (sub === "blank") {
+          const slug = args[1];
+          if (!slug || slug.startsWith("--")) {
+            onLine("✗ usage: db blank <slug> [--no-npm] [--name <label>]");
+            return 1;
+          }
+          const noNpm = args.includes("--no-npm");
+          const name  = argValue(args, "--name");
+          await createBlankDatabase(slug, { registerNpm: !noNpm, instanceName: name }, onLine);
+          return 0;
+        }
+
+        // ── db smoke-test ──────────────────────────────────────────────────────
+        // End-to-end test: blank DB → Postgres probe → Kong probe → Studio probe
+        // → snapshot → list snapshots → teardown.
+        if (sub === "smoke-test") {
+          const result = await smokeTestDatabase(onLine);
+          return result.ok ? 0 : 1;
+        }
+
+        onLine("✗ usage: db backup|logs|snapshot|snapshots|restore|template-capture|templates|provision|blank|smoke-test");
+        return 2;
       },
 
       // unaxis preflight edit --zone <zone> [--db-backup] [--dev] [--watch] [--label <text>]
@@ -977,7 +1156,18 @@ export function App() {
       },
     });
 
-    return () => { server.close(); };
+    // ── Remote IPC bridge (port 50506) ─────────────────────────────────────
+    // Authenticated tunnel: validates stored token, then pipes to local :50505.
+    // Always started — does nothing until a valid pairing key is generated.
+    const bridge = startRemoteIpcBridge(async () => {
+      const { getCredential } = await import('../utils/secureStorage/index.js');
+      const token = await getCredential('remote_bridge_token');
+      const exp   = await getCredential('remote_bridge_token_exp');
+      if (!token || !exp) return null;
+      return { token, exp: parseInt(exp, 10) };
+    });
+
+    return () => { server.close(); bridge.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1317,9 +1507,13 @@ export function App() {
   return (
     <AlternateScreen>
 
-      {/* ── Startup animation — exclusive gate ────────────────────────── */}
+      {/* ── Startup animation + project picker — exclusive gate ─────────── */}
       {!splashDone && (
-        <StartupScreen instant={noSplash} onDone={() => setSplashDone(true)} />
+        <StartupScreen
+          instant={noSplash}
+          onDone={() => setSplashDone(true)}
+          onQuit={() => exit()}
+        />
       )}
 
       {/* ── Full-screen overlay: operation output ─────────────────────── */}
@@ -1483,38 +1677,23 @@ export function App() {
               // Priority: start/stop/heal = 'now' (urgent); restart = 'next';
               //           verify = 'later' (health check, not blocking).
               onStart={() => runOpQueued("Start core stack", async (o) => {
-                const list = await loadRegistry();
-                const core = list[0];   // primary / only core instance
-                if (!core) { o("No registered core instance found in registry."); return 1; }
-                const ok = await startCoreStack(core, o);
+                const ok = await startCoreStack(CORE_DOCKER_INSTANCE, o);
                 return ok ? 0 : 1;
               }, 'now')}
               onStop={() => runOpQueued("Stop core stack", async (o) => {
-                const list = await loadRegistry();
-                const core = list[0];
-                if (!core) { o("No registered instance."); return 1; }
-                const ok = await stopCoreStack(core, o);
+                const ok = await stopCoreStack(CORE_DOCKER_INSTANCE, o);
                 return ok ? 0 : 1;
               }, 'now')}
               onRestart={() => runOpQueued("Restart core stack", async (o) => {
-                const list = await loadRegistry();
-                const core = list[0];
-                if (!core) { o("No registered instance."); return 1; }
-                const ok = await restartCoreStack(core, o);
+                const ok = await restartCoreStack(CORE_DOCKER_INSTANCE, o);
                 return ok ? 0 : 1;
               }, 'next')}
               onHeal={() => runOpQueued("Heal core stack", async (o) => {
-                const list = await loadRegistry();
-                const core = list[0];
-                if (!core) { o("No registered instance."); return 1; }
-                const ok = await healCoreStack(core, o);
+                const ok = await healCoreStack(CORE_DOCKER_INSTANCE, o);
                 return ok ? 0 : 1;
               }, 'now')}
               onVerify={() => runOpQueued("Verify core stack", async (o) => {
-                const list = await loadRegistry();
-                const core = list[0];
-                if (!core) { o("No registered instance."); return 1; }
-                const report = await verifyCoreStack(core, o);
+                const report = await verifyCoreStack(CORE_DOCKER_INSTANCE, o);
                 o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
                 return report.overall === "down" ? 1 : 0;
               }, 'later')}

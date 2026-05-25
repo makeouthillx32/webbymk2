@@ -85,7 +85,9 @@ function readConfigProjectRoot(): string | null {
 
   try {
     const appData    = process.env['APPDATA'] ?? join(homedir(), '.config')
-    const configPath = join(appData, 'unenter', 'config.json')
+    const configPath = existsSync(join(appData, 'unaxis', 'unenter', 'config.json'))
+      ? join(appData, 'unaxis', 'unenter', 'config.json')
+      : join(appData, 'unenter', 'config.json')   // legacy fallback
     const raw  = readJsonFile<LegacyUnenterConfig>(configPath)
     if (!raw) return null
     const root = raw.projectRoot
@@ -170,7 +172,7 @@ export function getSupportingMarkers(dir: string): string[] {
  */
 export function getConfigPath(): string {
   const appData = process.env['APPDATA'] ?? join(homedir(), '.config')
-  return join(appData, 'unenter', 'config.json')
+  return join(appData, 'unaxis', 'unenter', 'config.json')
 }
 
 /**
