@@ -6,7 +6,7 @@
  *   2. Resolve project root (rootGuard) -- auto-chdir if needed
  *   3. Load .env from project root into process.env
  *   4. Initialize runtime singleton
- *   5. Delegate to src/ink/App.tsx
+ *   5. Delegate to src/replLauncher.tsx
  */
 
 import { detectProjectRoot } from './utils/rootGuard.js'
@@ -55,8 +55,9 @@ initRuntimeState({
 
 profileCheckpoint('state-init')
 
-// 5. Delegate to Ink render layer
-import('./ink/App.tsx').then(() => {
+// 5. Delegate to the TUI runtime assembly layer.
+import('./replLauncher.js').then(async ({ launchRepl }) => {
+  await launchRepl()
   profileCheckpoint('ink-imported')
   flushStartupProfile()
 })

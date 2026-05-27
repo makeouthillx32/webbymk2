@@ -42,6 +42,7 @@ import type { DOMElement } from './dom.js'
 import type { UnaxisEnvironment } from './environment-store.js'
 import { ContainersView } from './panels/Env/views/containers/ContainersView.js'
 import { LocalEnginePreviewRoot } from './localEnginePreview.js'
+import { WelcomeScreen } from '../screens/WelcomeScreen.js'
 
 class MemoryWriteStream extends Writable {
   columns = 80
@@ -199,6 +200,28 @@ function LocalInputProbe() {
   })
 
   return <Text>{`input:${lastInput}`}</Text>
+}
+
+function LocalWelcomeInputProbe() {
+  const [action, setAction] = React.useState('none')
+
+  return (
+    <Box flexDirection="column">
+      <WelcomeScreen
+        zones={[]}
+        zoneStatuses={{}}
+        proxyStatus="missing"
+        busy={false}
+        onManage={() => setAction('manage')}
+        onSettings={() => setAction('settings')}
+        onQuit={() => setAction('quit')}
+        onRelease={() => setAction('release')}
+        onBuild={() => setAction('build')}
+        isActive
+      />
+      <Text>{`welcome-action:${action}`}</Text>
+    </Box>
+  )
 }
 
 function LocalExitProbe() {
@@ -465,6 +488,8 @@ const noopOperation = (
   _op: (onLine: (line: string) => void) => Promise<number>,
 ) => {}
 
+const COLOR_COMPAT_RAW = ['\x1b[35m', '\x1b[2m']
+
 const cases: SmokeCase[] = [
   {
     name: 'local-primitives',
@@ -476,6 +501,18 @@ const cases: SmokeCase[] = [
           <Text color="green">render:</Text>
           <Text> ok</Text>
         </Box>
+      </Box>
+    ),
+  },
+  {
+    name: 'local-ink-color-compat',
+    expected: 'namedcolordimborder',
+    expectedRawValues: COLOR_COMPAT_RAW,
+    element: (
+      <Box borderStyle="single" borderColor="magenta" width={30}>
+        <Text color="magenta" dimColor>
+          named color dim border
+        </Text>
       </Box>
     ),
   },
@@ -757,6 +794,17 @@ const cases: SmokeCase[] = [
     afterRender: (_instance, _stdout, stdin) => {
       stdin.send('j')
     },
+  },
+  {
+    name: 'local-welcome-input',
+    expected: 'welcome-action:none',
+    expectedAfterRerender: 'settings',
+    element: <LocalWelcomeInputProbe />,
+    afterRender: (_instance, _stdout, stdin) => {
+      stdin.send('\x1b[B')
+      setTimeout(() => stdin.send('\r'), 0)
+    },
+    localRuntimeOnly: true,
   },
   {
     name: 'local-keyboard-event-dispatch',

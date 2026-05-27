@@ -51,12 +51,109 @@ import {
   initializeSupabaseCore,
   removeFromRegistry,
   spawnRun,
+  envWithFile,
   CORE_DIR,
   type RuntimeInstance,
 }                           from "./supabase-factory.ts";
 import { DOMAIN, STACK_HOST } from "../../config/stack.ts";
+import { loadRegistry, updateInstanceStatus } from "./supabase-factory.ts";
 import { existsSync }          from "fs";
 import type { OnLine }         from "./types.ts";
+
+// ── Guard rails ───────────────────────────────────────────────────────────────
+
+/** Slugs that would collide with system subdomains or reserved DNS labels. */
+const RESERVED_SLUGS = new Set([
+  "www", "api", "db", "studio", "mail", "cdn", "app", "admin",
+  "ftp", "smtp", "pop", "imap", "vpn", "ns", "ns1", "ns2",
+  "unenter", "core", "template", "test", "dev", "staging", "prod",
+]);
+
+/**
+ * Validate a database slug for DNS safety and uniqueness.
+ * Throws a descriptive Error on any violation so the caller surfaces it cleanly.
+ *
+ * Rules:
+ *   • 2–40 characters
+ *   • Lowercase letters, digits, hyphens only
+ *   • Must start and end with a letter or digit (no leading/trailing hyphens)
+ *   • No consecutive hyphens
+ *   • Not a reserved name
+ *   • Not already registered in proxy routes or the instance registry
+ */
+export async function validateDatabaseSlug(slug: string): Promise<void> {
+  if (!slug || typeof slug !== "string") {
+    throw new Error("Slug is required");
+  }
+  if (slug.length < 2 || slug.length > 40) {
+    throw new Error(`Slug "${slug}" must be 2–40 characters (got ${slug.length})`);
+  }
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug)) {
+    throw new Error(
+      `Slug "${slug}" is invalid — use lowercase letters, digits, and hyphens only.\n` +
+      `  Must start and end with a letter or digit.  Example: my-db`
+    );
+  }
+  if (/--/.test(slug)) {
+    throw new Error(`Slug "${slug}" contains consecutive hyphens (not allowed)`);
+  }
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new Error(
+      `Slug "${slug}" is reserved.  Choose a more specific name, e.g. "${slug}-db" or "my${slug}"`
+    );
+  }
+
+  // Uniqueness: proxy routes
+  const routes = getDatabaseRoutes();
+  if (routes[slug]) {
+    throw new Error(
+      `Slug "${slug}" is already registered as a database instance.\n` +
+      `  API: ${routes[slug].apiDomain}  Studio: ${routes[slug].studioDomain}\n` +
+      `  Run: db templates  to list existing instances or choose a different name.`
+    );
+  }
+
+  // Uniqueness: instance registry (catches half-created instances)
+  const registry = await loadRegistry();
+  const clash = registry.find((i) => i.slug === slug || i.slug.startsWith(`${slug}-`));
+  if (clash) {
+    throw new Error(
+      `Slug "${slug}" conflicts with existing instance "${clash.slug}" in the registry.\n` +
+      `  Choose a different name or clean up the stale entry first.`
+    );
+  }
+}
+
+/**
+ * Assert Docker daemon is running.
+ * Throws if Docker is not reachable so we fail fast instead of hanging.
+ */
+export async function assertDockerRunning(): Promise<void> {
+  const { code, out } = await spawnRun("docker", ["info", "--format", "{{.ServerVersion}}"],
+    { timeout: 8_000 });
+  if (code !== 0) {
+    throw new Error(
+      `Docker daemon is not running or not reachable.\n` +
+      `  Start Docker Desktop and try again.\n` +
+      `  (docker info: ${out.slice(0, 120)})`
+    );
+  }
+}
+
+/**
+ * Assert supabase-core/docker is present (required for new instance scaffolding).
+ * Returns immediately if present; throws with a clear install instruction if not.
+ */
+export function assertCoreDockerPresent(): void {
+  const coreDocker = join(CORE_DIR, "docker");
+  if (!existsSync(coreDocker)) {
+    throw new Error(
+      `supabase-core/docker not found at ${coreDocker}\n` +
+      `  Run:  unaxis unenter db template-capture\n` +
+      `  This will clone supabase/supabase and set up the template (one-time, ~2 min).`
+    );
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -76,6 +173,11 @@ export interface DatabaseProvisionConfig {
   projectName?: string;
   /** Whether to register in NPM with SSL. Default: true. */
   registerNpm?: boolean;
+  /**
+   * If provided, NPM registration success will persist public URLs back to the
+   * instance registry entry.
+   */
+  instance?: RuntimeInstance;
 }
 
 export interface McpKeys {
@@ -219,6 +321,10 @@ export async function provisionDatabase(
   keys:    McpKeys | null,
   onLine:  OnLine,
 ): Promise<ProvisionResult> {
+  // ── Guard rails ─────────────────────────────────────────────────────────
+  await validateDatabaseSlug(slug);
+  await assertDockerRunning();
+
   const domain    = DOMAIN || "unenter.live";
   const stackIp   = STACK_HOST.ip;
 
@@ -267,7 +373,6 @@ export async function provisionDatabase(
       domain,
       stackIp,
       cfg.ports.kong,
-      cfg.ports.studio,
       onLine,
     );
     npmErrors = npmResult.errors;
@@ -277,6 +382,13 @@ export async function provisionDatabase(
     }
     if (npmErrors.length > 0) {
       onLine(`  ⚠ NPM registration had ${npmErrors.length} error(s) — database still reachable internally`);
+    }
+    // Store public URLs in registry so the TUI can surface them (if instance provided)
+    if (cfg.instance) {
+      await updateInstanceStatus(cfg.instance.id, {
+        npmApiUrl:    `https://db.${slug}.${domain}`,
+        npmStudioUrl: `https://studio.${slug}.${domain}`,
+      });
     }
   } else {
     onLine("\n[4/5] NPM registration skipped (registerNpm: false)");
@@ -427,6 +539,10 @@ export async function createBlankDatabase(
   const label     = opts.instanceName ?? slug;
   const registerNpm = opts.registerNpm !== false;
 
+  // ── Guard rails ──────────────────────────────────────────────────────────
+  await validateDatabaseSlug(slug);
+  await assertDockerRunning();
+
   onLine(`🆕 Creating blank database: ${slug}`);
   onLine(`   Will be live at:  db.${slug}.${domain}  /  studio.${slug}.${domain}`);
 
@@ -452,7 +568,8 @@ export async function createBlankDatabase(
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
       ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
-      { cwd: instance.dockerPath, timeout: 120_000 },
+      { cwd: instance.dockerPath, timeout: 120_000,
+        env: envWithFile(`${instance.dockerPath}/.env`) },
     );
     if (upCode !== 0) throw new Error(`docker compose up failed:\n${upOut}`);
     didStart = true;
@@ -485,13 +602,18 @@ export async function createBlankDatabase(
       onLine("  Registering NPM proxy hosts...");
       const npmResult = await npmAddDatabaseHosts(
         slug, domain, stackIp,
-        instance.ports.kong, instance.ports.studio,
+        instance.ports.kong,
         onLine,
       );
       npmErrors = npmResult.errors;
       if (npmResult.dbHostId !== null || npmResult.studioHostId !== null) {
         await setDatabaseNpmIds(slug, npmResult.dbHostId, npmResult.studioHostId);
       }
+      // Store public URLs in registry
+      await updateInstanceStatus(instance.id, {
+        npmApiUrl:    `https://db.${slug}.${domain}`,
+        npmStudioUrl: `https://studio.${slug}.${domain}`,
+      });
     }
 
     // ── [6] Write MCP config (real keys — no placeholders!) ──────────────
@@ -540,6 +662,165 @@ export async function createBlankDatabase(
   }
 }
 
+// ── cloneFromSnapshot ─────────────────────────────────────────────────────────
+
+export interface CloneFromSnapshotResult {
+  instance:        RuntimeInstance;
+  dnsSlug:         string;           // short name used for public URLs
+  publicApiUrl:    string;
+  publicStudioUrl: string;
+  mcpConfig:       McpConfig;
+  npmErrors:       string[];
+}
+
+/**
+ * Create a new independent Supabase instance pre-loaded with data from a snapshot.
+ *
+ * This is the "clone" path — any captured snapshot can become a fresh,
+ * fully independent runtime instance with its own lean Docker stack,
+ * public NPM/SSL proxy entries, and MCP config.
+ *
+ * Unlike the old cloneFromBundle() path, this always uses the lean instance
+ * template (not the compose file from the bundle), so the clone inherits
+ * proper Kong host-based routing, fresh secrets, and appears in the TUI.
+ *
+ * Steps:
+ *   1. Validate + scaffold  — createRuntimeInstance() (lean template, fresh secrets)
+ *   2. Start stack          — docker compose up -d
+ *   3. Wait for Postgres    — pg_isready polling (up to 60s)
+ *   4. Restore data         — restoreInstance(bundle, target) — pg_restore + storage
+ *   5. Register routes      — addDatabaseRoutes()
+ *   6. NPM proxy hosts      — npmAddDatabaseHosts()
+ *   7. MCP config           — writeMcpConfig() with real keys
+ *
+ * @param bundlePath  Absolute path to the snapshot bundle directory.
+ * @param name        Human-readable name for the clone (e.g. "Yapp Clone").
+ * @param opts        registerNpm (default true)
+ * @param onLine      Progress logger.
+ */
+export async function cloneFromSnapshot(
+  bundlePath: string,
+  name:        string,
+  opts:        { registerNpm?: boolean } = {},
+  onLine:      OnLine,
+): Promise<CloneFromSnapshotResult> {
+  const { restoreInstance } = await import("./snapshot.ts");
+  const domain      = DOMAIN || "unenter.live";
+  const stackIp     = STACK_HOST.ip;
+  const registerNpm = opts.registerNpm !== false;
+
+  // DNS slug — short name derived from the human label (no timestamp).
+  // Used for public subdomains:  db.{dnsSlug}.{domain}
+  const dnsSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "clone";
+
+  onLine(`🌱 Cloning snapshot  →  ${dnsSlug}`);
+  onLine(`   Public:  db.${dnsSlug}.${domain}  /  studio.${dnsSlug}.${domain}`);
+
+  // ── Guard rails ─────────────────────────────────────────────────────────────
+  await validateDatabaseSlug(dnsSlug);
+  await assertDockerRunning();
+
+  // ── [1] Scaffold lean instance ────────────────────────────────────────────
+  onLine(`\n[1/5] Scaffolding lean instance (${dnsSlug})...`);
+  const instance = await createRuntimeInstance(name, onLine);
+  onLine(`  ✓ slug:    ${instance.slug}`);
+  onLine(`  ✓ ports:   Kong:${instance.ports.kong}  PG:${instance.ports.postgres}`);
+  onLine(`  ✓ studio:  ${instance.studioUrl}  (via Kong)`);
+
+  let npmErrors: string[] = [];
+
+  try {
+    // ── [2] Start the stack ──────────────────────────────────────────────
+    onLine(`\n[2/5] Starting lean stack...`);
+    const { code: upCode, out: upOut } = await spawnRun(
+      "docker",
+      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      { cwd: instance.dockerPath, timeout: 120_000,
+        env: envWithFile(`${instance.dockerPath}/.env`) },
+    );
+    if (upCode !== 0) throw new Error(`docker compose up failed:\n${upOut}`);
+    onLine("  ✓ containers started");
+
+    // ── [3] Wait for Postgres ────────────────────────────────────────────
+    onLine(`\n[3/5] Waiting for Postgres...`);
+    const dbCont = instance.containerPrefix
+      ? `${instance.containerPrefix}db`
+      : `${instance.slug}-db`;
+    let pgReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const { out } = await _dockerExec(["exec", dbCont, "pg_isready", "-U", "postgres"]);
+      if (out.includes("accepting connections")) { pgReady = true; break; }
+      if ((i + 1) % 5 === 0) onLine(`  … waiting (${(i + 1) * 2}s)`);
+    }
+    if (!pgReady) throw new Error("Postgres did not become ready within 60s");
+    onLine("  ✓ Postgres ready");
+
+    // ── [4] Restore snapshot data ────────────────────────────────────────
+    onLine(`\n[4/5] Restoring snapshot data...`);
+    const restoreCode = await restoreInstance(bundlePath, onLine, instance);
+    if (restoreCode !== 0) {
+      onLine(`  ⚠ restoreInstance returned ${restoreCode} — data may be incomplete`);
+    } else {
+      onLine("  ✓ snapshot data restored");
+    }
+
+    // ── [5] Register routes, NPM, MCP ───────────────────────────────────
+    onLine(`\n[5/5] Registering public routes...`);
+    const routes = await addDatabaseRoutes(
+      dnsSlug,
+      { kong: instance.ports.kong, studio: instance.ports.studio },
+      stackIp,
+      onLine,
+    );
+
+    if (registerNpm) {
+      onLine("  Registering NPM proxy hosts...");
+      const npmResult = await npmAddDatabaseHosts(
+        dnsSlug, domain, stackIp,
+        instance.ports.kong,
+        onLine,
+      );
+      npmErrors = npmResult.errors;
+      if (npmResult.dbHostId !== null || npmResult.studioHostId !== null) {
+        await setDatabaseNpmIds(dnsSlug, npmResult.dbHostId, npmResult.studioHostId);
+      }
+      await updateInstanceStatus(instance.id, {
+        npmApiUrl:    `https://db.${dnsSlug}.${domain}`,
+        npmStudioUrl: `https://studio.${dnsSlug}.${domain}`,
+      });
+    }
+
+    const publicApiUrl    = `https://db.${dnsSlug}.${domain}`;
+    const publicStudioUrl = `https://studio.${dnsSlug}.${domain}`;
+
+    const mcpConfig = await writeMcpConfig(
+      instance.dockerPath,
+      dnsSlug,
+      publicApiUrl,
+      {
+        anonKey:        instance.secrets.anonKey,
+        serviceRoleKey: instance.secrets.serviceRoleKey,
+      },
+      onLine,
+    );
+
+    onLine(`\n✓ Clone ready: ${dnsSlug}`);
+    onLine(`  Local API:      http://127.0.0.1:${instance.ports.kong}`);
+    onLine(`  Public API:     ${publicApiUrl}`);
+    onLine(`  Public Studio:  ${publicStudioUrl}`);
+    onLine(`  Studio user:    supabase  /  ${instance.secrets.dashboardPassword}`);
+    onLine(`  MCP config:     ${instance.dockerPath}/mcp-config.json`);
+
+    return { instance, dnsSlug, publicApiUrl, publicStudioUrl, mcpConfig, npmErrors };
+
+  } catch (err) {
+    // Leave containers running so the user can debug — just surface the error.
+    await updateInstanceStatus(instance.id, { status: "error" }).catch(() => {});
+    throw err;
+  }
+}
+
 // ── smokeTestDatabase ─────────────────────────────────────────────────────────
 
 export interface SmokeTestResult {
@@ -574,6 +855,27 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
     result.failed.push(msg);
     onLine(`  ✗ ${msg}`);
   };
+
+  // ── Pre-flight checks ─────────────────────────────────────────────────────
+  onLine("[pre-flight] Docker daemon...");
+  try {
+    await assertDockerRunning();
+    pass("Docker daemon running");
+  } catch (e) {
+    fail("Docker daemon not running", e);
+    result.ok = false;
+    return result;
+  }
+
+  onLine("[pre-flight] supabase-core/docker...");
+  try {
+    assertCoreDockerPresent();
+    pass("supabase-core/docker present");
+  } catch (e) {
+    fail("supabase-core/docker missing", e);
+    result.ok = false;
+    return result;
+  }
 
   const suffix = Math.random().toString(36).slice(2, 6);
   const slug   = `smoke-${suffix}`;

@@ -1,10 +1,11 @@
+/** @jsxRuntime classic */
 // src/ink/screens/NotesScreen.tsx
 // Placeholder panel. The shape of this page is still being decided.
 // For now: shows the active project root and lets you open it in the
 // system file explorer.
 
-import React, { useCallback } from 'react'
-import { Box, Text, useInput } from 'ink'
+import React, { useCallback } from '../ink/reactRuntime.js'
+import { Box, Text, useInput } from '../ink/runtimeInk.js'
 import { spawn } from 'child_process'
 import { getRuntime } from '../bootstrap/state.js'
 

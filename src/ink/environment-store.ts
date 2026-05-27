@@ -244,6 +244,80 @@ function buildHeaders(): Record<string, string> {
   };
 }
 
+async function autoSeedLocalEnvironment(kongUrl: string, serviceKey: string): Promise<UnaxisEnvironment[]> {
+  dbg("Auto-seeding local 'POWER' environment because Supabase environments list is empty.");
+  
+  let localConfig: any = null;
+  try {
+    const { join } = await import("path");
+    const { homedir } = await import("os");
+    const { readFileSync, existsSync } = await import("fs");
+    const appData = process.env["APPDATA"] ?? join(homedir(), ".config");
+    const configPath = join(appData, "unaxis", "unenter", "config.json");
+    if (existsSync(configPath)) {
+      localConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    }
+  } catch (e) {
+    dbg("Could not read local config for auto-seeding: " + e);
+  }
+
+  const domain = localConfig?.domain ?? "unenter.live";
+  const npmIp = localConfig?.npm?.ip ?? "127.0.0.1";
+  const npmPort = localConfig?.npm?.port ?? 81;
+  const stackIp = localConfig?.stack?.ip ?? "127.0.0.1";
+  const proxyPort = localConfig?.stack?.proxyPort ?? 3080;
+  const ddnsHostname = localConfig?.ddns?.hostname ?? "";
+
+  const payload = {
+    id: "00000000-0000-0000-0000-000000000001",
+    name: "POWER",
+    type: "local-docker",
+    status: "unknown",
+    active: true,
+    is_default_target: true,
+    docker_url: "unix:///var/run/docker.sock",
+    machine_role: "App · DB · Proxy · Zones",
+    agent_url: "http://127.0.0.1:8888",
+    agent_port: 8888,
+    agent_status: "unknown",
+    npm_host: npmIp,
+    npm_port: npmPort,
+    proxy_host: stackIp,
+    proxy_port: proxyPort,
+    domain: domain,
+    ddns_hostname: ddnsHostname,
+    public_url: "https://" + domain,
+  };
+
+  const headers = {
+    "Authorization": "Bearer " + serviceKey,
+    "apikey":        serviceKey,
+    "Accept":        "application/json",
+    "Content-Type":  "application/json",
+    "Prefer":        "return=representation",
+  };
+
+  const url = kongUrl + "/rest/v1/environments";
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      dbg("Auto-seed POST failed: " + res.status + " " + text);
+      return [];
+    }
+    const rows = await res.json() as EnvironmentRow[];
+    dbg("Auto-seeded successfully: " + (rows[0]?.name ?? "POWER"));
+    return rows.map(rowToEnvironment);
+  } catch (err) {
+    dbg("Auto-seed error: " + err);
+    return [];
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -304,6 +378,17 @@ export async function loadEnvironments(force = false): Promise<UnaxisEnvironment
 
     const rows = await res.json() as EnvironmentRow[];
     dbg("rows received: " + rows.length);
+
+    if (rows.length === 0) {
+      const seeded = await autoSeedLocalEnvironment(kongUrl, serviceKey);
+      if (seeded.length > 0) {
+        lastEnvironmentError = null;
+        _cache     = seeded;
+        _fetchedAt = Date.now();
+        return _cache;
+      }
+    }
+
     lastEnvironmentError = null;
     _cache     = rows.map(rowToEnvironment);
     _fetchedAt = Date.now();

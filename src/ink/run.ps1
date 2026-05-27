@@ -18,19 +18,25 @@ $TUI_DIR     = $PSScriptRoot
 $PROJECT_DIR = Split-Path (Split-Path $TUI_DIR -Parent) -Parent
 
 # --- Check local config -------------------------------------------------------
-# Sensitive infra credentials live in %APPDATA%\unenter\config.json — never in git.
+# Sensitive infra credentials live in %APPDATA%\unaxis\unenter\config.json — never in git.
 # Run setup.ps1 once to create it interactively.
 
-$untConfigFile = Join-Path $env:APPDATA "unenter\config.json"
+$untConfigFile    = Join-Path (Join-Path $env:APPDATA "unaxis") "unenter\config.json"
+$legacyConfigFile = Join-Path $env:APPDATA "unenter\config.json"
+
 if (-not (Test-Path $untConfigFile)) {
-    Write-Host ""
-    Write-Host "  ✗  Local config not found:" -ForegroundColor Red
-    Write-Host "     $untConfigFile" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  Run the setup script once to create it:" -ForegroundColor Yellow
-    Write-Host "     .\src\ink\setup.ps1" -ForegroundColor Cyan
-    Write-Host ""
-    exit 1
+    if (Test-Path $legacyConfigFile) {
+        $untConfigFile = $legacyConfigFile
+    } else {
+        Write-Host ""
+        Write-Host "  ✗  Local config not found:" -ForegroundColor Red
+        Write-Host "     Expected: $untConfigFile" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  Run the setup script once to create it:" -ForegroundColor Yellow
+        Write-Host "     .\src\ink\setup.ps1" -ForegroundColor Cyan
+        Write-Host ""
+        exit 1
+    }
 }
 
 # --- Check Bun ----------------------------------------------------------------

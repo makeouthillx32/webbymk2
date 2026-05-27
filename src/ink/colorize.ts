@@ -1,6 +1,19 @@
 import chalk from 'chalk'
 import type { Color, TextStyles } from './styles.js'
 
+function enableTerminalColorsByDefault(): boolean {
+  if (process.env.NO_COLOR || process.env.FORCE_COLOR === '0') {
+    return false
+  }
+
+  if (chalk.level === 0) {
+    chalk.level = 3
+    return true
+  }
+
+  return false
+}
+
 /**
  * xterm.js (VS Code, Cursor, code-server, Coder) has supported truecolor
  * since 2017, but code-server/Coder containers often don't set
@@ -58,6 +71,7 @@ function clampChalkLevelForTmux(): boolean {
 // Computed once at module load — terminal/tmux environment doesn't change mid-session.
 // Order matters: boost first so the tmux clamp can re-clamp if tmux is running
 // inside a VS Code terminal. Exported for debugging — tree-shaken if unused.
+export const CHALK_COLOR_ENABLED_BY_DEFAULT = enableTerminalColorsByDefault()
 export const CHALK_BOOSTED_FOR_XTERMJS = boostChalkLevelForXtermJs()
 export const CHALK_CLAMPED_FOR_TMUX = clampChalkLevelForTmux()
 
@@ -73,6 +87,11 @@ export const colorize = (
 ): string => {
   if (!color) {
     return str
+  }
+
+  const namedColor = normalizeNamedColor(color)
+  if (namedColor !== color) {
+    return colorize(str, namedColor, type)
   }
 
   if (color.startsWith('ansi:')) {
@@ -166,6 +185,37 @@ export const colorize = (
   }
 
   return str
+}
+
+function normalizeNamedColor(color: string): string {
+  switch (color) {
+    case 'black':
+    case 'red':
+    case 'green':
+    case 'yellow':
+    case 'blue':
+    case 'magenta':
+    case 'cyan':
+    case 'white':
+      return `ansi:${color}`
+    case 'gray':
+    case 'grey':
+      return 'ansi:blackBright'
+    case 'blackBright':
+    case 'grayBright':
+    case 'greyBright':
+      return 'ansi:blackBright'
+    case 'redBright':
+    case 'greenBright':
+    case 'yellowBright':
+    case 'blueBright':
+    case 'magentaBright':
+    case 'cyanBright':
+    case 'whiteBright':
+      return `ansi:${color}`
+    default:
+      return color
+  }
 }
 
 /**

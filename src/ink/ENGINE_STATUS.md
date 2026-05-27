@@ -6,7 +6,7 @@ to production boot.
 Current production boot remains:
 
 ```text
-src/main.tsx -> src/ink/App.tsx -> npm ink
+src/main.tsx -> src/replLauncher.tsx -> src/interactiveHelpers.tsx -> npm ink -> src/ink/AppProviders.tsx -> src/ink/App.tsx -> src/ink/AppFrame.tsx -> src/ink/AppRoutes.tsx
 ```
 
 Local engine entry points:
@@ -70,6 +70,9 @@ Covered now:
 - local `onFrame` callback support through `renderSync` / `createRoot` options
 - detached local-engine preview assembly via `LocalEnginePreviewRoot` and
   `renderLocalEnginePreview`, covered under `UNAXIS_LOCAL_INK_RUNTIME=1`
+- production App assembly split into launcher, provider, frame, routes, IPC,
+  operation chrome, global input, and dev action layers while keeping npm Ink
+  as the default renderer
 
 Important fixes made:
 
@@ -131,8 +134,8 @@ Current import boundary:
   production engine. Its local-engine mode is opt-in through
   `UNAXIS_LOCAL_INK_RUNTIME=1` and has only been exercised by detached smoke.
 - Only live boot/entry compatibility files should import npm `ink` directly:
-  `src/ink/App.tsx`, `src/ink/index.tsx`, `runtimeInk.ts`, and the smoke
-  comparison case.
+  `src/interactiveHelpers.tsx`, `src/ink/AppBoot.tsx`, `runtimeInk.ts`, and
+  the smoke comparison case.
 - Active keybinding flows in production panels are now import-canonicalized and
   have detached local-runtime coverage for `DetachedStack`, `ZonesView`,
   `CoreView`, `OperationOverlay`, and nested Env `ContainersView`, but

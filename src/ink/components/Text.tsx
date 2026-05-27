@@ -32,6 +32,7 @@ type BaseProps = {
    * Inverse background and foreground colors.
    */
   readonly inverse?: boolean;
+  readonly dimColor?: boolean;
 
   /**
    * This property tells Ink to wrap or truncate text if its width is larger than container.
@@ -118,6 +119,7 @@ export default function Text({
   backgroundColor,
   bold,
   dim,
+  dimColor,
   italic = false,
   underline = false,
   strikethrough = false,
@@ -132,7 +134,7 @@ export default function Text({
   const textStyles: TextStyles = {
     ...(color && { color }),
     ...(backgroundColor && { backgroundColor }),
-    ...(dim && { dim }),
+    ...((dim || dimColor) && { dim: true }),
     ...(bold && { bold }),
     ...(italic && { italic }),
     ...(underline && { underline }),

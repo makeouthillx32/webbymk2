@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/SettingsScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Infrastructure config view.
@@ -20,8 +21,8 @@
 //   esc / q — back
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState, useEffect, useCallback, useMemo } from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { join, resolve } from "path";

@@ -43,6 +43,7 @@ import { PROJECT_DIR }    from "../../config/stack.ts";
 import {
   updateInstanceStatus,
   spawnRun,
+  envWithFile,
   loadRegistry,
   removeFromRegistry,
   registerInstance,
@@ -273,7 +274,7 @@ Start-Sleep -Seconds 20
 
 # 2. Restore database
 Write-Host "[2/4] Restoring database..."
-docker cp "$BundleDir/db.dump" "${DbContainer}:/restore/db.dump"
+docker cp "$BundleDir/db.dump" "\${DbContainer}:/restore/db.dump"
 docker exec $DbContainer pg_restore \`
   --host=localhost --username=postgres --dbname=postgres \`
   --clean --if-exists --no-owner --no-privileges /restore/db.dump
@@ -281,7 +282,7 @@ docker exec $DbContainer pg_restore \`
 # 3. Restore storage
 Write-Host "[3/4] Restoring storage objects..."
 if (Test-Path "$BundleDir/storage") {
-  docker cp "$BundleDir/storage/." "${StgContainer}:/var/lib/storage/"
+  docker cp "$BundleDir/storage/." "\${StgContainer}:/var/lib/storage/"
   Write-Host "  storage restored"
 }
 
@@ -518,8 +519,9 @@ export async function listSnapshots(instance: RuntimeInstance): Promise<Snapshot
  *   6. Restart full stack
  */
 export async function restoreInstance(
-  bundlePath: string,
-  onLine:     OnLine,
+  bundlePath:     string,
+  onLine:         OnLine,
+  targetInstance?: RuntimeInstance,   // when cloning into a NEW instance; omit for same-instance restore
 ): Promise<number> {
   const metaPath = join(bundlePath, "metadata.json");
   const dumpPath = join(bundlePath, "db.dump");
@@ -531,20 +533,35 @@ export async function restoreInstance(
 
   const meta = JSON.parse(await fs.readFile(metaPath, "utf-8")) as any;
 
-  // Resolve instance — prefer registry lookup, fall back to core defaults.
-  const { loadRegistry } = await import("./supabase-factory.ts");
-  const registry = await loadRegistry();
-  const instance: Partial<RuntimeInstance> & { slug: string; dockerPath: string } =
-    registry.find((i) => i.id === meta.instanceId) ?? {
+  // Resolve instance:
+  //  • If targetInstance is provided (clone flow) — use it directly.
+  //  • Otherwise look up by instanceId in the registry (same-instance restore).
+  //  • Fall back to core defaults if not found.
+  let instance: Partial<RuntimeInstance> & { slug: string; dockerPath: string };
+  if (targetInstance) {
+    instance = targetInstance;
+  } else {
+    const { loadRegistry } = await import("./supabase-factory.ts");
+    const registry = await loadRegistry();
+    instance = registry.find((i) => i.id === meta.instanceId) ?? {
       id:         "core",
       slug:       "unenter",       // compose project name for core
       dockerPath: PROJECT_DIR,
     };
+  }
 
   const projectName = instance.slug;
-  // Use the db container name stored in the bundle (resolves containerPrefix)
-  const dbCont: string = meta.dbContainer ?? `${projectName}-db`;
-  const storageCont: string = meta.storageContainer ?? `${projectName}-storage`;
+
+  // Container names:
+  //  • Clone flow: derive from TARGET instance naming (slug-based).
+  //  • Restore flow: use names saved in bundle metadata (may differ if containerPrefix was set).
+  const prefix = (instance as RuntimeInstance).containerPrefix;
+  const dbCont: string = targetInstance
+    ? (prefix ? `${prefix}db` : `${projectName}-db`)
+    : (meta.dbContainer ?? `${projectName}-db`);
+  const storageCont: string = targetInstance
+    ? (prefix ? `${prefix}storage` : `${projectName}-storage`)
+    : (meta.storageContainer ?? `${projectName}-storage`);
   const storagePath = join(bundlePath, "storage");
 
   onLine(`↺ Restoring  ${meta.instanceName || projectName}  from snapshot…`);
@@ -563,7 +580,7 @@ export async function restoreInstance(
   await spawnRun(
     "docker",
     ["compose", "--project-name", projectName, "up", "-d", "db"],
-    { cwd: instance.dockerPath },
+    { cwd: instance.dockerPath, env: envWithFile(`${instance.dockerPath}/.env`) },
   );
 
   // Wait up to 30s for Postgres to accept connections
@@ -617,7 +634,7 @@ export async function restoreInstance(
     await spawnRun(
       "docker",
       ["compose", "--project-name", projectName, "up", "-d", "storage"],
-      { cwd: instance.dockerPath },
+      { cwd: instance.dockerPath, env: envWithFile(`${instance.dockerPath}/.env`) },
     );
     await new Promise((r) => setTimeout(r, 3000)); // brief wait for container init
 
@@ -638,7 +655,7 @@ export async function restoreInstance(
   await spawnRun(
     "docker",
     ["compose", "--project-name", projectName, "up", "-d", "--remove-orphans"],
-    { cwd: instance.dockerPath },
+    { cwd: instance.dockerPath, env: envWithFile(`${instance.dockerPath}/.env`) },
   );
 
   onLine(`\n✓ Restore complete!`);
@@ -922,7 +939,8 @@ export async function captureTemplate(
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
       ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
-      { cwd: instance.dockerPath, timeout: 120_000 },
+      { cwd: instance.dockerPath, timeout: 120_000,
+        env: envWithFile(`${instance.dockerPath}/.env`) },
     );
     if (upCode !== 0) throw new Error(`docker compose up failed:\n${upOut}`);
     onLine("  ✓ containers starting");

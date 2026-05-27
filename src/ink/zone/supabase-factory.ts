@@ -21,14 +21,14 @@
 //   PROJECT_DIR/supabase-instances/{slug}/docker/
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { promises as fs }                    from "fs";
-import { existsSync, mkdirSync, copyFileSync } from "fs";
+import { promises as fs }                                    from "fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
 import { join, resolve }                       from "path";
 import { homedir }         from "os";
 import { randomBytes }     from "crypto";
 import { createServer }    from "net";
 import { spawn }           from "child_process";
-import { PROJECT_DIR }     from "../../config/stack.ts";
+import { PROJECT_DIR, DOMAIN } from "../../config/stack.ts";
 import type { OnLine }     from "./types.ts";
 
 // ── Runtime state model ───────────────────────────────────────────────────────
@@ -71,6 +71,8 @@ export interface RuntimeInstance {
   ports:            RuntimePorts;
   secrets:          RuntimeSecrets;
   studioUrl:        string;        // http://127.0.0.1:{studio}
+  npmApiUrl?:       string;        // https://db.{slug}.{domain}   — set after NPM registration
+  npmStudioUrl?:    string;        // https://studio.{slug}.{domain}
   healthState:      HealthState;
   snapshotState:    SnapshotState;
   lastSnapshot?:    string;        // ISO-8601 | undefined
@@ -122,7 +124,7 @@ export async function registerInstance(instance: RuntimeInstance): Promise<void>
 
 export async function updateInstanceStatus(
   id:    string,
-  patch: Partial<Pick<RuntimeInstance, "status" | "healthState" | "snapshotState" | "lastSnapshot">>,
+  patch: Partial<Pick<RuntimeInstance, "status" | "healthState" | "snapshotState" | "lastSnapshot" | "npmApiUrl" | "npmStudioUrl">>,
 ): Promise<void> {
   const list = await loadRegistry();
   const idx  = list.findIndex((i) => i.id === id);
@@ -173,13 +175,14 @@ export function generateJWT(role: "anon" | "service_role", timestamp: number): s
 export function spawnRun(
   cmd:  string,
   args: string[],
-  opts: { cwd?: string; timeout?: number } = {},
+  opts: { cwd?: string; timeout?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ code: number; out: string }> {
   return new Promise((res) => {
     const proc = spawn(cmd, args, {
       cwd:   opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
+      env:   opts.env,
     });
     let out = "";
     const timer = opts.timeout
@@ -191,6 +194,46 @@ export function spawnRun(
     proc.on("close", (code) => { if (timer) clearTimeout(timer); res({ code: code ?? 1, out: out.trim() }); });
     proc.on("error", ()     => { if (timer) clearTimeout(timer); res({ code: 1, out }); });
   });
+}
+
+// ── Env file helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Parse a .env file into a key→value map.
+ * Lines starting with # are comments; blank lines are ignored.
+ * Values may optionally be quoted with " or '.
+ */
+function parseEnvFile(filePath: string): Record<string, string> {
+  try {
+    const content = readFileSync(filePath, "utf8");
+    const result: Record<string, string> = {};
+    for (const raw of content.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      const key = line.slice(0, eq).trim();
+      let val   = line.slice(eq + 1).trim();
+      // Strip surrounding quotes
+      if ((val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      result[key] = val;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Return a spawn env where the given .env file's values take precedence over
+ * the current process environment.  This prevents shell-level variables like
+ * POSTGRES_PORT from shadowing the per-instance port assignments.
+ */
+export function envWithFile(envFilePath: string): NodeJS.ProcessEnv {
+  return { ...process.env, ...parseEnvFile(envFilePath) };
 }
 
 // ── UUID v4 (no external dependency) ─────────────────────────────────────────
@@ -205,8 +248,9 @@ function uuidV4(): string {
 
 // ── Core directories ──────────────────────────────────────────────────────────
 
-export const CORE_DIR      = join(PROJECT_DIR, "supabase-core");
-export const INSTANCES_DIR = join(PROJECT_DIR, "supabase-instances");
+export const CORE_DIR          = join(PROJECT_DIR, "supabase-core");
+export const INSTANCES_DIR     = join(PROJECT_DIR, "supabase-instances");
+export const INSTANCE_TEMPLATE = join(PROJECT_DIR, "src", "ink", "zone", "templates", "instance");
 
 // ── initializeSupabaseCore ────────────────────────────────────────────────────
 
@@ -328,6 +372,11 @@ async function unavailablePorts(
   return unavailable;
 }
 
+/** Publicly allocate a free port block — used by clone wizard and external callers. */
+export async function allocatePorts(onLine: OnLine = () => {}): Promise<RuntimePorts> {
+  return allocateAvailablePorts(Date.now(), onLine);
+}
+
 async function allocateAvailablePorts(timestamp: number, onLine: OnLine): Promise<RuntimePorts> {
   const alreadyRegistered = await registeredPorts();
 
@@ -365,11 +414,7 @@ const CONTAINER_TEMPLATES = [
   "supabase-storage",
   "supabase-imgproxy",
   "supabase-meta",
-  "supabase-edge-functions",
-  "supabase-analytics",
   "supabase-db",
-  "supabase-vector",
-  "supabase-pooler",
 ] as const;
 
 function rewriteContainerNames(content: string, slug: string): string {
@@ -387,6 +432,109 @@ function rewriteContainerNames(content: string, slug: string): string {
   }
   out = out.replace(/^name: supabase$/m, `name: ${slug}`);
   return out;
+}
+
+// ── Kong 2.8.1 config generator ───────────────────────────────────────────────
+
+/**
+ * Generate a Kong 2.8.1 declarative config (format version 1.1) with secrets
+ * baked in.  Routes:
+ *   /auth/v1/     → GoTrue (cors)              — all hosts
+ *   /rest/v1/     → PostgREST (cors, key-auth) — all hosts
+ *   /realtime/v1/ → Realtime (cors)            — all hosts
+ *   /storage/v1/  → Storage API (cors)         — all hosts
+ *   /             → Studio (basic-auth)         — studio.{name}.{domain} ONLY
+ *
+ * The dashboard route is host-restricted to `studio.{name}.{domain}` so that:
+ *   db.{name}.{domain}/     → Kong "no Route matched" JSON  (pure API)
+ *   studio.{name}.{domain}/ → Studio with basic-auth prompt
+ *
+ * Both NPM hosts point to the same Kong port — Kong differentiates by Host header.
+ */
+export function generateKongYml(
+  secrets:      RuntimeSecrets,
+  instanceName: string,
+  baseDomain:   string,
+): string {
+  const nameSlug    = instanceName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const studioHost  = `studio.${nameSlug}.${baseDomain}`;
+  return `_format_version: "1.1"
+
+services:
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1-all
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+
+  - name: rest-v1
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1-all
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
+  - name: realtime-v1
+    url: http://realtime:4000/socket/
+    routes:
+      - name: realtime-v1-all
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+
+  - name: storage-v1
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1-all
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors
+
+  ## Protected Dashboard — Studio UI, restricted to studio.{name}.{domain} only.
+  ## Requests to db.{name}.{domain}/ skip this route and return Kong's
+  ## "no Route matched" JSON response — keeping the db subdomain pure API.
+  - name: dashboard
+    url: http://studio:3000/
+    routes:
+      - name: dashboard-all
+        strip_path: true
+        hosts:
+          - ${studioHost}
+        paths:
+          - /
+    plugins:
+      - name: basic-auth
+        config:
+          hide_credentials: true
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: ${secrets.anonKey}
+
+  - username: service_role
+    keyauth_credentials:
+      - key: ${secrets.serviceRoleKey}
+
+  - username: supabase
+    basicauth_credentials:
+      - username: supabase
+        password: ${secrets.dashboardPassword}
+`;
 }
 
 // ── createRuntimeInstance ─────────────────────────────────────────────────────
@@ -421,7 +569,9 @@ export async function createRuntimeInstance(
     );
   }
 
-  // Copy docker template
+  // ── [1] Copy SQL init files from supabase-core ────────────────────────────
+  // We copy the DB volumes directory from supabase-core for SQL init scripts,
+  // then replace docker-compose.yml and kong.yml with our lean versions.
   await fs.mkdir(runtimePath, { recursive: true });
   onLine(`✓ Created  supabase-instances/${slug}/`);
 
@@ -432,26 +582,53 @@ export async function createRuntimeInstance(
 
   const { code: cpCode, out: cpOut } = await spawnRun(copyCmd, copyArgs as string[]);
   if (cpCode !== 0) throw new Error(`Failed to copy docker template: ${cpOut}`);
-  onLine(`✓ Docker template copied`);
+  onLine(`✓ Docker template copied  (SQL init files from supabase-core)`);
 
-  // Rewrite compose file
-  const composeFile = join(dockerPath, "docker-compose.yml");
-  const composeSrc  = await fs.readFile(composeFile, "utf-8");
-  await fs.writeFile(composeFile, rewriteContainerNames(composeSrc, slug), "utf-8");
-  onLine(`✓ Container names rewritten  (prefix: ${slug}-)`);
-
-  // Ports + secrets
+  // ── [2] Ports + secrets ────────────────────────────────────────────────────
+  // Passwords follow the pattern {name}{MMDDYY} for easy recognition, e.g. "ramp052626".
+  // A random suffix is appended so two instances created on the same day differ.
   const ports: RuntimePorts = await allocateAvailablePorts(timestamp, onLine);
+  const d = new Date(timestamp);
+  const dateSuffix = String(d.getMonth() + 1).padStart(2, "0")
+    + String(d.getDate()).padStart(2, "0")
+    + String(d.getFullYear()).slice(-2);
+  const nameSlug = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const basePassword = `${nameSlug}${dateSuffix}`;
   const secrets: RuntimeSecrets = {
-    postgresPassword:  generateRandomString(32),
+    postgresPassword:  basePassword + generateRandomString(6),
     jwtSecret:         generateRandomString(64),
     anonKey:           generateJWT("anon",         timestamp),
     serviceRoleKey:    generateJWT("service_role", timestamp),
-    dashboardPassword: generateRandomString(16),
+    dashboardPassword: basePassword + generateRandomString(4),
   };
-  onLine(`✓ Ports allocated  Kong:${ports.kong}  Studio:${ports.studio}  PG:${ports.postgres}`);
+  onLine(`✓ Ports allocated  Kong:${ports.kong}  PG:${ports.postgres}`);
 
-  // Write .env
+  // ── [3] Write lean docker-compose.yml (replaces supabase-core template) ───
+  const composeTemplatePath = join(INSTANCE_TEMPLATE, "docker-compose.yml");
+  let composeSrc: string;
+  try {
+    composeSrc = await fs.readFile(composeTemplatePath, "utf-8");
+  } catch {
+    throw new Error(
+      `Lean instance template not found at ${composeTemplatePath}\n` +
+      `  This is a bug — the template should ship with the codebase.`
+    );
+  }
+  const composeContent = rewriteContainerNames(composeSrc, slug);
+  const composeFile    = join(dockerPath, "docker-compose.yml");
+  await fs.writeFile(composeFile, composeContent, "utf-8");
+  onLine(`✓ Lean docker-compose.yml written  (Kong 2.8.1, 9 services, prefix: ${slug}-)`);
+
+  // ── [4] Write generated kong.yml (secrets baked in, dashboard route) ──────
+  // Dashboard route is host-restricted to studio.{name}.{domain} so that
+  // db.{name}.{domain}/ returns Kong's "no Route matched" JSON (pure API).
+  const kongYml  = generateKongYml(secrets, name, DOMAIN);
+  const kongDir  = join(dockerPath, "volumes", "api");
+  await fs.mkdir(kongDir, { recursive: true });
+  await fs.writeFile(join(kongDir, "kong.yml"), kongYml, "utf-8");
+  onLine(`✓ Kong 2.8.1 config written  (studio.${name}.${DOMAIN} → dashboard, db.* → API only)`);
+
+  // ── [5] Write .env ────────────────────────────────────────────────────────
   const envVars: Record<string, string> = {
     POSTGRES_PASSWORD:              secrets.postgresPassword,
     JWT_SECRET:                     secrets.jwtSecret,
@@ -467,14 +644,7 @@ export async function createRuntimeInstance(
     POSTGRES_PORT:                  String(ports.postgres),
     KONG_HTTP_PORT:                 String(ports.kong),
     KONG_HTTPS_PORT:                String(ports.kongSSL),
-    POOLER_PROXY_PORT_TRANSACTION:  String(ports.pooler),
-    ANALYTICS_PORT:                 String(ports.analytics),
-    STUDIO_PORT:                    String(ports.studio),
 
-    POOLER_DEFAULT_POOL_SIZE:       "20",
-    POOLER_MAX_CLIENT_CONN:         "100",
-    POOLER_TENANT_ID:               `instance-${timestamp}`,
-    POOLER_DB_POOL_SIZE:            "5",
     PGRST_DB_SCHEMAS:               "public,storage,graphql_public",
     SITE_URL:                       `http://localhost:${ports.kong}`,
     ADDITIONAL_REDIRECT_URLS:       "",
@@ -496,17 +666,10 @@ export async function createRuntimeInstance(
     ENABLE_ANONYMOUS_USERS:         "false",
     ENABLE_PHONE_SIGNUP:            "true",
     ENABLE_PHONE_AUTOCONFIRM:       "true",
-    STUDIO_DEFAULT_ORGANIZATION:    "Default Organization",
-    STUDIO_DEFAULT_PROJECT:         "Default Project",
+    STUDIO_DEFAULT_ORGANIZATION:    name,
+    STUDIO_DEFAULT_PROJECT:         name,
     SUPABASE_PUBLIC_URL:            `http://localhost:${ports.kong}`,
     IMGPROXY_ENABLE_WEBP_DETECTION: "true",
-    OPENAI_API_KEY:                 "",
-    FUNCTIONS_VERIFY_JWT:           "false",
-    LOGFLARE_PUBLIC_ACCESS_TOKEN:   generateRandomString(64),
-    LOGFLARE_PRIVATE_ACCESS_TOKEN:  generateRandomString(64),
-    DOCKER_SOCKET_LOCATION:         "/var/run/docker.sock",
-    GOOGLE_PROJECT_ID:              "GOOGLE_PROJECT_ID",
-    GOOGLE_PROJECT_NUMBER:          "GOOGLE_PROJECT_NUMBER",
   };
 
   await fs.writeFile(
@@ -516,7 +679,8 @@ export async function createRuntimeInstance(
   );
   onLine(`✓ .env written  (${Object.keys(envVars).length} variables)`);
 
-  // Build + register
+  // ── [6] Build + register ──────────────────────────────────────────────────
+  // studioUrl points to Kong — Studio is served via Kong's dashboard route.
   const instance: RuntimeInstance = {
     id,
     name,
@@ -527,7 +691,7 @@ export async function createRuntimeInstance(
     dockerPath,
     ports,
     secrets,
-    studioUrl:     `http://127.0.0.1:${ports.studio}`,
+    studioUrl:     `http://127.0.0.1:${ports.kong}/`,
     healthState:   "unknown",
     snapshotState: "none",
   };

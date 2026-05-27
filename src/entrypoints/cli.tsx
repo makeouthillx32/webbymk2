@@ -75,8 +75,9 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> zones list                     list zones\n' +
     '    unaxis <slug> dev <zone>                     start/stop dev container\n' +
     '    unaxis <slug> restart <zone>                 hard restart dev container\n' +
-    '    unaxis <slug> logs proxy --tail 120          proxy logs\n' +
-    '    unaxis <slug> logs db --tail 120             db logs\n' +
+    '    unaxis <slug> logs proxy --tail 120          proxy logs (unt_proxy on P0W3R)\n' +
+    '    unaxis <slug> logs db --tail 120             db logs (unt_db on P0W3R)\n' +
+    '    unaxis <slug> logs npm --tail 120            NPM logs (nginx-proxy-manager on L0VE via SSH)\n' +
     '    unaxis <slug> zone <zone> status             one zone status\n' +
     '    unaxis <slug> zone <zone> logs --tail 120    zone logs\n' +
     '    unaxis <slug> zone <zone> dev start|stop     zone dev container\n' +
@@ -87,10 +88,21 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> watch snapshot                 record snapshot\n' +
     '    unaxis <slug> watch end                      end watch session\n' +
     '    unaxis <slug> db backup --reason <text>      DB backup\n' +
+    '    unaxis <slug> db instance list               list runtime instances\n' +
+    '    unaxis <slug> db instance <name> status      instance container health\n' +
+    '    unaxis <slug> db instance <name> logs        instance logs (db, kong, studio)\n' +
+    '    unaxis <slug> db instance <name> restart     restart instance\n' +
+    '    unaxis <slug> db instance <name> stop        stop instance\n' +
+    '    unaxis <slug> db instance <name> start       start instance\n' +
+    '    unaxis <slug> db instance <name> remove      stop, prune, deregister (--confirm)\n' +
+    '    unaxis <slug> npm list [--search <domain>]   list all NPM proxy hosts\n' +
+    '    unaxis <slug> npm search <domain>            search proxy hosts by domain substring\n' +
     '    unaxis <slug> preflight edit --zone <zone>   pre-edit validation\n' +
     '    unaxis <slug> env list                       list environments\n' +
     '    unaxis <slug> env ping [<name>]              ping environment agents\n' +
-    '    unaxis <slug> env containers [<name>]        list containers\n' +
+    '    unaxis <slug> env containers [<name>]        list containers (unt_* only; --all for everything)\n' +
+    '    unaxis <slug> env stacks [<name>]            list Docker Compose stacks (grouped by project)\n' +
+    '    unaxis <slug> env logs <env> <container>     container logs from any environment\n' +
     '    unaxis <slug> env update <name>              update agent\n' +
     '\n' +
     '  UNAXIS global commands:\n' +

@@ -91,13 +91,33 @@ export const STUDIO_MCP_URL =
 /**
  * Build a Studio project URL for any instance's studio port.
  * Uses localhost so the URL works on Windows regardless of IPv4/IPv6 loopback binding.
+ * @deprecated Use instanceStudioPageUrl(instance) which is aware of lean vs old instances.
  */
 export function instanceStudioUrl(studioPort: number | string): string {
   return `http://localhost:${studioPort}/project/default`;
 }
 
+/** @deprecated Use instanceStudioMcpPageUrl(instance) */
 export function instanceStudioMcpUrl(studioPort: number | string): string {
   return `${instanceStudioUrl(studioPort)}?showConnect=true&connectTab=mcp`;
+}
+
+/**
+ * Get the local Studio page URL for an instance.
+ *
+ * Lean instances (studioUrl points to Kong): constructs URL via Kong's dashboard route.
+ * Old instances (studioUrl points to Studio directly): constructs URL via Studio port.
+ *
+ * Uses the `studioUrl` field as the canonical source of truth so both instance
+ * generations work correctly without hardcoding port numbers.
+ */
+export function instanceStudioPageUrl(instance: { studioUrl: string }): string {
+  const base = instance.studioUrl.replace(/\/$/, "");
+  return `${base}/project/default`;
+}
+
+export function instanceStudioMcpPageUrl(instance: { studioUrl: string }): string {
+  return `${instanceStudioPageUrl(instance)}?showConnect=true&connectTab=mcp`;
 }
 
 /** Host-mapped Postgres port. Default 5432. */
@@ -106,11 +126,12 @@ export const POSTGRES_PORT = envValue(["POSTGRES_PORT"], "5432");
 /** Postgres password from env (may be empty if the TUI process doesn't load docker .env). */
 export const POSTGRES_PASSWORD = envValue(["POSTGRES_PASSWORD"]);
 
-/** Direct Postgres connection string for the core unt_db container. */
-export function postgresConnStr(password?: string): string {
+/** Direct Postgres connection string. Pass port for runtime instances; defaults to core port. */
+export function postgresConnStr(password?: string, port?: number): string {
   const pw = password ?? POSTGRES_PASSWORD;
   const masked = pw ? pw : "***";
-  return `postgresql://postgres:${masked}@127.0.0.1:${POSTGRES_PORT}/postgres`;
+  const p = port ?? POSTGRES_PORT;
+  return `postgresql://postgres:${masked}@127.0.0.1:${p}/postgres`;
 }
 
 // ── Rich copy text builders ───────────────────────────────────────────────────
@@ -486,8 +507,10 @@ export async function listStorageBuckets(): Promise<BucketInfo[]> {
 // Progress is streamed via the OnLine callback (OperationOverlay compatible).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { promises as fsAsync }             from "fs";
+import { join as pathJoin }               from "path";
 import type { RuntimeInstance, HealthState } from "./zone/supabase-factory.ts";
-import { updateInstanceStatus }              from "./zone/supabase-factory.ts";
+import { updateInstanceStatus, removeFromRegistry, loadRegistry, saveRegistry } from "./zone/supabase-factory.ts";
 
 type OnLine = (line: string) => void;
 
@@ -625,6 +648,47 @@ export async function restartCoreStack(
   onLine(`↺ Restarting  ${instance.name}`);
   await stopCoreStack(instance, onLine);
   return startCoreStack(instance, onLine);
+}
+
+// ── removeCoreStack ───────────────────────────────────────────────────────────
+
+/**
+ * Fully remove a runtime instance:
+ *   1. docker compose stop  (containers stopped, volumes preserved)
+ *   2. docker compose down --remove-orphans  (containers + networks removed)
+ *   3. removeFromRegistry  (deregister from instances.json)
+ *
+ * Volumes are intentionally kept so data can be manually recovered if needed.
+ */
+export async function removeCoreStack(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  onLine(`Removing ${instance.name} (${instance.slug})…`);
+
+  onLine(`  [1/4] Removing NPM proxy hosts…`);
+  await removeInstanceNpmHosts(instance, onLine);
+
+  onLine(`  [2/4] Stopping containers…`);
+  await stopCoreStack(instance, onLine);
+
+  onLine(`  [3/4] Removing containers and networks…`);
+  const downCode = await composeStream(
+    ["down", "--remove-orphans"],
+    instance.dockerPath,
+    onLine,
+    60_000,
+  );
+  if (downCode !== 0) {
+    onLine(`  ⚠ compose down exited ${downCode} — continuing`);
+  } else {
+    onLine(`  ✓ containers and networks removed`);
+  }
+
+  onLine(`  [4/4] Deregistering from instances.json…`);
+  await removeFromRegistry(instance.id);
+  onLine(`✓ ${instance.name} removed`);
+  return true;
 }
 
 // ── healCoreStack ─────────────────────────────────────────────────────────────
@@ -772,7 +836,11 @@ export async function verifyCoreStack(
 
   log(`  → ${running}/${total} running  —  ${overall}`);
 
-  await updateInstanceStatus(instance.id, { healthState: overall });
+  // Sync both healthState AND status — status is set by lifecycle ops but can
+  // drift if Docker was touched outside the TUI (e.g., machine reboot, manual
+  // compose commands). Ground-truth here is what Docker ps actually says.
+  const liveStatus: RuntimeInstance["status"] = running > 0 ? "running" : "stopped";
+  await updateInstanceStatus(instance.id, { healthState: overall, status: liveStatus });
 
   return { slug: instance.slug, overall, containers, runningCount: running, totalCount: total };
 }
@@ -791,7 +859,10 @@ export async function deleteRuntimeInstance(
 ): Promise<boolean> {
   onLine(`🗑 Deleting  ${instance.name}  (${instance.slug})`);
 
-  // Step 1 — tear down containers + volumes
+  // Step 1 — remove NPM proxy hosts (before teardown so NPM is still reachable)
+  await removeInstanceNpmHosts(instance, onLine);
+
+  // Step 2 — tear down containers + volumes
   onLine(`  ↓ docker compose down --volumes --remove-orphans`);
   const code = await composeStream(
     ["down", "--volumes", "--remove-orphans"],
@@ -803,7 +874,7 @@ export async function deleteRuntimeInstance(
     onLine(`  ⚠ compose down returned ${code} — continuing with filesystem cleanup`);
   }
 
-  // Step 2 — remove instance directory
+  // Step 3 — remove instance directory
   try {
     const { rm } = await import("fs/promises");
     await rm(instance.runtimePath, { recursive: true, force: true });
@@ -812,9 +883,174 @@ export async function deleteRuntimeInstance(
     onLine(`  ⚠ Could not remove directory: ${e instanceof Error ? e.message : e}`);
   }
 
-  // Step 3 — deregister
-  const { removeFromRegistry } = await import("./zone/supabase-factory.ts");
+  // Step 4 — deregister
   await removeFromRegistry(instance.id);
   onLine(`✓ Instance deleted and removed from registry`);
+  return true;
+}
+
+// ── updateInstancePassword ────────────────────────────────────────────────────
+
+/**
+ * Change the Postgres superuser password for a runtime instance.
+ *
+ * Steps:
+ *   1. Patch POSTGRES_PASSWORD in the instance's .env file
+ *   2. Run ALTER USER postgres PASSWORD '...' inside the DB container (live apply)
+ *   3. Update the registry secrets so the TUI shows the new value
+ *
+ * The caller should prompt the user to restart after this if a full restart
+ * is needed (e.g. if the pooler or other services also cache the password).
+ */
+export async function updateInstancePassword(
+  instance:    RuntimeInstance,
+  newPassword: string,
+  onLine:      OnLine,
+): Promise<boolean> {
+  const envPath = pathJoin(instance.dockerPath, ".env");
+
+  // 1. Patch .env
+  try {
+    let envContent = await fsAsync.readFile(envPath, "utf-8");
+    envContent = envContent.replace(
+      /^POSTGRES_PASSWORD=.*/m,
+      `POSTGRES_PASSWORD=${newPassword}`,
+    );
+    await fsAsync.writeFile(envPath, envContent, "utf-8");
+    onLine(`✓ .env updated`);
+  } catch (e) {
+    onLine(`✗ Could not write .env: ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+
+  // 2. Apply live via ALTER USER (only works if the container is running)
+  const containerPrefix = instance.containerPrefix ?? `${instance.slug}-`;
+  const dbContainer     = `${containerPrefix}db`;
+  const { code } = await dockerRun([
+    "exec", dbContainer,
+    "psql", "-U", "postgres", "-c",
+    `ALTER USER postgres PASSWORD '${newPassword.replace(/'/g, "''")}'`,
+  ]);
+  if (code === 0) {
+    onLine(`✓ Postgres password updated live`);
+  } else {
+    onLine(`⚠ ALTER USER failed (container may be stopped) — password is in .env for next restart`);
+  }
+
+  // 3. Update registry
+  const list = await loadRegistry();
+  const idx  = list.findIndex((i) => i.id === instance.id);
+  if (idx >= 0) {
+    list[idx] = {
+      ...list[idx],
+      secrets: { ...list[idx].secrets!, postgresPassword: newPassword },
+    };
+    await saveRegistry(list);
+    onLine(`✓ Registry updated`);
+  }
+
+  return true;
+}
+
+// ── removeInstanceNpmHosts ────────────────────────────────────────────────────
+
+/**
+ * Remove the NPM proxy host records for a runtime instance.
+ * Deletes db.{slug}.{domain} and studio.{slug}.{domain} from NPM.
+ * The SSL certificate is left in place (shared wildcard cert — don't waste LE quota).
+ * Non-fatal: logs ⚠ on any failure so the delete flow always completes.
+ */
+export async function removeInstanceNpmHosts(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<void> {
+  const { npmGetToken, npmFindHost, npmDeleteHost, npmPing } = await import("./npm-api.ts");
+  const { DOMAIN: domain } = await import("../config/stack.ts");
+
+  const slug   = instance.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const dbDomain     = `db.${slug}.${domain}`;
+  const studioDomain = `studio.${slug}.${domain}`;
+
+  onLine(`  Removing NPM hosts: ${dbDomain}  ${studioDomain}`);
+
+  const reachable = await npmPing();
+  if (!reachable) {
+    onLine(`  ⚠ NPM unreachable — skipping NPM host removal`);
+    return;
+  }
+
+  let token: string;
+  try {
+    token = await npmGetToken();
+  } catch (e) {
+    onLine(`  ⚠ NPM auth failed — skipping NPM host removal: ${String(e)}`);
+    return;
+  }
+
+  for (const dom of [dbDomain, studioDomain]) {
+    try {
+      const host = await npmFindHost(dom, token);
+      if (!host) {
+        onLine(`  · ${dom}  not found in NPM (already gone)`);
+        continue;
+      }
+      await npmDeleteHost(host.id, token);
+      onLine(`  ✓ Removed NPM host #${host.id}  ${dom}`);
+    } catch (e) {
+      onLine(`  ⚠ Could not remove NPM host for ${dom}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+}
+
+// ── reregisterInstanceNpm ─────────────────────────────────────────────────────
+
+/**
+ * Re-run NPM host registration for an existing instance.
+ * Idempotent — updates stale entries or creates missing ones.
+ * Useful when the instance was provisioned before NPM registration was wired,
+ * or when a Studio/Kong host is missing/misconfigured.
+ */
+export async function reregisterInstanceNpm(
+  instance: RuntimeInstance,
+  onLine:   OnLine,
+): Promise<boolean> {
+  const { npmAddDatabaseHosts } = await import("./npm-api.ts");
+  const { DOMAIN: domain, STACK_IP_SAFE: stackIp } = await import("../config/stack.ts");
+
+  if (!stackIp) {
+    onLine(`✗ STACK_IP not configured — cannot register NPM hosts`);
+    return false;
+  }
+
+  const slug = instance.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+
+  onLine(`NPM re-registration for "${slug}"`);
+  onLine(`  Kong port  : ${instance.ports.kong}  (both db.* and studio.* → Kong)`);
+  onLine(`  Stack IP   : ${stackIp}`);
+  onLine(`  Domain     : ${slug}.${domain}`);
+
+  const result = await npmAddDatabaseHosts(
+    slug,
+    domain,
+    stackIp,
+    instance.ports.kong,
+    onLine,
+  );
+
+  if (result.dbHostId !== null || result.studioHostId !== null) {
+    await updateInstanceStatus(instance.id, {
+      npmApiUrl:    `https://db.${slug}.${domain}`,
+      npmStudioUrl: `https://studio.${slug}.${domain}`,
+    });
+    onLine(`✓ Registry URLs updated`);
+  }
+
+  if (result.errors.length > 0) {
+    onLine(`⚠ ${result.errors.length} error(s):`);
+    result.errors.forEach((e) => onLine(`  ${e}`));
+    return false;
+  }
+
+  onLine(`✓ NPM registration complete`);
   return true;
 }

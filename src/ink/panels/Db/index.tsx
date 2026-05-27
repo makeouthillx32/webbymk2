@@ -1,47 +1,32 @@
 // src/ink/panels/Db/index.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Database panel — Core Supabase mothership + Runtime Instances (branches/labs).
+// Database panel — three internal tabs:
+//
+//   [1] Core Supabase   — control-plane DB, metrics, actions, keys
+//   [2] Instances       — runtime branches / labs / side-projects
+//   [3] Snapshots       — all captured snapshots across core + instances
 //
 // Philosophy:
-//   Core Supabase is the primary control-plane database that the entire
-//   platform runs on — website, zones, TUI, MCP, storage, auth.  It is the
-//   source of truth and is treated as sacred.
-//
-//   Runtime Instances are branches: clones, blank runtimes, or seeded envs
-//   spun off for staging, testing, experiments, or side projects.  These are
-//   where you experiment — not Core.
-//
-// Layout (Core tab):
-//   Identity block     — name, role, status badges
-//   Quick-access URLs  — Studio · API · Postgres on one compact row
-//   Metrics row        — CPU + memory sparklines
-//   Action groups      — Operate · Protect · Connect · Branch (visual sections)
-//   Core Services      — compact status list (supporting detail, not main event)
-//   Keys               — anon + svc_role with copy shortcuts
-//
-// Layout (Runtime Instances tab):
-//   Instance list      — name · mode · status columns
-//   Detail panel       — URLs, mode, ports, last snapshot for selected instance
-//   Action bar         — per-instance operations
-//
-// ┌─ [Tab] section switch ─────────────────────────────────────────────────────┐
-// │  Core Supabase                     Runtime Instances                       │
-// └────────────────────────────────────────────────────────────────────────────┘
+//   Core is sacred — the live platform. Instances are branches.
+//   Snapshots are the safety net that lets you experiment freely.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "../../runtimeInk.js";
 import { openBrowser } from "@/utils/browser.ts";
 import {
   KONG_URL, STUDIO_PROJECT_URL, ANON_KEY, SERVICE_KEY,
-  postgresConnStr, instanceStudioUrl, instanceStudioMcpUrl,
-  buildConnectionSheet, buildMcpConfig,
+  postgresConnStr, instanceStudioPageUrl, instanceStudioMcpPageUrl,
+  buildConnectionSheet, buildMcpConfig, updateInstancePassword, verifyCoreStack,
+  reregisterInstanceNpm,
 } from "../../db-api.ts";
 import { loadRegistry } from "../../zone/supabase-factory.ts";
 import type { RuntimeInstance, HealthState } from "../../zone/supabase-factory.ts";
-import { PROJECT_DIR } from "../../../config/stack.ts";
+import { PROJECT_DIR, DOMAIN } from "../../../config/stack.ts";
+import { listSnapshots } from "../../zone/snapshot.ts";
 import type { SnapshotBundle } from "../../zone/snapshot.ts";
 import { KeyHints } from "../../components/KeyHint.tsx";
+import { TextInput } from "../../components/TextInput.tsx";
 import { Tabs } from "../../components/Tabs.tsx";
 import { Divider } from "../../components/Divider.tsx";
 import { SelectMenu, type SelectOption } from "../../components/SelectMenu.tsx";
@@ -52,52 +37,36 @@ import { MetricCard } from "../../components/design-system/index.ts";
 import type { HostSnapshot } from "../../hooks/useHostMonitor.ts";
 
 // ── Core service manifest ──────────────────────────────────────────────────────
-// Ordered: primary services first, infrastructure support last.
 
 const CORE_SERVICES = [
-  { label: "Postgres", container: "unt_db", desc: "primary database (pg 15)" },
-  { label: "Kong", container: "unt_kong", desc: "API gateway  :8001" },
-  { label: "Auth", container: "unt_auth", desc: "GoTrue authentication" },
-  { label: "Storage", container: "unt_storage", desc: "object / file storage" },
-  { label: "Realtime", container: "unt_realtime", desc: "WebSocket broadcast" },
-  { label: "Studio", container: "unt_studio", desc: "dashboard  :3002" },
-  { label: "PostgREST", container: "unt_rest", desc: "auto REST API" },
-  { label: "Meta", container: "unt_meta", desc: "postgres-meta" },
-  { label: "Imgproxy", container: "unt_imgproxy", desc: "image processing" },
+  { label: "Postgres",  container: "unt_db",       desc: "primary database (pg 15)" },
+  { label: "Kong",      container: "unt_kong",      desc: "API gateway  :8001" },
+  { label: "Auth",      container: "unt_auth",      desc: "GoTrue authentication" },
+  { label: "Storage",   container: "unt_storage",   desc: "object / file storage" },
+  { label: "Realtime",  container: "unt_realtime",  desc: "WebSocket broadcast" },
+  { label: "Studio",    container: "unt_studio",    desc: "dashboard  :3002" },
+  { label: "PostgREST", container: "unt_rest",      desc: "auto REST API" },
+  { label: "Meta",      container: "unt_meta",      desc: "postgres-meta" },
+  { label: "Imgproxy",  container: "unt_imgproxy",  desc: "image processing" },
 ] as const;
 
 const CORE_OPTIONS: SelectOption[] = CORE_SERVICES.map((s) => ({
-  id: s.container,
-  label: s.label,
-  desc: s.desc,
+  id: s.container, label: s.label, desc: s.desc,
 }));
 
-// ── Virtual RuntimeInstance for core (not in instances.json) ──────────────────
+// ── Virtual RuntimeInstance for core ──────────────────────────────────────────
 
 const CORE_INSTANCE: RuntimeInstance = {
   id:              "core",
   name:            "Core Supabase",
-  slug:            "unenter",   // matches Docker compose project name: unenter
-  containerPrefix: "unt_",      // containers: unt_db, unt_storage, unt_kong, …
+  slug:            "unenter",
+  containerPrefix: "unt_",
   status:          "active",
   createdAt:       "",
   runtimePath:     PROJECT_DIR,
   dockerPath:      PROJECT_DIR,
-  ports: {
-    kong: 8001,
-    kongSSL: 8443,
-    postgres: 5432,
-    pooler: 0,
-    analytics: 0,
-    studio: 3002,
-  },
-  secrets: {
-    postgresPassword: "",
-    jwtSecret: "",
-    anonKey: ANON_KEY,
-    serviceRoleKey: SERVICE_KEY,
-    dashboardPassword: "",
-  },
+  ports: { kong: 8001, kongSSL: 8443, postgres: 5432, pooler: 0, analytics: 0, studio: 3002 },
+  secrets: { postgresPassword: "", jwtSecret: "", anonKey: ANON_KEY, serviceRoleKey: SERVICE_KEY, dashboardPassword: "" },
   studioUrl:     STUDIO_PROJECT_URL,
   healthState:   "unknown",
   snapshotState: "none",
@@ -106,25 +75,23 @@ const CORE_INSTANCE: RuntimeInstance = {
 // ── Prop types ────────────────────────────────────────────────────────────────
 
 export interface DbPanelProps {
-  onLogs: (container: string) => void;
-  onBackup: () => void;
-  onCopy: (text: string) => void;
-  onStart: () => void;
-  onStop: () => void;
-  onRestart: () => void;
-  onHeal: () => void;
-  onVerify: () => void;
-  onNewInstance: () => void;
-  onRestore: (bundle: SnapshotBundle, instance: RuntimeInstance) => void;
-  onInstanceAction: (
-    action: "restart" | "stop" | "delete" | "snapshot" | "verify",
-    instance: RuntimeInstance,
-  ) => void;
-  onGoBack: () => void;
-  onSubCrumbs: (crumbs: string[]) => void;
+  onLogs:           (container: string) => void;
+  onBackup:         () => void;
+  onCopy:           (text: string) => void;
+  onStart:          () => void;
+  onStop:           () => void;
+  onRestart:        () => void;
+  onHeal:           () => void;
+  onVerify:         () => void;
+  onNewInstance:    () => void;
+  onRestore:            (bundle: SnapshotBundle, instance: RuntimeInstance) => void;
+  onCloneFromSnapshot:  (bundle: SnapshotBundle) => void;
+  onInstanceAction:     (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", instance: RuntimeInstance) => void;
+  onGoBack:         () => void;
+  onSubCrumbs:      (crumbs: string[]) => void;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function truncKey(key: string, n = 42): string {
   if (!key) return "(not set)";
@@ -133,30 +100,30 @@ function truncKey(key: string, n = 42): string {
 
 function healthColor(h: HealthState): string {
   switch (h) {
-    case "healthy": return "green";
+    case "healthy":  return "green";
     case "degraded": return "yellow";
-    case "down": return "red";
-    default: return "gray";
+    case "down":     return "red";
+    default:         return "gray";
   }
 }
 
 function statusColor(s: RuntimeInstance["status"]): string {
   switch (s) {
-    case "active": return "green";
+    case "active":   return "green";
     case "creating": return "yellow";
-    case "stopped": return "gray";
-    case "paused": return "cyan";
-    case "error": return "red";
+    case "stopped":  return "gray";
+    case "paused":   return "cyan";
+    case "error":    return "red";
   }
 }
 
 function statusDot(s: RuntimeInstance["status"]): string {
   switch (s) {
-    case "active": return "●";
+    case "active":   return "●";
     case "creating": return "◌";
-    case "stopped": return "○";
-    case "paused": return "◎";
-    case "error": return "✗";
+    case "stopped":  return "○";
+    case "paused":   return "◎";
+    case "error":    return "✗";
   }
 }
 
@@ -168,8 +135,12 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
+function fmtDate(iso: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 // ── ActionGroup ────────────────────────────────────────────────────────────────
-// Visual label + row of styled key hints.  Pure display — no interaction.
 
 interface ActionGroupProps {
   label: string;
@@ -194,48 +165,62 @@ function ActionGroup({ label, hints }: ActionGroupProps) {
   );
 }
 
-// ── InstanceDetail ─────────────────────────────────────────────────────────────
-// Compact per-instance connection + metadata pane shown below the list.
+// ── InstanceDetail (inline summary in list view) ───────────────────────────────
 
 interface InstanceDetailProps {
-  inst: RuntimeInstance;
+  inst:    RuntimeInstance;
   didCopy: boolean;
 }
 
 function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
-  const studioUrl = instanceStudioUrl(inst.ports.studio);
-  const apiUrl = `http://localhost:${inst.ports.kong}`;
-  const pgConn = postgresConnStr(inst.secrets.postgresPassword);
+  const localStudio = instanceStudioPageUrl(inst);
+  const localApi    = `http://localhost:${inst.ports.kong}`;
+  const pgConn      = postgresConnStr(inst.secrets.postgresPassword, inst.ports.postgres);
+  // Public URLs — stored at provision time, or derived from name (short user slug) + domain.
+  // inst.slug is the compose project name (e.g. "dcg-1779838801168"); inst.name is "dcg".
+  const shortSlug   = inst.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const pubStudio   = inst.npmStudioUrl ?? `https://studio.${shortSlug}.${DOMAIN}`;
+  const pubApi      = inst.npmApiUrl    ?? `https://db.${shortSlug}.${DOMAIN}`;
 
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
 
-      {/* Instance identity row */}
+      {/* Identity row */}
       <Box gap={2} marginBottom={0}>
         <Text bold>{inst.name}</Text>
-        <Text color={statusColor(inst.status)}>
-          {statusDot(inst.status)} {inst.status}
-        </Text>
-        <Text color={healthColor(inst.healthState)}>{inst.healthState}</Text>
-        {inst.lastSnapshot && (
-          <Text dimColor>snap {new Date(inst.lastSnapshot).toLocaleDateString()}</Text>
-        )}
+        <Text color={statusColor(inst.status)}>{statusDot(inst.status)} {inst.status}</Text>
+        <Text color={healthColor(inst.healthState)} dimColor>{inst.healthState}</Text>
+        {inst.lastSnapshot && <Text dimColor>· snap {fmtDate(inst.lastSnapshot)}</Text>}
       </Box>
 
-      {/* Connection URLs */}
+      {/* Local connections */}
       <Box flexDirection="column" marginTop={1}>
+        <Text dimColor bold>Local</Text>
         <Box gap={1}>
-          <Text dimColor>{"Studio  "}</Text>
-          <Text color="green">{studioUrl}</Text>
+          <Text dimColor>{"  Studio  "}</Text>
+          <Text color="green">{localStudio}</Text>
           <Text dimColor>  [u]</Text>
         </Box>
         <Box gap={1}>
-          <Text dimColor>{"API     "}</Text>
-          <Text>{apiUrl}</Text>
+          <Text dimColor>{"  API     "}</Text>
+          <Text>{localApi}</Text>
         </Box>
         <Box gap={1}>
-          <Text dimColor>{"Postgres"}</Text>
+          <Text dimColor>{"  PG      "}</Text>
           <Text dimColor>{pgConn}</Text>
+        </Box>
+      </Box>
+
+      {/* Public connections (NPM-proxied) */}
+      <Box flexDirection="column" marginTop={1}>
+        <Text dimColor bold>Public  <Text dimColor>(via NPM)</Text></Text>
+        <Box gap={1}>
+          <Text dimColor>{"  Studio  "}</Text>
+          <Text color="cyan">{pubStudio}</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"  API     "}</Text>
+          <Text color="cyan">{pubApi}</Text>
         </Box>
       </Box>
 
@@ -258,6 +243,7 @@ function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
           : <>
             <Text dimColor>[c] copy connection sheet</Text>
             <Text dimColor>[m] copy MCP config</Text>
+            <Text dimColor>[↵] full detail</Text>
           </>
         }
       </Box>
@@ -266,32 +252,316 @@ function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
   );
 }
 
-// ── Section 1 — Core Supabase ──────────────────────────────────────────────────
+// ── InstanceDetailScreen (full-screen on [Enter]) ──────────────────────────────
 
-const CORE_KEY_HINTS = [
-  { k: "↑↓", label: "services" },
-  { k: "↵", label: "logs" },
-  { k: "2", label: "→ instances" },
-];
-
-interface CoreSectionProps {
-  onLogs: (container: string) => void;
-  onStart: () => void;
-  onStop: () => void;
-  onRestart: () => void;
-  onHeal: () => void;
-  onBackup: () => void;
-  onVerify: () => void;
-  onCopy: (text: string) => void;
-  onOpenGallery: () => void;
-  onNewInstance: () => void;
-  hostSnapshot: HostSnapshot;
+interface InstanceDetailScreenProps {
+  inst:             RuntimeInstance;
+  onBack:           () => void;
+  onCopy:           (text: string) => void;
+  onInstanceAction: DbPanelProps["onInstanceAction"];
+  onOpenGallery:    (inst: RuntimeInstance) => void;
 }
+
+function InstanceDetailScreen({
+  inst, onBack, onCopy, onInstanceAction, onOpenGallery,
+}: InstanceDetailScreenProps) {
+  // Live copy of the instance so secrets update after a password change
+  const [liveInst, setLiveInst] = useState<RuntimeInstance>(inst);
+  const [didCopy,  setDidCopy]  = useState(false);
+  // Admin-only screen — show credentials by default; [h] toggles them off
+  const [showSecrets, setShowSecrets] = useState(true);
+  // Edit mode: null = idle, "pg" = editing postgres password, "dash" = dashboard password
+  const [editing, setEditing]  = useState<"pg" | "dash" | null>(null);
+  const [editStatus, setEditStatus] = useState<string | null>(null);
+  const [needsRestart, setNeedsRestart] = useState(false);
+  const updatingRef = useRef(false);
+
+  // Auto-sync status from Docker on mount — registry status can be stale if the
+  // instance was started/stopped outside the TUI (reboot, manual compose, etc.)
+  useEffect(() => {
+    let cancelled = false;
+    void verifyCoreStack(liveInst).then((report) => {
+      if (cancelled) return;
+      const liveStatus: RuntimeInstance["status"] = report.runningCount > 0 ? "running" : "stopped";
+      if (liveStatus !== liveInst.status || report.overall !== liveInst.healthState) {
+        setLiveInst((prev) => ({ ...prev, status: liveStatus, healthState: report.overall }));
+      }
+    }).catch(() => { /* silent — user can press [v] for verbose */ });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inst.id]);
+
+  const localStudio = instanceStudioPageUrl(liveInst);
+  const localApi    = `http://localhost:${liveInst.ports.kong}`;
+  const pgConn      = postgresConnStr(liveInst.secrets.postgresPassword, liveInst.ports.postgres);
+  const shortSlug   = liveInst.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const pubStudio   = liveInst.npmStudioUrl ?? `https://studio.${shortSlug}.${DOMAIN}`;
+  const pubApi      = liveInst.npmApiUrl    ?? `https://db.${shortSlug}.${DOMAIN}`;
+
+  const doCopy = useCallback((text: string) => {
+    onCopy(text);
+    setDidCopy(true);
+    setTimeout(() => setDidCopy(false), 1500);
+  }, [onCopy]);
+
+  useInput((input, key) => {
+    if (editing) return;  // TextInput handles input while editing
+    if (key.escape || input === "q") { onBack(); return; }
+    if (input === "u") { void openBrowser(pubStudio); return; }
+    if (input === "U") { void openBrowser(localStudio); return; }
+    if (input === "h") { setShowSecrets((v) => !v); return; }
+    if (input === "e") { setEditing("pg");   setEditStatus(null); return; }
+    if (input === "E") { setEditing("dash"); setEditStatus(null); return; }
+    if (input === "c") {
+      doCopy(buildConnectionSheet({
+        label:        liveInst.name,
+        kongUrl:      pubApi,
+        studioUrl:    pubStudio,
+        studioMcpUrl: instanceStudioMcpPageUrl(liveInst),
+        anonKey:      liveInst.secrets.anonKey,
+        svcKey:       liveInst.secrets.serviceRoleKey,
+        pgConn,
+      })); return;
+    }
+    if (input === "m") {
+      doCopy(buildMcpConfig({
+        kongUrl: pubApi,
+        svcKey:  liveInst.secrets.serviceRoleKey,
+        pgConn,
+      })); return;
+    }
+    if (input === "r") { onInstanceAction("restart",  liveInst); return; }
+    if (input === "x") { onInstanceAction("stop",     liveInst); return; }
+    if (input === "v") { onInstanceAction("verify",   liveInst); return; }
+    if (input === "s") { onInstanceAction("snapshot", liveInst); return; }
+    if (input === "n") { onInstanceAction("npm",      liveInst); return; }
+    if (input === "d") { onInstanceAction("delete",   liveInst); return; }
+    if (input === "g") { onOpenGallery(liveInst); return; }
+  });
+
+  const handlePasswordSubmit = useCallback(async (newVal: string) => {
+    if (!newVal || updatingRef.current) return;
+    updatingRef.current = true;
+    setEditStatus("Updating…");
+
+    if (editing === "pg") {
+      const lines: string[] = [];
+      const ok = await updateInstancePassword(liveInst, newVal, (l) => lines.push(l));
+      if (ok) {
+        setLiveInst((prev) => ({
+          ...prev,
+          secrets: { ...prev.secrets, postgresPassword: newVal },
+        }));
+        setEditStatus("✓ PG password updated");
+        setNeedsRestart(true);
+      } else {
+        setEditStatus(`✗ ${lines[lines.length - 1] ?? "update failed"}`);
+      }
+    } else if (editing === "dash") {
+      // Dashboard password lives only in .env — update manually, then restart
+      const { promises: fsp } = await import("fs");
+      const { join } = await import("path");
+      const envPath = join(liveInst.dockerPath, ".env");
+      try {
+        let content = await fsp.readFile(envPath, "utf-8");
+        content = content.replace(/^DASHBOARD_PASSWORD=.*/m, `DASHBOARD_PASSWORD=${newVal}`);
+        await fsp.writeFile(envPath, content, "utf-8");
+        setLiveInst((prev) => ({
+          ...prev,
+          secrets: { ...prev.secrets, dashboardPassword: newVal },
+        }));
+        setEditStatus("✓ Dashboard password updated");
+        setNeedsRestart(true);
+      } catch (e) {
+        setEditStatus(`✗ ${e instanceof Error ? e.message : "write failed"}`);
+      }
+    }
+
+    setEditing(null);
+    updatingRef.current = false;
+  }, [editing, liveInst]);
+
+  const LabelCol = 12;
+  const masked   = (s: string) => showSecrets ? s : "•".repeat(Math.min(s.length, 20));
+
+  return (
+    <Box flexDirection="column" paddingX={1}>
+
+      {/* Header */}
+      <Box gap={2} marginBottom={1}>
+        <Text bold color="magenta">⬡  {liveInst.name}</Text>
+        <Text color={statusColor(liveInst.status)}>{statusDot(liveInst.status)} {liveInst.status}</Text>
+        <Text color={healthColor(liveInst.healthState)} dimColor>{liveInst.healthState}</Text>
+        {liveInst.lastSnapshot && <Text dimColor>· snap {fmtDate(liveInst.lastSnapshot)}</Text>}
+        {needsRestart && <Text color="yellow"> ⚠ restart recommended</Text>}
+      </Box>
+
+      {/* ── Public connections ── */}
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold color="cyan">Public  <Text dimColor color="cyan">(nginx proxy manager · {DOMAIN})</Text></Text>
+        <Box gap={1} marginTop={0}>
+          <Text dimColor>{"  Studio".padEnd(LabelCol)}</Text>
+          <Text color="cyan">{pubStudio}</Text>
+          <Text dimColor>  [u]</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"  API".padEnd(LabelCol)}</Text>
+          <Text color="cyan">{pubApi}</Text>
+        </Box>
+      </Box>
+
+      {/* ── Local connections ── */}
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold dimColor>Local  <Text dimColor>(direct · no SSL)</Text></Text>
+        <Box gap={1} marginTop={0}>
+          <Text dimColor>{"  Studio".padEnd(LabelCol)}</Text>
+          <Text color="green">{localStudio}</Text>
+          <Text dimColor>  [U]</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"  API".padEnd(LabelCol)}</Text>
+          <Text>{localApi}</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"  Postgres".padEnd(LabelCol)}</Text>
+          <Text dimColor>{pgConn}</Text>
+        </Box>
+      </Box>
+
+      {/* ── Credentials ── */}
+      <Box flexDirection="column" marginBottom={1}>
+        <Box gap={2}>
+          <Text bold dimColor>Credentials</Text>
+          <Text dimColor>[h] {showSecrets ? "hide" : "show"}</Text>
+        </Box>
+
+        {/* PG */}
+        <Box gap={1} marginTop={0} alignItems="center">
+          <Text dimColor>{"  PG user".padEnd(LabelCol)}</Text>
+          <Text>postgres</Text>
+        </Box>
+        <Box gap={1} alignItems="center">
+          <Text dimColor>{"  PG pass".padEnd(LabelCol)}</Text>
+          {editing === "pg" ? (
+            <TextInput
+              active
+              width={36}
+              placeholder="new password…"
+              onSubmit={(v) => { void handlePasswordSubmit(v); }}
+              onCancel={() => { setEditing(null); setEditStatus(null); }}
+            />
+          ) : (
+            <>
+              <Text color={showSecrets ? "yellow" : "gray"}>{masked(liveInst.secrets.postgresPassword)}</Text>
+              <Text dimColor>  [e] edit</Text>
+            </>
+          )}
+        </Box>
+
+        {/* Dashboard */}
+        <Box gap={1} alignItems="center">
+          <Text dimColor>{"  Studio user".padEnd(LabelCol)}</Text>
+          <Text>supabase</Text>
+        </Box>
+        <Box gap={1} alignItems="center">
+          <Text dimColor>{"  Studio pass".padEnd(LabelCol)}</Text>
+          {editing === "dash" ? (
+            <TextInput
+              active
+              width={36}
+              placeholder="new password…"
+              onSubmit={(v) => { void handlePasswordSubmit(v); }}
+              onCancel={() => { setEditing(null); setEditStatus(null); }}
+            />
+          ) : (
+            <>
+              <Text color={showSecrets ? "yellow" : "gray"}>{masked(liveInst.secrets.dashboardPassword)}</Text>
+              <Text dimColor>  [E] edit</Text>
+            </>
+          )}
+        </Box>
+
+        {/* API Keys */}
+        <Box gap={1} marginTop={1}>
+          <Text dimColor>{"  anon key".padEnd(LabelCol)}</Text>
+          <Text color="yellow" dimColor>{truncKey(liveInst.secrets.anonKey, 52)}</Text>
+        </Box>
+        <Box gap={1}>
+          <Text dimColor>{"  svc key".padEnd(LabelCol)}</Text>
+          <Text color="yellow" dimColor>{truncKey(liveInst.secrets.serviceRoleKey, 52)}</Text>
+        </Box>
+      </Box>
+
+      {/* Status / feedback */}
+      {editStatus && (
+        <Box marginBottom={1}>
+          <Text color={editStatus.startsWith("✓") ? "green" : editStatus.startsWith("✗") ? "red" : "yellow"}>
+            {editStatus}
+          </Text>
+        </Box>
+      )}
+      {didCopy && <Text color="green" dimColor>✓ copied to clipboard</Text>}
+
+      {/* ── Actions ── */}
+      {!editing && (
+        <Box flexDirection="column" marginTop={1} gap={0}>
+          <ActionGroup label="Connect" hints={[
+            { k: "u", label: "open Studio (public)"  },
+            { k: "U", label: "open Studio (local)"   },
+            { k: "c", label: "copy conn. sheet"      },
+            { k: "m", label: "copy MCP config"       },
+          ]} />
+          <ActionGroup label="Creds" hints={[
+            { k: "h", label: showSecrets ? "hide secrets" : "show secrets" },
+            { k: "e", label: "edit PG password"       },
+            { k: "E", label: "edit Studio password"   },
+          ]} />
+          <ActionGroup label="Operate" hints={[
+            { k: "r", label: "restart"       },
+            { k: "x", label: "stop"          },
+            { k: "v", label: "verify"        },
+            { k: "n", label: "re-register NPM" },
+            { k: "d", label: "delete"        },
+          ]} />
+          <ActionGroup label="Protect" hints={[
+            { k: "s", label: "snapshot" },
+            { k: "g", label: "gallery"  },
+          ]} />
+        </Box>
+      )}
+
+      {!editing && (
+        <KeyHints hints={[
+          { k: "esc/q", label: "back"         },
+          { k: "h",     label: "show/hide"    },
+          { k: "e/E",   label: "edit creds"   },
+          { k: "u",     label: "open Studio"  },
+          { k: "c/m",   label: "copy sheet/MCP" },
+        ]} />
+      )}
+
+    </Box>
+  );
+}
+
+// ── Section 1 — Core Supabase ──────────────────────────────────────────────────
 
 function CoreSection({
   onLogs, onStart, onStop, onRestart, onHeal, onBackup, onVerify,
   onCopy, onOpenGallery, onNewInstance, hostSnapshot,
-}: CoreSectionProps) {
+}: {
+  onLogs:         (container: string) => void;
+  onStart:        () => void;
+  onStop:         () => void;
+  onRestart:      () => void;
+  onHeal:         () => void;
+  onBackup:       () => void;
+  onVerify:       () => void;
+  onCopy:         (text: string) => void;
+  onOpenGallery:  () => void;
+  onNewInstance:  () => void;
+  hostSnapshot:   HostSnapshot;
+}) {
   const [didCopy, setDidCopy] = useState(false);
 
   const doCopy = useCallback((text: string) => {
@@ -300,18 +570,14 @@ function CoreSection({
     setTimeout(() => setDidCopy(false), 1500);
   }, [onCopy]);
 
-  const handleSelect = useCallback((opt: SelectOption) => {
-    onLogs(opt.id);
-  }, [onLogs]);
-
   useInput((input) => {
     if (input === "u") { void openBrowser(STUDIO_PROJECT_URL); return; }
-    if (input === "s") { onStart(); return; }
-    if (input === "x") { onStop(); return; }
+    if (input === "s") { onStart();   return; }
+    if (input === "x") { onStop();    return; }
     if (input === "r") { onRestart(); return; }
-    if (input === "h") { onHeal(); return; }
-    if (input === "b") { onBackup(); return; }
-    if (input === "v") { onVerify(); return; }
+    if (input === "h") { onHeal();    return; }
+    if (input === "b") { onBackup();  return; }
+    if (input === "v") { onVerify();  return; }
     if (input === "g") { onOpenGallery(); return; }
     if (input === "c") { doCopy(buildConnectionSheet()); return; }
     if (input === "m") { doCopy(buildMcpConfig()); return; }
@@ -321,14 +587,13 @@ function CoreSection({
   return (
     <Box flexDirection="column">
 
-      {/* ── Identity ──────────────────────────────────────────────────────── */}
+      {/* Identity */}
       <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
         <Text bold color="cyan">◈  Core Supabase</Text>
-        <Text dimColor>primary control-plane DB</Text>
-        <Text dimColor>·  zones attached  ·  MCP ready</Text>
+        <Text dimColor>primary control-plane DB  ·  zones attached  ·  MCP ready</Text>
       </Box>
 
-      {/* ── Quick-access URLs ─────────────────────────────────────────────── */}
+      {/* Quick-access URLs */}
       <Box flexDirection="column" paddingX={1} paddingBottom={1}>
         <Box gap={1}>
           <Text dimColor>{"Studio  "}</Text>
@@ -345,7 +610,7 @@ function CoreSection({
         </Box>
       </Box>
 
-      {/* ── Live metrics ──────────────────────────────────────────────────── */}
+      {/* Live metrics */}
       <Box gap={1} paddingX={1} paddingBottom={1}>
         <MetricCard
           label="System CPU"
@@ -365,44 +630,41 @@ function CoreSection({
 
       <Divider />
 
-      {/* ── Action groups ─────────────────────────────────────────────────── */}
+      {/* Action groups */}
       <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
         <ActionGroup label="Operate" hints={[
-          { k: "s", label: "start" },
-          { k: "x", label: "stop" },
+          { k: "s", label: "start"   },
+          { k: "x", label: "stop"    },
           { k: "r", label: "restart" },
-          { k: "h", label: "heal" },
-          { k: "v", label: "verify" },
+          { k: "h", label: "heal"    },
+          { k: "v", label: "verify"  },
         ]} />
         <ActionGroup label="Protect" hints={[
-          { k: "b", label: "backup" },
+          { k: "b", label: "backup"  },
           { k: "g", label: "gallery" },
         ]} />
         <ActionGroup label="Connect" hints={[
-          { k: "u", label: "Studio" },
+          { k: "u", label: "Studio"           },
           { k: "c", label: "copy conn. sheet" },
-          { k: "m", label: "copy MCP config" },
+          { k: "m", label: "copy MCP config"  },
         ]} />
         <ActionGroup label="Branch" hints={[
-          { k: "n", label: "new runtime instance" },
-          { k: "2", label: "→ Runtime Instances" },
+          { k: "n", label: "new blank instance" },
+          { k: "2", label: "→ Instances"        },
+          { k: "3", label: "→ Snapshots"        },
         ]} />
       </Box>
 
       <Divider title="Core Services" />
 
-      {/* ── Services — compact, selectable for logs ───────────────────────── */}
+      {/* Services list — selectable for logs */}
       <Box paddingX={1} paddingBottom={0}>
-        <SelectMenu
-          options={CORE_OPTIONS}
-          onSelect={handleSelect}
-          searchable={false}
-        />
+        <SelectMenu options={CORE_OPTIONS} onSelect={(opt) => onLogs(opt.id)} searchable={false} />
       </Box>
 
       <Divider />
 
-      {/* ── API keys ──────────────────────────────────────────────────────── */}
+      {/* API keys */}
       <Box flexDirection="column" paddingX={1} paddingTop={1}>
         <Box gap={1}>
           <Text dimColor>{"anon    "}</Text>
@@ -423,7 +685,12 @@ function CoreSection({
         }
       </Box>
 
-      <KeyHints hints={CORE_KEY_HINTS} />
+      <KeyHints hints={[
+        { k: "↑↓/jk", label: "services" },
+        { k: "↵",      label: "logs"     },
+        { k: "2",      label: "instances" },
+        { k: "3",      label: "snapshots" },
+      ]} />
 
     </Box>
   );
@@ -431,37 +698,19 @@ function CoreSection({
 
 // ── Section 2 — Runtime Instances ─────────────────────────────────────────────
 
-const INSTANCE_KEY_HINTS = [
-  { k: "↑↓", label: "navigate" },
-  { k: "u", label: "open Studio" },
-  { k: "r", label: "restart" },
-  { k: "x", label: "stop" },
-  { k: "d", label: "delete" },
-  { k: "s", label: "snapshot" },
-  { k: "g", label: "gallery" },
-  { k: "v", label: "verify" },
-  { k: "c", label: "copy conn." },
-  { k: "m", label: "copy MCP" },
-  { k: "n", label: "new instance" },
-  { k: "1", label: "→ Core" },
-];
-
-interface InstancesSectionProps {
-  instances: RuntimeInstance[];
-  onInstanceAction: DbPanelProps["onInstanceAction"];
-  onNewInstance: () => void;
-  onOpenGallery: (inst: RuntimeInstance) => void;
-  onCopy: (text: string) => void;
-  onRefresh: () => void;
-}
-
 function InstancesSection({
   instances, onInstanceAction, onNewInstance, onOpenGallery, onCopy, onRefresh,
-}: InstancesSectionProps) {
-  const [highlighted, setHighlighted] = useState<RuntimeInstance | null>(
-    instances[0] ?? null,
-  );
-  const [didCopy, setDidCopy] = useState(false);
+}: {
+  instances:        RuntimeInstance[];
+  onInstanceAction: DbPanelProps["onInstanceAction"];
+  onNewInstance:    () => void;
+  onOpenGallery:    (inst: RuntimeInstance) => void;
+  onCopy:           (text: string) => void;
+  onRefresh:        () => void;
+}) {
+  const [highlighted, setHighlighted] = useState<RuntimeInstance | null>(instances[0] ?? null);
+  const [detailInst,  setDetailInst]  = useState<RuntimeInstance | null>(null);
+  const [didCopy, setDidCopy]         = useState(false);
 
   useEffect(() => {
     if (!highlighted && instances.length > 0) setHighlighted(instances[0]);
@@ -473,136 +722,323 @@ function InstancesSection({
     setTimeout(() => setDidCopy(false), 1500);
   }, [onCopy]);
 
-  // Build instance list options — show mode inferred from name/slug heuristic
-  const instanceOptions: SelectOption[] = instances.map((inst) => {
-    const age = inst.createdAt
-      ? new Date(inst.createdAt).toLocaleDateString()
-      : "—";
-    return {
-      id: inst.id,
-      label: inst.name,
-      desc: `${statusDot(inst.status)} ${inst.status.padEnd(8)}  ports Kong:${inst.ports.kong} Studio:${inst.ports.studio}  created ${age}`,
-    };
-  });
-
-  const handleHighlight = useCallback((opt: SelectOption) => {
-    setHighlighted(instances.find((i) => i.id === opt.id) ?? null);
-  }, [instances]);
+  const instanceOptions: SelectOption[] = instances.map((inst) => ({
+    id:    inst.id,
+    label: inst.name,
+    desc:  `${statusDot(inst.status)} ${inst.status.padEnd(8)}  Kong:${inst.ports.kong}  PG:${inst.ports.postgres}  ${fmtDate(inst.createdAt)}`,
+  }));
 
   useInput((input) => {
-    if (!highlighted) {
-      if (input === "n") onNewInstance();
-      return;
-    }
-    if (input === "u") {
-      void openBrowser(instanceStudioUrl(highlighted.ports.studio));
-      return;
-    }
+    if (!highlighted) { if (input === "n") onNewInstance(); return; }
+    if (input === "u") { void openBrowser(instanceStudioPageUrl(highlighted)); return; }
     if (input === "c") {
       doCopy(buildConnectionSheet({
-        label: highlighted.name,
-        kongUrl: `http://localhost:${highlighted.ports.kong}`,
-        studioUrl: instanceStudioUrl(highlighted.ports.studio),
-        studioMcpUrl: instanceStudioMcpUrl(highlighted.ports.studio),
-        anonKey: highlighted.secrets.anonKey,
-        svcKey: highlighted.secrets.serviceRoleKey,
-        pgConn: postgresConnStr(highlighted.secrets.postgresPassword),
-      }));
-      return;
+        label:      highlighted.name,
+        kongUrl:    `http://localhost:${highlighted.ports.kong}`,
+        studioUrl:  instanceStudioPageUrl(highlighted),
+        studioMcpUrl: instanceStudioMcpPageUrl(highlighted),
+        anonKey:    highlighted.secrets.anonKey,
+        svcKey:     highlighted.secrets.serviceRoleKey,
+        pgConn:     postgresConnStr(highlighted.secrets.postgresPassword, highlighted.ports.postgres),
+      })); return;
     }
     if (input === "m") {
       doCopy(buildMcpConfig({
         kongUrl: `http://localhost:${highlighted.ports.kong}`,
-        svcKey: highlighted.secrets.serviceRoleKey,
-        pgConn: postgresConnStr(highlighted.secrets.postgresPassword),
-      }));
-      return;
+        svcKey:  highlighted.secrets.serviceRoleKey,
+        pgConn:  postgresConnStr(highlighted.secrets.postgresPassword, highlighted.ports.postgres),
+      })); return;
     }
-    if (input === "r") { onInstanceAction("restart", highlighted); return; }
-    if (input === "x") { onInstanceAction("stop", highlighted); return; }
-    if (input === "d") { onInstanceAction("delete", highlighted); return; }
+    if (input === "r") { onInstanceAction("restart",  highlighted); return; }
+    if (input === "x") { onInstanceAction("stop",     highlighted); return; }
+    if (input === "d") { onInstanceAction("delete",   highlighted); return; }
     if (input === "s") { onInstanceAction("snapshot", highlighted); return; }
-    if (input === "v") { onInstanceAction("verify", highlighted); return; }
+    if (input === "v") { onInstanceAction("verify",   highlighted); return; }
     if (input === "g") { onOpenGallery(highlighted); return; }
     if (input === "n") { onNewInstance(); return; }
     if (input === "f") { onRefresh(); return; }
   });
 
+  // Full-screen detail view when an instance is selected via [Enter]
+  if (detailInst) {
+    return (
+      <InstanceDetailScreen
+        inst={detailInst}
+        onBack={() => setDetailInst(null)}
+        onCopy={onCopy}
+        onInstanceAction={onInstanceAction}
+        onOpenGallery={onOpenGallery}
+      />
+    );
+  }
+
   return (
     <Box flexDirection="column">
 
-      {/* ── Section identity ────────────────────────────────────────────────── */}
+      {/* Section identity */}
       <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
         <Text bold color="magenta">⬡  Runtime Instances</Text>
         <Text dimColor>branches · labs · side-project runtimes</Text>
+        {instances.length > 0 && (
+          <Text dimColor>· {instances.length} instance{instances.length !== 1 ? "s" : ""}</Text>
+        )}
       </Box>
 
       {instances.length === 0 ? (
 
-        /* ── Empty state ────────────────────────────────────────────────────── */
         <Box flexDirection="column" paddingX={2} gap={1}>
           <Text dimColor>No runtime instances yet.</Text>
-          <Text dimColor>Create one from Core Supabase with [n] → New Instance.</Text>
           <Box flexDirection="column" paddingTop={1} gap={0}>
-            <Text dimColor bold>Available templates:</Text>
-            <Text dimColor>  [1] Clone Core Supabase   — copy schema + data for staging/testing</Text>
-            <Text dimColor>  [2] Blank Standalone       — fresh runtime for a side project</Text>
-            <Text dimColor>  [3] Clone Existing Runtime — branch a test/staging DB forward</Text>
-            <Text dimColor>  [4] Fresh + SQL Seed       — blank runtime with migrations/fixtures</Text>
+            <Text dimColor bold>Start from Core Supabase:</Text>
+            <Text dimColor>  [n] blank instance   — fresh runtime, ready for MCP or Studio</Text>
+            <Text dimColor>  [3] → Snapshots       — restore or clone from a captured snapshot</Text>
           </Box>
-          <Box paddingTop={1}>
-            <Text color="magenta">[n] new instance</Text>
-            <Text dimColor>  ·  </Text>
-            <Text dimColor>[1] → Core Supabase</Text>
+          <Box paddingTop={1} gap={2}>
+            <Text color="magenta">[n] new blank instance</Text>
+            <Text dimColor>[1] → Core</Text>
+            <Text dimColor>[3] → Snapshots</Text>
           </Box>
         </Box>
 
       ) : (
         <>
-          {/* ── Instance list ───────────────────────────────────────────────── */}
+          {/* Instance list */}
           <Box paddingX={1}>
             <SelectMenu
               options={instanceOptions}
-              onSelect={(opt) =>
-                onInstanceAction("verify", instances.find((i) => i.id === opt.id)!)
-              }
-              onHighlight={handleHighlight}
+              onSelect={(opt) => setDetailInst(instances.find((i) => i.id === opt.id) ?? null)}
+              onHighlight={(opt) => setHighlighted(instances.find((i) => i.id === opt.id) ?? null)}
               searchable={false}
             />
           </Box>
 
           <Divider />
 
-          {/* ── Selected instance detail ─────────────────────────────────────── */}
-          {highlighted && (
-            <InstanceDetail inst={highlighted} didCopy={didCopy} />
-          )}
+          {/* Selected instance detail (inline summary) */}
+          {highlighted && <InstanceDetail inst={highlighted} didCopy={didCopy} />}
 
-          {/* ── Instance action groups ───────────────────────────────────────── */}
+          {/* Action groups */}
           <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
             <ActionGroup label="Operate" hints={[
-              { k: "r", label: "restart" },
-              { k: "x", label: "stop" },
-              { k: "v", label: "verify" },
-              { k: "d", label: "delete" },
+              { k: "r", label: "restart"  },
+              { k: "x", label: "stop"     },
+              { k: "v", label: "verify"   },
+              { k: "d", label: "delete"   },
             ]} />
             <ActionGroup label="Protect" hints={[
               { k: "s", label: "snapshot" },
-              { k: "g", label: "gallery" },
+              { k: "g", label: "gallery"  },
             ]} />
             <ActionGroup label="Connect" hints={[
-              { k: "u", label: "open Studio" },
+              { k: "u", label: "open Studio"      },
               { k: "c", label: "copy conn. sheet" },
-              { k: "m", label: "copy MCP config" },
+              { k: "m", label: "copy MCP config"  },
             ]} />
             <ActionGroup label="New" hints={[
-              { k: "n", label: "new runtime instance" },
+              { k: "n", label: "new blank instance" },
+              { k: "f", label: "refresh list"       },
             ]} />
           </Box>
         </>
       )}
 
-      <KeyHints hints={INSTANCE_KEY_HINTS} />
+      <KeyHints hints={[
+        { k: "↑↓/jk", label: "navigate"    },
+        { k: "↵",      label: "full detail" },
+        { k: "s",      label: "snapshot"    },
+        { k: "d",      label: "delete"      },
+        { k: "f",      label: "refresh"     },
+        { k: "1",      label: "→ Core"      },
+        { k: "3",      label: "→ Snapshots" },
+      ]} />
+
+    </Box>
+  );
+}
+
+// ── Section 3 — Snapshots ──────────────────────────────────────────────────────
+
+interface SnapshotRow {
+  bundle:       SnapshotBundle;
+  instanceName: string;
+  isCore:       boolean;
+}
+
+function SnapshotsSection({
+  onRestore, onClone, onCopy,
+}: {
+  onRestore: (bundle: SnapshotBundle, inst: RuntimeInstance) => void;
+  onClone:   (bundle: SnapshotBundle) => void;
+  onCopy:    (text: string) => void;
+}) {
+  const [rows,    setRows]    = useState<SnapshotRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [highlighted, setHighlighted] = useState<SnapshotRow | null>(null);
+  const [didCopy, setDidCopy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const all: SnapshotRow[] = [];
+
+      // Core snapshots
+      const coreSnaps = await listSnapshots(CORE_INSTANCE);
+      for (const b of coreSnaps) {
+        all.push({ bundle: b, instanceName: "Core Supabase", isCore: true });
+      }
+
+      // Runtime instance snapshots
+      const instances = await loadRegistry();
+      for (const inst of instances) {
+        const snaps = await listSnapshots(inst);
+        for (const b of snaps) {
+          all.push({ bundle: b, instanceName: inst.name, isCore: false });
+        }
+      }
+
+      // Sort newest first
+      all.sort((a, b) => b.bundle.createdAt.localeCompare(a.bundle.createdAt));
+      setRows(all);
+      setHighlighted(all[0] ?? null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const doCopy = useCallback((text: string) => {
+    onCopy(text);
+    setDidCopy(true);
+    setTimeout(() => setDidCopy(false), 1500);
+  }, [onCopy]);
+
+  useInput((input) => {
+    if (input === "f") { void load(); return; }
+    if (!highlighted) return;
+    if (input === "p") {
+      doCopy(highlighted.bundle.bundlePath);
+      return;
+    }
+    if (input === "k") {
+      onClone(highlighted.bundle);
+      return;
+    }
+    if (input === "r") {
+      void loadRegistry().then((insts) => {
+        const inst = highlighted.isCore
+          ? CORE_INSTANCE
+          : insts.find((i) => i.id === highlighted.bundle.instanceId) ?? CORE_INSTANCE;
+        onRestore(highlighted.bundle, inst);
+      });
+    }
+  });
+
+  const snapshotOptions: SelectOption[] = rows.map((row) => ({
+    id:    row.bundle.id,
+    label: row.bundle.id,
+    desc:  `${row.isCore ? "◈ core" : "⬡ " + row.instanceName}  ·  ${fmtDate(row.bundle.createdAt)}`,
+  }));
+
+  return (
+    <Box flexDirection="column">
+
+      {/* Section identity */}
+      <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
+        <Text bold color="yellow">◆  Snapshots</Text>
+        <Text dimColor>captured states across core + instances</Text>
+        {!loading && rows.length > 0 && (
+          <Text dimColor>· {rows.length} total</Text>
+        )}
+      </Box>
+
+      {loading ? (
+        <Box paddingX={2}><Text dimColor>Loading snapshots…</Text></Box>
+      ) : rows.length === 0 ? (
+        <Box flexDirection="column" paddingX={2} gap={1}>
+          <Text dimColor>No snapshots yet.</Text>
+          <Box flexDirection="column" paddingTop={1} gap={0}>
+            <Text dimColor>  [1] → Core Supabase and press [b] to capture one</Text>
+            <Text dimColor>  [2] → Instances, select one, press [s] to snapshot it</Text>
+          </Box>
+        </Box>
+      ) : (
+        <>
+          {/* Snapshot list */}
+          <Box paddingX={1}>
+            <SelectMenu
+              options={snapshotOptions}
+              onSelect={(opt) => {
+                const row = rows.find((r) => r.bundle.id === opt.id);
+                if (row) setHighlighted(row);
+              }}
+              onHighlight={(opt) => {
+                setHighlighted(rows.find((r) => r.bundle.id === opt.id) ?? null);
+              }}
+              searchable={false}
+            />
+          </Box>
+
+          <Divider />
+
+          {/* Selected snapshot detail */}
+          {highlighted && (
+            <Box flexDirection="column" paddingX={1} marginTop={1} gap={0}>
+              <Box gap={2}>
+                <Text bold>{highlighted.bundle.id}</Text>
+                <Text dimColor>{highlighted.isCore ? "◈ Core Supabase" : `⬡ ${highlighted.instanceName}`}</Text>
+              </Box>
+              <Box gap={1} marginTop={1}>
+                <Text dimColor>{"Created "}</Text>
+                <Text>{fmtDate(highlighted.bundle.createdAt)}</Text>
+              </Box>
+              <Box gap={1}>
+                <Text dimColor>{"Path    "}</Text>
+                <Text dimColor>{highlighted.bundle.bundlePath}</Text>
+              </Box>
+              {highlighted.bundle.archivePath && (
+                <Box gap={1}>
+                  <Text dimColor>{"Archive "}</Text>
+                  <Text dimColor>{highlighted.bundle.archivePath}</Text>
+                </Box>
+              )}
+              <Box marginTop={1} gap={3}>
+                {didCopy
+                  ? <Text color="green">✓ path copied</Text>
+                  : <>
+                    <Text dimColor>[k] clone as new instance</Text>
+                    <Text dimColor>[r] restore into instance</Text>
+                    <Text dimColor>[p] copy path</Text>
+                  </>
+                }
+              </Box>
+            </Box>
+          )}
+
+          {/* Actions */}
+          <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
+            <ActionGroup label="Clone" hints={[
+              { k: "k", label: "clone as new independent instance" },
+            ]} />
+            <ActionGroup label="Restore" hints={[
+              { k: "r", label: "restore into existing instance" },
+            ]} />
+            <ActionGroup label="Copy" hints={[
+              { k: "p", label: "copy bundle path" },
+              { k: "f", label: "refresh list" },
+            ]} />
+          </Box>
+        </>
+      )}
+
+      <KeyHints hints={[
+        { k: "↑↓/jk", label: "navigate" },
+        { k: "k",      label: "clone"    },
+        { k: "r",      label: "restore"  },
+        { k: "f",      label: "refresh"  },
+        { k: "1",      label: "→ Core"   },
+        { k: "2",      label: "→ Instances" },
+      ]} />
 
     </Box>
   );
@@ -610,13 +1046,15 @@ function InstancesSection({
 
 // ── DbPanel — main ────────────────────────────────────────────────────────────
 
+type DbSection = "core" | "instances" | "snapshots";
+
 export function DbPanel({
   onLogs, onBackup, onCopy, onStart, onStop, onRestart, onHeal, onVerify,
-  onNewInstance, onRestore, onInstanceAction, onGoBack, onSubCrumbs,
+  onNewInstance, onRestore, onCloneFromSnapshot, onInstanceAction, onGoBack, onSubCrumbs,
 }: DbPanelProps) {
 
-  const [section, setSection] = useState<"core" | "instances">("core");
-  const [instances, setInstances] = useState<RuntimeInstance[]>([]);
+  const [section,         setSection]         = useState<DbSection>("core");
+  const [instances,       setInstances]       = useState<RuntimeInstance[]>([]);
   const [galleryInstance, setGalleryInstance] = useState<RuntimeInstance | null>(null);
 
   const hostSnapshot = useHostMonitor();
@@ -628,35 +1066,33 @@ export function DbPanel({
     return () => { cancelled = true; };
   }, [section]);
 
-  const refreshInstances = useCallback(() => {
-    loadRegistry().then(setInstances);
-  }, []);
+  const refreshInstances = useCallback(() => { loadRegistry().then(setInstances); }, []);
 
-  // ── Breadcrumb sync ────────────────────────────────────────────────────────
+  // Breadcrumb sync
   useEffect(() => {
     if (galleryInstance) {
-      if (galleryInstance.id === "core") {
-        onSubCrumbs(["gallery"]);
-      } else {
-        onSubCrumbs(["instances", `${galleryInstance.name} · gallery`]);
-      }
+      onSubCrumbs(galleryInstance.id === "core"
+        ? ["gallery"]
+        : ["instances", `${galleryInstance.name} · gallery`]);
     } else if (section === "instances") {
       onSubCrumbs(["instances"]);
+    } else if (section === "snapshots") {
+      onSubCrumbs(["snapshots"]);
     } else {
       onSubCrumbs([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryInstance, section]);
 
-  // Section switch + back nav (gallery owns its own keyboard)
   useInput((input, key) => {
     if (galleryInstance !== null) return;
-    if (input === "1") { setSection("core"); return; }
+    if (input === "1") { setSection("core");      return; }
     if (input === "2") { setSection("instances"); return; }
+    if (input === "3") { setSection("snapshots"); return; }
     if (input === "q" || key.leftArrow) { onGoBack(); return; }
   });
 
-  // ── Gallery overlay ────────────────────────────────────────────────────────
+  // Gallery overlay
   if (galleryInstance !== null) {
     return (
       <SnapshotGalleryScreen
@@ -670,17 +1106,21 @@ export function DbPanel({
     );
   }
 
-  // ── Normal layout ──────────────────────────────────────────────────────────
+  const activeTab =
+    section === "core"      ? "Core Supabase"      :
+    section === "instances" ? "Runtime Instances"  :
+                              "Snapshots";
+
   return (
     <Box flexDirection="column">
 
       <Tabs
-        tabs={["Core Supabase", "Runtime Instances"]}
-        active={section === "core" ? "Core Supabase" : "Runtime Instances"}
+        tabs={["Core Supabase", "Runtime Instances", "Snapshots"]}
+        active={activeTab}
         marginBottom={1}
       />
 
-      {section === "core" ? (
+      {section === "core" && (
         <CoreSection
           onLogs={onLogs}
           onStart={onStart}
@@ -694,7 +1134,9 @@ export function DbPanel({
           onNewInstance={() => { setSection("instances"); onNewInstance(); }}
           hostSnapshot={hostSnapshot}
         />
-      ) : (
+      )}
+
+      {section === "instances" && (
         <InstancesSection
           instances={instances}
           onInstanceAction={onInstanceAction}
@@ -702,6 +1144,14 @@ export function DbPanel({
           onOpenGallery={setGalleryInstance}
           onCopy={onCopy}
           onRefresh={refreshInstances}
+        />
+      )}
+
+      {section === "snapshots" && (
+        <SnapshotsSection
+          onRestore={onRestore}
+          onClone={onCloneFromSnapshot}
+          onCopy={onCopy}
         />
       )}
 

@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/screens/ProjectPickerScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Project picker — shown once at startup, after the splash animation, before
@@ -20,8 +21,8 @@
 //   to proxy IPC commands here as if running locally.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import React, { useState, useEffect } from "../ink/reactRuntime.js";
+import { Box, Text, useInput, useApp } from "../ink/runtimeInk.js";
 import {
   getKnownProjects,
   ensureCurrentProjectRegistered,

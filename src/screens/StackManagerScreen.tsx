@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/StackManagerScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Full-screen background-op manager — shows ALL ops regardless of strip state.
@@ -20,8 +21,8 @@
 //           X clear all done, O pop out focused, c copy focused, q/esc close.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React from "react";
-import { Box, Text, useInput } from "ink";
+import React from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import type { StackOp } from "../ink/components/DetachedStack.jsx";
 import { Spinner } from "../ink/components/Spinner.jsx";
 import { statusColor } from "../ink/components/StatusBadge.jsx";

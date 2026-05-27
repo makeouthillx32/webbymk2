@@ -1,14 +1,14 @@
 #!/usr/bin/env pwsh
 # src/ink/setup.ps1 — First-run local config bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
-# Creates %APPDATA%\unenter\config.json with your infrastructure credentials.
+# Creates %APPDATA%\unaxis\unenter\config.json with your infrastructure credentials.
 # This file is never committed — it lives only on your machine.
 #
 # Run once:  .\src\ink\setup.ps1
 # Re-run at any time to update values.
 # ─────────────────────────────────────────────────────────────────────────────
 
-$configDir  = Join-Path $env:APPDATA "unenter"
+$configDir  = Join-Path (Join-Path $env:APPDATA "unaxis") "unenter"
 $configFile = Join-Path $configDir "config.json"
 
 # ── Already exists? ────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ if (-not $ddnsHost) { $ddnsHost = "" }
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $config = [ordered]@{
-    "_comment" = "Local infrastructure config — never commit. Lives in %APPDATA%\unenter\config.json"
+    "_comment" = "Local infrastructure config — never commit. Lives in %APPDATA%\unaxis\unenter\config.json"
     "domain" = $domain
     "npm" = [ordered]@{
         "ip"       = $npmIp

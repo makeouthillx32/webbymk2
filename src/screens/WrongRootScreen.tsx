@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 /**
  * WrongRootScreen.tsx - recovery screen for invalid startup directory.
  *
@@ -10,8 +11,8 @@
  *   [r] rescanning       -> re-runs detectProjectRoot(), updates display
  */
 
-import React, { useState, useCallback } from 'react'
-import { Box, Text, useInput, useApp } from 'ink'
+import React, { useState, useCallback } from '../ink/reactRuntime.js'
+import { Box, Text, useInput, useApp } from '../ink/runtimeInk.js'
 import { spawn } from 'child_process'
 import { detectProjectRoot, missingMarkers } from '../utils/rootGuard.js'
 import { gracefulShutdownSync } from '../utils/gracefulShutdown.js'

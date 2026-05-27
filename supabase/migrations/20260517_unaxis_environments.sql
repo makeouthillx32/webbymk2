@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS public.environments (
   type           environment_type    NOT NULL DEFAULT 'local-docker',
   status         environment_status  NOT NULL DEFAULT 'unknown',
   active         boolean             NOT NULL DEFAULT false, -- only one true at a time
+  is_default_target boolean          NOT NULL DEFAULT false, -- pre-selected wizard target
 
   -- ── Connection coordinates (non-sensitive) ──────────────────────────────
   npm_host       text                NOT NULL DEFAULT '',    -- e.g. '<NPM_HOST_IP>'
@@ -59,6 +60,16 @@ CREATE TABLE IF NOT EXISTS public.environments (
   domain         text                NOT NULL DEFAULT '',    -- e.g. 'unenter.live'
   ddns_hostname  text                NOT NULL DEFAULT '',    -- e.g. 'unenter.asuscomm.com'
   public_url     text                NOT NULL DEFAULT '',    -- e.g. 'https://unenter.live'
+
+  -- ── Docker & Agent coordinates ──────────────────────────────────────────
+  docker_url     text                NOT NULL DEFAULT '',    -- e.g. 'unix:///var/run/docker.sock'
+  machine_role   text                NOT NULL DEFAULT '',    -- e.g. 'App · DB · Proxy · Zones'
+  agent_url      text                NOT NULL DEFAULT '',    -- e.g. 'http://127.0.0.1:8888'
+  agent_port     integer             NOT NULL DEFAULT 8888,
+  agent_status   text                NOT NULL DEFAULT 'unknown',
+  agent_last_seen_at timestamptz,
+  agent_version  text                NOT NULL DEFAULT '',
+  agent_token_secret_id uuid,                                -- vault secret ref for bearer token
 
   -- ── TLS config (paths only — cert contents go in Vault) ─────────────────
   tls_config     jsonb               NOT NULL DEFAULT '{
@@ -120,26 +131,44 @@ CREATE POLICY "service role full access"
   WITH CHECK (true);
 
 -- ── 6. Seed ───────────────────────────────────────────────────────────────────
--- Insert your environment(s) here with your actual infrastructure coordinates.
--- DO NOT commit real IPs or hostnames — use the UNAXIS env panel or run
--- setup.ps1 to populate your local config, then insert via the Supabase UI
--- or a separate private migration.
---
--- Example (replace ALL <placeholders> before running):
---
--- INSERT INTO public.environments (
---   name, type, status, active,
---   npm_host,              npm_port,
---   proxy_host,            proxy_port,
---   domain,                ddns_hostname,               public_url,
---   sort_order
--- ) VALUES (
---   'my-env',
---   'local-docker',
---   'unknown',
---   true,
---   '<NPM_HOST_IP>',       81,
---   '<PROXY_HOST_IP>',     3080,
---   '<YOUR_DOMAIN>',       '<YOUR_DDNS_HOSTNAME>',      'https://<YOUR_DOMAIN>',
---   0
--- );
+-- Inserts a baseline 'POWER' environment record automatically.
+-- This ensures the environments tab is pre-seeded with the local developer node
+-- coordinates upon first boot, preventing a blank TUI view.
+
+INSERT INTO public.environments (
+  id,
+  name,
+  type,
+  status,
+  active,
+  is_default_target,
+  docker_url,
+  machine_role,
+  agent_url,
+  agent_port,
+  agent_status,
+  npm_host,
+  npm_port,
+  proxy_host,
+  proxy_port,
+  domain,
+  public_url
+) VALUES (
+  '00000000-0000-0000-0000-000000000001',
+  'POWER',
+  'local-docker',
+  'unknown',
+  true,
+  true,
+  'unix:///var/run/docker.sock',
+  'App · DB · Proxy · Zones',
+  'http://127.0.0.1:8888',
+  8888,
+  'unknown',
+  '127.0.0.1',
+  81,
+  '127.0.0.1',
+  3080,
+  'unenter.live',
+  'https://unenter.live'
+) ON CONFLICT (name) DO NOTHING;

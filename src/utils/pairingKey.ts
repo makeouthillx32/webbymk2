@@ -37,8 +37,8 @@ import { randomBytes, createHmac } from 'crypto'
 /** Remote IPC bridge port — LAN-accessible, token-authenticated. */
 export const REMOTE_IPC_PORT = 50506
 
-/** Key lifetime in hours. */
-export const KEY_TTL_H = 24
+/** Key lifetime in hours. Generate K in the TUI to get a fresh key. */
+export const KEY_TTL_H = 168   // 7 days
 
 const PREFIX = 'uaxc_'
 

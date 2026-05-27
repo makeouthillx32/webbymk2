@@ -38,16 +38,16 @@ yarn-error.log*
 # vercel
 .vercel
 
-# infrastructure config — sensitive IPs/credentials live in %APPDATA%\unenter\config.json
+# infrastructure config -- sensitive IPs/credentials live in %APPDATA%\unenter\config.json
 # The /config/ folder at project root is just forwarding re-exports; exclude it entirely
 # so no future edits can accidentally reintroduce credentials here.
 /config/
 
-# credential snapshot files — never commit these
+# credential snapshot files -- never commit these
 .credentials.json
 *.credentials.json
 
-# TUI structured logs — local only
+# TUI structured logs -- local only
 logs/
 *.ndjson
 
@@ -79,6 +79,19 @@ backups/
 snapshopts.txt
 RUNTIME_PRIMITIVES_PREP_REPORT.md
 
+# -- Supabase runtime data -----------------------------------------------------
+# supabase-core/ is cloned from github.com/supabase/supabase on first run via
+# initializeSupabaseCore(). ~300 MB, fully reproducible, no project config.
+supabase-core/
+
+# supabase-instances/ holds live runtime Docker stacks per tenant instance.
+# Contains .env (Postgres/JWT secrets), volumes/db (binary data), kong.yml
+# (dashboard credentials), mcp-config.json (real API keys). Never commit.
+supabase-instances/
+
+# Temporary operational scripts generated during ops sessions
+cleanup-*.ps1
+
 # binary blobs that don't belong in source control
 rclone.zip
 *.zip
@@ -86,5 +99,5 @@ rclone.zip
 # skills lock (machine-local)
 skills-lock.json
 
-# local infrastructure config (IPs, sensitive data — never commit)
+# local infrastructure config (IPs, sensitive data -- never commit)
 config.json

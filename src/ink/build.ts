@@ -5,7 +5,8 @@
 //
 // Entry:   src/entrypoints/cli.tsx   (fast-path flags + TUI boot)
 //   via:   src/main.tsx              (runtime bootstrap / rootGuard)
-//   via:   src/ink/App.tsx           (Ink render layer)
+//   via:   src/replLauncher.tsx      (TUI runtime assembly)
+//   via:   src/interactiveHelpers.tsx (production Ink render layer)
 //
 // Output:  src/ink/dist/cli.js       (shebang-prefixed, ESM)
 //

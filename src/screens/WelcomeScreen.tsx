@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/WelcomeScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Splash / home screen — fully responsive to any terminal size.
@@ -15,8 +16,8 @@
 //   Dead code in the production bundle (NODE_ENV define eliminates them).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState, useEffect } from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import type { Zone } from "../config/zones.js";
 import { STACK_HOST, NPM_HOST, DOMAIN } from "../config/stack.js";
 import { PROJECT_DIR } from "../config/zones.js";

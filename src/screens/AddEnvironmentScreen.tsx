@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/screens/AddEnvironmentScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Add Environment Wizard — Portainer-style new environment setup.
@@ -17,8 +18,8 @@
 //   Esc / q      — back one step / cancel
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback } from "react";
-import { Box, Text, useInput }          from "ink";
+import React, { useState, useCallback } from "../ink/reactRuntime.js";
+import { Box, Text, useInput }          from "../ink/runtimeInk.js";
 
 import { SearchInput }    from "../ink/components/SearchBox.jsx";
 import { Divider }        from "../ink/components/Divider.jsx";

@@ -550,12 +550,17 @@ export interface DatabaseNpmResult {
 
 /**
  * Register two NPM proxy hosts for a Supabase database instance:
- *   db.{slug}.{baseDomain}     → stackIp:{kongPort}     (API gateway)
- *   studio.{slug}.{baseDomain} → stackIp:{studioPort}   (Studio)
+ *   db.{slug}.{baseDomain}     → stackIp:{kongPort}   (API + Studio via Kong dashboard route)
+ *   studio.{slug}.{baseDomain} → stackIp:{kongPort}   (same Kong — Studio with basic-auth)
  *
- * Both hosts reuse any existing wildcard cert covering *.{slug}.{baseDomain}
- * or *.{baseDomain} so we never exceed the LE 5-cert/week rate limit.
- * Falls back to HTTP-only if no cert is available.
+ * Both hosts point to the same Kong port.  Kong's declarative config has a
+ * dashboard catch-all route (/) with basic-auth, so Studio is protected at
+ * the Kong level — no NPM access lists needed.  API clients use specific
+ * paths (/rest/v1/, /auth/v1/, /storage/v1/) which bypass the dashboard route.
+ *
+ * Both hosts reuse any existing wildcard cert covering *.{baseDomain} so we
+ * never exceed the LE 5-cert/week rate limit.  Falls back to HTTP-only if no
+ * cert is available.
  *
  * Idempotent: if a host already exists with the correct target, it is skipped.
  *
@@ -568,7 +573,6 @@ export async function npmAddDatabaseHosts(
   baseDomain: string,
   stackIp:    string,
   kongPort:   number,
-  studioPort: number,
   onLine:     OnLine,
 ): Promise<DatabaseNpmResult> {
   const result: DatabaseNpmResult = { dbHostId: null, studioHostId: null, errors: [] };
@@ -605,7 +609,7 @@ export async function npmAddDatabaseHosts(
     },
     {
       domain:      `studio.${slug}.${baseDomain}`,
-      forwardPort: studioPort,
+      forwardPort: kongPort,
       key:         "studioHostId",
       label:       "Studio",
     },

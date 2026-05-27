@@ -229,3 +229,127 @@ UNAXIS is designed to manage workloads across a distributed topology, splitting 
 *   **HTTP Health Pings:** The TUI continuously pings `/health` on all registered nodes. An agent is reported as offline if it fails to respond within `4s`.
 *   **Self-Updating Operations (`/self-update`)**:
     When a new agent build is pushed, the TUI issues a signed payload to the target agent. The agent starts a detached helper container (`unaxis-updater`) which pulls the updated image, swaps the running container, verifies `/health` returns `v1.0.0`, and cleans up the deprecated rollback image—ensuring completely hands-free remote administration.
+
+---
+
+## 7. Zero-Keystroke Developer Onboarding & Seeding ("Overdefining the Initial Setup")
+
+To make developer onboarding completely friction-free and robust, UNAXIS implements a **dual-layer self-healing seeding topology** for database environments. When a new developer downloads the repository and spins up the stack for the first time, they get a fully pre-populated, active local node (`POWER`) without manually configuring any SQL tables or terminal inputs.
+
+```
+       [ Clone Repository ]
+                 │
+                 ▼
+       [ .\src\ink\setup.ps1 ]  ──► Provisions %APPDATA%\unaxis\unenter\config.json
+                 │
+                 ▼
+       [ docker compose up -d ] ──► Launches Supabase Core + local DB (unt_db)
+                 │
+                 ▼
+       [ .\src\ink\run.ps1 ]    ──► Launches Interactive React/Ink TUI
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+ [ Static SQL Seed ]   [ Dynamic TUI Seeding ]
+ - Migration inserts   - If DB loaded envs list is empty,
+   fallback POWER node   TUI dynamically reads config.json
+   record automatically. and inserts current host specs.
+```
+
+### 7.1 The Onboarding Protocol: Step-by-Step
+
+#### Step 1: Local Credential Provisioning (`setup.ps1`)
+The developer runs the first-time setup script from a PowerShell session:
+```powershell
+.\src\ink\setup.ps1
+```
+*   **What it does:**
+    1. Validates prerequisites (Bun, Git, Docker, Node.js).
+    2. Guides the user through a quick local input sequence (Domain, NPM coordinates, stack IPs).
+    3. Creates a local configuration file isolated at `%APPDATA%\unaxis\unenter\config.json` (so credentials never leak into git).
+    4. Generates a secure, cryptographically random `.env` and `.env.local` containing local PostgreSQL passwords and JWT secrets.
+
+#### Step 2: Spinning up the Infrastructure
+Once the configuration is created, the developer spins up the local Docker stack:
+```powershell
+docker compose up -d
+```
+*   **What it does:** Spins up all core components (`unt_db`, `unt_kong`, `unt_auth`, `unt_rest`, `unt_proxy`, etc.).
+*   **SQL Migration Application:** The `unt_db` container automatically applies all SQL migrations in chronological order, including `supabase/migrations/20260517_unaxis_environments.sql`.
+
+#### Step 3: Launching the Control Plane (TUI)
+The developer launches the TUI via the launcher:
+```powershell
+.\src\ink\run.ps1 -Dev
+```
+*   **What it does:** Runs `src/main.tsx` under watcher mode. The root guard validates local path structures, boots the splash shimmer, and mounts the primary Ink App.
+
+---
+
+### 7.2 The Dual-Layer Environment Seeding Mechanics
+
+If the database is clean (no environment records exist), the system populates the local environment record using two layers:
+
+#### Layer 1: Static Migration Seeding
+Inside `supabase/migrations/20260517_unaxis_environments.sql`, an active INSERT query is executed when the table is created:
+```sql
+INSERT INTO public.environments (
+  id, name, type, status, active, is_default_target,
+  docker_url, machine_role, agent_url, agent_port, agent_status,
+  npm_host, npm_port, proxy_host, proxy_port, domain, public_url
+) VALUES (
+  '00000000-0000-0000-0000-000000000001',
+  'POWER',
+  'local-docker',
+  'unknown',
+  true,
+  true,
+  'unix:///var/run/docker.sock',
+  'App · DB · Proxy · Zones',
+  'http://127.0.0.1:8888',
+  8888,
+  'unknown',
+  '127.0.0.1',
+  81,
+  '127.0.0.1',
+  3080,
+  'unenter.live',
+  'https://unenter.live'
+) ON CONFLICT (name) DO NOTHING;
+```
+*   **Purpose:** Ensures that even without TUI intervention, a baseline, correctly-formatted record exists in PostgreSQL representing the local dev host.
+
+#### Layer 2: Dynamic TUI Self-Healing
+If the static seed was omitted, or if the tables were manually wiped by a database command, the TUI dynamically self-heals.
+When `loadEnvironments()` in `environment-store.ts` runs, if it receives an empty array (`[]`) from Supabase:
+1.  **Reads Local Filesystem:** It dynamically imports `fs` and parses `%APPDATA%\unaxis\unenter\config.json`.
+2.  **Resolves Current Host IPs:** It extracts the active domain, stack IP, proxy ports, and ASUS DDNS hostname.
+3.  **Inserts Record dynamically:** It performs a POST request back to PostgREST to create the `POWER` environment record on the fly with the exact coordinates of the developer's local machine.
+4.  **Auto-Refreshes:** It reloads the environment list, resulting in a zero-keystroke onboarding experience.
+
+---
+
+### 7.3 Detailed Database Schema Reference
+
+The `public.environments` table structure contains the following critical fields required for orchestrating zones:
+
+| Column | Data Type | Default | Description |
+|:---|:---|:---|:---|
+| `id` | `uuid` | `gen_random_uuid()` | Primary key identifying the environment. |
+| `name` | `text` | *None* | Unique name of the host (e.g. `POWER`, `L0V3`). |
+| `type` | `environment_type` | `'local-docker'` | Enum: `local-docker`, `remote-docker`, `azure`, `edge`. |
+| `status` | `environment_status` | `'unknown'` | Enum: `up`, `down`, `unknown` (host status). |
+| `active` | `boolean` | `false` | Deprecated active environment target flag. |
+| `is_default_target` | `boolean` | `false` | Wizard pre-selected deploy target. |
+| `docker_url` | `text` | `''` | Direct Docker engine TCP/socket URL. |
+| `machine_role` | `text` | `''` | Visual label describing the host machine role. |
+| `agent_url` | `text` | `''` | Endpoint for the running unaxis agent. |
+| `agent_port` | `integer` | `8888` | Local port of the unaxis agent. |
+| `agent_status` | `text` | `'unknown'` | Current agent state: `online`, `offline`, `unknown`. |
+| `npm_host` | `text` | `''` | Nginx Proxy Manager admin dashboard host IP. |
+| `npm_port` | `integer` | `81` | Nginx Proxy Manager admin dashboard port. |
+| `proxy_host` | `text` | `''` | Routing proxy host IP. |
+| `proxy_port` | `integer` | `3080` | Mapped HTTP proxy port on the host machine. |
+| `domain` | `text` | `''` | Root domain name linked to this environment node. |
+| `public_url` | `text` | `''` | Fully-qualified public domain URL. |
+

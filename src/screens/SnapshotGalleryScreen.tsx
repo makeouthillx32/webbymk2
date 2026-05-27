@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/SnapshotGalleryScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapshot Gallery — browse and restore backup bundles for a RuntimeInstance.
@@ -24,8 +25,8 @@
 //   q            — close gallery (back to instances)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState, useEffect } from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import { statSync, existsSync } from "fs";
 import { listSnapshots } from "../ink/zone/snapshot.js";
 import type { SnapshotBundle } from "../ink/zone/snapshot.js";

@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/ZoneWizardScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Multi-step wizard for creating a new zone.
@@ -19,8 +20,8 @@
 // App.tsx runs the full pipeline as a detached background operation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState, useRef } from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import {
   deriveZone, findNextDevPort,
   LAYOUT_OPTIONS, DS_CATALOG,

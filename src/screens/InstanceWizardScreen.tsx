@@ -1,3 +1,4 @@
+/** @jsxRuntime classic */
 // src/ink/screens/InstanceWizardScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Instance Wizard — Phase 5 of the Core Runtime Control Plane.
@@ -21,18 +22,16 @@
 //   q        — cancel (onCancel)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState, useRef, useCallback } from "../ink/reactRuntime.js";
+import { Box, Text, useInput } from "../ink/runtimeInk.js";
 import {
-  initializeSupabaseCore,
-  createRuntimeInstance,
   generateRandomString,
   generateJWT,
   type RuntimeInstance,
   type RuntimePorts,
   type RuntimeSecrets,
 } from "../ink/zone/supabase-factory.js";
-import { startCoreStack } from "../ink/db-api.js";
+import { createBlankDatabase } from "../ink/zone/database-manager.js";
 import { Divider } from "../ink/components/Divider.jsx";
 import { SearchInput } from "../ink/components/SearchBox.jsx";
 import ScrollBox from "../ink/components/ScrollBox.jsx";
@@ -69,6 +68,25 @@ function previewPorts(name: string): RuntimePorts {
 
 // ── Step 1 — Naming ───────────────────────────────────────────────────────────
 
+// ── Slug validation (sync subset — reserved + format only; registry check at deploy) ──
+
+const RESERVED = new Set([
+  "www", "api", "db", "studio", "mail", "cdn", "app", "admin",
+  "ftp", "smtp", "pop", "imap", "vpn", "ns", "ns1", "ns2",
+  "unenter", "core", "template", "test", "dev", "staging", "prod",
+]);
+
+function validateSlugSync(slug: string): string | null {
+  if (!slug) return null; // empty — no error yet
+  if (slug.length < 2)   return "Too short (min 2 chars)";
+  if (slug.length > 40)  return "Too long (max 40 chars)";
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug))
+    return "Lowercase letters, digits, hyphens only — must start & end with a letter or digit";
+  if (/--/.test(slug))   return "No consecutive hyphens";
+  if (RESERVED.has(slug)) return `"${slug}" is reserved — try "${slug}-db" or "my${slug}"`;
+  return null; // valid
+}
+
 function NamingStep({
   name,
   onChangeName,
@@ -80,10 +98,12 @@ function NamingStep({
   onNext: () => void;
   onCancel: () => void;
 }) {
-  const slug = toSlugPreview(name);
+  const slug  = toSlugPreview(name);
+  const error = validateSlugSync(slug);
+  const ready = name.trim().length > 0 && error === null;
 
   useInput((_input, key) => {
-    if (key.return && name.trim().length > 0) { onNext(); return; }
+    if (key.return && ready) { onNext(); return; }
     if (key.escape) { onCancel(); return; }
   });
 
@@ -104,17 +124,28 @@ function NamingStep({
 
         <Box gap={1}>
           <Text dimColor>{"Slug".padEnd(8)}</Text>
-          <Text color="gray">{slug}-{"{timestamp}"}</Text>
+          <Text color={error ? "red" : "gray"}>{slug}-{"{timestamp}"}</Text>
         </Box>
 
-        <Box gap={1}>
-          <Text dimColor>{"Type".padEnd(8)}</Text>
-          <Text color="cyan">Supabase Runtime</Text>
-        </Box>
+        {error ? (
+          <Box gap={1}>
+            <Text color="red">✗ {error}</Text>
+          </Box>
+        ) : slug.length >= 2 ? (
+          <Box gap={1}>
+            <Text color="green">✓ looks good</Text>
+          </Box>
+        ) : (
+          <Box gap={1}>
+            <Text dimColor>{"Type".padEnd(8)}</Text>
+            <Text color="cyan">Supabase Runtime</Text>
+          </Box>
+        )}
       </Box>
 
       <Box paddingX={2} marginTop={1} gap={3}>
-        <Text dimColor>[↵]</Text><Text dimColor>next</Text>
+        <Text dimColor={!ready} color={ready ? "white" : undefined}>[↵]</Text>
+        <Text dimColor={!ready}>{ready ? "next" : "fix name to continue"}</Text>
         <Text dimColor>[Esc]</Text><Text dimColor>cancel</Text>
       </Box>
     </Box>
@@ -225,32 +256,24 @@ function DeployStep({
 
     (async () => {
       try {
-        // Phase A — init core template
         setPhase("init");
-        addLine("── Initializing Supabase core template ──────────────────");
-        const initResult = await initializeSupabaseCore(addLine);
-        if (!initResult.success) throw new Error(initResult.error);
+        addLine("── Blank database provisioning ──────────────────────────");
 
-        // Phase B — create instance (scaffold files, write .env, register)
-        setPhase("create");
-        addLine("");
-        addLine("── Creating runtime instance ────────────────────────────");
-        const inst = await createRuntimeInstance(name, addLine);
-        setInstance(inst);
-
-        // Phase C — deploy (docker compose up -d)
-        setPhase("start");
-        addLine("");
-        addLine("── Starting compose stack ───────────────────────────────");
-        const ok = await startCoreStack(inst, addLine);
-        if (!ok) throw new Error("docker compose up failed — see output above");
+        const result = await createBlankDatabase(
+          name,
+          { registerNpm: true, instanceName: name },
+          addLine,
+        );
 
         addLine("");
-        addLine(`✓ Instance "${name}" is live`);
-        addLine(`  Studio  →  ${inst.studioUrl}`);
-        addLine(`  API     →  http://127.0.0.1:${inst.ports.kong}`);
+        addLine(`✓ "${name}" is live`);
+        addLine(`  Studio  →  ${result.instance.studioUrl}`);
+        addLine(`  API     →  http://127.0.0.1:${result.instance.ports.kong}`);
+        if (result.publicStudioUrl) {
+          addLine(`  Public  →  ${result.publicStudioUrl}`);
+        }
         setPhase("done");
-        setInstance(inst);
+        setInstance(result.instance);
 
       } catch (err) {
         addLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
@@ -266,21 +289,21 @@ function DeployStep({
   });
 
   const phaseLabel: Record<DeployPhase, string> = {
-    idle: "Preparing...",
-    init: "Initializing core template...",
-    create: "Scaffolding instance...",
-    start: "Starting compose stack...",
-    done: "Deployment complete",
-    error: "Deployment failed",
+    idle:   "Preparing…",
+    init:   "Provisioning blank database…",
+    create: "Provisioning blank database…",
+    start:  "Provisioning blank database…",
+    done:   "Deployment complete",
+    error:  "Deployment failed",
   };
 
   const phaseColor: Record<DeployPhase, string> = {
-    idle: "gray",
-    init: "yellow",
-    create: "yellow",
-    start: "cyan",
-    done: "green",
-    error: "red",
+    idle:   "gray",
+    init:   "cyan",
+    create: "cyan",
+    start:  "cyan",
+    done:   "green",
+    error:  "red",
   };
 
   return (
