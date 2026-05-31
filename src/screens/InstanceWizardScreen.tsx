@@ -12,9 +12,9 @@
 //   Shows computed ports, container names, JWT keys, studio URL
 //   before any deployment begins.
 //
-// Step 3 — Deployment
-//   Real-time docker compose output streamed via OperationOverlay-style log.
-//   Runs initializeSupabaseCore → createRuntimeInstance → startCoreStack.
+// Step 3 — Deployment (handed off to caller)
+//   Caller closes the wizard and fires runOpQueued(createBlankDatabase) so the
+//   output streams through the shared OperationOverlay — scroll, copy, detach.
 //
 // Navigation:
 //   Enter    — advance / confirm
@@ -22,27 +22,21 @@
 //   q        — cancel (onCancel)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef, useCallback } from "../ink/reactRuntime.js";
+import React, { useState } from "../ink/reactRuntime.js";
 import { Box, Text, useInput } from "../ink/runtimeInk.js";
-import {
-  generateRandomString,
-  generateJWT,
-  type RuntimeInstance,
-  type RuntimePorts,
-  type RuntimeSecrets,
-} from "../ink/zone/supabase-factory.js";
-import { createBlankDatabase } from "../ink/zone/database-manager.js";
+import { type RuntimePorts } from "../ink/zone/supabase-factory.js";
 import { Divider } from "../ink/components/Divider.jsx";
 import { SearchInput } from "../ink/components/SearchBox.jsx";
-import ScrollBox from "../ink/components/ScrollBox.jsx";
-import { Spinner } from "../ink/components/Spinner.jsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type WizardStep = "name" | "preview" | "deploy";
+type WizardStep = "name" | "preview";
 
 export interface InstanceWizardScreenProps {
-  onDone: (instance: RuntimeInstance) => void;
+  /** Called when the user confirms step 2 — caller should close the wizard
+   *  and push a runOp / runOpQueued with createBlankDatabase so the deployment
+   *  runs inside the shared OperationOverlay (scroll, copy, detach all work). */
+  onDeploy: (name: string) => void;
   onCancel: () => void;
 }
 
@@ -227,127 +221,13 @@ function PreviewStep({
   );
 }
 
-// ── Step 3 — Deployment ───────────────────────────────────────────────────────
-
-type DeployPhase = "idle" | "init" | "create" | "start" | "done" | "error";
-
-function DeployStep({
-  name,
-  onDone,
-  onBack,
-}: {
-  name: string;
-  onDone: (instance: RuntimeInstance) => void;
-  onBack: () => void;
-}) {
-  const [phase, setPhase] = useState<DeployPhase>("idle");
-  const [lines, setLines] = useState<string[]>([]);
-  const [instance, setInstance] = useState<RuntimeInstance | null>(null);
-  const started = useRef(false);
-
-  const addLine = useCallback((l: string) => {
-    setLines((prev) => [...prev, l]);
-  }, []);
-
-  // Auto-start on mount
-  React.useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-
-    (async () => {
-      try {
-        setPhase("init");
-        addLine("── Blank database provisioning ──────────────────────────");
-
-        const result = await createBlankDatabase(
-          name,
-          { registerNpm: true, instanceName: name },
-          addLine,
-        );
-
-        addLine("");
-        addLine(`✓ "${name}" is live`);
-        addLine(`  Studio  →  ${result.instance.studioUrl}`);
-        addLine(`  API     →  http://127.0.0.1:${result.instance.ports.kong}`);
-        if (result.publicStudioUrl) {
-          addLine(`  Public  →  ${result.publicStudioUrl}`);
-        }
-        setPhase("done");
-        setInstance(result.instance);
-
-      } catch (err) {
-        addLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
-        setPhase("error");
-      }
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // [↵] to finish once done
-  useInput((_input, key) => {
-    if (phase === "done" && key.return) { onDone(instance!); return; }
-    if (phase === "error" && key.escape) { onBack(); return; }
-  });
-
-  const phaseLabel: Record<DeployPhase, string> = {
-    idle:   "Preparing…",
-    init:   "Provisioning blank database…",
-    create: "Provisioning blank database…",
-    start:  "Provisioning blank database…",
-    done:   "Deployment complete",
-    error:  "Deployment failed",
-  };
-
-  const phaseColor: Record<DeployPhase, string> = {
-    idle:   "gray",
-    init:   "cyan",
-    create: "cyan",
-    start:  "cyan",
-    done:   "green",
-    error:  "red",
-  };
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Divider title="New Instance  ·  Step 3 of 3  ·  Deployment" color="magenta" />
-
-      <Box paddingX={2} gap={2} marginBottom={1}>
-        {phase !== "done" && phase !== "error" && <Spinner active={true} />}
-        {phase === "done" && <Text color="green">✓</Text>}
-        {phase === "error" && <Text color="red">✗</Text>}
-        <Text color={phaseColor[phase]}>{phaseLabel[phase]}</Text>
-      </Box>
-
-      {/* Live log output */}
-      <Box paddingX={2}>
-        <ScrollBox height={16}>
-          <Box flexDirection="column">
-            {lines.map((l, i) => (
-              <Text key={i} wrap="truncate" dimColor={l.startsWith("  ")} color={
-                l.startsWith("✓") ? "green" :
-                  l.startsWith("✗") ? "red" :
-                    l.startsWith("⚠") ? "yellow" : undefined
-              }>
-                {l}
-              </Text>
-            ))}
-          </Box>
-        </ScrollBox>
-      </Box>
-
-      <Box paddingX={2} marginTop={1} gap={3}>
-        {phase === "done" && <><Text dimColor>[↵]</Text><Text dimColor>finish</Text></>}
-        {phase === "error" && <><Text dimColor>[Esc]</Text><Text dimColor>back</Text></>}
-        {phase !== "done" && phase !== "error" && (
-          <Text dimColor>deployment in progress...</Text>
-        )}
-      </Box>
-    </Box>
-  );
-}
-
 // ── InstanceWizardScreen — main ───────────────────────────────────────────────
+// Steps 1-2 run in the wizard dialog.
+// Step 3 (deployment) is handed off to the caller via onDeploy — the caller
+// closes the wizard and fires runOp/runOpQueued so the output streams through
+// the shared OperationOverlay (scroll, copy, detach all work).
 
-export function InstanceWizardScreen({ onDone, onCancel }: InstanceWizardScreenProps) {
+export function InstanceWizardScreen({ onDeploy, onCancel }: InstanceWizardScreenProps) {
   const [step, setStep] = useState<WizardStep>("name");
   const [name, setName] = useState("");
 
@@ -365,16 +245,8 @@ export function InstanceWizardScreen({ onDone, onCancel }: InstanceWizardScreenP
       {step === "preview" && (
         <PreviewStep
           name={name}
-          onNext={() => setStep("deploy")}
+          onNext={() => onDeploy(name)}
           onBack={() => setStep("name")}
-        />
-      )}
-
-      {step === "deploy" && (
-        <DeployStep
-          name={name}
-          onDone={onDone}
-          onBack={() => setStep("preview")}
         />
       )}
     </Box>

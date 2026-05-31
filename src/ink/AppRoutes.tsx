@@ -14,6 +14,7 @@ import { EnvPanel } from "./panels/Env/index.tsx";
 import { EnvDetailScreen } from "./panels/Env/EnvDetailScreen.tsx";
 import { gracefulShutdownSync } from "../utils/gracefulShutdown.js";
 import { backupDatabase } from "./db-api.ts";
+import { snapshotInstance } from "./zone/snapshot.ts";
 import {
   startCoreStack,
   stopCoreStack,
@@ -23,6 +24,8 @@ import {
   deleteRuntimeInstance,
   reregisterInstanceNpm,
 } from "./db-api.ts";
+import { createBlankDatabase } from "./zone/database-manager.js";
+import { cloneFromSnapshot }   from "./zone/database-manager.js";
 import {
   snapshotInstance,
   restoreInstance,
@@ -105,7 +108,7 @@ export function AppRoutes({
           zoneStatuses={zoneStatuses}
           proxyStatus={proxyStatus}
           busy={anyBusy}
-          onManage={() => navigate("zones")}
+          onManage={() => navigate("core")}
           onSettings={() => navigate("settings")}
           onQuit={() => gracefulShutdownSync(0)}
           onRelease={handleRelease}
@@ -122,6 +125,7 @@ export function AppRoutes({
           onTokenEditEnd={() => setTokenEditing(false)}
         />
       )}
+
 
       {view === "core" && (
         <CoreView
@@ -169,7 +173,10 @@ export function AppRoutes({
             service: svc, container: svc,
             image: "", upstreamEnvKey: "",
           })}
-          onBackup={() => runOpQueued("DB backup", (o) => backupDatabase(o), 'next')}
+          onBackup={() => runOpQueued("Snapshot core DB", async (o) => {
+            await snapshotInstance(coreDockerInstance, o);
+            return 0;
+          }, 'next')}
           onCopy={copy}
           onGoBack={goBack}
           onStart={() => runOpQueued("Start core stack", async (o) => {
@@ -246,7 +253,13 @@ export function AppRoutes({
 
       {view === "instance-wizard" && (
         <InstanceWizardScreen
-          onDone={(_inst) => { goBack(); }}
+          onDeploy={(name) => {
+            goBack();
+            runOpQueued(`New Instance  ${name}`, async (o) => {
+              await createBlankDatabase(name, { registerNpm: true, instanceName: name }, o);
+              return 0;
+            }, 'next');
+          }}
           onCancel={goBack}
         />
       )}
@@ -254,7 +267,15 @@ export function AppRoutes({
       {view === "clone-wizard" && cloneBundle && (
         <CloneWizardScreen
           bundle={cloneBundle}
-          onDone={(_inst) => { setCloneBundle(null); goBack(); }}
+          onDeploy={(name) => {
+            const bundlePath = cloneBundle.bundlePath;
+            setCloneBundle(null);
+            goBack();
+            runOpQueued(`Clone → ${name}`, async (o) => {
+              await cloneFromSnapshot(bundlePath, name, { registerNpm: true }, o);
+              return 0;
+            }, 'next');
+          }}
           onCancel={() => { setCloneBundle(null); goBack(); }}
         />
       )}

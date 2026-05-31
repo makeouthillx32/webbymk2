@@ -13,6 +13,37 @@
     "rappers": "http://unt_rappers:3000",
     "onemore": "http://unt_onemore:3000",
     "logs": "http://unt_logs:3000",
-    "logz": "http://unt_logz:3000"
+    "logz": "http://unt_logz:3000",
+    "nick": "http://unt_nick:3000",
+    "nick2": "http://unt_nick2:3000"
+  },
+  "databases": {
+    "buttdb": {
+      "apiUpstream": "http://192.168.50.204:8943",
+      "studioUpstream": "http://192.168.50.204:9043",
+      "apiDomain": "db.buttdb.unenter.live",
+      "studioDomain": "studio.buttdb.unenter.live",
+      "registeredAt": "2026-05-30T01:35:42.286Z",
+      "npmApiHostId": 144,
+      "npmStudioHostId": 145
+    },
+    "nick2006": {
+      "apiUpstream": "http://192.168.50.204:8211",
+      "studioUpstream": "http://192.168.50.204:8311",
+      "apiDomain": "db.nick2006.unenter.live",
+      "studioDomain": "studio.nick2006.unenter.live",
+      "registeredAt": "2026-05-30T01:41:35.644Z",
+      "npmApiHostId": 146,
+      "npmStudioHostId": 147
+    },
+    "frontdb": {
+      "apiUpstream": "http://192.168.50.204:8510",
+      "studioUpstream": "http://192.168.50.204:8610",
+      "apiDomain": "db.frontdb.unenter.live",
+      "studioDomain": "studio.frontdb.unenter.live",
+      "registeredAt": "2026-05-30T02:10:32.097Z",
+      "npmApiHostId": 148,
+      "npmStudioHostId": 149
+    }
   }
 }

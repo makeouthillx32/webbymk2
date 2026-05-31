@@ -75,7 +75,25 @@ export async function npmDeleteHost(id: number, token?: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
 
-/** PUT update a proxy host by id. Caller supplies the full payload. */
+// ── Schema filter (NPM v2.13+ additionalProperties:false) ────────────────────
+// NPM's AJV schema rejects PUT/POST bodies with unknown fields.  Strip any key
+// that isn't part of the proxy-host write schema before sending.
+const PROXY_HOST_WRITE_KEYS = new Set([
+  "domain_names", "forward_scheme", "forward_host", "forward_port",
+  "access_list_id", "certificate_id", "ssl_forced", "caching_enabled",
+  "block_exploits", "advanced_config", "allow_websocket_upgrade",
+  "http2_support", "enabled", "locations", "hsts_enabled", "hsts_subdomains",
+  "meta",
+]);
+
+function sanitize(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([k]) => PROXY_HOST_WRITE_KEYS.has(k)),
+  );
+}
+
+/** PUT update a proxy host by id. Caller supplies the full payload; unknown
+ *  fields are stripped automatically to satisfy NPM v2.13+ schema validation. */
 export async function npmUpdateHost(
   id:      number,
   payload: Record<string, unknown>,
@@ -87,7 +105,7 @@ export async function npmUpdateHost(
   const timeout = slow ? SLOW_TIMEOUT_MS : TIMEOUT_MS;
   const res     = await npmFetch(`${base}/${id}`, {
     method: "PUT",
-    body:   JSON.stringify(payload),
+    body:   JSON.stringify(sanitize(payload)),
   }, t, timeout);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -96,7 +114,8 @@ export async function npmUpdateHost(
   return res.json() as Promise<NpmProxyHost>;
 }
 
-/** POST create a new proxy host. Caller supplies the full payload. */
+/** POST create a new proxy host. Caller supplies the full payload; unknown
+ *  fields are stripped automatically to satisfy NPM v2.13+ schema validation. */
 export async function npmCreateHost(
   payload: Record<string, unknown>,
   token?:  string,
@@ -107,7 +126,7 @@ export async function npmCreateHost(
   const timeout = slow ? SLOW_TIMEOUT_MS : TIMEOUT_MS;
   const res     = await npmFetch(base, {
     method: "POST",
-    body:   JSON.stringify(payload),
+    body:   JSON.stringify(sanitize(payload)),
   }, t, timeout);
   if (!res.ok) {
     const text = await res.text().catch(() => "");

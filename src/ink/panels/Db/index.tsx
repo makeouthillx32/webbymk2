@@ -17,13 +17,13 @@ import { openBrowser } from "@/utils/browser.ts";
 import {
   KONG_URL, STUDIO_PROJECT_URL, ANON_KEY, SERVICE_KEY,
   postgresConnStr, instanceStudioPageUrl, instanceStudioMcpPageUrl,
-  buildConnectionSheet, buildMcpConfig, updateInstancePassword, verifyCoreStack,
+  buildConnectionSheet, buildMcpConfig, updateInstancePassword, updateInstanceDashboardPassword, verifyCoreStack,
   reregisterInstanceNpm,
 } from "../../db-api.ts";
 import { loadRegistry } from "../../zone/supabase-factory.ts";
 import type { RuntimeInstance, HealthState } from "../../zone/supabase-factory.ts";
 import { PROJECT_DIR, DOMAIN } from "../../../config/stack.ts";
-import { listSnapshots } from "../../zone/snapshot.ts";
+import { listSnapshots, listOrphanSnapshots } from "../../zone/snapshot.ts";
 import type { SnapshotBundle } from "../../zone/snapshot.ts";
 import { KeyHints } from "../../components/KeyHint.tsx";
 import { TextInput } from "../../components/TextInput.tsx";
@@ -35,6 +35,19 @@ import { useHostMonitor } from "../../hooks/useHostMonitor.ts";
 import { sparkline } from "../../utils/sparkline.ts";
 import { MetricCard } from "../../components/design-system/index.ts";
 import type { HostSnapshot } from "../../hooks/useHostMonitor.ts";
+
+// ── Studio public URL helper ───────────────────────────────────────────────────
+// Returns the public Studio URL with /project/default path.
+// NOTE: we do NOT embed credentials in the URL — Chromium-based browsers
+// (Brave, Chrome) block user:pass@url for sub-resource requests, causing 401s
+// on JS/CSS/manifest fetches even though the initial navigation succeeds.
+// Instead, pressing [u] also copies the password to clipboard so the user
+// can paste it in the browser's native Basic Auth dialog (remembered after once).
+
+function studioPublicUrl(inst: RuntimeInstance): string {
+  const raw = inst.npmStudioUrl ?? instanceStudioPageUrl(inst);
+  return raw.includes("/project/") ? raw : raw.replace(/\/?$/, "/project/default");
+}
 
 // ── Core service manifest ──────────────────────────────────────────────────────
 
@@ -307,7 +320,7 @@ function InstanceDetailScreen({
   useInput((input, key) => {
     if (editing) return;  // TextInput handles input while editing
     if (key.escape || input === "q") { onBack(); return; }
-    if (input === "u") { void openBrowser(pubStudio); return; }
+    if (input === "u") { doCopy(liveInst.secrets.dashboardPassword); void openBrowser(studioPublicUrl(liveInst)); return; }
     if (input === "U") { void openBrowser(localStudio); return; }
     if (input === "h") { setShowSecrets((v) => !v); return; }
     if (input === "e") { setEditing("pg");   setEditStatus(null); return; }
@@ -358,22 +371,16 @@ function InstanceDetailScreen({
         setEditStatus(`✗ ${lines[lines.length - 1] ?? "update failed"}`);
       }
     } else if (editing === "dash") {
-      // Dashboard password lives only in .env — update manually, then restart
-      const { promises: fsp } = await import("fs");
-      const { join } = await import("path");
-      const envPath = join(liveInst.dockerPath, ".env");
-      try {
-        let content = await fsp.readFile(envPath, "utf-8");
-        content = content.replace(/^DASHBOARD_PASSWORD=.*/m, `DASHBOARD_PASSWORD=${newVal}`);
-        await fsp.writeFile(envPath, content, "utf-8");
+      const lines: string[] = [];
+      const ok = await updateInstanceDashboardPassword(liveInst, newVal, (l) => lines.push(l));
+      if (ok) {
         setLiveInst((prev) => ({
           ...prev,
           secrets: { ...prev.secrets, dashboardPassword: newVal },
         }));
-        setEditStatus("✓ Dashboard password updated");
-        setNeedsRestart(true);
-      } catch (e) {
-        setEditStatus(`✗ ${e instanceof Error ? e.message : "write failed"}`);
+        setEditStatus("✓ Dashboard password updated — Kong reloaded");
+      } else {
+        setEditStatus(`✗ ${lines[lines.length - 1] ?? "update failed"}`);
       }
     }
 
@@ -461,7 +468,7 @@ function InstanceDetailScreen({
         {/* Dashboard */}
         <Box gap={1} alignItems="center">
           <Text dimColor>{"  Studio user".padEnd(LabelCol)}</Text>
-          <Text>supabase</Text>
+          <Text>{liveInst.name}</Text>
         </Box>
         <Box gap={1} alignItems="center">
           <Text dimColor>{"  Studio pass".padEnd(LabelCol)}</Text>
@@ -640,8 +647,8 @@ function CoreSection({
           { k: "v", label: "verify"  },
         ]} />
         <ActionGroup label="Protect" hints={[
-          { k: "b", label: "backup"  },
-          { k: "g", label: "gallery" },
+          { k: "b", label: "snapshot" },
+          { k: "g", label: "gallery"  },
         ]} />
         <ActionGroup label="Connect" hints={[
           { k: "u", label: "Studio"           },
@@ -699,9 +706,11 @@ function CoreSection({
 // ── Section 2 — Runtime Instances ─────────────────────────────────────────────
 
 function InstancesSection({
-  instances, onInstanceAction, onNewInstance, onOpenGallery, onCopy, onRefresh,
+  instances, detailInst, onSetDetailInst, onInstanceAction, onNewInstance, onOpenGallery, onCopy, onRefresh,
 }: {
   instances:        RuntimeInstance[];
+  detailInst:       RuntimeInstance | null;
+  onSetDetailInst:  (inst: RuntimeInstance | null) => void;
   onInstanceAction: DbPanelProps["onInstanceAction"];
   onNewInstance:    () => void;
   onOpenGallery:    (inst: RuntimeInstance) => void;
@@ -709,7 +718,6 @@ function InstancesSection({
   onRefresh:        () => void;
 }) {
   const [highlighted, setHighlighted] = useState<RuntimeInstance | null>(instances[0] ?? null);
-  const [detailInst,  setDetailInst]  = useState<RuntimeInstance | null>(null);
   const [didCopy, setDidCopy]         = useState(false);
 
   useEffect(() => {
@@ -729,8 +737,9 @@ function InstancesSection({
   }));
 
   useInput((input) => {
+    if (detailInst) return;  // detail view is open — let InstanceDetailScreen handle all input
     if (!highlighted) { if (input === "n") onNewInstance(); return; }
-    if (input === "u") { void openBrowser(instanceStudioPageUrl(highlighted)); return; }
+    if (input === "u") { doCopy(highlighted.secrets.dashboardPassword); void openBrowser(studioPublicUrl(highlighted)); return; }
     if (input === "c") {
       doCopy(buildConnectionSheet({
         label:      highlighted.name,
@@ -764,7 +773,7 @@ function InstancesSection({
     return (
       <InstanceDetailScreen
         inst={detailInst}
-        onBack={() => setDetailInst(null)}
+        onBack={() => onSetDetailInst(null)}
         onCopy={onCopy}
         onInstanceAction={onInstanceAction}
         onOpenGallery={onOpenGallery}
@@ -806,7 +815,7 @@ function InstancesSection({
           <Box paddingX={1}>
             <SelectMenu
               options={instanceOptions}
-              onSelect={(opt) => setDetailInst(instances.find((i) => i.id === opt.id) ?? null)}
+              onSelect={(opt) => onSetDetailInst(instances.find((i) => i.id === opt.id) ?? null)}
               onHighlight={(opt) => setHighlighted(instances.find((i) => i.id === opt.id) ?? null)}
               searchable={false}
             />
@@ -894,6 +903,13 @@ function SnapshotsSection({
         for (const b of snaps) {
           all.push({ bundle: b, instanceName: inst.name, isCore: false });
         }
+      }
+
+      // Snapshots from deleted instances (orphan backups on disk)
+      const knownSlugs = [CORE_INSTANCE.slug, ...instances.map((i) => i.slug)];
+      const orphans = await listOrphanSnapshots(knownSlugs);
+      for (const b of orphans) {
+        all.push({ bundle: b, instanceName: `${b.instanceName} ✕`, isCore: false });
       }
 
       // Sort newest first
@@ -1056,6 +1072,8 @@ export function DbPanel({
   const [section,         setSection]         = useState<DbSection>("core");
   const [instances,       setInstances]       = useState<RuntimeInstance[]>([]);
   const [galleryInstance, setGalleryInstance] = useState<RuntimeInstance | null>(null);
+  // Lifted from InstancesSection so DbPanel.useInput can guard on it
+  const [detailInst,      setDetailInst]      = useState<RuntimeInstance | null>(null);
 
   const hostSnapshot = useHostMonitor();
 
@@ -1074,6 +1092,8 @@ export function DbPanel({
       onSubCrumbs(galleryInstance.id === "core"
         ? ["gallery"]
         : ["instances", `${galleryInstance.name} · gallery`]);
+    } else if (detailInst) {
+      onSubCrumbs(["instances", detailInst.name]);
     } else if (section === "instances") {
       onSubCrumbs(["instances"]);
     } else if (section === "snapshots") {
@@ -1082,13 +1102,14 @@ export function DbPanel({
       onSubCrumbs([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [galleryInstance, section]);
+  }, [galleryInstance, detailInst, section]);
 
   useInput((input, key) => {
     if (galleryInstance !== null) return;
-    if (input === "1") { setSection("core");      return; }
-    if (input === "2") { setSection("instances"); return; }
-    if (input === "3") { setSection("snapshots"); return; }
+    if (detailInst !== null) return;  // InstanceDetailScreen owns all keys while open
+    if (input === "1") { setDetailInst(null); setSection("core");      return; }
+    if (input === "2") { setDetailInst(null); setSection("instances"); return; }
+    if (input === "3") { setDetailInst(null); setSection("snapshots"); return; }
     if (input === "q" || key.leftArrow) { onGoBack(); return; }
   });
 
@@ -1139,6 +1160,8 @@ export function DbPanel({
       {section === "instances" && (
         <InstancesSection
           instances={instances}
+          detailInst={detailInst}
+          onSetDetailInst={setDetailInst}
           onInstanceAction={onInstanceAction}
           onNewInstance={onNewInstance}
           onOpenGallery={setGalleryInstance}

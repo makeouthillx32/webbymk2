@@ -23,9 +23,9 @@
 //   bun release.ts --dry       # preview only, no writes
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rmSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdtempSync, writeSync } from 'fs'
+import { rmSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdtempSync, writeSync, existsSync } from 'fs'
 import { join }                                                        from 'path'
-import { tmpdir }                                                      from 'os'
+import { tmpdir, homedir }                                             from 'os'
 import { spawnSync }                                                   from 'child_process'
 import { resolveNpmToken }                                             from '../utils/secureStorage/index.js'
 import { makeBuildConfig, outdir, outfile }                            from './bun-build-config.js'
@@ -225,6 +225,26 @@ if (publish) {
 
   print('')
   print('  Published:  @untsystems/unaxis@' + current + ' on npm')
+
+  // ── Auto-update global CLI after publish ──────────────────────────────────
+  // `npm update -g` only bumps within the installed semver range and often
+  // skips the version just published.  `install -g @latest` always fetches
+  // the exact version we just pushed.
+  print('  Auto-updating global CLI...')
+  const updateResult = spawnSync('npm', ['install', '-g', '@untsystems/unaxis@latest'], {
+    stdio:   ['ignore', 'pipe', 'pipe'],
+    shell:   true,
+    timeout: 60_000,
+    env:     { ...process.env, CI: '1', NO_UPDATE_NOTIFIER: '1' },
+  })
+  if (updateResult.stdout?.length) writeSync(1, updateResult.stdout)
+  if (updateResult.stderr?.length) writeSync(2, updateResult.stderr)
+  if (!updateResult.error && updateResult.status === 0) {
+    print('  ✓ Global CLI updated to v' + current)
+  } else {
+    printerr('  ⚠ Global CLI auto-update failed — run manually: npm install -g @untsystems/unaxis@latest')
+  }
+
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────────
@@ -235,15 +255,15 @@ print('  Released:   UNAXIS v' + current)
 print('  Dev now:    v' + next + '  (package.json bumped)')
 print('')
 
-if (publish) {
-  print('  Install on any machine:')
-  print('    npm install -g @untsystems/unaxis')
-  print('')
-  print('  Update on any machine:')
-  print('    npm update -g @untsystems/unaxis')
-} else {
+if (!publish) {
   print('  To push to npm next time:')
   print('    bun release.ts --publish')
 }
 
+// Signal the TUI to restart — caught by useDevBuildActions which calls process.exit(0).
+// In dev mode (bun --watch) the watcher restarts the TUI automatically in ~1s.
+// In production mode the process exits cleanly.
+if (publish) {
+  print('  [ok] done')
+}
 print('')

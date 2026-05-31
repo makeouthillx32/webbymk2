@@ -58,6 +58,12 @@ if (args.includes('--version') || args.includes('-v')) {
   process.exit(0)
 }
 
+if (args.includes('--schema')) {
+  const { UNAXIS_CLI_SCHEMA } = await import('../ink/cli-schema.js')
+  process.stdout.write(JSON.stringify(UNAXIS_CLI_SCHEMA, null, 2) + '\n')
+  process.exit(0)
+}
+
 if (args.includes('--help') || args.includes('-h')) {
   process.stdout.write(
     '\n' +
@@ -87,14 +93,26 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> watch note <text>              add watch note\n' +
     '    unaxis <slug> watch snapshot                 record snapshot\n' +
     '    unaxis <slug> watch end                      end watch session\n' +
-    '    unaxis <slug> db backup --reason <text>      DB backup\n' +
-    '    unaxis <slug> db instance list               list runtime instances\n' +
-    '    unaxis <slug> db instance <name> status      instance container health\n' +
-    '    unaxis <slug> db instance <name> logs        instance logs (db, kong, studio)\n' +
-    '    unaxis <slug> db instance <name> restart     restart instance\n' +
-    '    unaxis <slug> db instance <name> stop        stop instance\n' +
-    '    unaxis <slug> db instance <name> start       start instance\n' +
-    '    unaxis <slug> db instance <name> remove      stop, prune, deregister (--confirm)\n' +
+    '    unaxis <slug> db backup                       quick pg_dump (core DB only)\n' +
+    '    unaxis <slug> db snapshot                     full snapshot (DB + storage + metadata)\n' +
+    '    unaxis <slug> db snapshots                    list core snapshots\n' +
+    '    unaxis <slug> db restore --bundle <path>      restore core from snapshot bundle\n' +
+    '    unaxis <slug> db blank <name>                 create new blank instance\n' +
+    '    unaxis <slug> db clone <source> <name>        snapshot source → new independent instance\n' +
+    '    unaxis <slug> db clone core <name>            clone the core database\n' +
+    '    unaxis <slug> db instances                    list all runtime instances\n' +
+    '    unaxis <slug> db instance <name> status       instance container health\n' +
+    '    unaxis <slug> db instance <name> logs         instance logs (db, kong, studio)\n' +
+    '    unaxis <slug> db instance <name> start        start all containers\n' +
+    '    unaxis <slug> db instance <name> stop         stop all containers\n' +
+    '    unaxis <slug> db instance <name> restart      stop + start\n' +
+    '    unaxis <slug> db instance <name> snapshot     capture full bundle\n' +
+    '    unaxis <slug> db instance <name> snapshots    list captured bundles\n' +
+    '    unaxis <slug> db instance <name> restore      rollback from bundle (--bundle <path>)\n' +
+    '    unaxis <slug> db instance <name> verify       deep health check, sync Docker state\n' +
+    '    unaxis <slug> db instance <name> delete       full teardown, volumes gone (--confirm)\n' +
+    '    unaxis <slug> db instance <name> remove       soft remove, volumes kept  (--confirm)\n' +
+    '    unaxis <slug> db instance <name> npm          re-register NPM proxy hosts\n' +
     '    unaxis <slug> npm list [--search <domain>]   list all NPM proxy hosts\n' +
     '    unaxis <slug> npm search <domain>            search proxy hosts by domain substring\n' +
     '    unaxis <slug> preflight edit --zone <zone>   pre-edit validation\n' +
@@ -103,6 +121,9 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> env containers [<name>]        list containers (unt_* only; --all for everything)\n' +
     '    unaxis <slug> env stacks [<name>]            list Docker Compose stacks (grouped by project)\n' +
     '    unaxis <slug> env logs <env> <container>     container logs from any environment\n' +
+    '    unaxis <slug> env security [<name>]          inspect container security posture\n' +
+    '    unaxis <slug> env audit-image <img_name>     audit image layers for secrets\n' +
+    '    unaxis <slug> env events [<name>]            stream recent docker events\n' +
     '    unaxis <slug> env update <name>              update agent\n' +
     '\n' +
     '  UNAXIS global commands:\n' +
@@ -113,6 +134,7 @@ if (args.includes('--help') || args.includes('-h')) {
     '                                                   (generate key: press K in picker)\n' +
     '    unaxis disconnect                            remove remote session\n' +
     '    unaxis version                               print installed version\n' +
+    '    unaxis events --watch                        stream TUI event bus\n' +
     '\n' +
     '  Config:\n' +
     '    unaxis config set default_project <path>     set default project root\n' +
@@ -275,6 +297,13 @@ if (args[0] === 'disconnect') {
   process.exit(0)
 }
 
+// ── events subcommand ─────────────────────────────────────────────────────────
+
+if (args[0] === 'events') {
+  const { sendIpcCommand } = await import('../ink/ipc-client.js')
+  process.exit(await sendIpcCommand(args))
+}
+
 // ── <slug> <command…> — project-scoped IPC routing ───────────────────────────
 // All TUI commands are namespaced under the project slug:
 //   unaxis unenter status
@@ -285,7 +314,7 @@ if (args[0] === 'disconnect') {
 // session is active (unaxis connect <key>), commands route through the bridge.
 
 const GLOBAL_SUBCOMMANDS = new Set([
-  'project', 'connect', 'disconnect', 'config', 'credentials', 'creds', 'version',
+  'project', 'connect', 'disconnect', 'events', 'config', 'credentials', 'creds', 'version',
 ])
 
 if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMANDS.has(args[0])) {

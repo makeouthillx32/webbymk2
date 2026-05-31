@@ -3,14 +3,14 @@ import type { StackOp } from "../components/DetachedStack.tsx";
 import type { RuntimeInstance } from "../zone/supabase-factory.ts";
 import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
-import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack } from "../db-api.ts";
+import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
 import { devContainerName, startDevContainer, stopDevContainer } from "../dev-container.ts";
-import { getStatus } from "../docker.ts";
+import { getStatus, pullAndUp, removeZoneDockerArtifacts } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
 import { parseLogTail, snapshotContainerLogs } from "../log-snapshot.ts";
 import { loadZones } from "../zone-store.ts";
-import { fetchContainers, fetchContainerLogs } from "../agent-client.ts";
+import { fetchContainers, fetchContainerLogs, fetchImages, fetchVolumes, fetchNetworks, inspectContainer, fetchImageHistory, fetchDockerEvents } from "../agent-client.ts";
 import { updateRemoteAgent } from "../agent-ops.ts";
 import {
   loadEnvironments,
@@ -47,6 +47,16 @@ import {
 } from "../zone/database-manager.ts";
 import { loadRegistry } from "../zone/supabase-factory.ts";
 import { NPM_HOST } from "../../config/stack.ts";
+import { addZoneRoute, getRoutes } from "../proxy-config.ts";
+import { buildZone, deployZone } from "../zone-build.ts";
+import { deleteZone } from "../zone-scaffold.ts";
+import { doctorComposeService }    from "../docker.ts";
+import {
+  npmAddZone, npmEnableHost, npmDisableHost,
+} from "../npm/index.ts";
+import { buildInfraServices, checkService, INFRA_SERVICES } from "../infra.ts";
+import { eventBus } from "../../utils/eventBus.js";
+import { UNAXIS_CLI_SCHEMA } from "../cli-schema.js";
 
 declare const UNAXIS_VERSION: string;
 
@@ -158,6 +168,35 @@ export function useIpcBridge({
 
     const server = startIpcServer({
 
+      // unaxis --schema
+      "--schema": async (_args, onLine) => {
+        onLine(JSON.stringify(UNAXIS_CLI_SCHEMA, null, 2));
+        return 0;
+      },
+
+      // unaxis events --watch
+      events: async (args, onLine, onClose) => {
+        if (!args.includes("--watch")) {
+          onLine("✗ usage: events --watch");
+          return 2;
+        }
+
+        const handleEvent = (event: string, payload: any) => {
+          onLine(JSON.stringify({ event, payload, timestamp: new Date().toISOString() }));
+        };
+
+        const unsubscribe = eventBus.subscribe(handleEvent);
+        onClose(() => {
+          unsubscribe();
+        });
+
+        // Send an initial connected event
+        handleEvent("connected", { message: "Streaming events..." });
+
+        // Return a promise that never resolves, keeping the socket open
+        return new Promise<number>(() => {});
+      },
+
       // unaxis version  — TUI version + live agent ping on every registered environment
       // Returns package version immediately, then pings agents concurrently.
       // Offline fallback is handled in cli.tsx (prints pkg version if TUI is down).
@@ -238,6 +277,229 @@ export function useIpcBridge({
         onLine(`✓ ${all.length} zone${all.length !== 1 ? "s" : ""}`);
         return 0;
       },
+
+
+      // unaxis overview [--json]
+      // Structured project snapshot for agent consumption.
+      // Default: JSON object on a single line (machine-readable).
+      // --json flag: same (explicit).
+      // --pretty flag: formatted human display.
+      overview: async (args, onLine) => {
+        const pretty = args.includes("--pretty");
+        const all      = await loadZones();
+        const registry = await loadRegistry().catch(() => []);
+        const envs     = await loadEnvironments();
+        const active   = envs.find((e: any) => e.active) ?? envs[0] ?? null;
+        const proxyS   = ipcStateRef.current.proxyStatus;
+
+        // ── Platform ────────────────────────────────────────────────────────
+        const coreZone = all.find((z: any) => z.key === "unenter");
+        const appStatus  = coreZone ? await getStatus(coreZone.container ?? "unt_app") : "missing";
+        const proxyStatus = proxyS;
+
+        // ── Zones ────────────────────────────────────────────────────────────
+        const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
+        const zoneItems: { key: string; label: string; domain: string; status: string }[] = [];
+        for (const z of deployable) {
+          const s = await getStatus(z.container ?? z.key);
+          zoneItems.push({ key: z.key, label: z.label, domain: z.domain, status: s });
+        }
+        const runningCount = zoneItems.filter((z) => z.status === "running").length;
+
+        // ── Database ─────────────────────────────────────────────────────────
+        const instanceItems = registry.map((inst: any) => ({
+          slug:    inst.slug,
+          id:      inst.id,
+          health:  inst.healthState ?? "unknown",
+          status:  inst.status      ?? "unknown",
+          dbUrl:   `db.${inst.slug}.unenter.live`,
+          studioUrl: `studio.${inst.slug}.unenter.live`,
+        }));
+
+        // ── Host ─────────────────────────────────────────────────────────────
+        const os = await import("os");
+        const cpus = os.cpus();
+        let totalTick = 0, idleTick = 0;
+        for (const cpu of cpus) {
+          const vals = Object.values(cpu.times) as number[];
+          totalTick += vals.reduce((a, b) => a + b, 0);
+          idleTick  += cpu.times.idle;
+        }
+        const cpuPct   = parseFloat(((1 - idleTick / totalTick) * 100).toFixed(1));
+        const memTotal = os.totalmem();
+        const memFree  = os.freemem();
+        const memUsed  = memTotal - memFree;
+
+        // ── Assemble payload ─────────────────────────────────────────────────
+        const payload = {
+          ts:      new Date().toISOString(),
+          project: active?.name ?? "unenter",
+          env:     active?.type ?? "local-docker",
+          domain:  "unenter.live",
+          platform: {
+            app:   { status: appStatus },
+            proxy: { status: proxyStatus },
+          },
+          zones: {
+            total:   deployable.length,
+            running: runningCount,
+            items:   zoneItems,
+          },
+          database: {
+            core:      { status: "active" },
+            instances: instanceItems,
+          },
+          host: {
+            cpuPct,
+            memUsedMb:  Math.round(memUsed  / 1024 / 1024),
+            memFreeMb:  Math.round(memFree  / 1024 / 1024),
+            memTotalMb: Math.round(memTotal / 1024 / 1024),
+            uptimeSec:  Math.round(os.uptime()),
+          },
+        };
+
+        if (pretty) {
+          // ── Human display ──────────────────────────────────────────────────
+          const dot = (s: string) =>
+            s === "running" || s === "active" ? "●" :
+            s === "starting" || s === "degraded" ? "◐" : "○";
+
+          onLine(`Project  ${payload.project}  ·  ${payload.domain}  ·  ${payload.env}`);
+          onLine("");
+          onLine(`Platform`);
+          onLine(`  ${dot(appStatus)}  App     ${coreZone?.domain ?? "unenter.live"}`);
+          onLine(`  ${dot(proxyStatus)}  Proxy   :3080`);
+          onLine("");
+          onLine(`Zones  (${runningCount}/${deployable.length} running)`);
+          for (const z of zoneItems) {
+            onLine(`  ${dot(z.status)}  ${z.label.padEnd(18)} ${z.domain}`);
+          }
+          onLine("");
+          onLine(`Database  (1 core + ${instanceItems.length} instance${instanceItems.length !== 1 ? "s" : ""})`);
+          onLine(`  ●  Core     db.unenter.live  (active)`);
+          for (const inst of instanceItems) {
+            onLine(`  ${dot(inst.health)}  ${inst.slug.padEnd(8)} ${inst.dbUrl}  (${inst.health})`);
+          }
+          onLine("");
+          onLine(`Host  CPU ${cpuPct}%  ·  RAM ${payload.host.memUsedMb} MB used / ${payload.host.memFreeMb} MB free  ·  up ${Math.round(payload.host.uptimeSec / 3600)}h`);
+          return 0;
+        }
+
+        // Default: single JSON line — parseable by agent
+        onLine(JSON.stringify(payload));
+        return 0;
+      },
+
+
+      // unaxis sync-routes
+      // Rebuild proxy-config/routes.json from all live zones.
+      // The proxy hot-reloads this file — no restart needed.
+      // TUI equivalent: CoreView → Proxy → [sync-routes] action.
+      "sync-routes": async (_args, onLine) => {
+        const all = await loadZones();
+        const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
+        if (deployable.length === 0) { onLine("(no deployable zones)"); return 0; }
+        for (const z of deployable) {
+          await addZoneRoute(z.key, `http://${z.service}:3000`, onLine);
+        }
+        onLine(`✓ routes.json synced  (${deployable.length} zone${deployable.length !== 1 ? "s" : ""})`);
+        return 0;
+      },
+
+      // unaxis audit-npm
+      // Verify every zone has a correct NPM proxy host — create or fix if not.
+      // TUI equivalent: CoreView → Proxy → [audit-npm] action.
+      "audit-npm": async (_args, onLine) => {
+        const all = await loadZones();
+        const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
+        if (deployable.length === 0) { onLine("(no deployable zones)"); return 0; }
+        let failed = 0;
+        for (const z of deployable) {
+          onLine(`
+── ${z.label}  (${z.domain}) ──`);
+          const code = await npmAddZone(z, onLine);
+          if (code !== 0) failed++;
+        }
+        onLine(failed === 0
+          ? `
+✓ All ${deployable.length} NPM hosts verified`
+          : `
+⚠ ${failed} host${failed !== 1 ? "s" : ""} had errors`);
+        return failed === 0 ? 0 : 1;
+      },
+
+      // unaxis host [--json]
+      // Snapshot of host CPU / RAM / uptime. No deps on Docker or NPM.
+      // TUI equivalent: CoreView perf NOC + useHostMonitor hook.
+      host: async (args, onLine) => {
+        const json = args.includes("--json");
+        const os = await import("os");
+        const cpus = os.cpus();
+        let totalTick = 0, idleTick = 0;
+        for (const cpu of cpus) {
+          const vals = Object.values(cpu.times) as number[];
+          totalTick += vals.reduce((a, b) => a + b, 0);
+          idleTick  += cpu.times.idle;
+        }
+        const cpuPct   = parseFloat(((1 - idleTick / totalTick) * 100).toFixed(1));
+        const memTotal = os.totalmem();
+        const memFree  = os.freemem();
+        const uptimeSec = Math.round(os.uptime());
+        const payload = {
+          cpuPct,
+          cpuCount:   cpus.length,
+          memTotalMb: Math.round(memTotal / 1024 / 1024),
+          memUsedMb:  Math.round((memTotal - memFree) / 1024 / 1024),
+          memFreeMb:  Math.round(memFree  / 1024 / 1024),
+          uptimeSec,
+          platform:   os.platform(),
+          arch:       os.arch(),
+        };
+        if (json) { onLine(JSON.stringify(payload)); return 0; }
+        onLine(`CPU    ${cpuPct}%  (${cpus.length} cores)`);
+        onLine(`RAM    ${payload.memUsedMb} MB used / ${payload.memFreeMb} MB free / ${payload.memTotalMb} MB total`);
+        onLine(`Uptime ${Math.floor(uptimeSec / 3600)}h ${Math.floor((uptimeSec % 3600) / 60)}m`);
+        onLine(`OS     ${os.platform()}/${os.arch()}`);
+        return 0;
+      },
+
+      // unaxis infra check [--json]
+      // Run the full InfraPanel reachability suite against all known endpoints.
+      // TUI equivalent: InfraPanel → [1] Hosts view → [R] check all.
+      "infra": async (args, onLine) => {
+        const sub  = args[0] ?? "check";
+        const json = args.includes("--json");
+        if (sub !== "check") { onLine("✗ usage: infra check [--json]"); return 2; }
+
+        const envs   = await loadEnvironments();
+        const active = envs.find((e: any) => e.active) ?? null;
+        const svcs   = active ? buildInfraServices(active) : INFRA_SERVICES;
+
+        onLine(`Checking ${svcs.length} endpoints…`);
+        const results: { label: string; machine: string; status: string; ms: number | null }[] = [];
+        for (const svc of svcs) {
+          const r = await checkService(svc);
+          results.push({ label: svc.label, machine: svc.machine, status: r.status, ms: r.ms ?? null });
+          if (!json) {
+            const icon = r.status === "up" ? "●" : r.status === "down" ? "✗" : "○";
+            const ms   = r.ms != null ? `  ${r.ms}ms` : "";
+            onLine(`  ${icon}  ${svc.label.padEnd(28)} ${r.status}${ms}`);
+          }
+        }
+
+        if (json) { onLine(JSON.stringify({ ts: new Date().toISOString(), results })); return 0; }
+
+        const up   = results.filter((r) => r.status === "up").length;
+        const down = results.filter((r) => r.status === "down").length;
+        onLine(`
+${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
+        return down > 0 ? 1 : 0;
+      },
+
+      // unaxis npm enable <id>   — re-enable a disabled NPM proxy host
+      // unaxis npm disable <id>  — disable an NPM proxy host (keeps config)
+      // TUI equivalent: NpmPanel → [space] toggle enable/disable.
+      // These extend the existing npm handler (list/search/delete).
 
       // unaxis envs  — list all configured environments
       envs: async (_args, onLine) => {
@@ -351,6 +613,10 @@ export function useIpcBridge({
         // unaxis env list  — alias for unaxis envs
         if (sub === "list") {
           const all = await loadEnvironments();
+          if (args.includes("--json")) {
+            onLine(JSON.stringify(all, null, 2));
+            return 0;
+          }
           if (all.length === 0) { onLine("(no environments configured)"); return 0; }
           for (const e of all) {
             const marker = e.isDefaultTarget ? "● (default)" : "○";
@@ -470,6 +736,7 @@ export function useIpcBridge({
         if (sub === "containers") {
           // Disambiguate: is the next arg an env name or a flag?
           const showAll    = args.includes("--all");
+          const jsonOut    = args.includes("--json");
           const nameArg    = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
           const all        = await loadEnvironments();
 
@@ -488,7 +755,7 @@ export function useIpcBridge({
             return 1;
           }
 
-          onLine(`Fetching containers on ${env.name} (${env.agentUrl})…`);
+          if (!jsonOut) onLine(`Fetching containers on ${env.name} (${env.agentUrl})…`);
           const containers = await fetchContainers(env);
           if (!containers) {
             onLine(`✗ Could not reach agent — is ${env.name} online?`);
@@ -498,6 +765,11 @@ export function useIpcBridge({
           const visible = showAll
             ? containers
             : containers.filter((c) => c.Names.some((n) => n.replace(/^\//, "").startsWith("unt_")));
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: env.name, ts: new Date().toISOString(), containers: visible }, null, 2));
+            return 0;
+          }
 
           if (visible.length === 0) {
             onLine(showAll ? "  (no containers)" : "  (no unt_* containers — try --all)");
@@ -513,6 +785,245 @@ export function useIpcBridge({
           }
           const running = visible.filter((c) => c.State === "running").length;
           onLine(`\n✓ ${visible.length} container${visible.length !== 1 ? "s" : ""}  (${running} running)  —  ${env.name}`);
+          return 0;
+        }
+
+        // unaxis env images [<name>] [--json]
+        // List Docker images on the target environment.
+        // Reuses EnvPanel → ImagesView → fetchImages() — same call, straight to CLI.
+        if (sub === "images") {
+          const jsonOut = args.includes("--json");
+          const nameArg = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const all     = await loadEnvironments();
+          const env     = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+          if (!env) {
+            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
+            return 1;
+          }
+          if (!env.agentUrl) { onLine(`✗ ${env.name} has no agent configured`); return 1; }
+
+          onLine(`Fetching images on ${env.name} (${env.agentUrl})…`);
+          const images = await fetchImages(env);
+          if (!images) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: env.name, ts: new Date().toISOString(), images }));
+            return 0;
+          }
+          for (const img of images) {
+            const tag  = (img.RepoTags?.[0] ?? "<none>").padEnd(60);
+            const size = img.Size ? `${Math.round(img.Size / 1024 / 1024)} MB` : "?";
+            onLine(`  ${tag} ${size}`);
+          }
+          onLine(`
+✓ ${images.length} image${images.length !== 1 ? "s" : ""}  —  ${env.name}`);
+          return 0;
+        }
+
+        // unaxis env security [<name>] [--json]
+        // Security posture audit for all containers on the target environment.
+        // Calls inspectContainer() per container — reuses ContainerInspect path.
+        // Reports: Privileged, User, CapAdd/CapDrop, SecurityOpt, writable mounts.
+        if (sub === "security") {
+          const jsonOut  = args.includes("--json");
+          const nameArg  = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const all      = await loadEnvironments();
+          const targetEnv = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+          if (!targetEnv) {
+            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
+            return 1;
+          }
+          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+
+          onLine(`Auditing container security on ${targetEnv.name} (${targetEnv.agentUrl})…`);
+          const containers = await fetchContainers(targetEnv);
+          if (!containers) { onLine(`✗ could not reach agent — is ${targetEnv.name} online?`); return 1; }
+
+          type ContainerSecurity = {
+            id: string; name: string; image: string;
+            privileged: boolean; user: string;
+            capAdd: string[]; capDrop: string[]; securityOpt: string[];
+            writableMounts: string[]; readonlyRootfs: boolean;
+            restartPolicy: string; networkMode: string;
+          };
+
+          const results: ContainerSecurity[] = [];
+          for (const c of containers) {
+            const detail = await inspectContainer(targetEnv, c.Id as string);
+            if (!detail) continue;
+
+            const hc = (detail.HostConfig as Record<string, unknown>) ?? {};
+            const writableMounts = ((detail.Mounts as {RW?: boolean; Destination?: string}[]) ?? [])
+              .filter((m) => m.RW)
+              .map((m) => m.Destination ?? "?");
+
+            results.push({
+              id:              (c.Id as string).slice(0, 12),
+              name:            ((c.Names as string[])?.[0] ?? "?").replace(/^\//, ""),
+              image:           (c.Image as string) ?? "?",
+              privileged:      Boolean(hc.Privileged),
+              user:            String(hc.UsernsMode ?? (detail.Config as Record<string,unknown>)?.User ?? ""),
+              capAdd:          (hc.CapAdd as string[] | null) ?? [],
+              capDrop:         (hc.CapDrop as string[] | null) ?? [],
+              securityOpt:     (hc.SecurityOpt as string[] | null) ?? [],
+              writableMounts,
+              readonlyRootfs:  Boolean(hc.ReadonlyRootfs),
+              restartPolicy:   String((hc.RestartPolicy as {Name?: string})?.Name ?? "no"),
+              networkMode:     String(hc.NetworkMode ?? "?"),
+            });
+          }
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: targetEnv.name, ts: new Date().toISOString(), containers: results }));
+            return 0;
+          }
+
+          const risks   = results.filter((r) => r.privileged || r.capAdd.length > 0 || !r.readonlyRootfs);
+          const clean   = results.filter((r) => !r.privileged && r.capAdd.length === 0 && r.readonlyRootfs);
+          onLine(`\n  Security audit — ${targetEnv.name}  (${results.length} containers)`);
+          onLine(`  ─────────────────────────────────────────────────────────`);
+          for (const r of results) {
+            const flag    = r.privileged ? "⚠ PRIVILEGED" : r.capAdd.length > 0 ? "⚠ CapAdd" : "✓";
+            const rwfs    = r.readonlyRootfs ? "ro-root" : "rw-root";
+            const restart = r.restartPolicy;
+            onLine(`  ${flag.padEnd(14)} ${r.name.padEnd(40)} ${rwfs}  restart=${restart}`);
+            if (r.capAdd.length)      onLine(`               CapAdd:      ${r.capAdd.join(", ")}`);
+            if (r.capDrop.length)     onLine(`               CapDrop:     ${r.capDrop.join(", ")}`);
+            if (r.securityOpt.length) onLine(`               SecOpt:      ${r.securityOpt.join(", ")}`);
+            if (r.writableMounts.length) onLine(`               RW mounts:   ${r.writableMounts.join(", ")}`);
+          }
+          onLine(`\n  Summary: ${risks.length} flagged  ·  ${clean.length} clean`);
+          return 0;
+        }
+
+        // unaxis env audit-image <image> [<env-name>] [--json]
+        // Scan image layer history for secrets in RUN/ENV/COPY instructions.
+        // Calls fetchImageHistory() → /images/<name>/history — new client function.
+        if (sub === "audit-image") {
+          const imageName = args[1];
+          if (!imageName) {
+            onLine("✗ usage: env audit-image <image> [<env-name>] [--json]");
+            return 2;
+          }
+          const jsonOut   = args.includes("--json");
+          const nameArg   = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
+          const all       = await loadEnvironments();
+          const targetEnv = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+          if (!targetEnv) {
+            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
+            return 1;
+          }
+          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+
+          onLine(`Fetching layer history for ${imageName} on ${targetEnv.name}…`);
+          const layers = await fetchImageHistory(targetEnv, imageName);
+          if (!layers) { onLine(`✗ image not found or agent unreachable: ${imageName}`); return 1; }
+
+          // Secret patterns to flag in layer commands
+          const SECRET_PATTERNS = [
+            /password\s*=\s*\S+/i,
+            /secret\s*=\s*\S+/i,
+            /api[_\-]?key\s*=\s*\S+/i,
+            /token\s*=\s*\S+/i,
+            /private[_\-]?key/i,
+            /aws[_\-]?access[_\-]?key/i,
+            /aws[_\-]?secret/i,
+            /-----BEGIN\s+\w+\s+PRIVATE KEY/i,
+          ];
+
+          type LayerAudit = {
+            index: number; id: string; size: number; createdBy: string;
+            flags: string[];
+          };
+
+          const audited: LayerAudit[] = layers.map((layer, i) => {
+            const flags: string[] = [];
+            const cmd = layer.CreatedBy ?? "";
+            for (const pat of SECRET_PATTERNS) {
+              if (pat.test(cmd)) flags.push(`secret-pattern:${pat.source.split("\\")[0]}`);
+            }
+            // Flag ENV instructions (common source of leaked secrets)
+            if (/^\|?\d*\s*\/bin\/sh\s+-c\s+#\(nop\)\s+ENV\b/i.test(cmd)) flags.push("ENV-instruction");
+            // Flag large ADD/COPY layers that could contain key material
+            if (/^\|?\d*\s*\/bin\/sh\s+-c\s+#\(nop\)\s+(ADD|COPY)\b/i.test(cmd) && layer.Size > 10_000)
+              flags.push("COPY/ADD-layer");
+            return { index: i, id: layer.Id.slice(0, 12), size: layer.Size, createdBy: cmd, flags };
+          });
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: targetEnv.name, image: imageName, ts: new Date().toISOString(), layers: audited }));
+            return 0;
+          }
+
+          const flagged = audited.filter((l) => l.flags.length > 0);
+          onLine(`\n  Image layer audit — ${imageName}  (${layers.length} layers)`);
+          onLine(`  ─────────────────────────────────────────────────────────`);
+          for (const layer of audited) {
+            const sizeMb  = (layer.size / 1024 / 1024).toFixed(1);
+            const marker  = layer.flags.length ? "⚠" : "·";
+            const preview = layer.createdBy.slice(0, 80).replace(/\s+/g, " ");
+            onLine(`  ${marker} [${layer.index.toString().padStart(2)}] ${layer.id}  ${sizeMb.padStart(8)} MB  ${preview}`);
+            for (const f of layer.flags) {
+              onLine(`       ↳ ${f}`);
+            }
+          }
+          onLine(`\n  ${flagged.length} layer${flagged.length !== 1 ? "s" : ""} flagged  ·  ${layers.length - flagged.length} clean`);
+          if (flagged.length > 0) onLine(`  Tip: rebuild image without secret ENV vars; use Docker secrets or build args with --secret`);
+          return 0;
+        }
+
+        // unaxis env events [<name>] [--since <duration>] [--json]
+        // Fetch recent Docker events from the target environment.
+        // Calls fetchDockerEvents() — new agent-client function.
+        // <duration>: number of seconds back to look (default 3600 = 1 hour)
+        if (sub === "events") {
+          const jsonOut   = args.includes("--json");
+          const sinceIdx  = args.indexOf("--since");
+          const sinceSec  = sinceIdx !== -1 && args[sinceIdx + 1]
+            ? parseInt(args[sinceIdx + 1] ?? "3600", 10)
+            : 3600;
+          const nameArg   = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const all       = await loadEnvironments();
+          const targetEnv = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+          if (!targetEnv) {
+            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
+            return 1;
+          }
+          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+
+          const until = Math.floor(Date.now() / 1000);
+          const since = until - sinceSec;
+          onLine(`Fetching Docker events on ${targetEnv.name} (last ${sinceSec}s)…`);
+          const events = await fetchDockerEvents(targetEnv, since, until);
+          if (!events) { onLine(`✗ could not reach agent — is ${targetEnv.name} online?`); return 1; }
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: targetEnv.name, ts: new Date().toISOString(), since, until, events }));
+            return 0;
+          }
+
+          if (events.length === 0) {
+            onLine(`  No events in the last ${sinceSec}s on ${targetEnv.name}`);
+            return 0;
+          }
+
+          onLine(`\n  Docker events — ${targetEnv.name}  (last ${sinceSec}s · ${events.length} events)`);
+          onLine(`  ─────────────────────────────────────────────────────────`);
+          for (const ev of events) {
+            const ts   = new Date(ev.time * 1000).toISOString().slice(11, 19);
+            const name = ev.Actor?.Attributes?.name ?? ev.Actor?.ID?.slice(0, 12) ?? "?";
+            const img  = ev.Actor?.Attributes?.image ?? "";
+            const tail = img ? `  [${img}]` : "";
+            onLine(`  ${ts}  ${ev.Type.padEnd(10)} ${ev.Action.padEnd(12)} ${name}${tail}`);
+          }
           return 0;
         }
 
@@ -538,17 +1049,30 @@ export function useIpcBridge({
         }
 
         onLine(`✗ unknown env command: "${sub}"`);
-        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env stacks [<name>] | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name>");
+        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env images [<name>] | env stacks [<name>] | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name> | env security [<name>] [--json] | env audit-image <image> [<env>] [--json] | env events [<name>] [--since <sec>] [--json]");
         return 2;
       },
 
       // unaxis session  — agent-friendly snapshot of the attached TUI
-      session: async (_args, onLine) => {
+      session: async (args, onLine) => {
         const [all, activeEnv] = await Promise.all([loadZones(), getActiveEnvironment()]);
         const { view: currentView, bgOps: currentOps, proxyStatus: currentProxy } = ipcStateRef.current;
         const running = currentOps.filter((o) => o.busy && !o.dismissable).length;
         const live = currentOps.filter((o) => o.busy && o.dismissable).length;
         const done = currentOps.filter((o) => !o.busy).length;
+
+        if (args.includes("--json")) {
+          onLine(JSON.stringify({
+            cwd: process.cwd(),
+            env: activeEnv ? { name: activeEnv.name, type: activeEnv.type, domain: activeEnv.domain } : null,
+            view: currentView,
+            proxyStatus: currentProxy,
+            zoneCount: all.length,
+            stack: { running, live, done }
+          }, null, 2));
+          return 0;
+        }
+
         onLine("✓ UNAXIS TUI is running");
         onLine(`  cwd    : ${process.cwd()}`);
         if (activeEnv) {
@@ -563,8 +1087,16 @@ export function useIpcBridge({
       },
 
       // unaxis stack  — compact list of visible TUI ops
-      stack: async (_args, onLine) => {
+      stack: async (args, onLine) => {
         const ops = ipcStateRef.current.bgOps;
+
+        if (args.includes("--json")) {
+          const { getOpQueue } = await import("../../utils/messageQueueManager.js");
+          const queue = getOpQueue();
+          onLine(JSON.stringify({ active: ops, queued: queue }, null, 2));
+          return 0;
+        }
+
         if (ops.length === 0) { onLine("✓ stack empty"); return 0; }
         for (const op of ops) {
           const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
@@ -817,6 +1349,80 @@ export function useIpcBridge({
           return 0;
         }
 
+        // ── db core <status|start|stop|restart|verify> ────────────────────────
+        if (sub === "core") {
+          const coreSub = args[1] ?? "status";
+          const bg = args.includes("--bg");
+
+          if (coreSub === "status" || coreSub === "verify") {
+            const { verifyCoreStack } = await import("../db-api.ts");
+            const result = await verifyCoreStack(coreDockerInstance, onLine);
+            onLine(`\n${result.overall === "healthy" ? "✓" : "⚠"} ${result.overall}  (${result.runningCount}/${result.totalCount} running)`);
+            return result.overall === "healthy" ? 0 : 1;
+          }
+
+          if (coreSub === "start") {
+            const runStart = async (l: (msg: string) => void) => {
+              l(`Starting core Supabase stack…`);
+              const ok = await startCoreStack(coreDockerInstance, l);
+              l(ok ? `✓ Core started` : `✗ Core start failed`);
+              return ok ? 0 : 1;
+            };
+            if (bg) {
+              runOpQueued("Start core DB", runStart);
+              if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Start core DB" }));
+              else onLine("⚡ Core start queued");
+              return 3;
+            }
+            return runStart(onLine);
+          }
+
+          if (coreSub === "stop") {
+            const runStop = async (l: (msg: string) => void) => {
+              l(`Stopping core Supabase stack…`);
+              const ok = await stopCoreStack(coreDockerInstance, l);
+              l(ok ? `✓ Core stopped` : `✗ Core stop failed`);
+              return ok ? 0 : 1;
+            };
+            if (bg) {
+              runOpQueued("Stop core DB", runStop);
+              if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Stop core DB" }));
+              else onLine("⚡ Core stop queued");
+              return 3;
+            }
+            return runStop(onLine);
+          }
+
+          if (coreSub === "restart") {
+            const runRestart = async (l: (msg: string) => void) => {
+              l(`Restarting core Supabase stack…`);
+              const ok = await restartCoreStack(coreDockerInstance, l);
+              l(ok ? `✓ Core restarted` : `✗ Core restart failed`);
+              return ok ? 0 : 1;
+            };
+            if (bg) {
+              runOpQueued("Restart core DB", runRestart);
+              if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Restart core DB" }));
+              else onLine("⚡ Core restart queued");
+              return 3;
+            }
+            return runRestart(onLine);
+          }
+
+          onLine("✗ usage: db core <status|start|stop|restart|verify> [--bg]");
+          return 2;
+        }
+
+        // ── db heal ──────────────────────────────────────────────────────────
+        // Reuses DbPanel → [h] → healCoreStack() — same function, straight to CLI.
+        // Runs docker compose pull + up with restart-on-fail for all core services.
+        if (sub === "heal") {
+          onLine("Healing core Supabase stack…");
+          const code = await healCoreStack(onLine);
+          if (code === 0) onLine("✓ Core stack healed — services should be healthy shortly");
+          return code;
+        }
+
         // ── db blank <slug> [--no-npm] ────────────────────────────────────────
         // Fastest path: scaffold + start a fresh empty Supabase instance.
         // MCP config is written with real keys immediately.
@@ -859,37 +1465,62 @@ export function useIpcBridge({
         // Alias: list all runtime instances (same as `db instance list`)
         if (sub === "instances") {
           const registry = await loadRegistry();
-          if (registry.length === 0) { onLine("  (no runtime instances)"); return 0; }
-          for (const inst of registry) {
-            const p = inst.ports;
-            onLine(`  ${inst.name.padEnd(24)} ${inst.slug}`);
-            onLine(`    Kong:${p.kong}  Studio:${p.studio}  PG:${p.postgres}  ${inst.status}`);
+          if (args.includes("--json")) {
+            onLine(JSON.stringify(registry, null, 2));
+            return 0;
           }
-          onLine(`✓ ${registry.length} instance${registry.length !== 1 ? "s" : ""}`);
+          const projectSlug = coreDockerInstance.slug;
+          onLine(`Runtime instances  ·  project: ${projectSlug}`);
+          if (registry.length === 0) {
+            onLine(`  (none — create one: unaxis ${projectSlug} db blank <name>)`);
+            return 0;
+          }
+          onLine("");
+          for (const inst of registry) {
+            const p      = inst.ports;
+            const health = inst.healthState === "healthy" ? "●" : inst.healthState === "degraded" ? "◑" : "○";
+            const apiUrl    = inst.npmApiUrl    ?? `http://127.0.0.1:${p.kong}`;
+            const studioUrl = inst.npmStudioUrl ?? `http://127.0.0.1:${p.studio}`;
+            onLine(`  ${health} ${inst.name}`);
+            onLine(`      slug   ${inst.slug}   status: ${inst.status}`);
+            onLine(`      api    ${apiUrl}`);
+            onLine(`      studio ${studioUrl}`);
+            onLine(`      local  kong:${p.kong}  pg:${p.postgres}`);
+          }
+          onLine(`\n✓ ${registry.length} instance${registry.length !== 1 ? "s" : ""}  (project: ${projectSlug})`);
           return 0;
         }
 
         // ── db instance <name> <sub> ───────────────────────────────────────────
-        // Commands:
-        //   db instance list                       — list all runtime instances
-        //   db instance <name> logs [--tail <n>]   — stream container logs
-        //   db instance <name> restart             — restart all containers
-        //   db instance <name> stop                — stop all containers
-        //   db instance <name> start               — start all containers
-        //   db instance <name> status              — container health summary
         if (sub === "instance") {
           const nameOrSub = args[1];
+          const projectSlug = coreDockerInstance.slug;
 
           // db instance list
           if (!nameOrSub || nameOrSub === "list") {
             const registry = await loadRegistry();
-            if (registry.length === 0) { onLine("  (no runtime instances)"); return 0; }
-            for (const inst of registry) {
-              const p = inst.ports;
-              onLine(`  ${inst.name.padEnd(24)} ${inst.slug}`);
-              onLine(`    Kong:${p.kong}  Studio:${p.studio}  PG:${p.postgres}  ${inst.status}`);
+            if (args.includes("--json")) {
+              onLine(JSON.stringify(registry, null, 2));
+              return 0;
             }
-            onLine(`✓ ${registry.length} instance${registry.length !== 1 ? "s" : ""}`);
+            onLine(`Runtime instances  ·  project: ${projectSlug}`);
+            if (registry.length === 0) {
+              onLine(`  (none — create one: unaxis ${projectSlug} db blank <name>)`);
+              return 0;
+            }
+            onLine("");
+            for (const inst of registry) {
+              const p      = inst.ports;
+              const health = inst.healthState === "healthy" ? "●" : inst.healthState === "degraded" ? "◑" : "○";
+              const apiUrl    = inst.npmApiUrl    ?? `http://127.0.0.1:${p.kong}`;
+              const studioUrl = inst.npmStudioUrl ?? `http://127.0.0.1:${p.studio}`;
+              onLine(`  ${health} ${inst.name}`);
+              onLine(`      slug   ${inst.slug}   status: ${inst.status}`);
+              onLine(`      api    ${apiUrl}`);
+              onLine(`      studio ${studioUrl}`);
+              onLine(`      local  kong:${p.kong}  pg:${p.postgres}`);
+            }
+            onLine(`\n✓ ${registry.length} instance${registry.length !== 1 ? "s" : ""}  (project: ${projectSlug})`);
             return 0;
           }
 
@@ -1005,26 +1636,385 @@ export function useIpcBridge({
             return ok ? 0 : 1;
           }
 
-          onLine(`✗ usage: db instance <name> logs|restart|stop|start|remove|npm|status`);
+          // db instance <name> snapshot [--bg]
+          // --bg: queue as a TUI background op and return immediately (no socket wait)
+          if (instanceSub === "snapshot") {
+            const bg = args.includes("--bg");
+            if (bg) {
+              runOpQueued(
+                `Snapshot  ${inst.name}`,
+                async (bgLine) => {
+                  const { snapshotInstance } = await import("../zone/snapshot.ts");
+                  const bundle = await snapshotInstance(inst, bgLine);
+                  bgLine(`✓ ${bundle.bundlePath}`);
+                  if (bundle.archivePath) bgLine(`  Archive: ${bundle.archivePath}`);
+                  return 0;
+                },
+              );
+              if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `Snapshot  ${inst.name}` }));
+              else onLine(`⚡ Snapshot queued for ${inst.name} — watch TUI stack for progress`);
+              return 3; // queued — still running in TUI stack
+            }
+            const { snapshotInstance } = await import("../zone/snapshot.ts");
+            const bundle = await snapshotInstance(inst, onLine);
+            onLine(`✓ Snapshot: ${bundle.bundlePath}`);
+            if (bundle.archivePath) onLine(`  Archive:  ${bundle.archivePath}`);
+            return 0;
+          }
+
+          // db instance <name> snapshots  — list all captured bundles for this instance
+          if (instanceSub === "snapshots") {
+            const { listSnapshots } = await import("../zone/snapshot.ts");
+            const bundles = await listSnapshots(inst);
+            if (bundles.length === 0) {
+              onLine(`  (no snapshots for "${inst.name}" — run: db instance ${nameOrSub} snapshot)`);
+              return 0;
+            }
+            onLine(`Snapshots for  ${inst.name}  (${bundles.length} total)`);
+            for (const b of bundles) {
+              const date = new Date(b.createdAt).toLocaleString();
+              const arch = b.archivePath ? "  📦" : "";
+              onLine(`  ${b.id}  ${date}${arch}`);
+              onLine(`    ${b.bundlePath}`);
+            }
+            return 0;
+          }
+
+          // db instance <name> restore --bundle <path>
+          // Stops the stack, pg_restore, restores storage, restarts. Destructive.
+          if (instanceSub === "restore") {
+            const bundlePath = argValue(args.slice(2), "--bundle");
+            if (!bundlePath) {
+              onLine(`✗ usage: db instance ${nameOrSub} restore --bundle <path-to-bundle-dir>`);
+              onLine(`  Tip: run "db instance ${nameOrSub} snapshots" to list available bundles`);
+              return 2;
+            }
+            const { restoreInstance } = await import("../zone/snapshot.ts");
+            const code = await restoreInstance(bundlePath, onLine, inst);
+            return code;
+          }
+
+          // db instance <name> verify  — sync health state from Docker, surface issues
+          if (instanceSub === "verify") {
+            const { verifyCoreStack } = await import("../db-api.ts");
+            const result = await verifyCoreStack(inst, onLine);
+            onLine(`\n${result.overall === "healthy" ? "✓" : "⚠"} ${result.overall}  (${result.runningCount}/${result.totalCount} running)`);
+            return result.overall === "healthy" ? 0 : 1;
+          }
+
+          // db instance <name> mcp  — re-output MCP connection config for this instance
+          // Useful when mcp-config.json is lost or keys need to be shared.
+          if (instanceSub === "mcp") {
+            const mcpConfigPath = `${inst.dockerPath}/mcp-config.json`;
+            const mcpEnvPath    = `${inst.dockerPath}/mcp-env.txt`;
+            const { readFileSync, existsSync } = await import("fs");
+            if (!existsSync(mcpConfigPath)) {
+              onLine(`✗ mcp-config.json not found at ${mcpConfigPath}`);
+              onLine(`  Re-register NPM first: db instance ${nameOrSub} npm`);
+              return 1;
+            }
+            const config  = readFileSync(mcpConfigPath, "utf-8");
+            const envText = existsSync(mcpEnvPath) ? readFileSync(mcpEnvPath, "utf-8") : "";
+            onLine(`MCP config for  ${inst.name}  (${inst.slug})`);
+            onLine(`  Public API:    ${inst.npmApiUrl ?? "(not registered)"}`);
+            onLine(`  Public Studio: ${inst.npmStudioUrl ?? "(not registered)"}`);
+            onLine(`  Local API:     http://127.0.0.1:${inst.ports.kong}`);
+            onLine(`  Studio pass:   ${inst.secrets.dashboardPassword}`);
+            onLine(`  Anon key:      ${inst.secrets.anonKey.slice(0, 40)}…`);
+            onLine(`\n── mcp-config.json ──────────────────────────────────`);
+            config.split("\n").forEach(onLine);
+            if (envText) {
+              onLine(`\n── mcp-env.txt ──────────────────────────────────────`);
+              envText.split("\n").forEach(onLine);
+            }
+            return 0;
+          }
+
+          // db instance <name> delete --confirm
+          // Full teardown: NPM hosts removed, docker volumes deleted, filesystem removed, registry entry gone.
+          // Use "remove" to keep volumes; use "delete" to destroy everything.
+          if (instanceSub === "delete") {
+            const confirmed = args.includes("--confirm");
+            if (!confirmed) {
+              onLine(`⚠  This will PERMANENTLY delete "${inst.name}" (${inst.slug}).`);
+              onLine(`   NPM proxy hosts, containers, volumes, and all files will be removed.`);
+              onLine(`   Snapshot first if you want a recovery point:`);
+              onLine(`     db instance ${nameOrSub} snapshot`);
+              onLine(`   Then re-run with --confirm to proceed.`);
+              return 2;
+            }
+            const { deleteRuntimeInstance } = await import("../db-api.ts");
+            const ok = await deleteRuntimeInstance(inst, onLine);
+            return ok ? 0 : 1;
+          }
+
+          // db instance <name> fix-auth
+          // Reset supabase_admin password inside the DB container to match POSTGRES_PASSWORD.
+          // Use when services (auth/rest/storage/pooler) crash with "password authentication failed".
+          if (instanceSub === "fix-auth") {
+            const { execSync } = await import("child_process");
+            const dbContainer = `${inst.slug}-db`;
+            // Prefer registry secret; fall back to reading .env directly (older instances)
+            let pgPass: string = inst.secrets?.postgresPassword ?? "";
+            if (!pgPass) {
+              const { readFileSync, existsSync } = await import("fs");
+              const envPath = `${inst.dockerPath}/.env`;
+              if (existsSync(envPath)) {
+                const envLine = readFileSync(envPath, "utf-8")
+                  .split("\n").find((l) => l.startsWith("POSTGRES_PASSWORD="));
+                pgPass = envLine?.split("=", 2)[1]?.trim() ?? "";
+              }
+            }
+            if (!pgPass) {
+              onLine(`✗ Could not determine POSTGRES_PASSWORD for ${inst.name}`);
+              return 1;
+            }
+            onLine(`Resetting supabase_admin password in ${dbContainer}…`);
+            const sql = `ALTER USER supabase_admin WITH PASSWORD '${pgPass}'; ALTER USER supabase_auth_admin WITH PASSWORD '${pgPass}';`;
+            try {
+              const cmd = `docker exec ${dbContainer} psql -U supabase_admin -c "${sql.replace(/"/g, '\"')}"`;
+              execSync(cmd, { stdio: "pipe" });
+              onLine(`✓ supabase_admin + supabase_auth_admin passwords updated`);
+              onLine(`  Restart the instance to bring services back: db instance ${nameOrSub} restart`);
+              return 0;
+            } catch (e) {
+              onLine(`✗ exec failed: ${e instanceof Error ? e.message : e}`);
+              return 1;
+            }
+          }
+
+          onLine(`✗ usage: db instance <name> status|logs|start|stop|restart|snapshot|snapshots|restore|verify|delete|remove|npm|fix-auth`);
           return 2;
         }
 
-        onLine("✗ usage: db backup|logs|snapshot|snapshots|restore|template-capture|templates|provision|blank|smoke-test|instance|instances");
+        // ── db clone <source-name> <new-name> [--no-npm] [--bg] ──────────────
+        // Clone an existing instance (or core) into a new independent instance.
+        // --bg: queue as a TUI background op and return immediately (no socket wait)
+        if (sub === "clone") {
+          const sourceName = args[1];
+          const newName    = args[2];
+          if (!sourceName || !newName || sourceName.startsWith("--") || newName.startsWith("--")) {
+            onLine(`✗ usage: db clone <source-name> <new-name> [--no-npm] [--bg]`);
+            onLine(`  source-name  name or slug of existing instance (or "core" for the core DB)`);
+            onLine(`  new-name     display name for the new clone (e.g. "My Clone")`);
+            onLine(`  --no-npm     skip NPM SSL proxy registration`);
+            onLine(`  --bg         queue in TUI stack, return immediately (no timeout)`);
+            onLine(`  Example: db clone core "Staging" --bg`);
+            return 2;
+          }
+
+          const registerNpm = !args.includes("--no-npm");
+          const bg          = args.includes("--bg");
+
+          // Resolve source — "core" is a special alias for CORE_INSTANCE
+          type RI = import("../zone/supabase-factory.ts").RuntimeInstance;
+          let sourceInst: RI;
+          if (sourceName === "core") {
+            const { CORE_INSTANCE_SNAPSHOT_TARGET } = await import("../db-api.ts");
+            sourceInst = CORE_INSTANCE_SNAPSHOT_TARGET;
+          } else {
+            const registry = await loadRegistry();
+            const found = registry.find(
+              (i) => i.name === sourceName || i.slug === sourceName || i.id === sourceName,
+            );
+            if (!found) {
+              onLine(`✗ source instance "${sourceName}" not found`);
+              onLine(`  Run: db instances   or use "core" to clone the core database`);
+              return 1;
+            }
+            sourceInst = found;
+          }
+
+          const runClone = async (bgLine: (l: string) => void) => {
+            const { snapshotInstance } = await import("../zone/snapshot.ts");
+            const { cloneFromSnapshot } = await import("../zone/database-manager.ts");
+            bgLine(`📸 Snapshotting ${sourceInst.name} (${sourceInst.slug})`);
+            const bundle = await snapshotInstance(sourceInst, bgLine);
+            bgLine(`✓ Snapshot: ${bundle.id}`);
+            const result = await cloneFromSnapshot(bundle.bundlePath, newName, { registerNpm }, bgLine);
+            bgLine(`\n✓ Clone complete  →  ${result.publicApiUrl}`);
+            bgLine(`  Studio: ${result.publicStudioUrl}`);
+            bgLine(`  Pass:   ${result.instance.secrets.dashboardPassword}`);
+            return 0;
+          };
+
+          if (bg) {
+            runOpQueued(`Clone  ${sourceInst.slug}  →  ${newName}`, runClone);
+            if (args.includes("--json")) {
+              onLine(JSON.stringify({ status: "queued", taskId: `Clone  ${sourceInst.slug}  →  ${newName}` }));
+            } else {
+              onLine(`⚡ Clone queued: ${sourceInst.name} → "${newName}"`);
+              onLine(`  Watch TUI stack for progress (takes 2–5 min)`);
+            }
+            return 3; // queued — still running in TUI stack
+          }
+
+          return runClone(onLine);
+        }
+
+        onLine("✗ usage: db backup|logs|snapshot|snapshots|restore|clone|template-capture|templates|provision|blank|smoke-test|instance|instances");
+        return 2;
+      },
+
+      // unaxis proxy <restart|build|agent-reset|push-agent> [--bg]
+      proxy: async (args, onLine) => {
+        const sub = args[0] ?? "status";
+        const bg = args.includes("--bg");
+
+        if (sub === "status") {
+          onLine(`Proxy status: ${ipcStateRef.current.proxyStatus}`);
+          return 0;
+        }
+
+        if (sub === "restart") {
+          const runRestart = async (l: (msg: string) => void) => {
+            const { reloadProxy } = await import("../docker.ts");
+            return reloadProxy(l);
+          };
+          if (bg) {
+            runOpQueued("Restart proxy", runRestart);
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Restart proxy" }));
+            else onLine("⚡ Proxy restart queued");
+            return 3;
+          }
+          return runRestart(onLine);
+        }
+
+        if (sub === "build") {
+          const clean = args.includes("--clean");
+          const runBuild = async (l: (msg: string) => void) => {
+            const { rebuildProxy } = await import("../docker.ts");
+            return rebuildProxy(l, clean);
+          };
+          if (bg) {
+            const taskId = clean ? "Rebuild proxy (clean)" : "Rebuild proxy";
+            runOpQueued(taskId, runBuild);
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId }));
+            else onLine("⚡ Proxy build queued");
+            return 3;
+          }
+          return runBuild(onLine);
+        }
+
+        if (sub === "push-agent") {
+          const runPush = async (l: (msg: string) => void) => {
+            const { buildAndPushAgent } = await import("../agent-ops.ts");
+            const code = await buildAndPushAgent(l);
+            if (code === 0) l("✓ Agent image pushed — go to Environments → [u] on L0V3 to deploy");
+            return code;
+          };
+          if (bg) {
+            runOpQueued("Push agent → GHCR", runPush);
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Push agent → GHCR" }));
+            else onLine("⚡ Push agent queued");
+            return 3;
+          }
+          return runPush(onLine);
+        }
+
+        if (sub === "agent-reset") {
+          const runReset = async (l: (msg: string) => void) => {
+            const { unlinkSync } = await import("fs");
+            const { join } = await import("path");
+            const { PROJECT_DIR } = await import("../../config/stack.ts");
+            const stateFile = join(PROJECT_DIR, "proxy-config", "agent-state.json");
+            try {
+              unlinkSync(stateFile);
+              l("✓ TOFU pairing state cleared — agent will pair on next connect");
+            } catch (err: any) {
+              const msg = err.message || String(err);
+              if (msg.includes("ENOENT")) l("✓ No pairing state found — agent is already unpaired");
+              else { l(`✗ Could not remove state file: ${msg}`); return 1; }
+            }
+            l("Restarting proxy to apply...");
+            const { reloadProxy } = await import("../docker.ts");
+            return reloadProxy(l);
+          };
+          if (bg) {
+            runOpQueued("Reset agent pairing", runReset);
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: "Reset agent pairing" }));
+            else onLine("⚡ Agent reset queued");
+            return 3;
+          }
+          return runReset(onLine);
+        }
+
+        onLine("✗ usage: proxy <status|restart|build|agent-reset|push-agent> [--bg] [--clean]");
         return 2;
       },
 
       // ── npm list [--search <domain>]
       // ── npm search <domain>
+      // ── npm delete <id>   — remove a proxy host by NPM ID (use after orphaned instance cleanup)
       npm: async (args, onLine) => {
         const sub    = args[0] ?? "list";
         const search = argValue(args, "--search") ?? (sub === "search" ? args[1] : undefined);
 
-        const { npmListHosts, npmPing } = await import("../npm-api.ts");
+        const { npmListHosts, npmPing, npmGetToken, npmDeleteHost, npmFindHost } = await import("../npm-api.ts");
 
         const reachable = await npmPing();
         if (!reachable) {
           onLine(`✗ NPM unreachable — check that L0VE is up and the agent is running`);
           return 1;
+        }
+
+        // ── npm delete <id|domain> ───────────────────────────────────────────
+        if (sub === "delete") {
+          const target = args[1];
+          if (!target) {
+            onLine(`✗ usage: npm delete <id|domain>`);
+            // npm enable <id>
+          if (npmSub === "enable" || npmSub === "disable") {
+            const idArg = args[2];
+            if (!idArg) { onLine(`✗ usage: npm ${npmSub} <id>`); return 2; }
+            const id = parseInt(idArg, 10);
+            if (isNaN(id)) { onLine(`✗ id must be a number, got: "${idArg}"`); return 2; }
+            onLine(`${npmSub === "enable" ? "Enabling" : "Disabling"} NPM host #${id}…`);
+            try {
+              if (npmSub === "enable") {
+                await npmEnableHost(id);
+              } else {
+                await npmDisableHost(id);
+              }
+              onLine(`✓ Host #${id} ${npmSub}d`);
+              return 0;
+            } catch (e) {
+              onLine(`✗ ${String(e)}`);
+              return 1;
+            }
+          }
+          onLine(`  id      numeric NPM host ID (from npm list output)`);
+            onLine(`  domain  exact domain name (e.g. db.myapp.unenter.live)`);
+            return 2;
+          }
+          let token: string;
+          try { token = await npmGetToken(); }
+          catch (e) { onLine(`✗ NPM auth failed: ${e}`); return 1; }
+
+          const numericId = parseInt(target, 10);
+          let hostId: number;
+
+          if (!isNaN(numericId)) {
+            hostId = numericId;
+          } else {
+            // Resolve by domain name
+            const host = await npmFindHost(target, token);
+            if (!host) {
+              onLine(`✗ No NPM host found for domain "${target}"`);
+              return 1;
+            }
+            hostId = host.id;
+            onLine(`  Resolved "${target}" → host #${hostId}`);
+          }
+
+          try {
+            await npmDeleteHost(hostId, token);
+            onLine(`✓ Deleted NPM host #${hostId}`);
+            return 0;
+          } catch (e) {
+            onLine(`✗ Delete failed: ${e instanceof Error ? e.message : e}`);
+            return 1;
+          }
         }
 
         const hosts = await npmListHosts();
@@ -1176,6 +2166,20 @@ export function useIpcBridge({
         return 0;
       },
 
+      // unaxis zones [--json]
+      zones: async (args, onLine) => {
+        const all = await loadZones();
+        if (args.includes("--json")) {
+          onLine(JSON.stringify(all, null, 2));
+          return 0;
+        }
+        if (all.length === 0) { onLine("  (no zones)"); return 0; }
+        for (const z of all) {
+          onLine(`  ${z.key.padEnd(20)} ${z.label.padEnd(20)} ${z.domain}`);
+        }
+        return 0;
+      },
+
       // unaxis zone <name> status
       // unaxis zone <name> logs [--tail <lines>]
       // unaxis zone <name> dev start|stop|restart
@@ -1202,9 +2206,61 @@ export function useIpcBridge({
           return result.code;
         }
 
+        if (action === "build" || action === "rebuild") {
+          const noCache = action === "rebuild" || args.includes("--no-cache");
+          onLine(`${noCache ? "Rebuild" : "Build"}  ${zone.label}…`);
+          const code = await buildZone(zone, onLine, { noCache });
+          if (code !== 0) return code;
+          onLine("--- pull + up ---");
+          return pullAndUp(zone, onLine);
+        }
+
+        if (action === "deploy") {
+          onLine(`Deploy  ${zone.label}…`);
+          return deployZone(zone, onLine);
+        }
+
+        if (action === "pull") {
+          onLine(`Pull + up  ${zone.label}…`);
+          return pullAndUp(zone, onLine);
+        }
+
+        if (action === "delete") {
+          if (!args.includes("--confirm")) {
+            onLine(`✗ Destructive operation — pass --confirm to proceed`);
+            onLine(`  unaxis zone ${zone.key} delete --confirm`);
+            return 2;
+          }
+          if (zone.key === "unenter" || zone.key === "proxy") {
+            onLine(`✗ ${zone.label} is permanent infrastructure — cannot be deleted`);
+            return 1;
+          }
+          onLine(`Deleting zone  ${zone.label}…`);
+          const code = await deleteZone(zone, onLine);
+          if (code === 0) onLine(`✓ Zone "${zone.key}" deleted`);
+          return code;
+        }
+
+        if (action === "doctor") {
+          onLine(`Diagnosing ${zone.label}…`);
+          onLine(`--- compose ---`);
+          const changed = doctorComposeService(zone, onLine);
+          onLine(changed ? `  compose patched` : `  compose OK`);
+          onLine(`--- proxy routes ---`);
+          const routes = getRoutes();
+          if (routes.zones?.[zone.key]) {
+            onLine(`✓ proxy route OK  →  ${zone.domain}  →  ${routes.zones[zone.key]}`);
+          } else {
+            await addZoneRoute(zone.key, `http://${zone.service}:3000`, onLine);
+          }
+          onLine(`--- NPM ---`);
+          await npmAddZone(zone, onLine);
+          return 0;
+        }
+
         if (action !== "dev") {
           onLine(`✗ unknown zone action: ${action}`);
-          onLine("  usage: zone <zone-key> status|logs|dev <start|stop|restart|logs>");
+          onLine("  usage: zone <zone-key> status|logs|build|rebuild|deploy|pull|delete|doctor|dev <start|stop|restart|logs>");
           return 2;
         }
 

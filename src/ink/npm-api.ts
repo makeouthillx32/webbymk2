@@ -626,9 +626,49 @@ export async function npmAddDatabaseHosts(
     if (existing) {
       const correctHost = existing.forward_host === stackIp;
       const correctPort = existing.forward_port === cfg.forwardPort;
-      if (correctHost && correctPort) {
+      const hasSsl      = existing.certificate_id && existing.certificate_id !== 0;
+      if (correctHost && correctPort && (hasSsl || reusableCert)) {
         onLine(`✓ NPM host already registered (id #${existing.id})`);
         result[cfg.key] = existing.id;
+        continue;
+      }
+
+      // Host exists but is HTTP-only — patch it to add SSL/LE cert
+      if (correctHost && correctPort && !hasSsl) {
+        onLine(`  Host #${existing.id} exists but has no SSL — requesting LE cert...`);
+        try {
+          const base = await resolveProxyHostsBase(token);
+          const certPatch = {
+            domain_names:            [cfg.domain],
+            forward_scheme:          "http",
+            forward_host:            stackIp,
+            forward_port:            cfg.forwardPort,
+            certificate_id:          reusableCert ? reusableCert.id : "new",
+            meta:                    {},
+            ssl_forced:              true,
+            http2_support:           true,
+            allow_websocket_upgrade: true,
+            block_exploits:          false,
+            caching_enabled:         false,
+            hsts_enabled:            false,
+            hsts_subdomains:         false,
+            access_list_id:          0,
+            advanced_config:         "",
+            locations:               [],
+          };
+          const res = await npmFetch(`${base}/${existing.id}`, {
+            method: "PUT",
+            body:   JSON.stringify(certPatch),
+          }, token, SLOW_TIMEOUT_MS);
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+          const sslNote = reusableCert ? `cert #${reusableCert.id}` : "Let's Encrypt";
+          onLine(`✓ Patched #${existing.id} with SSL (${sslNote})`);
+          result[cfg.key] = existing.id;
+        } catch (e) {
+          const msg = `Failed to patch SSL on host #${existing.id}: ${String(e)}`;
+          onLine(`⚠ ${msg}`);
+          result.errors.push(msg);
+        }
         continue;
       }
 
@@ -670,13 +710,12 @@ export async function npmAddDatabaseHosts(
     }
 
     // Create new host
-    const certId     = reusableCert ? reusableCert.id : 0;
-    const sslEnabled = reusableCert != null;
-    const certMeta   = !reusableCert && NPM_HOST.letsencryptEmail
-      ? { letsencrypt_email: NPM_HOST.letsencryptEmail, letsencrypt_agree: true, dns_challenge: false }
-      : undefined;
-    const finalCertId = !reusableCert && certMeta ? "new" : certId;
-    const slowPath    = finalCertId === "new";
+    // NPM v2.13+: set certificate_id:"new" with empty meta {} to trigger LE issuance.
+    // Do NOT include letsencrypt_email/agree/dns_challenge — those fields return 400.
+    // NPM uses its configured admin email automatically.
+    const certId      = reusableCert ? reusableCert.id : "new";
+    const sslEnabled  = true;
+    const slowPath    = !reusableCert; // LE issuance takes 30-60s
 
     if (slowPath) {
       onLine("  (requesting new Let's Encrypt cert — may take 30-60s)");
@@ -687,8 +726,8 @@ export async function npmAddDatabaseHosts(
       forward_scheme:          "http",
       forward_host:            stackIp,
       forward_port:            cfg.forwardPort,
-      certificate_id:          finalCertId,
-      ...(certMeta ? { meta: certMeta } : {}),
+      certificate_id:          certId,
+      meta:                    {},
       ssl_forced:              sslEnabled || slowPath,
       http2_support:           sslEnabled || slowPath,
       allow_websocket_upgrade: true,
@@ -876,8 +915,8 @@ export async function npmAddZone(
       return 1;
     }
     onLine(`No existing cert found — requesting new Let's Encrypt cert...`);
-    certId = "new";
-    certMeta = { letsencrypt_email: leEmail, letsencrypt_agree: true, dns_challenge: false };
+    certId   = "new";
+    certMeta = undefined; // NPM v2.13+ handles LE internally — no meta fields accepted
   }
 
   // 6. Create

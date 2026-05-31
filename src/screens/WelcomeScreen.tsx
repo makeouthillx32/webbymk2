@@ -46,7 +46,7 @@ type StatusMap = Record<string, Status>;
 // ── Menu definitions ──────────────────────────────────────────────────────────
 
 const MENU_BASE = [
-  { icon: "▶", label: "Manage", desc: "zones · npm · db · infrastructure", action: "manage" },
+  { icon: "▶", label: "Manage", desc: "overview · zones · npm · db · infra", action: "manage" },
   { icon: "⚙", label: "Settings", desc: "view & edit local config", action: "settings" },
 ] as const;
 

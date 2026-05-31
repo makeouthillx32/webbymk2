@@ -505,6 +505,55 @@ export async function listSnapshots(instance: RuntimeInstance): Promise<Snapshot
   return bundles.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+// ── listOrphanSnapshots ───────────────────────────────────────────────────────
+
+/**
+ * List snapshot bundles for instances that are no longer in the registry
+ * (i.e., deleted instances whose backups still exist on disk).
+ *
+ * @param knownSlugs  Slugs already covered by registered instances — these are
+ *                    excluded so we don't double-count.
+ */
+export async function listOrphanSnapshots(
+  knownSlugs: string[],
+): Promise<Array<SnapshotBundle & { instanceName: string }>> {
+  if (!existsSync(BACKUPS_DIR)) return [];
+
+  let entries: import("fs").Dirent[];
+  try {
+    entries = await fs.readdir(BACKUPS_DIR, { withFileTypes: true });
+  } catch { return []; }
+
+  const result: Array<SnapshotBundle & { instanceName: string }> = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === "templates") continue;
+    if (knownSlugs.includes(entry.name)) continue;  // already in registry
+
+    const slugDir = join(BACKUPS_DIR, entry.name);
+    let snapEntries: import("fs").Dirent[];
+    try {
+      snapEntries = await fs.readdir(slugDir, { withFileTypes: true });
+    } catch { continue; }
+
+    for (const snap of snapEntries) {
+      if (!snap.isDirectory()) continue;
+      const metaPath = join(slugDir, snap.name, "metadata.json");
+      if (!existsSync(metaPath)) continue;
+      try {
+        const raw  = await fs.readFile(metaPath, "utf-8");
+        const b    = JSON.parse(raw) as SnapshotBundle & { instanceName?: string };
+        const arch = join(slugDir, `${snap.name}.tar.gz`);
+        if (existsSync(arch)) b.archivePath = arch;
+        result.push({ ...b, instanceName: b.instanceName ?? entry.name });
+      } catch { /* corrupt metadata — skip */ }
+    }
+  }
+
+  return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 // ── restoreInstance ───────────────────────────────────────────────────────────
 
 /**

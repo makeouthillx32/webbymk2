@@ -32,4 +32,6 @@ export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   onemore:  { layoutType: "app", appFooter: "none" },
   logs:     { layoutType: "minimal", appFooter: "none" },
   logz:     { layoutType: "minimal", appFooter: "none" },
+  nick:     { layoutType: "minimal", appFooter: "none" },
+  nick2:    { layoutType: "app", appFooter: "none" },
 };

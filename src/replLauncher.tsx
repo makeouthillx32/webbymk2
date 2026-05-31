@@ -56,7 +56,7 @@ export async function launchRepl(options: LaunchReplOptions = {}): Promise<void>
 
   setupGracefulShutdown()
 
-  const element = (
+  const productionElement = (
     <AppProviders write={data => {
       process.stdout.write(data)
     }}>
@@ -65,13 +65,31 @@ export async function launchRepl(options: LaunchReplOptions = {}): Promise<void>
   )
 
   if (options.renderAndRun) {
-    await options.renderAndRun(element)
+    await options.renderAndRun(productionElement)
     return
   }
 
   if (engine === 'local-preview') {
+    const { createElement } = await import('./ink/reactRuntime.js')
+    const { ThemeProvider } = await import(
+      './ink/components/design-system/ThemeProvider.js'
+    )
     const { renderSync } = await import('./ink/root.js')
-    renderSync(element, {
+    const localElement = createElement(
+      ThemeProvider,
+      { initialState: 'dark', enableAutoTheme: false },
+      createElement(
+        AppProviders,
+        {
+          write: (data: string) => {
+            process.stdout.write(data)
+          },
+        },
+        createElement(App),
+      ),
+    )
+
+    renderSync(localElement, {
       patchConsole: false,
       exitOnCtrlC: false,
     })
@@ -81,7 +99,7 @@ export async function launchRepl(options: LaunchReplOptions = {}): Promise<void>
   const { renderAndRun } = await import('./interactiveHelpers.js') as {
     renderAndRun: RenderAndRun
   }
-  await renderAndRun(element)
+  await renderAndRun(productionElement)
 }
 
 function resolveRuntimeEngine(options: LaunchReplOptions): ReplRuntimeEngine {

@@ -740,6 +740,8 @@ export async function removeZoneDockerArtifacts(
 
 // ── Log tailing ───────────────────────────────────────────────────────────────
 
+import { DOCKER_ENV } from "./utils/dockerEnv.ts";
+
 /** Spawn `docker logs --follow` for a container. Caller owns the process. */
 export function spawnLogTail(
   container: string,

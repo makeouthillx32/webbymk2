@@ -25,6 +25,28 @@ import { PROJECT_DIR } from "../../config/stack.js";
 import { StartupSplash } from "./StartupSplash.tsx";
 import { PairingKeyOverlay } from "./PairingKeyOverlay.tsx";
 import { NewProjectWizard } from "./NewProjectWizard.tsx";
+import { spawn }                from "child_process";
+import { gracefulShutdownSync } from "../../utils/gracefulShutdown.js";
+
+// Dev mode = bun --watch; Production = node running dist/cli.js
+const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+
+// Version injected at build time via bun define; falls back to "dev" in watch mode
+declare const UNAXIS_VERSION: string;
+const VERSION = ((): string => {
+  try { return UNAXIS_VERSION; } catch { return "dev"; }
+})();
+
+function selfRestart(): void {
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    stdio:    "inherit",
+    detached: true,
+    cwd:      process.cwd(),
+    env:      { ...process.env, UNAXIS_RESTARTED: "1" },
+  });
+  child.unref();
+  gracefulShutdownSync(0);
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -148,6 +170,12 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
       return;
     }
 
+    // R — restart production binary
+    if ((input === "r" || input === "R") && isProductionMode) {
+      selfRestart();
+      return;
+    }
+
     if (input === "q" || key.escape) {
       onQuit();
       return;
@@ -200,9 +228,11 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
       <Box marginBottom={1}>
         <Text color={SETTLED_GREY}>{TEARDROP}</Text>
       </Box>
-      <Box marginBottom={2}>
+      <Box marginBottom={1} gap={2} alignItems="center">
         <Text bold color="white">{TITLE}</Text>
+        <Text color={SETTLED_GREY}>v{VERSION}</Text>
       </Box>
+      <Box marginBottom={2} />
 
       {/* ── Project list ── */}
       {pickerLoading ? (
@@ -243,6 +273,7 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
         <Text dimColor>↑↓ navigate</Text>
         <Text dimColor>↵ open</Text>
         <Text dimColor>K key</Text>
+        {isProductionMode && <Text dimColor>R restart</Text>}
         <Text dimColor>q quit</Text>
       </Box>
 

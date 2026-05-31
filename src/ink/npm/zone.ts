@@ -126,7 +126,7 @@ export async function npmAddZone(zone: Zone, onLine: OnLine): Promise<number> {
     onLine(`No existing cert found — requesting new Let's Encrypt cert...`);
     onLine("  (this may take 30-60s — HTTP-01 challenge runs server-side)");
     certId   = "new";
-    certMeta = { letsencrypt_email: leEmail, letsencrypt_agree: true, dns_challenge: false };
+    certMeta = undefined; // NPM v2.13+ handles LE internally — no meta fields accepted
   }
 
   // 7. Create

@@ -10,7 +10,7 @@
 //
 //   [StartupScreen] ──onDone──▶ welcome  (project picked inside StartupScreen)
 //
-//   welcome ──navigate──▶ zones ──navigate──▶ wizard
+//   welcome ──navigate──▶ core ──navigate──▶ zones ──navigate──▶ wizard
 //          └──navigate──▶ settings
 //
 //   Tab key:  navigateReplace — swaps the current panel in-place

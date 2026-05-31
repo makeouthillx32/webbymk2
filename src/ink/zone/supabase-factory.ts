@@ -530,9 +530,9 @@ consumers:
     keyauth_credentials:
       - key: ${secrets.serviceRoleKey}
 
-  - username: supabase
+  - username: ${nameSlug}
     basicauth_credentials:
-      - username: supabase
+      - username: ${nameSlug}
         password: ${secrets.dashboardPassword}
 `;
 }
@@ -634,7 +634,7 @@ export async function createRuntimeInstance(
     JWT_SECRET:                     secrets.jwtSecret,
     ANON_KEY:                       secrets.anonKey,
     SERVICE_ROLE_KEY:               secrets.serviceRoleKey,
-    DASHBOARD_USERNAME:             "supabase",
+    DASHBOARD_USERNAME:             name.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
     DASHBOARD_PASSWORD:             secrets.dashboardPassword,
     SECRET_KEY_BASE:                generateRandomString(64),
     VAULT_ENC_KEY:                  generateRandomString(32),
@@ -668,7 +668,10 @@ export async function createRuntimeInstance(
     ENABLE_PHONE_AUTOCONFIRM:       "true",
     STUDIO_DEFAULT_ORGANIZATION:    name,
     STUDIO_DEFAULT_PROJECT:         name,
-    SUPABASE_PUBLIC_URL:            `http://localhost:${ports.kong}`,
+    // Must be the public HTTPS URL — Studio's client JS runs in the browser and
+    // fetches from this URL.  http://localhost:PORT would be blocked as mixed
+    // content when Studio is served over HTTPS (studio.slug.domain).
+    SUPABASE_PUBLIC_URL:            `https://db.${name}.${DOMAIN}`,
     IMGPROXY_ENABLE_WEBP_DETECTION: "true",
   };
 

@@ -30,6 +30,7 @@ export const REMOTE_IPC_HOST = "0.0.0.0";
 export type IpcHandler = (
   args:   string[],
   onLine: (line: string) => void,
+  onClose: (cb: () => void) => void,
 ) => Promise<number>;
 
 export type IpcHandlers = Record<string, IpcHandler>;
@@ -73,22 +74,47 @@ export function startIpcServer(handlers: IpcHandlers): net.Server {
         if (!socket.destroyed) socket.write(line + "\n");
       };
 
+      // ── Exit code conventions (machine-readable sentinel) ───────────────────
+      // Every response ends with:  __UNAXIS_EXIT__:<code>:<label>
+      //
+      //   0  ok       — clean success
+      //   1  error    — hard failure, something broke
+      //   2  usage    — bad args / wrong invocation (caller's fault)
+      //   3  queued   — --bg used; op is running in TUI stack, not done yet
+      //   4  review   — completed but warnings present; worth inspecting output
+      //   5  unknown  — uncaught exception; unclear state, needs human check
+      //
+      // Clients parse the LAST line of output for this sentinel and treat
+      // everything before it as human-readable text.
+      const EXIT_LABELS: Record<number, string> = {
+        0: "ok", 1: "error", 2: "usage", 3: "queued", 4: "review", 5: "unknown",
+      };
+      const sendExit = (code: number) => {
+        const label = EXIT_LABELS[code] ?? "unknown";
+        if (!socket.destroyed) socket.write(`__UNAXIS_EXIT__:${code}:${label}\n`);
+        socket.end();
+      };
+
+      let closeCb: (() => void) | null = null;
+      const setOnClose = (cb: () => void) => { closeCb = cb; };
+
+      socket.on("close", () => {
+        if (closeCb) closeCb();
+      });
+
       const handler = handlers[cmd];
       if (!handler) {
         onLine(`✗ unknown command: "${cmd}"`);
         onLine(`  available: ${Object.keys(handlers).sort().join(", ")}`);
-        socket.end();
+        sendExit(2);
         return;
       }
 
-      handler(args, onLine)
-        .then((code) => {
-          if (code !== 0) onLine(`✗ exited with code ${code}`);
-          socket.end();
-        })
+      handler(args, onLine, setOnClose)
+        .then((code) => { sendExit(code); })
         .catch((err) => {
-          onLine(`✗ error: ${String(err)}`);
-          socket.end();
+          onLine(`✗ unexpected: ${String(err)}`);
+          sendExit(5);
         });
     });
 

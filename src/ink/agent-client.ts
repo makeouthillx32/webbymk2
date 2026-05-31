@@ -838,3 +838,73 @@ export async function deployStack(
     return false;
   }
 }
+
+// ── Image history ──────────────────────────────────────────────────────────────
+// GET /images/{name}/history — ordered layer list (most recent first)
+// Each layer: { Id, Created, CreatedBy, Size, Comment }
+// Mirrors: docker image history <name>
+
+export type ImageLayer = {
+  Id:        string;
+  Created:   number;   // unix timestamp
+  CreatedBy: string;   // the Dockerfile instruction that created this layer
+  Size:      number;   // bytes
+  Comment:   string;
+};
+
+export async function fetchImageHistory(
+  env:  UnaxisEnvironment,
+  name: string,
+): Promise<ImageLayer[] | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const res = await dockerFetch(env, `/images/${encodeURIComponent(name)}/history`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ImageLayer[];
+  } catch {
+    return null;
+  }
+}
+
+// ── Docker events ──────────────────────────────────────────────────────────────
+// GET /events?since=<unix>&until=<unix>[&filters=...] — recent event log
+// Docker closes the stream at `until`, so this is safe for one-shot reads.
+// Returns an array of event objects (see Docker Engine API: SystemEvent).
+
+export type DockerEvent = {
+  Type:   string;    // "container" | "image" | "network" | "volume" | ...
+  Action: string;    // "start" | "stop" | "die" | "pull" | ...
+  Actor:  {
+    ID:         string;
+    Attributes: Record<string, string>;
+  };
+  time:       number;  // unix timestamp (seconds)
+  timeNano:   number;
+};
+
+export async function fetchDockerEvents(
+  env:   UnaxisEnvironment,
+  since: number = Math.floor(Date.now() / 1000) - 3600,  // default: last hour
+  until: number = Math.floor(Date.now() / 1000),
+): Promise<DockerEvent[] | null> {
+  if (!env.agentUrl) return null;
+  try {
+    const qs  = `since=${since}&until=${until}`;
+    const res = await dockerFetch(env, `/events?${qs}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    // Docker streams newline-delimited JSON — split and parse
+    const text   = await res.text();
+    const events = text
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => { try { return JSON.parse(line) as DockerEvent; } catch { return null; } })
+      .filter((e): e is DockerEvent => e !== null);
+    return events;
+  } catch {
+    return null;
+  }
+}

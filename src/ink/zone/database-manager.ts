@@ -641,7 +641,7 @@ export async function createBlankDatabase(
     onLine(`  Public Studio:  ${publicStudioUrl}  ${registerNpm && npmErrors.length === 0 ? "(SSL ✓)" : "(NPM pending)"}`);
     onLine(`  Public API:     ${publicApiUrl}  ${registerNpm && npmErrors.length === 0 ? "(SSL ✓)" : "(NPM pending)"}`);
     onLine(`  MCP config:     ${instance.dockerPath}/mcp-config.json`);
-    onLine(`  Studio user:    supabase  /  password: ${instance.secrets.dashboardPassword}`);
+    onLine(`  Studio user:    ${instance.name}  /  password: ${instance.secrets.dashboardPassword}`);
 
     return {
       instance,
@@ -809,7 +809,7 @@ export async function cloneFromSnapshot(
     onLine(`  Local API:      http://127.0.0.1:${instance.ports.kong}`);
     onLine(`  Public API:     ${publicApiUrl}`);
     onLine(`  Public Studio:  ${publicStudioUrl}`);
-    onLine(`  Studio user:    supabase  /  ${instance.secrets.dashboardPassword}`);
+    onLine(`  Studio user:    ${instance.name}  /  ${instance.secrets.dashboardPassword}`);
     onLine(`  MCP config:     ${instance.dockerPath}/mcp-config.json`);
 
     return { instance, dnsSlug, publicApiUrl, publicStudioUrl, mcpConfig, npmErrors };

@@ -15,24 +15,21 @@
 // host-based routing, and appears in the TUI instance list immediately.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef, useCallback } from "../ink/reactRuntime.js";
+import React, { useState } from "../ink/reactRuntime.js";
 import { Box, Text, useInput } from "../ink/runtimeInk.js";
-import { cloneFromSnapshot }   from "../ink/zone/database-manager.js";
 import type { SnapshotBundle } from "../ink/zone/snapshot.js";
-import type { RuntimeInstance } from "../ink/zone/supabase-factory.js";
 import { Divider }             from "../ink/components/Divider.jsx";
 import { SearchInput }         from "../ink/components/SearchBox.jsx";
-import ScrollBox               from "../ink/components/ScrollBox.jsx";
-import { Spinner }             from "../ink/components/Spinner.jsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type WizardStep = "name" | "preview" | "deploy";
+type WizardStep = "name" | "preview";
 
 export interface CloneWizardScreenProps {
-  bundle:   SnapshotBundle;          // the source snapshot to clone from
-  onDone:   (instance: RuntimeInstance) => void;
-  onCancel: () => void;
+  bundle:    SnapshotBundle;          // the source snapshot to clone from
+  /** Called when step 2 is confirmed — caller closes wizard + fires runOp. */
+  onDeploy:  (name: string) => void;
+  onCancel:  () => void;
 }
 
 // ── Slug derivation ───────────────────────────────────────────────────────────
@@ -156,118 +153,13 @@ function PreviewStep({
   );
 }
 
-// ── Step 3 — Deploy ───────────────────────────────────────────────────────────
-
-type DeployPhase = "idle" | "running" | "done" | "error";
-
-function DeployStep({
-  bundle, name, onDone, onBack,
-}: {
-  bundle:  SnapshotBundle;
-  name:    string;
-  onDone:  (instance: RuntimeInstance) => void;
-  onBack:  () => void;
-}) {
-  const [phase,    setPhase]    = useState<DeployPhase>("idle");
-  const [lines,    setLines]    = useState<string[]>([]);
-  const [instance, setInstance] = useState<RuntimeInstance | null>(null);
-  const started = useRef(false);
-
-  const addLine = useCallback((l: string) => {
-    setLines((prev) => [...prev, l]);
-  }, []);
-
-  React.useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-
-    (async () => {
-      try {
-        setPhase("running");
-        addLine("── Clone from snapshot (lean template) ──────────────────");
-
-        const result = await cloneFromSnapshot(
-          bundle.bundlePath,
-          name,
-          { registerNpm: true },
-          addLine,
-        );
-
-        addLine("");
-        addLine(`✓ Clone complete — "${name}" is live`);
-        addLine(`  API     →  ${result.publicApiUrl}`);
-        addLine(`  Studio  →  ${result.publicStudioUrl}`);
-
-        setInstance(result.instance);
-        setPhase("done");
-
-      } catch (err) {
-        addLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
-        setPhase("error");
-      }
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useInput((_input, key) => {
-    if (phase === "done"  && key.return) { onDone(instance!); return; }
-    if (phase === "error" && key.escape) { onBack();          return; }
-  });
-
-  const phaseLabel: Record<DeployPhase, string> = {
-    idle:    "Preparing…",
-    running: "Cloning from snapshot…",
-    done:    "Clone complete",
-    error:   "Clone failed",
-  };
-  const phaseColor: Record<DeployPhase, string> = {
-    idle:    "gray",
-    running: "cyan",
-    done:    "green",
-    error:   "red",
-  };
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Divider title="Clone Instance  ·  Step 3 of 3  ·  Deploy" color="yellow" />
-
-      <Box paddingX={2} gap={2} marginBottom={1}>
-        {phase === "running" && <Spinner active={true} />}
-        {phase === "done"    && <Text color="green">✓</Text>}
-        {phase === "error"   && <Text color="red">✗</Text>}
-        <Text color={phaseColor[phase]}>{phaseLabel[phase]}</Text>
-      </Box>
-
-      <Box paddingX={2}>
-        <ScrollBox height={16}>
-          <Box flexDirection="column">
-            {lines.map((l, i) => (
-              <Text key={i} wrap="truncate"
-                dimColor={l.startsWith("  ")}
-                color={
-                  l.startsWith("✓") ? "green"  :
-                  l.startsWith("✗") ? "red"    :
-                  l.startsWith("⚠") ? "yellow" : undefined
-                }
-              >
-                {l}
-              </Text>
-            ))}
-          </Box>
-        </ScrollBox>
-      </Box>
-
-      <Box paddingX={2} marginTop={1} gap={3}>
-        {phase === "done"    && <><Text dimColor>[↵]</Text><Text dimColor>finish</Text></>}
-        {phase === "error"   && <><Text dimColor>[Esc]</Text><Text dimColor>back</Text></>}
-        {phase === "running" && <Text dimColor>cloning in progress…</Text>}
-      </Box>
-    </Box>
-  );
-}
-
 // ── CloneWizardScreen — main ──────────────────────────────────────────────────
+// Steps 1-2 run in the wizard dialog.
+// Step 3 (deploy) is handed off to the caller via onDeploy — the caller closes
+// the wizard and fires runOp/runOpQueued so output streams through the shared
+// OperationOverlay (scroll, copy, detach all work).
 
-export function CloneWizardScreen({ bundle, onDone, onCancel }: CloneWizardScreenProps) {
+export function CloneWizardScreen({ bundle, onDeploy, onCancel }: CloneWizardScreenProps) {
   const [step, setStep] = useState<WizardStep>("name");
   const [name, setName] = useState("");
 
@@ -286,16 +178,8 @@ export function CloneWizardScreen({ bundle, onDone, onCancel }: CloneWizardScree
         <PreviewStep
           bundle={bundle}
           name={name}
-          onNext={() => setStep("deploy")}
+          onNext={() => onDeploy(name)}
           onBack={() => setStep("name")}
-        />
-      )}
-      {step === "deploy" && (
-        <DeployStep
-          bundle={bundle}
-          name={name}
-          onDone={onDone}
-          onBack={() => setStep("preview")}
         />
       )}
     </Box>

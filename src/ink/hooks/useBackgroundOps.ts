@@ -44,6 +44,7 @@ import { QueryGuard }            from "../../utils/QueryGuard.js";
 import { enqueue }               from "../../utils/messageQueueManager.js";
 import type { QueuePriority, QueuedOp } from "../../utils/messageQueueManager.js";
 import { useOpQueueProcessor }   from "./useQueueProcessor.js";
+import { eventBus }              from "../../utils/eventBus.js";
 
 // Types
 
@@ -101,6 +102,7 @@ export function useBackgroundOps({
 
     setBgOps((prev) => [...prev, { id, title, lines: [], busy: true, isLog }]);
     setStackFocusId(id);
+    eventBus.emit("op_started", { id, title, isLog });
     if (autoOverlay) {
       setOverlayOpId(id);
       setStackOpen(false);
@@ -132,11 +134,13 @@ export function useBackgroundOps({
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
             setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            eventBus.emit("op_completed", { id, title, code });
             refreshZones();
           },
           () => {
             addLine("✗ op failed unexpectedly");
             setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            eventBus.emit("op_failed", { id, title });
             refreshZones();
           },
         );
@@ -155,7 +159,10 @@ export function useBackgroundOps({
       if (sameOpRunning) return;
       if (buildBusy) {
         const queued = enqueue({ id: title, label: title, priority, payload: op });
-        if (queued) addNotification(`"${title}" queued`, 'info');
+        if (queued) {
+          addNotification(`"${title}" queued`, 'info');
+          eventBus.emit("op_queued", { title, priority });
+        }
       } else {
         runOp(title, op);
       }
@@ -173,12 +180,14 @@ export function useBackgroundOps({
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
             setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            eventBus.emit("op_completed", { id, title: op.label, code });
             refreshZones();
             resolve();
           },
           () => {
             addLine('✗ op failed unexpectedly');
             setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            eventBus.emit("op_failed", { id, title: op.label });
             resolve();
           },
         );

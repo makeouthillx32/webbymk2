@@ -36,15 +36,7 @@ import { getStatus }           from "./docker.ts";
 import { addZoneRoute, removeZoneRoute } from "./proxy-config.ts";
 import { npmAddDevHost }        from "./npm-api.ts";
 import { deleteZoneNpmHost }   from "./zone/npm-cleanup.ts";
-
-// ── Docker env (mirrors docker.ts) ────────────────────────────────────────────
-
-const DOCKER_ENV: Record<string, string> = {
-  ...(process.env as Record<string, string>),
-  ...(process.platform !== "win32"
-    ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
-    : {}),
-};
+import { DOCKER_ENV }          from "./utils/dockerEnv.ts";
 
 // ── Naming helpers ────────────────────────────────────────────────────────────
 
