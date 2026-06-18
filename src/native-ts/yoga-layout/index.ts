@@ -189,9 +189,11 @@ const EDGE_LEFT = 0
 const EDGE_TOP = 1
 const EDGE_RIGHT = 2
 const EDGE_BOTTOM = 3
-const EDGE_HORIZONTAL = 4
-const EDGE_VERTICAL = 5
-const EDGE_ALL = 6
+const EDGE_START = 4
+const EDGE_END = 5
+const EDGE_HORIZONTAL = 6
+const EDGE_VERTICAL = 7
+const EDGE_ALL = 8
 
 type Layout = {
   left: number

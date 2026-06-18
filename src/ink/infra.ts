@@ -3,17 +3,19 @@
 // Static infrastructure map + live reachability checker.
 //
 // Routing chain (outermost → innermost):
-//   GoDaddy DNS  →  ASUS DDNS  →  NPM (L0VE)  →  proxy (P0W3R)  →  zones
+//   GoDaddy DNS  →  ASUS DDNS  →  NPM (EDGE)  →  proxy (CORE)  →  zones
 //
 // DNS and DDNS are the two outermost links in the chain.  If either is down,
 // every *.unenter.live address stops resolving and all applications become
 // unreachable — regardless of whether the servers themselves are healthy.
 // They are tracked here as first-class infrastructure resources.
 //
-// Machine groups:
+// Machine groups (generic role-based keys — no env nicknames in source,
+// since this repo is public; cosmetic display labels still show the
+// nicknames in the TUI via Machine.label):
 //   INTERNET  —  GoDaddy DNS + ASUS DDNS  (public internet layer)
-//   LOVE      —  NPM, Mail, AI  (IP read from config.json / Supabase env record)
-//   POWER     —  App stack, DB, services  (IP read from config.json / Supabase env record)
+//   EDGE      —  NPM, Mail, AI  (IP read from config.json / Supabase env record)
+//   CORE      —  App stack, DB, services  (IP read from config.json / Supabase env record)
 //
 // Sections exported:
 //   INFRA_SERVICES  — checkable endpoints grouped by machine
@@ -28,7 +30,7 @@ export interface InfraService {
   label:     string;   // short display name
   subdomain: string;   // public hostname / subdomain
   internal:  string;   // URL that gets checked (HTTP or DoH probe)
-  machine:   string;   // machine key (INTERNET | LOVE | POWER)
+  machine:   string;   // machine key (INTERNET | EDGE | CORE)
   port:      string;   // :NNN extracted from internal, or "" for standard ports
   checkType: "http" | "doh";  // how to probe this service
   /** For DoH checks: the hostname whose A/CNAME record we resolve */
@@ -49,8 +51,8 @@ export interface Machine {
 
 export const MACHINES: Record<string, Machine> = {
   INTERNET: { label: "INTERNET", ip: "public",       role: "DNS · DDNS · Routing" },
-  LOVE:     { label: "L0VE",     ip: NPM_IP_SAFE,    role: "NPM · Mail · AI"      },
-  POWER:    { label: "P0W3R",    ip: STACK_IP_SAFE,  role: "App · DB · Services"  },
+  EDGE:     { label: "L0VE",     ip: NPM_IP_SAFE,    role: "NPM · Mail · AI"      },
+  CORE:     { label: "P0W3R",    ip: STACK_IP_SAFE,  role: "App · DB · Services"  },
 };
 
 // ── Service builder helpers ───────────────────────────────────────────────────
@@ -96,7 +98,7 @@ function doh(
 // The INTERNET tier (GoDaddy + DDNS) is always built from the environment's
 // domain and ddnsHostname fields.
 //
-// The LOVE tier (NPM host) and POWER tier (proxy/app host) are built from
+// The EDGE tier (NPM host) and CORE tier (proxy/app host) are built from
 // the environment's npmHost and proxyHost fields respectively.
 //
 // Fixed well-known ports (Supabase :8000, DB UI :8001, etc.) are kept as
@@ -116,23 +118,23 @@ export function buildInfraServices(env: UnaxisEnvironment): InfraService[] {
     doh("GoDaddy",   domain,   "INTERNET", domain),
     doh("ASUS DDNS", ddnsHost, "INTERNET", ddnsHost),
 
-    // ── NPM host (L0VE tier by default, configurable per env) ───────────────
-    s("NPM",       `npm.${domain}`,        `http://${npmIp}:${npmPort}`,  "LOVE"),
-    s("Supabase",  `supa.${domain}`,       `http://${npmIp}:8000`,        "LOVE"),
-    s("AI",        `ai.${domain}`,         `http://${npmIp}:3010`,        "LOVE"),
-    s("Mail",      `mail.${domain}`,       `http://${npmIp}:8082`,        "LOVE"),
-    s("Cool",      `cool.${domain}`,       `http://${npmIp}:9080`,        "LOVE"),
+    // ── NPM host (EDGE tier by default, configurable per env) ───────────────
+    s("NPM",       `npm.${domain}`,        `http://${npmIp}:${npmPort}`,  "EDGE"),
+    s("Supabase",  `supa.${domain}`,       `http://${npmIp}:8000`,        "EDGE"),
+    s("AI",        `ai.${domain}`,         `http://${npmIp}:3010`,        "EDGE"),
+    s("Mail",      `mail.${domain}`,       `http://${npmIp}:8082`,        "EDGE"),
+    s("Cool",      `cool.${domain}`,       `http://${npmIp}:9080`,        "EDGE"),
 
-    // ── Proxy/app host (P0W3R tier by default, configurable per env) ────────
-    s("App",       `www.${domain}`,         `http://${proxyIp}:3000`,  "POWER"),
-    s("DB UI",     `db.${domain}`,          `http://${proxyIp}:8001`,  "POWER"),
-    s("Portainer", `port.${domain}`,        `http://${proxyIp}:9000`,  "POWER"),
-    s("n8n",       `n8n.${domain}`,         `http://${proxyIp}:5678`,  "POWER"),
-    s("MC",        `mc.${domain}`,          `http://${proxyIp}:5012`,  "POWER"),
-    s("Acct",      `accounting.${domain}`,  `http://${proxyIp}:5007`,  "POWER"),
-    s("Retro",     `retro.${domain}`,       `http://${proxyIp}:3050`,  "POWER"),
-    s("Aud",       `aud.${domain}`,         `http://${proxyIp}:3000`,  "POWER"),
-    s("LinuxHelp", `linuxhelp.${domain}`,   `http://${proxyIp}:18088`, "POWER"),
+    // ── Proxy/app host (CORE tier by default, configurable per env) ─────────
+    s("App",       `www.${domain}`,         `http://${proxyIp}:3000`,  "CORE"),
+    s("DB UI",     `db.${domain}`,          `http://${proxyIp}:8001`,  "CORE"),
+    s("Portainer", `port.${domain}`,        `http://${proxyIp}:9000`,  "CORE"),
+    s("n8n",       `n8n.${domain}`,         `http://${proxyIp}:5678`,  "CORE"),
+    s("MC",        `mc.${domain}`,          `http://${proxyIp}:5012`,  "CORE"),
+    s("Acct",      `accounting.${domain}`,  `http://${proxyIp}:5007`,  "CORE"),
+    s("Retro",     `retro.${domain}`,       `http://${proxyIp}:3050`,  "CORE"),
+    s("Aud",       `aud.${domain}`,         `http://${proxyIp}:3000`,  "CORE"),
+    s("LinuxHelp", `linuxhelp.${domain}`,   `http://${proxyIp}:18088`, "CORE"),
   ];
 }
 
@@ -145,38 +147,45 @@ export function buildInfraServices(env: UnaxisEnvironment): InfraService[] {
 export const INFRA_SERVICES: InfraService[] = [
   doh("GoDaddy",   DNS_PROVIDER.domain,    "INTERNET", DNS_PROVIDER.checkDomain),
   doh("ASUS DDNS", DDNS_PROVIDER.hostname, "INTERNET", DDNS_PROVIDER.hostname),
-  s("NPM",       `npm.${DNS_PROVIDER.domain}`,        `http://${NPM_IP_SAFE}:81`,    "LOVE"),
-  s("Supabase",  `supa.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8000`,  "LOVE"),
-  s("AI",        `ai.${DNS_PROVIDER.domain}`,         `http://${NPM_IP_SAFE}:3010`,  "LOVE"),
-  s("Mail",      `mail.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8082`,  "LOVE"),
-  s("Cool",      `cool.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:9080`,  "LOVE"),
-  s("App",       `www.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "POWER"),
-  s("DB UI",     `db.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:8001`, "POWER"),
-  s("Portainer", `port.${DNS_PROVIDER.domain}`,       `http://${STACK_IP_SAFE}:9000`, "POWER"),
-  s("n8n",       `n8n.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:5678`, "POWER"),
-  s("MC",        `mc.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:5012`, "POWER"),
-  s("Acct",      `accounting.${DNS_PROVIDER.domain}`, `http://${STACK_IP_SAFE}:5007`, "POWER"),
-  s("Retro",     `retro.${DNS_PROVIDER.domain}`,      `http://${STACK_IP_SAFE}:3050`, "POWER"),
-  s("Aud",       `aud.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "POWER"),
-  s("LinuxHelp", `linuxhelp.${DNS_PROVIDER.domain}`,  `http://${STACK_IP_SAFE}:18088`, "POWER"),
+  s("NPM",       `npm.${DNS_PROVIDER.domain}`,        `http://${NPM_IP_SAFE}:81`,    "EDGE"),
+  s("Supabase",  `supa.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8000`,  "EDGE"),
+  s("AI",        `ai.${DNS_PROVIDER.domain}`,         `http://${NPM_IP_SAFE}:3010`,  "EDGE"),
+  s("Mail",      `mail.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:8082`,  "EDGE"),
+  s("Cool",      `cool.${DNS_PROVIDER.domain}`,       `http://${NPM_IP_SAFE}:9080`,  "EDGE"),
+  s("App",       `www.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "CORE"),
+  s("DB UI",     `db.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:8001`, "CORE"),
+  s("Portainer", `port.${DNS_PROVIDER.domain}`,       `http://${STACK_IP_SAFE}:9000`, "CORE"),
+  s("n8n",       `n8n.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:5678`, "CORE"),
+  s("MC",        `mc.${DNS_PROVIDER.domain}`,         `http://${STACK_IP_SAFE}:5012`, "CORE"),
+  s("Acct",      `accounting.${DNS_PROVIDER.domain}`, `http://${STACK_IP_SAFE}:5007`, "CORE"),
+  s("Retro",     `retro.${DNS_PROVIDER.domain}`,      `http://${STACK_IP_SAFE}:3050`, "CORE"),
+  s("Aud",       `aud.${DNS_PROVIDER.domain}`,        `http://${STACK_IP_SAFE}:3000`, "CORE"),
+  s("LinuxHelp", `linuxhelp.${DNS_PROVIDER.domain}`,  `http://${STACK_IP_SAFE}:18088`, "CORE"),
 ];
 
 // ── DNS (GoDaddy) record reference ───────────────────────────────────────────
+//
+// NOTE: actual addresses, verification codes, and DKIM targets are NOT
+// hardcoded here — this repo is public on GitHub, and pinning live DNS
+// values (anycast IPs, home public IP, Brevo verification tokens, etc.)
+// in source is exactly the kind of infra fingerprinting we want to avoid.
+// This table documents record *shape* (type/name → provider/purpose) for
+// reference; check `dig <domain>` or the GoDaddy dashboard for live values.
 
 export const DNS_RECORDS: { type: string; name: string; value: string }[] = [
-  { type: "A",     name: "@",                   value: "15.197.225.128  (Anycast)"              },
-  { type: "A",     name: "@",                   value: "3.33.251.168    (Anycast)"              },
-  { type: "A",     name: "*.cool",              value: "173.24.124.104"                         },
+  { type: "A",     name: "@",                   value: "<GoDaddy domain-forward anycast — see dig/dashboard>"   },
+  { type: "A",     name: "@",                   value: "<GoDaddy domain-forward anycast — see dig/dashboard>"   },
+  { type: "A",     name: "*.cool",              value: "<home public IP — tracks DDNS, see dig/dashboard>"      },
   { type: "CNAME", name: "*",                   value: `${DDNS_PROVIDER.hostname}.`             },
   { type: "CNAME", name: "www",                 value: `${DDNS_PROVIDER.hostname}.`             },
-  { type: "CNAME", name: "npm / mail / love",   value: `${DDNS_PROVIDER.hostname}.`             },
-  { type: "CNAME", name: "mc / power",          value: `${DDNS_PROVIDER.hostname}.`             },
-  { type: "CNAME", name: "brevo1._domainkey",   value: "b1.unenter-live.dkim.brevo.com."        },
-  { type: "CNAME", name: "brevo2._domainkey",   value: "b2.unenter-live.dkim.brevo.com."        },
+  { type: "CNAME", name: "npm / mail / ai",     value: `${DDNS_PROVIDER.hostname}.`             },
+  { type: "CNAME", name: "mc / db",             value: `${DDNS_PROVIDER.hostname}.`             },
+  { type: "CNAME", name: "brevo1._domainkey",   value: "<Brevo DKIM target — see dashboard>"     },
+  { type: "CNAME", name: "brevo2._domainkey",   value: "<Brevo DKIM target — see dashboard>"     },
   { type: "MX",    name: "@",                   value: "mail.unenter.live.  (pri 10)"           },
-  { type: "TXT",   name: "@",                   value: "v=spf1 mx a include:asuscomm.com ~all"  },
+  { type: "TXT",   name: "@",                   value: "v=spf1 mx a include:<ddns-provider-domain> ~all" },
   { type: "TXT",   name: "_dmarc",              value: "p=none  rua=admin@mail.unenter.live"    },
-  { type: "TXT",   name: "@",                   value: "brevo-code:3fecd41fe10238d96..."        },
+  { type: "TXT",   name: "@",                   value: "<Brevo domain-verification code — see dashboard>" },
   { type: "NS",    name: "@",                   value: "ns53 / ns54.domaincontrol.com."         },
 ];
 

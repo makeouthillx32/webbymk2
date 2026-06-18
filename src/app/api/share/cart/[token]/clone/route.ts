@@ -5,7 +5,7 @@
 
 import { createServerClient } from "@/utils/supabase/server";
 import { supabasePublicUrlFromImage } from "@/lib/images";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── Response helpers ────────────────────────────────────────────────────────
@@ -73,10 +73,7 @@ export async function POST(
     const supabase = await createServerClient();
 
     // Service role for trusted writes (saved_carts insert, image fetch)
-    const adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const adminClient = createAdminClient();
 
     // ── 1. Identify the viewer ─────────────────────────────────────────────
     const identity = await getIdentity(request, supabase);

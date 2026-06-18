@@ -12,6 +12,7 @@ export type AppView =
   | 'env'
   | 'wizard'
   | 'instance-wizard'
+  | 'clone-wizard'
   | 'notes'
 
 export const PANEL_TABS = ['core', 'zones', 'npm', 'db', 'infra', 'env'] as const

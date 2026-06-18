@@ -1,8 +1,9 @@
 ﻿import { useCallback } from "react";
 import { startCreation, deleteZone } from "../zone/index.js";
 import { pullAndUp, restartZone, reloadProxy, doctorComposeService } from "../docker.js";
-import { deployZone, buildZone, gitPush, buildAll, deployAll } from "../zone-build.js";
+import { deployZone, buildAndDeploy, gitPush, buildAll, deployAll } from "../zone-build.js";
 import { npmAddZone } from "../npm/index.ts";
+import { loadEnvironments } from "../environment-store.js";
 import { invalidateZoneCache } from "../zone-store.js";
 import type { Zone } from "../../config/zones.js";
 import type { DerivedZone } from "../zone/index.js";
@@ -66,7 +67,7 @@ export function useTuiActions(
           setBgOps((prev: any[]) => prev.map((o: any) => o.title === `Build: ${zone.key}` && o.busy ? { ...o, busy: false } : o));
           break;
         }
-        runOp(`Build+push  ${zone.label}`, (o) => buildZone(zone, o));
+        runOp(`Build+deploy  ${zone.label}`, (o) => buildAndDeploy(zone, o));
         break;
       case "rebuild":
         if (!zone.dockerfile) {
@@ -75,10 +76,14 @@ export function useTuiActions(
           setBgOps((prev: any[]) => prev.map((o: any) => o.title === `Rebuild: ${zone.key}` && o.busy ? { ...o, busy: false } : o));
           break;
         }
-        runOp(`Rebuild  ${zone.label}  (no cache)`, (o) => buildZone(zone, o, { noCache: true }));
+        runOp(`Rebuild+deploy  ${zone.label}  (no cache)`, (o) => buildAndDeploy(zone, o, { noCache: true }));
         break;
       case "logs": openLogs(zone.container, zone.label); break;
-      case "npm": runOp(`Register NPM  ${zone.domain}`, (o) => npmAddZone(zone, o)); break;
+      case "npm": runOp(`Register NPM  ${zone.domain}`, async (o) => {
+        const envs    = await loadEnvironments().catch(() => []);
+        const zoneEnv = zone.environmentId ? (envs.find((e) => e.id === zone.environmentId) ?? null) : null;
+        return npmAddZone(zone, o, zoneEnv);
+      }); break;
       case "doctor":
         runOp(`Fix compose  ${zone.label}`, async (o) => {
           o(`--- doctor: ${zone.label} ---`);

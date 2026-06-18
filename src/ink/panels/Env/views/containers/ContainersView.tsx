@@ -20,8 +20,10 @@
 //   [q/←]     back
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Box, Text, useInput } from "../../../../runtimeInk.js";
+import { useScrollIntoView }                          from "../../../../components/ScrollBox.js";
+import type { DOMElement }                            from "../../../../dom.js";
 
 import {
   fetchContainers,
@@ -162,6 +164,9 @@ export function ContainersView({ env, onBack }: ContainersViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [selected, setSelected] = useState(0);
+
+  const infoBoxRef = useRef<DOMElement>(null);
+  useScrollIntoView(infoBoxRef, containers.length > 0 && selected >= 0, 0, selected);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [stats, setStats] = useState<ContainerStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -499,6 +504,7 @@ export function ContainersView({ env, onBack }: ContainersViewProps) {
 
       {selectedContainer && (
         <Box
+          ref={infoBoxRef}
           flexDirection="column"
           borderStyle="round"
           borderColor="gray"

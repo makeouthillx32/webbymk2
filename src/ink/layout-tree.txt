@@ -1,0 +1,109 @@
+ink-root [left:0 top:0 w:80 h:24] styles:{}
+  ink-box [left:0 top:0 w:80 h:22] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":0,"flexShrink":1,"borderStyle":"double","borderColor":"magenta","paddingX":2,"paddingY":0,"width":80,"overflow":"hidden","overflowX":"hidden","overflowY":"hidden"}
+    ink-box [left:3 top:1 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":0,"flexShrink":1,"alignItems":"center","marginBottom":0,"overflowX":"visible","overflowY":"visible"}
+      ink-box [left:29 top:0 w:16 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"gap":2,"alignItems":"center","overflowX":"visible","overflowY":"visible"}
+        ink-text [left:0 top:0 w:9 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "◈  UNAXIS"
+        ink-text [left:11 top:0 w:5 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: " DEV "
+    ink-box [left:3 top:2 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"justifyContent":"center","marginBottom":0,"overflowX":"visible","overflowY":"visible"}
+      ink-text [left:25 top:0 w:11 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "welcome to "
+      ink-text [left:36 top:0 w:12 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "unenter.live"
+    ink-box [left:3 top:3 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"justifyContent":"center","marginBottom":1,"overflowX":"visible","overflowY":"visible"}
+      ink-text [left:25 top:0 w:3 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "⌂  "
+      ink-text [left:28 top:0 w:20 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "Z:\\WEBSITES\\webbymk2"
+    ink-box [left:3 top:5 w:74 h:7] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":0,"flexShrink":1,"alignItems":"center","marginBottom":2,"overflowX":"visible","overflowY":"visible"}
+      ink-box [left:0 top:0 w:74 h:5] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"gap":1,"marginBottom":1,"overflowX":"visible","overflowY":"visible"}
+        ink-box [left:0 top:0 w:37 h:5] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":1,"flexShrink":1,"borderColor":"rgb(80,80,80)","borderStyle":"single","paddingX":1,"paddingY":0,"minWidth":22,"overflowX":"visible","overflowY":"visible"}
+          ink-box [left:2 top:1 w:33 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"overflowX":"visible","overflowY":"visible"}
+            ink-text [left:0 top:0 w:10 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+              #text: "System CPU"
+            ink-box [left:10 top:0 w:3 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":1,"flexShrink":1,"overflowX":"visible","overflowY":"visible"}
+            ink-text [left:12 top:0 w:20 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+              #text: "                    "
+          ink-text [left:2 top:2 w:33 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "0.0%"
+          ink-text [left:2 top:3 w:33 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "host load"
+        ink-box [left:38 top:0 w:36 h:5] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":1,"flexShrink":1,"borderColor":"rgb(80,80,80)","borderStyle":"single","paddingX":1,"paddingY":0,"minWidth":22,"overflowX":"visible","overflowY":"visible"}
+          ink-box [left:2 top:1 w:32 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"overflowX":"visible","overflowY":"visible"}
+            ink-text [left:0 top:0 w:11 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+              #text: "Host Memory"
+            ink-box [left:11 top:0 w:1 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":1,"flexShrink":1,"overflowX":"visible","overflowY":"visible"}
+            ink-text [left:12 top:0 w:20 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+              #text: "▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆"
+          ink-text [left:2 top:2 w:33 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "45.5 GB"
+          ink-text [left:2 top:3 w:33 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "18.2 GB free"
+      ink-box [left:34 top:6 w:6 h:1] styles:{"flexWrap":"wrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"justifyContent":"center","gap":1,"overflowX":"visible","overflowY":"visible"}
+        ink-box [left:0 top:0 w:6 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"gap":1,"overflowX":"visible","overflowY":"visible"}
+          ink-text [left:0 top:0 w:4 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "prox"
+          ink-text [left:5 top:0 w:1 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+            #text: "●"
+    ink-box [left:3 top:14 w:74 h:5] styles:{"flexWrap":"nowrap","flexDirection":"column","flexGrow":0,"flexShrink":1,"gap":0,"marginBottom":0,"overflowX":"visible","overflowY":"visible"}
+      ink-box [left:0 top:0 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"paddingX":1,"gap":2,"overflowX":"visible","overflowY":"visible"}
+        ink-text [left:1 top:0 w:1 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "▶"
+        ink-text [left:4 top:0 w:6 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "Manage"
+        ink-text [left:12 top:0 w:35 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "overview · zones · npm · db · infra"
+      ink-box [left:0 top:1 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"paddingX":1,"gap":2,"overflowX":"visible","overflowY":"visible"}
+        ink-text [left:1 top:0 w:1 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: " "
+        ink-text [left:4 top:0 w:8 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "Settings"
+        ink-text [left:14 top:0 w:24 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "view & edit local config"
+      ink-box [left:0 top:2 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"paddingX":1,"marginTop":0,"overflowX":"visible","overflowY":"visible"}
+        ink-text [left:1 top:0 w:36 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "  ─── dev ──────────────────────────"
+      ink-box [left:0 top:3 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"paddingX":1,"gap":2,"overflowX":"visible","overflowY":"visible"}
+        ink-text [left:1 top:0 w:1 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: " "
+        ink-text [left:4 top:0 w:7 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "Release"
+        ink-text [left:13 top:0 w:29 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "build + bump + publish to npm"
+      ink-box [left:0 top:4 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"paddingX":1,"gap":2,"overflowX":"visible","overflowY":"visible"}
+        ink-text [left:1 top:0 w:1 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: " "
+        ink-text [left:4 top:0 w:5 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "Build"
+        ink-text [left:11 top:0 w:29 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+          #text: "local build only (no publish)"
+    ink-box [left:3 top:19 w:74 h:1] styles:{"flexWrap":"nowrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"overflowX":"visible","overflowY":"visible"}
+      ink-text [left:0 top:0 w:74 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "──────────────────────────────────────────────────────────────────────────"
+    ink-box [left:3 top:20 w:74 h:1] styles:{"flexWrap":"wrap","flexDirection":"row","flexGrow":0,"flexShrink":1,"marginTop":0,"paddingX":1,"gap":3,"overflowX":"visible","overflowY":"visible"}
+      ink-text [left:1 top:0 w:13 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "["
+        #text: "↑↓"
+        #text: "] "
+        #text: "navigate"
+      ink-text [left:17 top:0 w:10 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "["
+        #text: "↵"
+        #text: "] "
+        #text: "select"
+      ink-text [left:30 top:0 w:8 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "["
+        #text: "q"
+        #text: "] "
+        #text: "quit"
+      ink-text [left:41 top:0 w:11 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "["
+        #text: "r"
+        #text: "] "
+        #text: "release"
+      ink-text [left:55 top:0 w:9 h:1] styles:{"flexGrow":0,"flexShrink":1,"flexDirection":"row","textWrap":"wrap"}
+        #text: "["
+        #text: "b"
+        #text: "] "
+        #text: "build"

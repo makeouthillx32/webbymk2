@@ -48,8 +48,6 @@ import {
   removeFromRegistry,
   registerInstance,
   createRuntimeInstance,
-  initializeSupabaseCore,
-  CORE_DIR,
   type RuntimeInstance,
 } from "./supabase-factory.ts";
 import type { OnLine } from "./types.ts";
@@ -934,10 +932,9 @@ export async function listTemplates(): Promise<TemplateBundle[]> {
  *
  * Steps:
  *   1. Check for an existing fresh-enough template
- *   2. initializeSupabaseCore() if supabase-core/docker is absent
- *   3. createRuntimeInstance("template-seed")
- *   4. docker compose up -d
- *   5. Poll Kong (/health) + Studio (/) until both respond 200
+ *   2. createRuntimeInstance("template-seed")
+ *   3. docker compose up -d
+ *   4. Poll Kong (/health) + Studio (/) until both respond 200
  *   6. snapshotInstance() → writes bundle + .tar.gz
  *   7. Copy archive → TEMPLATES_DIR/fresh-{date}.tar.gz
  *   8. docker compose down + deregister temp instance
@@ -963,18 +960,7 @@ export async function captureTemplate(
 
   onLine("🌱 Capturing fresh template — spinning up vanilla Supabase...");
 
-  // ── [1] Ensure supabase-core is available ─────────────────────────────────
-  const coreDocker = join(CORE_DIR, "docker");
-
-  if (!existsSync(coreDocker)) {
-    onLine("  supabase-core/docker not found — cloning supabase/supabase...");
-    const { success, error } = await initializeSupabaseCore(onLine);
-    if (!success) throw new Error(`initializeSupabaseCore failed: ${error}`);
-  } else {
-    onLine("  ✓ supabase-core/docker present");
-  }
-
-  // ── [2] Create a temporary instance ──────────────────────────────────────
+  // ── [1] Create a temporary instance ─────────────────────────────────────
   onLine("\n[1/5] Creating temporary seed instance...");
   const instance = await createRuntimeInstance("template-seed", onLine);
   onLine(`  ✓ instance: ${instance.slug}  Kong:${instance.ports.kong}  Studio:${instance.ports.studio}`);

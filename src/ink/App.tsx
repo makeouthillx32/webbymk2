@@ -9,6 +9,7 @@
 // Navigation model (history stack in useAppRouter):
 //
 //   [StartupScreen] ──onDone──▶ welcome  (project picked inside StartupScreen)
+//                                welcome is the project welcome screen route
 //
 //   welcome ──navigate──▶ core ──navigate──▶ zones ──navigate──▶ wizard
 //          └──navigate──▶ settings
@@ -38,7 +39,6 @@ import { useEnvManager } from "./hooks/useEnvManager.ts";
 import { useBackgroundOps } from "./hooks/useBackgroundOps.ts";
 import { useCopyOnSelect } from "./hooks/useCopyOnSelect.ts";
 import { useOperationChrome } from "./hooks/useOperationChrome.ts";
-import { useDevBuildActions } from "./hooks/useDevBuildActions.ts";
 import { useGlobalAppInput } from "./hooks/useGlobalAppInput.ts";
 import { useIpcBridge } from "./hooks/useIpcBridge.ts";
 
@@ -195,6 +195,7 @@ export function App() {
     refreshEnvs,
     runOpQueued,
     coreDockerInstance: CORE_DOCKER_INSTANCE,
+    addNotification,
   });
   useGlobalAppInput({
     view,
@@ -205,10 +206,6 @@ export function App() {
     navigateReplace,
     toggleStackFocus,
     toggleStackManager,
-  });
-  const { handleRelease, handleBuild } = useDevBuildActions({
-    runOpQueued,
-    addNotification,
   });
   // ── Render ────────────────────────────────────────────────────────────────
   // Everything lives inside AlternateScreen so the TUI occupies the terminal's
@@ -290,8 +287,6 @@ export function App() {
         runDevMode={runDevMode}
         forceRefreshZoneList={forceRefreshZoneList}
         checkInfra={checkInfra}
-        handleRelease={handleRelease}
-        handleBuild={handleBuild}
       />
     </AppFrame>
   );

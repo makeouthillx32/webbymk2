@@ -1,4 +1,4 @@
-﻿import autoBind from 'auto-bind';
+import autoBind from 'auto-bind';
 import React, { type ReactNode } from 'react';
 import { LegacyRoot } from 'react-reconciler/constants.js';
 import onExit from 'signal-exit';
@@ -8,10 +8,10 @@ import instances from './instances.js';
 import Output from './output.js';
 import reconciler from './reconciler.js';
 import App from './components/App.js';
-import renderNodeToOutput from './render-node-to-output.js';
+import renderNodeToOutput, { didLayoutShift } from './render-node-to-output.js';
 import createRenderer, { type Renderer } from './renderer.js';
 import { createScreen, StylePool, CharPool, HyperlinkPool } from './screen.js';
-import { writeDiffToTerminal } from './terminal.js';
+import { SYNC_OUTPUT_SUPPORTED, writeDiffToTerminal } from './terminal.js';
 import {
   CURSOR_HOME,
   ENABLE_KITTY_KEYBOARD,
@@ -55,6 +55,7 @@ import {
   ENTER_ALT_SCREEN,
 } from './termio/dec.js';
 import { supportsExtendedKeys } from './terminal.js';
+import { FRAME_INTERVAL_MS } from './constants.js';
 
 export type Options = {
   stdout: NodeJS.WriteStream;
@@ -93,6 +94,20 @@ export default class Ink {
   private previousFrameHadOverlay = false;
   private hoveredNodes = new Set<DOMElement>();
   private hasRenderedFullFrame = false;
+  // Track the dimensions used in the last yoga layout pass so we only invalidate
+  // the diff baseline when the layout actually changes size (terminal resize or
+  // first paint), not on every React state-update commit.
+  private lastLayoutColumns = -1;
+  private lastLayoutRows    = -1;
+  private scrollDrainTimer: ReturnType<typeof setTimeout> | null = null;
+  // Render throttle: coalesce rapid state-change commits into at most ~30fps.
+  // lastRenderTime === 0 means "no render yet" — first frame always fires immediately.
+  private lastRenderTime = 0;
+  private pendingRenderTimer: ReturnType<typeof setTimeout> | null = null;
+  // Layout-shift signal: if the previous frame shifted scroll/content positions,
+  // mark the next frame's prev-buffer as contaminated so the diff engine does a
+  // full repaint rather than blitting from a stale base.
+  private lastFrameHadLayoutShift = false;
   private exitError: Error | undefined;
   private readonly exitPromise: Promise<void>;
   private resolveExitPromise!: () => void;
@@ -128,12 +143,32 @@ export default class Ink {
       if (this.isUnmounted || !this.rootNode.yogaNode) return;
       this.rootNode.yogaNode.setWidth(this.terminalColumns);
       this.rootNode.yogaNode.calculateLayout(this.terminalColumns, this.terminalRows);
+      // Only invalidate the diff baseline when the terminal dimensions have
+      // actually changed (first paint or terminal resize).  Resetting on every
+      // commit would force a full clear+redraw for every React state update,
+      // which causes visible flicker on data-heavy panels like Infra.
+      if (
+        this.terminalColumns !== this.lastLayoutColumns ||
+        this.terminalRows    !== this.lastLayoutRows
+      ) {
+        this.hasRenderedFullFrame   = false;
+        this.lastLayoutColumns      = this.terminalColumns;
+        this.lastLayoutRows         = this.terminalRows;
+      }
     };
 
     if (options.stdout.isTTY) {
       options.stdout.on('resize', () => {
         this.terminalColumns = options.stdout.columns || 80;
         this.terminalRows = options.stdout.rows || 24;
+        // Recalculate Yoga layout with the new dimensions before rendering.
+        // Without this the layout engine uses stale column/row counts until
+        // the next React commit, so text wraps at the old terminal width.
+        if (this.rootNode.yogaNode) {
+          this.rootNode.yogaNode.setWidth(this.terminalColumns);
+          this.rootNode.yogaNode.calculateLayout(this.terminalColumns, this.terminalRows);
+        }
+        this.hasRenderedFullFrame = false;
         this.onRender();
       });
     }
@@ -167,9 +202,12 @@ export default class Ink {
       </App>
     );
 
-    reconciler.updateContainer(rootNode, this.container, null, () => {
-        this.onRender();
-    });
+    // No onRender() callback needed here.
+    // resetAfterCommit in the reconciler calls rootNode.onRender() at exactly
+    // the right moment: after mutation effects (so AlternateScreen's
+    // useInsertionEffect has already activated the alt screen) but before
+    // layout effects. Every additional onRender() call here is redundant.
+    reconciler.updateContainer(rootNode, this.container, null, null);
   }
 
   setAltScreenActive(isActive: boolean, mouseTracking = false): void {
@@ -196,6 +234,7 @@ export default class Ink {
 
   detachForShutdown(): void {
     this.isUnmounted = true;
+    this.clearScrollDrainTimer();
     this.isAltScreenActive = false;
     this.isMouseTrackingActive = false;
     instances.delete(this.options.stdout);
@@ -495,10 +534,57 @@ export default class Ink {
     }
   };
 
+  private clearScrollDrainTimer(): void {
+    if (this.scrollDrainTimer === null) {
+      return;
+    }
+
+    clearTimeout(this.scrollDrainTimer);
+    this.scrollDrainTimer = null;
+  }
+
+  private scheduleScrollDrain(): void {
+    if (this.scrollDrainTimer !== null || this.isUnmounted) {
+      return;
+    }
+
+    this.scrollDrainTimer = setTimeout(() => {
+      this.scrollDrainTimer = null;
+      this.onRender();
+    }, FRAME_INTERVAL_MS);
+  }
+
   onRender() {
     if (this.isUnmounted) return;
 
-    const frameStartedAt = performance.now();
+    const now = performance.now();
+    const throttleMs = FRAME_INTERVAL_MS * 2; // ~32ms cap (~30fps)
+
+    // Bypass throttle for: first-ever frame, and any forced full-repaint
+    // (terminal resize, alt-screen enter, SIGCONT).  Those paths already set
+    // hasRenderedFullFrame=false so the engine knows a fresh base is needed.
+    const needsImmediateRender = this.lastRenderTime === 0 || !this.hasRenderedFullFrame;
+
+    if (!needsImmediateRender && now - this.lastRenderTime < throttleMs) {
+      // Coalesce: schedule one catch-up render at the end of the throttle
+      // window so the last state change in a rapid burst still gets painted.
+      if (this.pendingRenderTimer === null) {
+        this.pendingRenderTimer = setTimeout(() => {
+          this.pendingRenderTimer = null;
+          this.onRender();
+        }, throttleMs - (now - this.lastRenderTime));
+      }
+      return;
+    }
+
+    // Cancel any deferred render — we're rendering right now.
+    if (this.pendingRenderTimer !== null) {
+      clearTimeout(this.pendingRenderTimer);
+      this.pendingRenderTimer = null;
+    }
+    this.lastRenderTime = now;
+
+    const frameStartedAt = now;
     const prevFrame = this.frontFrame || emptyFrame(this.terminalRows, this.terminalColumns, this.stylePool, this.charPool, this.hyperlinkPool);
 
     const frame = this.renderer({
@@ -510,7 +596,8 @@ export default class Ink {
       altScreen: this.isAltScreenActive,
       prevFrameContaminated:
         (this.isAltScreenActive && !this.hasRenderedFullFrame) ||
-        this.previousFrameHadOverlay
+        this.previousFrameHadOverlay ||
+        this.lastFrameHadLayoutShift,
     });
 
     const selectionOverlayApplied = hasSelection(this.selection);
@@ -537,42 +624,82 @@ export default class Ink {
     this.previousFrameHadOverlay =
       selectionOverlayApplied || searchOverlayApplied || positionedSearchApplied;
 
+    // Capture layout-shift signal from this render so the NEXT frame's diff
+    // engine knows not to blit from a potentially stale base.
+    this.lastFrameHadLayoutShift = didLayoutShift();
+
     this.frontFrame = frame;
 
     if (this.isAltScreenActive && !this.hasRenderedFullFrame) {
       // Full frame render ONLY for the first frame to fill conhost buffers with spaces.
-      // This prevents the "Managezones" squishing bug without causing constant flicker.
+      // This prevents the diff engine from seeing garbage in unwritten cells on first paint.
       this.hasRenderedFullFrame = true;
       const fullFrameDiff = this.logUpdate.renderFullFrame(frame);
       this.options.stdout.write(CURSOR_HOME);
-      writeDiffToTerminal({ stdout: this.options.stdout, stderr: this.options.stderr } as any, fullFrameDiff, true);
+      writeDiffToTerminal(
+        { stdout: this.options.stdout, stderr: this.options.stderr },
+        fullFrameDiff,
+        !SYNC_OUTPUT_SUPPORTED,
+      );
     } else {
-      // Subsequent frames (like the clock) use the smart diff engine for zero flicker.
-      const diff = this.logUpdate.render(prevFrame, frame, this.isAltScreenActive, true);
-      writeDiffToTerminal({ stdout: this.options.stdout, stderr: this.options.stderr } as any, diff, true);
+      // For alt-screen, VirtualScreen always starts at {x:0,y:0} and uses
+      // purely RELATIVE cursor moves. After renderFullFrame (or any prior
+      // diff render) the actual terminal cursor is not at (0,0).
+      // Reset it here so every diff render's relative moves land correctly.
+      if (this.isAltScreenActive) {
+        this.options.stdout.write(CURSOR_HOME);
+      }
+      const diff = this.logUpdate.render(
+        prevFrame,
+        frame,
+        this.isAltScreenActive,
+        SYNC_OUTPUT_SUPPORTED,
+      );
+      writeDiffToTerminal(
+        { stdout: this.options.stdout, stderr: this.options.stderr },
+        diff,
+        !SYNC_OUTPUT_SUPPORTED,
+      );
     }
 
     this.options.onFrame?.({
       durationMs: performance.now() - frameStartedAt,
       flickers: [],
     });
+
+    if (frame.scrollDrainPending) {
+      this.scheduleScrollDrain();
+    } else {
+      this.clearScrollDrainTimer();
+    }
   }
 
-  unmount = (error?: Error) => {
+  /** Returns the last rendered screen frame, or null before first render.
+   *  Used by renderToFrame (agent-view) to read cell text directly. */
+  lastFrame(): import('./frame.js').Frame | null {
+    return this.frontFrame ?? null;
+  }
+
+  unmount = (error?: Error): void => {
     if (this.isUnmounted) return;
     this.isUnmounted = true;
+    this.clearScrollDrainTimer();
+    if (this.pendingRenderTimer !== null) {
+      clearTimeout(this.pendingRenderTimer);
+      this.pendingRenderTimer = null;
+    }
     this.exitError = error;
     reconciler.updateContainer(null, this.container, null, () => {
-        instances.delete(this.options.stdout);
-        if (this.exitError) {
-          this.rejectExitPromise(this.exitError);
-        } else {
-          this.resolveExitPromise();
-        }
+      instances.delete(this.options.stdout);
+      if (this.exitError) {
+        this.rejectExitPromise(this.exitError);
+      } else {
+        this.resolveExitPromise();
+      }
     });
   };
 
-  waitUntilExit() {
+  waitUntilExit(): Promise<void> {
     return this.exitPromise;
   }
 }

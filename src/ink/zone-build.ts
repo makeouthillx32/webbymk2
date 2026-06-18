@@ -410,19 +410,42 @@ export async function buildZone(
 
   try {
     const buildArgs = loadBuildArgs(zone);
+    const dockerEnvBuild = { DOCKER_CONFIG: dockerCfg.tmpDir };
+
+    // The default BuildKit builder can't attach RUN steps to a custom Docker
+    // network, so Next.js SSG (`bun run build`) can't reach the internal
+    // Supabase host (kong:8000) and hangs at "Generating static pages (0/92)"
+    // until the daemon drops. Fix: use a docker-container buildx builder bound
+    // to the `unenter` network so build-time DB access works. Created once and
+    // reused. `--load` exports the result into the local image store so the
+    // subsequent `docker push` can find it.
+    const BUILDX_BUILDER = "unaxis-net";
+    const inspectCode = await spawnDocker(["buildx", "inspect", BUILDX_BUILDER], () => {}, dockerEnvBuild);
+    if (inspectCode !== 0) {
+      logBuild(`--- creating buildx builder "${BUILDX_BUILDER}" on network unenter ---`);
+      const createCode = await spawnDocker(
+        ["buildx", "create", "--name", BUILDX_BUILDER, "--driver", "docker-container", "--driver-opt", "network=unenter", "--bootstrap"],
+        logBuild, dockerEnvBuild,
+      );
+      if (createCode !== 0) { logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`); return createCode; }
+    }
+
     const buildCmd  = [
-      "build",
-      // --cache-from omitted: BuildKit resolves it inside buildkitd which
-      // ignores DOCKER_CONFIG on the host, causing credential failures for
-      // private GHCR repos. BuildKit's local layer cache handles re-builds.
+      "buildx", "build",
+      "--builder", BUILDX_BUILDER,
+      // The builder (buildkitd) is attached to the `unenter` network via the
+      // driver-opt below. `--network=host` makes RUN steps share buildkitd's
+      // network namespace — i.e. the `unenter` network — so SSG can resolve
+      // kong:8000. (BuildKit only accepts default/none/host here, not a name.)
+      "--network", "host",
+      // Load the built image into the local docker store for the push step.
+      "--load",
       "--progress=plain",
       "--build-arg", "BUILDKIT_INLINE_CACHE=1",
-      // --no-cache: bypass ALL BuildKit layer caching.  Necessary when the
-      // Dockerfile overlays files (like our zones/{key}/src/app/ → src/app/
-      // swap) whose inputs sometimes hash-collide with prior builds of the
-      // same zone, causing BuildKit to reuse a stale `next build` layer that
-      // contains the PREVIOUS zone's code.  Symptom: test2 serves test1's
-      // content after delete+rescaffold.  Use [R] Rebuild in the TUI.
+      // --no-cache: bypass ALL layer caching.  Necessary when the Dockerfile
+      // overlays files (zones/{key}/src/app/ → src/app/) whose inputs sometimes
+      // hash-collide with prior builds of the same zone, reusing a stale
+      // `next build` layer with the PREVIOUS zone's code.
       ...(opts.noCache ? ["--no-cache"] : []),
       "-f", dockerfile,
       ...buildArgs,
@@ -431,14 +454,11 @@ export async function buildZone(
     ];
 
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
-    logBuild(`docker build ${opts.noCache ? "--no-cache " : ""}... -t ${zone.image} .`);
+    logBuild(`docker buildx build (builder=${BUILDX_BUILDER}, network=unenter) -t ${zone.image} .`);
 
-    // BuildKit (default) — matches build-and-push.ps1 + docker compose.
     // DOCKER_CONFIG points to our temp dir with embedded GHCR credentials
     // for the push step; the build itself only uses public base images.
-    const buildCode = await spawnDocker(buildCmd, logBuild, {
-      DOCKER_CONFIG: dockerCfg.tmpDir,
-    });
+    const buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild);
     if (buildCode !== 0) {
       log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
       logBuild(`FAILED: build exited ${buildCode}`);
@@ -476,6 +496,25 @@ export async function buildZone(
   } finally {
     dockerCfg.cleanup();
   }
+}
+
+// ── Build + deploy ("ship") ────────────────────────────────────────────────────
+
+/**
+ * Build + push, then deploy (pull + up) — the full "ship" for a zone. This is
+ * what the TUI `b`/`R` actions, the CLI `zone <k> build`, and `--bg` builds all
+ * run, so "what shipping means" lives in exactly one place. Returns the first
+ * non-zero exit (build failure short-circuits the deploy).
+ */
+export async function buildAndDeploy(
+  zone:   Zone,
+  onLine: (l: string) => void,
+  opts:   { noCache?: boolean } = {},
+): Promise<number> {
+  const code = await buildZone(zone, onLine, opts);
+  if (code !== 0) return code;
+  onLine("--- pull + up ---");
+  return pullAndUp(zone, onLine);
 }
 
 // ── Deploy a single zone ──────────────────────────────────────────────────────

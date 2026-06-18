@@ -16,6 +16,24 @@ export const UNAXIS_CLI_SCHEMA = {
         "--json": { type: "boolean", description: "Output as structured JSON." }
       }
     },
+    stacks: {
+      description: "Show all background stack ops and a tail of each one's output.",
+      options: {
+        "--tail": { type: "number", description: "Lines of output to show per op (default 6)." }
+      }
+    },
+    "build-doctor": {
+      description: "Diagnose build-time SSG hangs: Docker memory + endpoint reachability from the unenter network.",
+      arguments: [
+        { name: "zone", type: "string", required: false }
+      ]
+    },
+    "build-mem": {
+      description: "Snapshot every container's memory usage + limit (run during a build to watch the builder).",
+    },
+    "builder-reset": {
+      description: "Remove the unaxis-net buildx builder (recreated on next build); unsticks a zombie build.",
+    },
     zones: {
       description: "List all zones managed by the control plane.",
       options: {
@@ -103,6 +121,55 @@ export const UNAXIS_CLI_SCHEMA = {
       description: "Subscribe to an event stream of TUI actions.",
       options: {
         "--watch": { type: "boolean", description: "Keep connection open and stream JSON events." }
+      }
+    },
+    snap: {
+      description: "Capture the current live TUI frame, or record a timed frame sequence.",
+      options: {
+        "--save": { type: "boolean", description: "Write the single-frame snapshot to .snapshots/." },
+        "--json": { type: "boolean", description: "Output the single-frame snapshot as structured JSON." },
+        "--label": { type: "string", description: "Label used for saved snapshot or frame-series directories." },
+        "--series": { type: "boolean", description: "Record repeated live TUI frames into a frame-series folder." },
+        "--every": { type: "number", description: "Frame-series sample interval in milliseconds. Default: 100." },
+        "--duration": { type: "number", description: "Frame-series recording duration in milliseconds. Default: 4000." },
+        "--arm-startup": { type: "boolean", description: "Arm the next TUI boot to record the startup splash as a frame series." }
+      }
+    },
+    "snap-view": {
+      description: "View a recorded frame series: manifest stats, sample timeline, and inline film strip of unique frames. Standalone fast-path — no TUI or IPC required. Defaults to logs/startup-series-latest.json.",
+      arguments: [
+        { name: "manifestOrDir", type: "string", required: false, default: "logs/startup-series-latest.json" }
+      ],
+      options: {
+        "--summary":     { type: "boolean", description: "Only print manifest stats and frame timeline." },
+        "--strip":       { type: "boolean", description: "Print unique frames inline as a compact film strip. Default unless --summary." },
+        "--all-samples": { type: "boolean", description: "Include repeat samples as timing rows. Default." },
+        "--unique-only": { type: "boolean", description: "Omit repeat samples from the timeline." },
+        "--max-frames":  { type: "number",  description: "Limit inline unique frames. Default: all unique frames." }
+      }
+    },
+    "project studio": {
+      description: "Toggle public access to core Supabase Studio via the NPM proxy (studio.unenter.live).",
+      arguments: [
+        { name: "action", type: "string", enum: ["public", "local", "toggle", "status"], required: false, default: "status" }
+      ]
+    },
+    "db migrate-control": {
+      description: "One-time import: migrate zones + environments from unenter.db (Supabase) into the local SQLite control-plane DB. Safe to re-run.",
+    },
+    "db control-info": {
+      description: "Show local SQLite control-db path, zone count, environment count, and schema version.",
+    },
+    notify: {
+      description: "Push a notification into the running TUI from outside. Appears immediately in the notifications pane.",
+      arguments: [
+        { name: "message", type: "string", required: true }
+      ],
+      options: {
+        "--type":     { type: "string",  description: "Notification type: success | error | info  (default: info)" },
+        "--priority": { type: "string",  description: "Queue priority: low | medium | high | immediate  (default: medium)" },
+        "--timeout":  { type: "number",  description: "Display duration in ms. Defaults to type default (success=5s, error=8s, info=3s)." },
+        "--key":      { type: "string",  description: "Dedup key — same-key calls update the existing notification instead of stacking." },
       }
     }
   }

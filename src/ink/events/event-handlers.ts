@@ -1,8 +1,12 @@
 import type { ClickEvent } from './click-event.js'
 import type { FocusEvent } from './focus-event.js'
 import type { KeyboardEvent } from './keyboard-event.js'
-import type { PasteEvent } from './paste-event.js'
-import type { ResizeEvent } from './resize-event.js'
+
+// paste-event.ts and resize-event.ts don't exist yet; inline the minimal types
+// needed here so the module compiles. Expand to full event objects when those
+// event types are implemented.
+type PasteEvent = { text: string }
+type ResizeEvent = { columns: number; rows: number }
 
 type KeyboardEventHandler = (event: KeyboardEvent) => void
 type FocusEventHandler = (event: FocusEvent) => void

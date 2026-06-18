@@ -2,6 +2,7 @@
 
 import React, { useMemo } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { FaInstagram, FaTiktok } from "react-icons/fa";
 
 import useLoginSession from "@/lib/useLoginSession";
@@ -19,6 +20,9 @@ const socialLinks = [
 export default function Footer() {
   const session = useLoginSession();
   const { themeType } = useTheme();
+  const pathname = usePathname();
+  // Return the user to the page they signed in from, not the dashboard default.
+  const signInHref = `/sign-in?next=${encodeURIComponent(pathname || "/")}`;
 
   const userId = session?.user?.id;
   const cookieRole = userRoleCookies.getUserRole(userId) ?? "guest";
@@ -79,7 +83,7 @@ export default function Footer() {
         {
           title: "Account",
           links: [
-            { name: "Sign In", href: "/sign-in" },
+            { name: "Sign In", href: signInHref },
             { name: "Join the Barn", href: "/sign-up" },
           ],
         },
@@ -114,7 +118,7 @@ export default function Footer() {
     }
 
     return member;
-  }, [isMember, isOwnerOrAdmin]);
+  }, [isMember, isOwnerOrAdmin, signInHref]);
 
   return (
     <footer 

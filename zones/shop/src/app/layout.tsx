@@ -14,6 +14,7 @@ import { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import ChunkReloader from "@/components/system/ChunkReloader";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -50,6 +51,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang={locale} suppressHydrationWarning>
       <head />
       <body className={titillium.className} suppressHydrationWarning>
+        <ChunkReloader />
         <Providers>
           <ClientLayout locale={locale}>{children}</ClientLayout>
         </Providers>

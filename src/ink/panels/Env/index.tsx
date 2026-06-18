@@ -49,6 +49,8 @@ interface EnvPanelProps {
   envStale?:          boolean;
   lastEnvError?:      string | null;
   envDataAge?:        number;
+  /** Pre-seeded environment list for snapshot-view — skips the Supabase fetch. */
+  initialEnvs?:       UnaxisEnvironment[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -197,10 +199,10 @@ function EnvCard({ env, focused, pinging, updating, expanded, pingError }: {
 
 export function EnvPanel({
   onGoBack, addNotification, runOp, onAddEnvironment, onSelectEnv,
-  envStale, lastEnvError, envDataAge,
+  envStale, lastEnvError, envDataAge, initialEnvs,
 }: EnvPanelProps) {
-  const [envs,       setEnvs]       = useState<UnaxisEnvironment[]>([]);
-  const [loading,    setLoading]    = useState(true);
+  const [envs,       setEnvs]       = useState<UnaxisEnvironment[]>(initialEnvs ?? []);
+  const [loading,    setLoading]    = useState(initialEnvs === undefined);
   const [pinging,    setPinging]    = useState(false);
   const [updating,   setUpdating]   = useState(false);
   const [selected,   setSelected]   = useState(0);
@@ -209,6 +211,8 @@ export function EnvPanel({
   const [pingErrors, setPingErrors] = useState<Record<string, string>>({});
 
   const didInit = useRef(false);
+  // Skip the initial Supabase fetch when pre-seeded (e.g. from snapshot-view).
+  const seededRef = useRef(initialEnvs !== undefined);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -220,6 +224,7 @@ export function EnvPanel({
   }, []);
 
   useEffect(() => {
+    if (seededRef.current) return;  // already have data — skip initial fetch
     if (!didInit.current) {
       didInit.current = true;
       refresh();

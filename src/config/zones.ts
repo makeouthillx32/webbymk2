@@ -33,6 +33,12 @@ export interface Zone {
   dockerfile?: string;
   /** Which UPSTREAM_* env var in the proxy service points at this zone */
   upstreamEnvKey: string;
+  /**
+   * The environment this zone is deployed to.
+   * Null/undefined = unassigned (defaults to is_default_target at deploy time).
+   * Used by proxy-config to derive the correct upstream host for cross-machine routing.
+   */
+  environmentId?: string | null;
 }
 
 /** Proxy service identifiers */

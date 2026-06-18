@@ -297,6 +297,32 @@ export async function initializeSupabaseCore(
 
 // ── Port allocation ───────────────────────────────────────────────────────────
 
+/**
+ * Ports permanently reserved by the core webbymk2 stack.
+ * These must NEVER be allocated to a runtime instance regardless of
+ * whether the core containers are running at allocation time.
+ *
+ * Core stack fixed ports (from docker-compose.yml):
+ *   8001  unt_kong       (KONG_HTTP_PORT → 8001:8000)
+ *   5433  unt_db         (5433:5432)
+ *   3002  unt_studio     (3002:3000)
+ *   4001  unt_realtime   (4001:4000)
+ *   5000  unt_storage    (5000:5000)
+ *   3080  unt_proxy      (3080:3080)
+ *   3000  unt_app        (3000:3000)
+ *   8444  unt_kong SSL   (8444:8443 — though not in compose, used by some instances)
+ */
+const CORE_RESERVED_PORTS = new Set<number>([
+  8001,  // unt_kong HTTP
+  8444,  // unt_kong HTTPS (common default)
+  5433,  // unt_db
+  3002,  // unt_studio
+  4001,  // unt_realtime
+  5000,  // unt_storage
+  3080,  // unt_proxy
+  3000,  // unt_app
+]);
+
 function derivePortsFromBase(base: number): RuntimePorts {
   return {
     kong:      base,
@@ -360,6 +386,10 @@ async function unavailablePorts(
   const unavailable: Array<{ key: RuntimePortKey; port: number; reason: "registered" | "busy" }> = [];
 
   for (const [key, port] of portEntries(ports)) {
+    if (CORE_RESERVED_PORTS.has(port)) {
+      unavailable.push({ key, port, reason: "registered" });
+      continue;
+    }
     if (alreadyRegistered.has(port)) {
       unavailable.push({ key, port, reason: "registered" });
       continue;
@@ -559,30 +589,25 @@ export async function createRuntimeInstance(
   const id          = uuidV4();
   const runtimePath = join(INSTANCES_DIR, slug);
   const dockerPath  = join(runtimePath, "docker");
-  const coreDocker  = join(CORE_DIR, "docker");
 
   onLine(`→ Creating instance "${name}"  (slug: ${slug})`);
 
-  if (!existsSync(coreDocker)) {
-    throw new Error(
-      `supabase-core/docker not found — run initializeSupabaseCore() first.`
-    );
-  }
-
-  // ── [1] Copy SQL init files from supabase-core ────────────────────────────
-  // We copy the DB volumes directory from supabase-core for SQL init scripts,
-  // then replace docker-compose.yml and kong.yml with our lean versions.
-  await fs.mkdir(runtimePath, { recursive: true });
+  // ── [1] Scaffold docker directory from vendored template ─────────────────
+  // SQL init files (_supabase.sql, roles.sql, jwt.sql, etc.) are vendored in
+  // src/ink/zone/templates/instance/volumes/db/ — no GitHub clone required.
+  const templateVolumesDb = join(INSTANCE_TEMPLATE, "volumes", "db");
+  const instanceVolumesDb = join(dockerPath, "volumes", "db");
+  await fs.mkdir(instanceVolumesDb, { recursive: true });
   onLine(`✓ Created  supabase-instances/${slug}/`);
 
   const isWindows = process.platform === "win32";
   const [copyCmd, copyArgs] = isWindows
-    ? ["xcopy", [`"${coreDocker}"`, `"${dockerPath}"`, "/E", "/I", "/H", "/K"]]
-    : ["cp",    ["-r", coreDocker, runtimePath]];
+    ? ["xcopy", [`"${templateVolumesDb}"`, `"${instanceVolumesDb}"`, "/E", "/I", "/H", "/K"]]
+    : ["cp",    ["-r", templateVolumesDb + "/.", instanceVolumesDb]];
 
   const { code: cpCode, out: cpOut } = await spawnRun(copyCmd, copyArgs as string[]);
-  if (cpCode !== 0) throw new Error(`Failed to copy docker template: ${cpOut}`);
-  onLine(`✓ Docker template copied  (SQL init files from supabase-core)`);
+  if (cpCode !== 0) throw new Error(`Failed to copy DB init SQL files: ${cpOut}`);
+  onLine(`✓ DB init SQL files copied  (vendored — no GitHub clone needed)`);
 
   // ── [2] Ports + secrets ────────────────────────────────────────────────────
   // Passwords follow the pattern {name}{MMDDYY} for easy recognition, e.g. "ramp052626".

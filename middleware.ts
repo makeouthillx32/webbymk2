@@ -112,8 +112,14 @@ export async function middleware(request: NextRequest) {
   // zones not in the static ZONES map — prevents spurious auth redirects and
   // zone-prefix rewrites on zones the static map doesn't know about.
   const zoneConfig = getZoneConfig(zoneFromHost);
-  const zonePrimaryPrefix =
-    zoneConfig.routePrefixes.find((p) => p !== "/") ?? null;
+  const nonRootPrefixes = zoneConfig.routePrefixes.filter((p) => p !== "/");
+
+  // Zone-prefix injection only makes sense for SINGLE-prefix zones (e.g. blog),
+  // whose overlay pages nest under that one prefix. Multi-prefix zones (e.g. shop:
+  // /shop, /products, /checkout, /collections, /cart, /u) serve their overlay at
+  // ROOT, so injecting the primary prefix would 302 every non-primary route to
+  // /shop/* and 404. Only inject when there is exactly one non-root prefix.
+  const zonePrimaryPrefix = nonRootPrefixes.length === 1 ? nonRootPrefixes[0] : null;
 
   const needsZonePrefixRewrite =
     !isLocal &&

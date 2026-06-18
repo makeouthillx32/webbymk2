@@ -6,11 +6,18 @@
  * Do NOT import server-only modules here (like createClient from server.ts)
  */
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+// Browser-facing base URL. getDocumentUrl()'s output is always consumed by the
+// browser (cdn/u redirect targets, <img> src, srcset, public API JSON), so it
+// MUST use the public HTTPS host (db.unenter.live), never the internal Docker
+// address (kong:8000) which browsers cannot resolve. Matches utils/supabase/client.ts.
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  '';
 const BUCKET_NAME = 'documents';
 
 if (!SUPABASE_URL && typeof window === 'undefined') {
-  console.warn('⚠️ NEXT_PUBLIC_SUPABASE_URL is not set');
+  console.warn('⚠️ NEXT_PUBLIC_SUPABASE_URL_BROWSER / NEXT_PUBLIC_SUPABASE_URL is not set');
 }
 
 /**

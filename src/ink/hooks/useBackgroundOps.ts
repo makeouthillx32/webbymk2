@@ -124,6 +124,21 @@ export function useBackgroundOps({
     return { id, addLine };
   }, []);
 
+  // Mark an op finished. Successful ops auto-dismiss after a short flash so the
+  // stack stays clean ("all others stop on finish"). The dev/log-tail ops
+  // (isLog or dismissable) are the persistent exception — they stay until
+  // manually stopped. Failures also persist so they can be inspected.
+  const AUTO_DISMISS_MS = 6000;
+  const finishOp = useCallback((id: number, code: number) => {
+    setBgOps((prev) => prev.map((o) => (o.id === id ? { ...o, busy: false } : o)));
+    if (code === 0) {
+      setTimeout(() => {
+        setBgOps((prev) => prev.filter((o) => !(o.id === id && !o.isLog && !o.dismissable)));
+        dismissHooks.current.delete(id);
+      }, AUTO_DISMISS_MS);
+    }
+  }, []);
+
   // Streaming operation runner
   const runOp = useCallback(
     (title: string, op: (onLine: (l: string) => void) => Promise<number>) => {
@@ -133,19 +148,20 @@ export function useBackgroundOps({
         .then(
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            finishOp(id, code);
             eventBus.emit("op_completed", { id, title, code });
             refreshZones();
           },
-          () => {
-            addLine("✗ op failed unexpectedly");
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            addLine(`✗ ${msg}`);
+            finishOp(id, 1);
             eventBus.emit("op_failed", { id, title });
             refreshZones();
           },
         );
     },
-    [_startOp, refreshZones],
+    [_startOp, refreshZones, finishOp],
   );
 
   // Queued operation runner
@@ -179,21 +195,22 @@ export function useBackgroundOps({
         Promise.resolve().then(() => opFn(addLine)).then(
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            finishOp(id, code);
             eventBus.emit("op_completed", { id, title: op.label, code });
             refreshZones();
             resolve();
           },
-          () => {
-            addLine('✗ op failed unexpectedly');
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            addLine(`✗ ${msg}`);
+            finishOp(id, 1);
             eventBus.emit("op_failed", { id, title: op.label });
             resolve();
           },
         );
       });
     },
-    [_startOp, setBgOps, refreshZones],
+    [_startOp, setBgOps, refreshZones, finishOp],
   );
 
   // Drain the queue whenever all build/lifecycle ops have finished.
@@ -250,10 +267,11 @@ export function useBackgroundOps({
         addNotification(`Create "${zone.label}" failed -- check [o] for output`, "error");
       }
       refreshZones();
-    }, () => {
+    }, (err) => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       lineBuffer.splice(0).forEach(rawAddLine);
-      rawAddLine("✗ op failed unexpectedly");
+      const msg = err instanceof Error ? err.message : String(err);
+      rawAddLine(`✗ ${msg}`);
       setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
       addNotification(`Create "${zone.label}" failed -- check [o] for output`, "error");
       refreshZones();

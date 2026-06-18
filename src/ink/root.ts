@@ -18,6 +18,7 @@ export type Instance = {
   rerender: Ink['render']
   unmount: Ink['unmount']
   waitUntilExit: Ink['waitUntilExit']
+  lastFrame: Ink['lastFrame']
   cleanup: () => void
 }
 
@@ -47,20 +48,13 @@ export const renderSync = (
   )
 
   instance.render(node)
-  
-  // FORCE FIRST RENDER: Standard Ink's onRender is throttled/deferred.
-  // We trigger it multiple times to ensure AlternateScreen and Layout effects apply.
-  instance.onRender();
-  instance.onRender();
-  instance.onRender();
 
   return {
-    rerender: instance.render,
-    unmount() {
-      instance.unmount()
-    },
-    waitUntilExit: instance.waitUntilExit,
-    cleanup: () => instances.delete(inkOptions.stdout),
+    rerender:       instance.render,
+    unmount()       { instance.unmount() },
+    waitUntilExit:  instance.waitUntilExit,
+    lastFrame:      instance.lastFrame.bind(instance),
+    cleanup:        () => instances.delete(inkOptions.stdout),
   }
 }
 
@@ -98,9 +92,6 @@ export async function createRoot({
   return {
     render: node => {
         instance.render(node);
-        instance.onRender(); 
-        instance.onRender();
-        instance.onRender();
     },
     unmount: () => instance.unmount(),
     waitUntilExit: () => instance.waitUntilExit(),

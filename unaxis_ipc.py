@@ -23,16 +23,32 @@ Usage:
       print("FAILED:", result.text)
 """
 
+import os
 import socket
 import json
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Open LAN IPC — no auth, no pairing keys.
+# Prod TUI: port 50505  (unaxis binary)
+# Dev TUI:  port 50507  (bun run tui:dev, hot-reload)
+#
+# The control-node's LAN IP is intentionally NOT a literal here — this repo is
+# public on GitHub, and hardcoding a real address would leak network topology.
+# Set UNAXIS_HOST in your shell/session env before using this helper remotely:
+#   export UNAXIS_HOST=192.168.x.x
+# Defaults to localhost, which is correct when running directly on the
+# control node itself.
+_HOST = os.environ.get("UNAXIS_HOST", "127.0.0.1")
+
 UNAXIS = {
-    "host":  "192.168.50.204",
-    "port":  50506,
-    "token": "4f11bb222b454ec68f608d7bc4691f27ed5150548c0430986f27d476545e5bd4",
+    "host": _HOST,
+    "port": 50505,   # prod by default
+}
+UNAXIS_DEV = {
+    "host": _HOST,
+    "port": 50507,   # dev TUI
 }
 
 SENTINEL_PREFIX = "__UNAXIS_EXIT__:"
@@ -71,11 +87,7 @@ def ipc(argv: list, timeout: int = 25, conn: Optional[dict] = None) -> IpcResult
     s.settimeout(8)
     try:
         s.connect((c["host"], c["port"]))
-        s.sendall(f"AUTH {c['token']}\n".encode())
-        auth = s.recv(64).decode().strip()
-        if auth != "OK":
-            return IpcResult(argv, f"Auth failed: {auth}", 5, "unknown")
-
+        # No auth — open LAN access
         s.sendall((json.dumps({"argv": argv}) + "\n").encode())
         s.settimeout(timeout)
 

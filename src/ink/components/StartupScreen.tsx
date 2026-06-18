@@ -1,15 +1,17 @@
 // src/ink/components/StartupScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Startup splash + project picker coordinator.
+// Global startup splash + project picker coordinator.
 //
 // Phases:
 //   "animating"  ✻ hue sweeps 2 rotations; UNAXIS shimmers; spinner ticks
 //   "picking"    animation settles → project list appears below the wordmark
-//                user selects a project → onDone() fires → welcome screen
+//                user selects a project → onDone() fires → project welcome screen
 //
 // Dynamic Overlays (under "picking" phase):
-//   • "key"      PairingKeyOverlay (invoked with capital K)
-//   • "wizard"   NewProjectWizard (invoked via "Create new project…" list item)
+//   • "key"       PairingKeyOverlay         (invoked with capital K)
+//   • "wizard"    NewProjectWizard          (invoked via "Create new project…" list item)
+//   • "release"   ReleaseOverlay            (invoked with capital R in dev/bun mode)
+//   • "instances" RuntimeInstancesOverlay   (invoked with capital I)
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,14 +24,18 @@ import {
   type KnownProject,
 } from "../../utils/projectRegistry.js";
 import { PROJECT_DIR } from "../../config/stack.js";
-import { StartupSplash } from "./StartupSplash.tsx";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
+import { StartupSplash }     from "./StartupSplash.tsx";
 import { PairingKeyOverlay } from "./PairingKeyOverlay.tsx";
-import { NewProjectWizard } from "./NewProjectWizard.tsx";
+import { NewProjectWizard }  from "./NewProjectWizard.tsx";
+import { ReleaseOverlay }              from "./ReleaseOverlay.tsx";
+import { RuntimeInstancesOverlay }    from "./RuntimeInstancesOverlay.tsx";
 import { spawn }                from "child_process";
 import { gracefulShutdownSync } from "../../utils/gracefulShutdown.js";
 
 // Dev mode = bun --watch; Production = node running dist/cli.js
 const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+const SETTLE_MS = 180;
 
 // Version injected at build time via bun define; falls back to "dev" in watch mode
 declare const UNAXIS_VERSION: string;
@@ -83,10 +89,10 @@ interface Props {
 
 export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
   const { stdout } = useContext(StdinContext);
-
+  const { columns } = useTerminalSize();
   // ── Coordinator States ─────────────────────────────────────────────────────
-  type Phase = "animating" | "picking";
-  type Overlay = "none" | "key" | "wizard";
+  type Phase = "animating" | "settling" | "picking";
+  type Overlay = "none" | "key" | "wizard" | "release" | "instances";
 
   const [phase, setPhase]     = useState<Phase>("animating");
   const [overlay, setOverlay] = useState<Overlay>("none");
@@ -95,6 +101,7 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
   const [items, setItems]           = useState<PickerItem[]>([]);
   const [selected, setSelected]     = useState(0);
   const [pickerLoading, setPickerLoading] = useState(true);
+  const showProjectPaths = columns >= 96;
 
   // ── iTerm2 progress bar integration ────────────────────────────────────────
   useEffect(() => {
@@ -133,6 +140,12 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
 
   // ── Load projects when phase flips to picking ──────────────────────────────
   useEffect(() => {
+    if (phase !== "settling") return;
+    const id = setTimeout(() => setPhase("picking"), SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
+
+  useEffect(() => {
     if (phase === "picking") {
       loadProjects();
     }
@@ -170,9 +183,19 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
       return;
     }
 
-    // R — restart production binary
-    if ((input === "r" || input === "R") && isProductionMode) {
-      selfRestart();
+    // I — runtime instances overlay
+    if (input === "I") {
+      setOverlay("instances");
+      return;
+    }
+
+    // R — restart production binary  /  release overlay in dev (bun) mode
+    if (input === "r" || input === "R") {
+      if (isProductionMode) {
+        selfRestart();
+      } else {
+        setOverlay("release");
+      }
       return;
     }
 
@@ -187,7 +210,24 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
 
   // ── PHASE 1: animating (Splash Animation) ──────────────────────────────────
   if (phase === "animating") {
-    return <StartupSplash onComplete={() => setPhase("picking")} />;
+    return <StartupSplash onComplete={() => setPhase("settling")} />;
+  }
+
+  // â”€â”€ PHASE 1.5: settling (brief handoff frame) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (phase === "settling") {
+    return (
+      <Box flexDirection="column" alignItems="center" justifyContent="center" paddingY={2}>
+        <Box marginBottom={1}>
+          <Text color={SETTLED_GREY}>·</Text>
+        </Box>
+        <Box marginBottom={1}>
+          <Text bold color="white">{TITLE}</Text>
+        </Box>
+        <Box marginBottom={1}>
+          <Text color={SETTLED_GREY}>opening project picker</Text>
+        </Box>
+      </Box>
+    );
   }
 
   // ── PHASE 2: picking (Project Picker & Active Overlays) ────────────────────
@@ -202,6 +242,16 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
         onClose={() => setOverlay("none")}
       />
     );
+  }
+
+  // ── Overlay: Release ──
+  if (overlay === "release") {
+    return <ReleaseOverlay onClose={() => setOverlay("none")} />;
+  }
+
+  // ── Overlay: Runtime Instances ──
+  if (overlay === "instances") {
+    return <RuntimeInstancesOverlay onClose={() => setOverlay("none")} />;
   }
 
   // ── Overlay: New Project Wizard ──
@@ -248,12 +298,14 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
           {knownProjects.map((proj, i) => {
             const isCursor = selected === i;
             return (
-              <Box key={proj.slug} gap={2}>
-                <Text color={isCursor ? ACTIVE : DIM}>{isCursor ? "▶" : " "}</Text>
+              <Box key={proj.slug} gap={1}>
+                <Text color={isCursor ? ACTIVE : DIM}>{isCursor ? "·" : " "}</Text>
                 <Text bold={isCursor} color={isCursor ? ACTIVE : "white"}>{proj.slug}</Text>
-                <Text dimColor>
-                  {proj.path.replace(/\\/g, "/").replace(/^.*\/([^/]+\/[^/]+)$/, "…/$1")}
-                </Text>
+                {showProjectPaths && (
+                  <Text dimColor>
+                    {proj.path.replace(/\\/g, "/").replace(/^.*\/([^/]+\/[^/]+)$/, "…/$1")}
+                  </Text>
+                )}
               </Box>
             );
           })}
@@ -261,10 +313,10 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
       )}
 
       {/* ── Create new project list option ── */}
-      <Box gap={2} marginBottom={2}>
-        <Text color={selected === stubIdx ? ACTIVE : DIM}>{selected === stubIdx ? "▶" : " "}</Text>
+      <Box gap={1} marginBottom={2}>
+        <Text color={selected === stubIdx ? ACTIVE : DIM}>{selected === stubIdx ? "·" : " "}</Text>
         <Text bold={selected === stubIdx} color={selected === stubIdx ? ACTIVE : "white"}>
-          ⊕  create new project…
+          ⊕  Create new project…
         </Text>
       </Box>
 
@@ -273,7 +325,9 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
         <Text dimColor>↑↓ navigate</Text>
         <Text dimColor>↵ open</Text>
         <Text dimColor>K key</Text>
-        {isProductionMode && <Text dimColor>R restart</Text>}
+        {isProductionMode  && <Text dimColor>R restart</Text>}
+        {!isProductionMode && <Text dimColor>R release</Text>}
+        <Text dimColor>I instances</Text>
         <Text dimColor>q quit</Text>
       </Box>
 

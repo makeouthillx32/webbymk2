@@ -1,6 +1,6 @@
 // src/ink/components/LogoV2/feedConfigs.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Feed data builders for the UNAXIS welcome screen.
+// Feed data builders for the project welcome screen.
 //
 // Each function returns a FeedConfig (or null to hide the feed entirely).
 // FeedColumn accepts an array of FeedConfigs and stacks them vertically.

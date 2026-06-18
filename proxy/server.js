@@ -210,9 +210,10 @@ proxy.on("error", (err, req, res) => {
 
 function resolveTarget(req) {
   // NPM (Nginx Proxy Manager) sits in front of this proxy and rewrites the
-  // Host header to the upstream address (e.g. "192.168.50.204").  The original
-  // public hostname is preserved in X-Forwarded-Host.  Try that first so
-  // zone routing works through NPM; fall back to Host for direct connections.
+  // Host header to the upstream address (e.g. a LAN IP like "192.168.x.x").
+  // The original public hostname is preserved in X-Forwarded-Host.  Try that
+  // first so zone routing works through NPM; fall back to Host for direct
+  // connections.
   const rawHost  = (req.headers["x-forwarded-host"] ?? req.headers["host"] ?? "")
                      .split(",")[0].trim();
   const host     = rawHost.split(":")[0].toLowerCase();

@@ -19,16 +19,12 @@ export const outdir         = join(import.meta.dir, 'dist')
 export const outfile        = join(outdir, 'cli.js')
 
 const tuiNodeModules        = join(import.meta.dir, 'node_modules')
-const tuiInkBuild           = join(tuiNodeModules, 'ink', 'build')
 
 // ── Shared plugins ─────────────────────────────────────────────────────────────
 
 export const buildPlugins: import('bun').BunPlugin[] = [
   {
     // Stub react-devtools-core so it is never left as a live runtime import.
-    // devDependencies are not installed with global npm packages, so any
-    // external reference to this module causes ERR_MODULE_NOT_FOUND on
-    // machines that only have the published package.
     name: 'stub-react-devtools-core',
     setup(builder) {
       builder.onResolve({ filter: /^react-devtools-core$/ }, () => ({
@@ -42,19 +38,12 @@ export const buildPlugins: import('bun').BunPlugin[] = [
     },
   },
   {
-    // Force all ink/react/react-dom imports to the single isolated copy in
-    // src/ink/node_modules.  Without this, files at different directory depths
-    // resolve to different copies (root vs src/ink), producing two React
-    // instances in the bundle — the reconciler initialises with one, components
-    // reference the other, and React's internal state is undefined at runtime.
+    // Force react/react-dom/react-reconciler imports to the single isolated
+    // copy in src/ink/node_modules so the reconciler and components share one
+    // React instance. npm `ink` alias removed — the local engine is now the
+    // only renderer on the live path.
     name: 'unaxis-tui-runtime-aliases',
     setup(builder) {
-      builder.onResolve({ filter: /^ink$/ }, () => ({
-        path: join(tuiInkBuild, 'index.js'),
-      }))
-      builder.onResolve({ filter: /^ink\/(.+)$/ }, ({ path }) => ({
-        path: join(tuiInkBuild, path.slice('ink/'.length)),
-      }))
       builder.onResolve({ filter: /^react$/ }, () => ({
         path: join(tuiNodeModules, 'react', 'index.js'),
       }))

@@ -11,6 +11,7 @@ import { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "./provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import ChunkReloader from "@/components/system/ChunkReloader";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -56,6 +57,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           globals.css via hsl(var(--background)) so the iOS status bar
           always reads the correct theme color, never a hardcoded value. */}
       <body className={titillium.className} suppressHydrationWarning>
+        <ChunkReloader />
         <Providers>
           <ClientLayout locale={locale}>{children}</ClientLayout>
         </Providers>

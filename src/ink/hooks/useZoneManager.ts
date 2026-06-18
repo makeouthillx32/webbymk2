@@ -89,6 +89,21 @@ export function useZoneManager({
     refreshZoneList();
   }, [refreshZoneList]);
 
+  // ── Auto-recover zones after Docker pause/resume ──────────────────────────
+  // When the proxy transitions from "missing" → "running" and we have no zone
+  // definitions loaded (zones: 0), the cache likely expired during the pause.
+  // Immediately bust the cache and re-fetch so zones come back automatically
+  // without requiring manual intervention.
+  const prevProxyRef = useRef<Status>("missing");
+  useEffect(() => {
+    const prev = prevProxyRef.current;
+    prevProxyRef.current = proxyStatus;
+    if (prev === "missing" && proxyStatus === "running" && zones.length === 0) {
+      invalidateZoneCache();
+      refreshZoneList();
+    }
+  }, [proxyStatus, zones.length, refreshZoneList]);
+
   // ──────────────────────────────────────────────────────────────────────────
   return {
     zones, setZones, zonesLoading,

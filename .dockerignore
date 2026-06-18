@@ -1,4 +1,8 @@
-# Dependencies
+# NOTE: keep this file LF-only. CRLF endings make every pattern (e.g.
+# "node_modules\r") match nothing, so the whole repo — node_modules, .next,
+# .git — ends up in the build context (~1.7GB) and starves the build.
+
+# Dependencies (the image runs its own `bun install`)
 node_modules
 .pnp
 .pnp.js
@@ -9,7 +13,7 @@ out
 build
 dist
 
-# Lockfiles (Bun generates these inside container)
+# Lockfiles (Bun regenerates inside the container)
 yarn.lock
 package-lock.json
 npm-debug.log*
@@ -19,11 +23,10 @@ npm-debug.log*
 .env.local
 .env.*.local
 
-# Dev tooling
+# VCS + dev tooling
 .git
 .gitignore
 .eslintcache
-.prettierrc*
 *.md
 !README.md
 
@@ -34,3 +37,20 @@ supabase/.temp
 # OS
 .DS_Store
 Thumbs.db
+
+# Non-app artifacts — not imported by the Next.js app
+backups
+.snapshots
+snapshots
+*.dump
+vault
+.obsidian
+.obsidian-agent
+.vault-operator
+.agents
+.letta
+.gemini
+.tmp
+__pycache__
+.turbo
+.vercel

@@ -215,8 +215,6 @@ function LocalWelcomeInputProbe() {
         onManage={() => setAction('manage')}
         onSettings={() => setAction('settings')}
         onQuit={() => setAction('quit')}
-        onRelease={() => setAction('release')}
-        onBuild={() => setAction('build')}
         isActive
       />
       <Text>{`welcome-action:${action}`}</Text>
@@ -554,7 +552,7 @@ const cases: SmokeCase[] = [
   {
     name: 'resize',
     expected: 'size:80x24',
-    expectedAfterRerender: '4212',
+    expectedAfterRerender: '42x12',
     element: <ResizeProbe key="initial" />,
     afterRender: (instance, stdout) => {
       stdout.columns = 42

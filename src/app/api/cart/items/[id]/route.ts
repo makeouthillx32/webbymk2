@@ -1,5 +1,6 @@
 // app/api/cart/items/[id]/route.ts
 import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 function jsonOk(data: any) {
@@ -19,10 +20,13 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createServerClient();
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops; ownership is checked in-app below.
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
 
     const sessionId = request.headers.get("x-session-id");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await auth.auth.getUser();
     const userId = user?.id;
 
     if (!userId && !sessionId) {
@@ -106,10 +110,13 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createServerClient();
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops; ownership is checked in-app below.
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
 
     const sessionId = request.headers.get("x-session-id");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await auth.auth.getUser();
     const userId = user?.id;
 
     if (!userId && !sessionId) {

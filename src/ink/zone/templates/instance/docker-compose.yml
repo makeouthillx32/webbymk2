@@ -9,8 +9,8 @@
 # rewriteContainerNames() can rename them to "{slug}-*" at scaffold time.
 # The compose project name "supabase" is also rewritten to the slug.
 #
-# DB init SQL files are copied from supabase-core/docker/volumes/db/ at
-# scaffold time and referenced here as relative bind mounts.
+# DB init SQL files are vendored in src/ink/zone/templates/instance/volumes/db/
+# and copied to each instance at scaffold time — no GitHub clone required.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: supabase

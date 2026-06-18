@@ -606,11 +606,24 @@ export async function pullAndUp(
   onLine?:   (l: string) => void,
   dockerUrl?: string,
 ): Promise<number> {
-  const newStyle = zoneComposeExists(zone.key);
-  const file     = newStyle ? zoneComposePath(zone.key) : undefined;
-
-  // Legacy zones only: self-heal missing `image:` field in root compose.
-  if (!newStyle) doctorComposeService(zone, onLine);
+  // Compose-file resolution, in priority order:
+  //   1. Artifact-store copy (%APPDATA%/unenter/stacks/<key>/) — authoritative.
+  //   2. Repo's per-zone template (zones/<key>/docker-compose.yml) — used when
+  //      the artifact copy is missing (e.g. shop, whose runtime compose was
+  //      never written to the store). Without this, deploy falls back to the
+  //      root compose, which has no such service → "no such service: <key>".
+  //   3. Root docker-compose.yml — legacy zones whose service lives there.
+  const repoCompose = join(process.cwd(), "zones", zone.key, "docker-compose.yml");
+  let file: string | undefined;
+  if (zoneComposeExists(zone.key)) {
+    file = zoneComposePath(zone.key);
+  } else if (existsSync(repoCompose)) {
+    file = repoCompose;
+  } else {
+    file = undefined;
+    // Legacy zones only: self-heal missing `image:` field in root compose.
+    doctorComposeService(zone, onLine);
+  }
 
   const internet = await checkInternetConnectivity();
   if (internet.online) {
@@ -626,7 +639,12 @@ export async function pullAndUp(
   }
 
   onLine?.(`Starting ${zone.service} (force-recreate)...`);
-  return composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file, dockerUrl);
+  const upCode = await composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file, dockerUrl);
+  // Explicit terminal line: `docker compose up` ends on "Container … Starting/
+  // Started", so a successful op would otherwise auto-dismiss with "Starting"
+  // as its last visible line and look stuck. Emit a clear success marker.
+  if (upCode === 0) onLine?.(`✓ deployed — ${(zone as any).domain || zone.label || zone.service} live`);
+  return upCode;
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────

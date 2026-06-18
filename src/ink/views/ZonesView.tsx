@@ -46,11 +46,12 @@ import {
   restartZone, pullAndUp, reloadProxy,
   doctorComposeService,
 }                             from "../docker.ts";
-import { buildZone, buildAll, deployAll, deployZone, gitPush } from "../zone-build.ts";
+import { buildAndDeploy, buildAll, deployAll, deployZone, gitPush } from "../zone-build.ts";
 import { npmAddZone }         from "../npm/index.ts";
 import { deleteZone, DS_CATALOG } from "../zone-scaffold.ts";
-import { addZoneRoute, getRoutes } from "../proxy-config.ts";
+import { addZoneRoute, getRoutes, deriveZoneUpstream } from "../proxy-config.ts";
 import { invalidateZoneCache, loadZones, lastZoneError } from "../zone-store.ts";
+import { loadEnvironments }  from "../environment-store.ts";
 import {
   getZoneLayout, getInstalledSections,
   scaffoldDynamicSection, removeDynamicSection,
@@ -180,23 +181,20 @@ export function ZonesView({
         runOp(`Restart  ${zone.label}`, (o) => restartZone(zone, o));
         break;
 
+      // build/rebuild are one-key "ship": build → push → pull + up (deploy the
+      // fresh image), matching CoreView and the CLI `unaxis zone <k> build`.
+      // (Use [d] deploy / [p] pull+up to deploy without building.)
       case "build":
-        runOp(`Build+push  ${zone.label}`, async (o) => {
-          if (!zone.dockerfile) {
-            o(`${zone.key} has no Dockerfile — use [p] pull+up instead.`);
-            return 1;
-          }
-          return buildZone(zone, o);
+        runOp(`Build+deploy  ${zone.label}`, async (o) => {
+          if (!zone.dockerfile) { o(`${zone.key} has no Dockerfile — use [p] pull+up instead.`); return 1; }
+          return buildAndDeploy(zone, o);
         });
         break;
 
       case "rebuild":
-        runOp(`Rebuild  ${zone.label}  (no cache)`, async (o) => {
-          if (!zone.dockerfile) {
-            o(`${zone.key} has no Dockerfile — use [p] pull+up instead.`);
-            return 1;
-          }
-          return buildZone(zone, o, { noCache: true });
+        runOp(`Rebuild+deploy  ${zone.label}  (no cache)`, async (o) => {
+          if (!zone.dockerfile) { o(`${zone.key} has no Dockerfile — use [p] pull+up instead.`); return 1; }
+          return buildAndDeploy(zone, o, { noCache: true });
         });
         break;
 
@@ -205,7 +203,11 @@ export function ZonesView({
         break;
 
       case "npm":
-        runOp(`Register NPM  ${zone.domain}`, (o) => npmAddZone(zone, o));
+        runOp(`Register NPM  ${zone.domain}`, async (o) => {
+          const envs    = await loadEnvironments().catch(() => []);
+          const zoneEnv = zone.environmentId ? (envs.find((e) => e.id === zone.environmentId) ?? null) : null;
+          return npmAddZone(zone, o, zoneEnv);
+        });
         break;
 
       case "sections": {
@@ -236,20 +238,25 @@ export function ZonesView({
             o(`  compose already correct`);
           }
 
+          // Resolve environment once — used for both proxy route and NPM.
+          const doctorEnvs  = await loadEnvironments().catch(() => []);
+          const doctorEnv   = zone.environmentId
+            ? (doctorEnvs.find((e) => e.id === zone.environmentId) ?? null)
+            : null;
+
           // Step 2 — Ensure route exists in proxy-config/routes.json.
-          //   The proxy hot-reloads this file — no container restart needed.
           o(`--- proxy routes ---`);
-          const routes = getRoutes();
-          if (routes.zones[zone.key]) {
-            o(`✓ proxy route OK  →  ${zone.domain}  →  ${routes.zones[zone.key]}`);
+          const routes         = getRoutes();
+          const correctUpstream = deriveZoneUpstream(zone, doctorEnv);
+          if (routes.zones[zone.key] === correctUpstream) {
+            o(`✓ proxy route OK  →  ${zone.domain}  →  ${correctUpstream}`);
           } else {
-            await addZoneRoute(zone.key, `http://${zone.service}:3000`, o);
+            await addZoneRoute(zone.key, correctUpstream, o);
           }
 
           // Step 3 — Verify NPM proxy host forward target is correct.
-          //   npmAddZone detects wrong forward_host/forward_port and updates.
           o(`--- verify NPM ---`);
-          await npmAddZone(zone, o);
+          await npmAddZone(zone, o, doctorEnv);
 
           return 0;
         });
@@ -368,6 +375,9 @@ export function ZonesView({
     }
 
     if (input === "l") { const z = visibleZones[selected]; if (z) openLogs(z); return; }
+    // One-key ship: build → push → pull + up the HIGHLIGHTED zone, no menu.
+    // Same path as [↵] → [b]; the build case guards no-Dockerfile zones.
+    if (input === "b") { const z = visibleZones[selected]; if (z) executeAction("build", z); return; }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }
     if (input === "R") {

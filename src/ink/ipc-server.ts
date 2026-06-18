@@ -1,30 +1,29 @@
 // src/ink/ipc-server.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Local IPC server — lets CLI agents send commands to the running TUI.
+// Open LAN IPC server — no auth, no pairing keys.
 //
-// Two servers:
+// Two servers (one per TUI mode so both can run simultaneously):
 //
-//   50505  127.0.0.1 only  — local IPC (existing, unchanged)
-//          Protocol: send one JSON { argv } command line, receive streamed output
+//   50505  0.0.0.0  — prod TUI  (unaxis binary)
+//   50507  0.0.0.0  — dev TUI   (bun run tui:dev, hot-reload)
 //
-//   50506  0.0.0.0         — remote IPC bridge (new)
-//          Protocol: client sends AUTH <token>\n first; if token matches the
-//          stored remote_bridge_token credential, the connection is promoted and
-//          subsequent commands are handled identically to 50505.
-//          The bridge only runs if a valid pairing key has been generated.
+// Protocol: send one JSON { argv } command line, receive streamed output.
+// No AUTH handshake. Any agent on the LAN can connect directly.
 //
-// Remote bridge security:
-//   • Token is 32 random bytes (hex) — collision probability negligible
-//   • Token expires after KEY_TTL_H hours (same as pairing key)
-//   • Expired-token connections are refused before any data is processed
-//   • The bridge only forwards known IPC commands; it is NOT a shell
+// Rationale: this stack runs on a private LAN, not exposed
+// to the internet. Removing the pairing key ceremony gives agents (Claude
+// Cowork, Antigravity, Codex) seamless access without session management.
+// The pairing key / remote bridge (50506) is removed — legacy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as net from "net";
 
-export const IPC_PORT        = 50505;
-export const IPC_HOST        = "127.0.0.1";
-export const REMOTE_IPC_PORT = 50506;
+// Dev mode: process is bun (hot-reload). Prod mode: compiled node binary.
+const IS_DEV_TUI = process.execPath.toLowerCase().includes("bun");
+
+export const IPC_PORT        = IS_DEV_TUI ? 50507 : 50505;
+export const IPC_HOST        = "0.0.0.0";
+export const REMOTE_IPC_PORT = 50506;   // kept for legacy compat — no longer started
 export const REMOTE_IPC_HOST = "0.0.0.0";
 
 export type IpcHandler = (
@@ -102,6 +101,24 @@ export function startIpcServer(handlers: IpcHandlers): net.Server {
         if (closeCb) closeCb();
       });
 
+      // ── snap --series / --arm-startup: frame-sequence recorder ────────────
+      // Intercepted at the server so the single-frame `snap` handler in
+      // useIpcBridge.ts stays untouched. Logic lives in hooks/snapSeries.ts.
+      if (cmd === "snap" && (args.includes("--series") || args.includes("--arm-startup"))) {
+        import("./hooks/snapSeries.js")
+          .then((m) =>
+            args.includes("--series")
+              ? m.recordFrameSeries(m.parseSeriesOpts(args, "series"), onLine)
+              : m.armStartupRecording(args, onLine),
+          )
+          .then((code) => sendExit(code))
+          .catch((err) => {
+            onLine(`✗ unexpected: ${String(err)}`);
+            sendExit(5);
+          });
+        return;
+      }
+
       const handler = handlers[cmd];
       if (!handler) {
         onLine(`✗ unknown command: "${cmd}"`);
@@ -126,6 +143,15 @@ export function startIpcServer(handlers: IpcHandlers): net.Server {
   });
 
   server.listen(IPC_PORT, IPC_HOST);
+
+  // ── Startup splash recorder — armed via `unaxis snap --arm-startup` ───────
+  // startIpcServer runs once at TUI boot, so this is the boot hook: if a
+  // marker file is present, record this boot's startup splash as a frame
+  // series. Fire-and-forget; never blocks or breaks boot.
+  import("./hooks/snapSeries.js")
+    .then((m) => m.maybeRecordStartupFromMarker())
+    .catch(() => { /* recorder unavailable — ignore */ });
+
   return server;
 }
 

@@ -1,4 +1,4 @@
-import React, { type PropsWithChildren, type Ref, useImperativeHandle, useRef, useState } from 'react';
+import React, { type PropsWithChildren, type Ref, useImperativeHandle, useRef, useState, createContext, useContext, useEffect, type RefObject, useMemo } from 'react';
 import type { Except } from 'type-fest';
 import { markScrollActivity } from '../../bootstrap/state.js';
 import type { DOMElement } from '../dom.js';
@@ -59,9 +59,9 @@ export type ScrollBoxHandle = {
    * cold start).
    */
   setClampBounds: (min: number | undefined, max: number | undefined) => void;
+  getDOMNode: () => DOMElement | null;
 };
 export type ScrollBoxProps = Except<Styles, 'textWrap' | 'overflow' | 'overflowX' | 'overflowY'> & {
-  ref?: Ref<ScrollBoxHandle>;
   /**
    * When true, automatically pins scroll position to the bottom when content
    * grows. Unset manually via scrollTo/scrollBy to break the stickiness.
@@ -79,21 +79,61 @@ export type ScrollBoxProps = Except<Styles, 'textWrap' | 'overflow' | 'overflowX
  *
  * Works best inside a fullscreen (constrained-height root) Ink tree.
  */
+export const ScrollBoxContext = createContext<ScrollBoxHandle | null>(null);
+
+export function useScrollIntoView(
+  ref: RefObject<DOMElement | null>,
+  isActive: boolean,
+  offset = 0,
+  scrollTrigger: any = isActive
+) {
+  const scrollBox = useContext(ScrollBoxContext);
+
+  useEffect(() => {
+    if (!isActive || !scrollBox || !ref.current) return;
+
+    const el = ref.current;
+    const timer = setTimeout(() => {
+      const yoga = el.yogaNode;
+      if (!yoga) return;
+
+      const scrollBoxDOM = scrollBox.getDOMNode();
+      if (!scrollBoxDOM) return;
+
+      // Walk up the DOM parent chain to calculate the cumulative top of `el` relative to `scrollBoxDOM`
+      let elementTop = yoga.getComputedTop();
+      let parent = el.parentNode as DOMElement | undefined;
+      while (parent && parent !== scrollBoxDOM) {
+        if (parent.yogaNode) {
+          elementTop += parent.yogaNode.getComputedTop();
+        }
+        parent = parent.parentNode as DOMElement | undefined;
+      }
+
+      const elementHeight = yoga.getComputedHeight();
+      const scrollTop = scrollBox.getScrollTop();
+      const viewportHeight = scrollBox.getViewportHeight();
+
+      if (viewportHeight <= 0) return;
+
+      if (elementTop < scrollTop) {
+        scrollBox.scrollTo(elementTop - offset);
+      } else if (elementTop + elementHeight > scrollTop + viewportHeight) {
+        scrollBox.scrollTo(elementTop + elementHeight - viewportHeight + offset);
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [isActive, scrollBox, ref, offset, scrollTrigger]);
+}
+
+
 function ScrollBox({
   children,
-  ref,
   stickyScroll,
   ...style
-}: PropsWithChildren<ScrollBoxProps>): React.ReactNode {
+}: PropsWithChildren<ScrollBoxProps>, ref: Ref<ScrollBoxHandle>): React.ReactNode {
   const domRef = useRef<DOMElement>(null);
-  // scrollTo/scrollBy bypass React: they mutate scrollTop on the DOM node,
-  // mark it dirty, and call the root's throttled scheduleRender directly.
-  // The Ink renderer reads scrollTop from the node — no React state needed,
-  // no reconciler overhead per wheel event. The microtask defer coalesces
-  // multiple scrollBy calls in one input batch (discreteUpdates) into one
-  // render — otherwise scheduleRender's leading edge fires on the FIRST
-  // event before subsequent events mutate scrollTop. scrollToBottom still
-  // forces a React render: sticky is attribute-observed, no DOM-only path.
   const [, forceRender] = useState(0);
   const listenersRef = useRef(new Set<() => void>());
   const renderQueuedRef = useRef(false);
@@ -101,9 +141,6 @@ function ScrollBox({
     for (const l of listenersRef.current) l();
   };
   function scrollMutated(el: DOMElement): void {
-    // Signal background intervals (IDE poll, LSP poll, GCS fetch, orphan
-    // check) to skip their next tick — they compete for the event loop and
-    // contributed to 1402ms max frame gaps during scroll drain.
     markScrollActivity();
     markDirty(el);
     markCommitStart();
@@ -115,12 +152,11 @@ function ScrollBox({
       scheduleRenderFrom(el);
     });
   }
-  useImperativeHandle(ref, (): ScrollBoxHandle => ({
+
+  const handle = useMemo((): ScrollBoxHandle => ({
     scrollTo(y: number) {
       const el = domRef.current;
       if (!el) return;
-      // Explicit false overrides the DOM attribute so manual scroll
-      // breaks stickiness. Render code checks ?? precedence.
       el.stickyScroll = false;
       el.pendingScrollDelta = undefined;
       el.scrollAnchor = undefined;
@@ -142,11 +178,7 @@ function ScrollBox({
       const el = domRef.current;
       if (!el) return;
       el.stickyScroll = false;
-      // Wheel input cancels any in-flight anchor seek — user override.
       el.scrollAnchor = undefined;
-      // Accumulate in pendingScrollDelta; renderer drains it at a capped
-      // rate so fast flicks show intermediate frames. Pure accumulator:
-      // scroll-up followed by scroll-down naturally cancels.
       el.pendingScrollDelta = (el.pendingScrollDelta ?? 0) + Math.floor(dy);
       scrollMutated(el);
     },
@@ -163,9 +195,6 @@ function ScrollBox({
       return domRef.current?.scrollTop ?? 0;
     },
     getPendingDelta() {
-      // Accumulated-but-not-yet-drained delta. useVirtualScroll needs
-      // this to mount the union [committed, committed+pending] range —
-      // otherwise intermediate drain frames find no children (blank).
       return domRef.current?.pendingScrollDelta ?? 0;
     },
     getScrollHeight() {
@@ -195,42 +224,35 @@ function ScrollBox({
       if (!el) return;
       el.scrollClampMin = min;
       el.scrollClampMax = max;
+    },
+    getDOMNode() {
+      return domRef.current;
     }
-  }),
-    // notify/scrollMutated are inline (no useCallback) but only close over
-    // refs + imports — stable. Empty deps avoids rebuilding the handle on
-    // every render (which re-registers the ref = churn).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []);
+  }), []);
 
-  // Structure: outer viewport (overflow:scroll, constrained height) >
-  // inner content (flexGrow:1, flexShrink:0 — fills at least the viewport
-  // but grows beyond it for tall content). flexGrow:1 lets children use
-  // spacers to pin elements to the bottom of the scroll area. Yoga's
-  // Overflow.Scroll prevents the viewport from growing to fit the content.
-  // The renderer computes scrollHeight from the content box and culls
-  // content's children based on scrollTop.
-  //
-  // stickyScroll is passed as a DOM attribute (via ink-box directly) so it's
-  // available on the first render — ref callbacks fire after the initial
-  // commit, which is too late for the first frame.
-  return <ink-box ref={el => {
-    domRef.current = el;
-    if (el) el.scrollTop ??= 0;
-  }} style={{
-    flexWrap: 'nowrap',
-    flexDirection: style.flexDirection ?? 'row',
-    flexGrow: style.flexGrow ?? 0,
-    flexShrink: style.flexShrink ?? 1,
-    ...style,
-    overflowX: 'scroll',
-    overflowY: 'scroll'
-  }} {...stickyScroll ? {
-    stickyScroll: true
-  } : {}}>
-    <Box flexDirection="column" flexGrow={1} flexShrink={0} width="100%">
-      {children}
-    </Box>
-  </ink-box>;
+  useImperativeHandle(ref, () => handle, [handle]);
+
+  return (
+    <ScrollBoxContext.Provider value={handle}>
+      <ink-box ref={el => {
+        domRef.current = el;
+        if (el) el.scrollTop ??= 0;
+      }} style={{
+        flexWrap: 'nowrap',
+        flexDirection: style.flexDirection ?? 'row',
+        flexGrow: style.flexGrow ?? 0,
+        flexShrink: style.flexShrink ?? 1,
+                ...style,
+        overflowX: 'hidden',
+        overflowY: 'scroll'
+      }} {...stickyScroll ? {
+        stickyScroll: true
+      } : {}}>
+        <Box flexDirection="column" flexGrow={1} flexShrink={0} width="100%">
+          {children}
+        </Box>
+      </ink-box>
+    </ScrollBoxContext.Provider>
+  );
 }
-export default ScrollBox;
+export default React.forwardRef<ScrollBoxHandle, PropsWithChildren<ScrollBoxProps>>(ScrollBox);

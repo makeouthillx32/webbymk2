@@ -138,9 +138,15 @@ interface TokenState {
 
 const BLANK_TOKEN: TokenState = { value: null, setAt: null, loading: true };
 
+import { provisionNpmToken } from "../ink/utils/npmProvision.js";
+
 // ── Edit mode enum ─────────────────────────────────────────────────────────────
 
 type EditField = "ghcr_token" | "npm_token" | "default_project" | null;
+
+// ── Provision flow ─────────────────────────────────────────────────────────────
+
+type ProvisionStep = "idle" | "username" | "password" | "otp" | "working" | "done" | "error";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -160,6 +166,20 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
   const [activeTab, setTab] = useState<"infra" | "identity" | "zones">("infra");
   const [editField, setEditField] = useState<EditField>(null);
   const [saved, setSaved] = useState<string | null>(null);
+
+  // ── Provision state ─────────────────────────────────────────────────────────
+  const [provStep,    setProvStep]    = useState<ProvisionStep>("idle");
+  const [provUser,    setProvUser]    = useState("");
+  const [provPass,    setProvPass]    = useState("");
+  const [provOtp,     setProvOtp]     = useState("");
+  const [provError,   setProvError]   = useState<string | null>(null);
+  const [provBuf,     setProvBuf]     = useState(""); // current field buffer
+
+  const resetProv = () => {
+    setProvStep("idle"); setProvUser(""); setProvPass("");
+    setProvOtp(""); setProvError(null); setProvBuf("");
+    onTokenEditEnd();
+  };
 
   // ── Credential state ────────────────────────────────────────────────────────
   const [ghcr, setGhcr] = useState<TokenState>(BLANK_TOKEN);
@@ -230,8 +250,60 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
   }
 
   // ── Keyboard handler ────────────────────────────────────────────────────────
+  // ── Provision keyboard handler ──────────────────────────────────────────────
+  useInput((input, key) => {
+    if (provStep !== "idle" && provStep !== "done" && provStep !== "error") {
+      if (provStep === "working") return;
+
+      if (key.escape) { resetProv(); return; }
+
+      if (key.return) {
+        if (provStep === "username") {
+          setProvUser(provBuf.trim()); setProvBuf(""); setProvStep("password");
+        } else if (provStep === "password") {
+          setProvPass(provBuf); setProvBuf(""); setProvStep("otp");
+        } else if (provStep === "otp") {
+          const otp = provBuf.trim();
+          setProvOtp(otp); setProvBuf(""); setProvStep("working");
+          onTokenEditStart();
+          // fire async
+          void (async () => {
+            const result = await provisionNpmToken(provUser, provPass, otp);
+            if (result.ok) {
+              await setCredential("npm_token", result.token);
+              await setCredential("npm_token_set_at", new Date().toISOString());
+              await reload();
+              addNotification("npm token provisioned ✓", "success");
+              setProvStep("done");
+              setTimeout(() => resetProv(), 2_500);
+            } else {
+              setProvError(result.error);
+              setProvStep("error");
+            }
+          })();
+        }
+        return;
+      }
+
+      if ((key.backspace || key.delete) && provStep !== "working") {
+        setProvBuf((b) => b.slice(0, -1));
+        return;
+      }
+
+      if (input && !key.ctrl && !key.meta) {
+        setProvBuf((b) => b + input);
+      }
+      return;
+    }
+
+    if (provStep === "done" || provStep === "error") {
+      resetProv(); return;
+    }
+  });
+
   useInput((input, key) => {
     if (editField) return;
+    if (provStep !== "idle") return;
 
     if (key.tab) {
       setTab((prev) =>
@@ -251,6 +323,11 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (activeTab === "identity") {
       if (input === "t") { startEdit("ghcr_token"); return; }
       if (input === "n") { startEdit("npm_token"); return; }
+      if (input === "p") {
+        setProvStep("username"); setProvBuf("");
+        onTokenEditStart();
+        return;
+      }
     }
 
     if (activeTab === "infra" && input === "p") {
@@ -444,6 +521,62 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
                   onCancel={handleCancel}
                 />
               </Box>
+            ) : provStep !== "idle" ? (
+              /* ── Provision flow ──────────────────────────────────────────── */
+              <Box flexDirection="column" gap={1} paddingY={1}>
+                {provStep === "username" && (
+                  <Box gap={2}>
+                    <Text color="cyan">Username</Text>
+                    <Text color="yellow">{provBuf || " "}</Text>
+                    <Text color="cyan">|</Text>
+                  </Box>
+                )}
+                {provStep === "password" && (
+                  <Box gap={2}>
+                    <Text dimColor>Username</Text>
+                    <Text dimColor>{provUser}</Text>
+                    <Text>  </Text>
+                    <Text color="cyan">Password</Text>
+                    <Text color="yellow">{"•".repeat(provBuf.length) || " "}</Text>
+                    <Text color="cyan">|</Text>
+                  </Box>
+                )}
+                {provStep === "otp" && (
+                  <Box flexDirection="column" gap={1}>
+                    <Box gap={2}>
+                      <Text dimColor>{provUser}</Text>
+                      <Text color="cyan">2FA Code</Text>
+                      <Text color="yellow">{provBuf || " "}</Text>
+                      <Text color="cyan">|</Text>
+                    </Box>
+                    <Text dimColor>No 2FA? Press ↵ to skip</Text>
+                  </Box>
+                )}
+                {provStep === "working" && (
+                  <Box gap={2}>
+                    <Text color="yellow">⟳</Text>
+                    <Text dimColor>Creating automation token…</Text>
+                  </Box>
+                )}
+                {provStep === "done" && (
+                  <Box gap={2}>
+                    <Text color="green">✓</Text>
+                    <Text color="green">Token provisioned and saved</Text>
+                  </Box>
+                )}
+                {provStep === "error" && (
+                  <Box flexDirection="column" gap={1}>
+                    <Box gap={2}>
+                      <Text color="red">✗</Text>
+                      <Text color="red">{provError}</Text>
+                    </Box>
+                    <Text dimColor>Press any key to dismiss</Text>
+                  </Box>
+                )}
+                {(provStep === "username" || provStep === "password" || provStep === "otp") && (
+                  <Text dimColor>↵ next  ·  esc cancel</Text>
+                )}
+              </Box>
             ) : (
               <Box flexDirection="column" gap={1}>
                 <Box gap={2}>
@@ -498,7 +631,8 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
             : [
               ...(activeTab === "identity" ? [
                 { k: "t", label: "edit GHCR token" },
-                { k: "n", label: "edit npm token" },
+                { k: "n", label: "paste npm token" },
+                { k: "p", label: "provision npm token" },
               ] : []),
               ...(activeTab === "infra" ? [
                 { k: "p", label: "set project path" },

@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import { WelcomeScreen } from "../screens/WelcomeScreen.js";
 import { SettingsScreen } from "../screens/SettingsScreen.js";
-import { InstanceWizardScreen } from "../screens/InstanceWizardScreen.js";
-import { CloneWizardScreen }    from "../screens/CloneWizardScreen.js";
 import { NotesScreen } from "../screens/NotesScreen.js";
 import { AddEnvironmentScreen } from "../screens/AddEnvironmentScreen.js";
+import { InstanceWizardScreen } from "../screens/InstanceWizardScreen.tsx";
+import { CloneWizardScreen }    from "../screens/CloneWizardScreen.tsx";
 import { CoreView } from "./views/CoreView.tsx";
 import { ZonesView } from "./views/ZonesView.tsx";
 import { NpmPanel } from "./panels/Npm/index.tsx";
@@ -13,7 +13,6 @@ import { InfraPanel } from "./panels/Infra/index.tsx";
 import { EnvPanel } from "./panels/Env/index.tsx";
 import { EnvDetailScreen } from "./panels/Env/EnvDetailScreen.tsx";
 import { gracefulShutdownSync } from "../utils/gracefulShutdown.js";
-import { backupDatabase } from "./db-api.ts";
 import { snapshotInstance } from "./zone/snapshot.ts";
 import {
   startCoreStack,
@@ -24,14 +23,9 @@ import {
   deleteRuntimeInstance,
   reregisterInstanceNpm,
 } from "./db-api.ts";
-import { createBlankDatabase } from "./zone/database-manager.js";
-import { cloneFromSnapshot }   from "./zone/database-manager.js";
-import {
-  snapshotInstance,
-  restoreInstance,
-} from "./zone/snapshot.ts";
+import { createBlankDatabase, cloneFromSnapshot } from "./zone/database-manager.js";
 import type { RuntimeInstance } from "./zone/supabase-factory.ts";
-
+import type { SnapshotBundle } from "./zone/snapshot.ts";
 type AppRoutesProps = {
   view: string;
   zones: any[];
@@ -47,7 +41,7 @@ type AppRoutesProps = {
   infraChecking: boolean;
   selectedEnvForDetail: any;
   lastEnvError: string | null;
-  coreDockerInstance: RuntimeInstance;
+  coreDockerInstance: import("./zone/supabase-factory.ts").RuntimeInstance;
   navigate: (view: any) => void;
   goBack: () => void;
   copy: (value: string) => void;
@@ -61,8 +55,6 @@ type AppRoutesProps = {
   runDevMode: (zone: any) => void;
   forceRefreshZoneList: () => void;
   checkInfra: () => void;
-  handleRelease: () => void;
-  handleBuild: () => void;
 };
 
 export function AppRoutes({
@@ -94,11 +86,44 @@ export function AppRoutes({
   runDevMode,
   forceRefreshZoneList,
   checkInfra,
-  handleRelease,
-  handleBuild,
 }: AppRoutesProps) {
-  // Clone wizard state — holds the bundle to clone from while navigating
-  const [cloneBundle, setCloneBundle] = React.useState<import("./zone/snapshot.ts").SnapshotBundle | null>(null);
+  // Bundle captured when user picks a snapshot to clone — passed to CloneWizardScreen
+  const [cloneBundle, setCloneBundle] = useState<SnapshotBundle | null>(null);
+
+  const handleInstanceAction = (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", inst: RuntimeInstance) => {
+    if (action === "snapshot") {
+      runOpQueued(`Snapshot ${inst.name}`, async (o) => {
+        await snapshotInstance(inst, o);
+        return 0;
+      }, 'next');
+    } else if (action === "restart") {
+      runOpQueued(`Restart ${inst.name}`, async (o) => {
+        const ok = await restartCoreStack(inst, o);
+        return ok ? 0 : 1;
+      }, 'now');
+    } else if (action === "stop") {
+      runOpQueued(`Stop ${inst.name}`, async (o) => {
+        const ok = await stopCoreStack(inst, o);
+        return ok ? 0 : 1;
+      }, 'now');
+    } else if (action === "verify") {
+      runOpQueued(`Verify ${inst.name}`, async (o) => {
+        const report = await verifyCoreStack(inst, o);
+        o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
+        return report.overall === "down" ? 1 : 0;
+      }, 'later');
+    } else if (action === "delete") {
+      runOpQueued(`Delete ${inst.name}`, async (o) => {
+        const ok = await deleteRuntimeInstance(inst, o);
+        return ok ? 0 : 1;
+      }, 'now');
+    } else if (action === "npm") {
+      runOpQueued(`Re-register NPM ${inst.name}`, async (o) => {
+        const ok = await reregisterInstanceNpm(inst, o);
+        return ok ? 0 : 1;
+      }, 'next');
+    }
+  };
 
   return (
     <>
@@ -108,11 +133,10 @@ export function AppRoutes({
           zoneStatuses={zoneStatuses}
           proxyStatus={proxyStatus}
           busy={anyBusy}
+          infraResults={infraResults}
           onManage={() => navigate("core")}
           onSettings={() => navigate("settings")}
           onQuit={() => gracefulShutdownSync(0)}
-          onRelease={handleRelease}
-          onBuild={handleBuild}
           isActive={!stackFocused}
           activeEnv={activeEnv}
         />
@@ -200,54 +224,14 @@ export function AppRoutes({
             o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
             return report.overall === "down" ? 1 : 0;
           }, 'later')}
-          onInstanceAction={(action, inst: RuntimeInstance) => {
-            if (action === "restart") {
-              runOpQueued(`Restart ${inst.name}`, async (o) => {
-                const ok = await restartCoreStack(inst, o);
-                return ok ? 0 : 1;
-              }, 'next');
-            } else if (action === "stop") {
-              runOpQueued(`Stop ${inst.name}`, async (o) => {
-                const ok = await stopCoreStack(inst, o);
-                return ok ? 0 : 1;
-              }, 'now');
-            } else if (action === "delete") {
-              runOpQueued(`Delete ${inst.name}`, async (o) => {
-                const ok = await deleteRuntimeInstance(inst, o);
-                return ok ? 0 : 1;
-              }, 'next');
-            } else if (action === "snapshot") {
-              runOpQueued(`Snapshot ${inst.name}`, async (o) => {
-                await snapshotInstance(inst, o);
-                return 0;
-              }, 'later');
-            } else if (action === "verify") {
-              runOpQueued(`Verify ${inst.name}`, async (o) => {
-                const report = await verifyCoreStack(inst, o);
-                o(`\nOverall: ${report.overall}  (${report.runningCount}/${report.totalCount} running)`);
-                return report.overall === "down" ? 1 : 0;
-              }, 'later');
-            } else if (action === "npm") {
-              runOpQueued(`NPM register ${inst.name}`, async (o) => {
-                const ok = await reregisterInstanceNpm(inst, o);
-                return ok ? 0 : 1;
-              }, 'later');
-            }
-          }}
-          onRestore={(bundle, inst) => runOpQueued(
-            `Restore ${inst.name} <- ${bundle.id}`,
-            async (o) => {
-              await restoreInstance(bundle.bundlePath, o);
-              return 0;
-            },
-            'next',
-          )}
-          onNewInstance={() => navigate("instance-wizard")}
-          onCloneFromSnapshot={(bundle) => {
-            setCloneBundle(bundle);
-            navigate("clone-wizard");
-          }}
           onSubCrumbs={setSubCrumbs}
+          onNewInstance={() => navigate("instance-wizard")}
+          onInstanceAction={handleInstanceAction}
+          onRestore={(bundle, inst) => runOpQueued(`Restore → ${inst.name}`, async (o) => {
+            const { restoreInstance } = await import("./zone/snapshot.ts");
+            return await restoreInstance(bundle.bundlePath, o, inst) ? 0 : 1;
+          }, 'now')}
+          onCloneFromSnapshot={(bundle) => { setCloneBundle(bundle); navigate("clone-wizard"); }}
         />
       )}
 
@@ -255,10 +239,10 @@ export function AppRoutes({
         <InstanceWizardScreen
           onDeploy={(name) => {
             goBack();
-            runOpQueued(`New Instance  ${name}`, async (o) => {
+            runOpQueued(`Create instance "${name}"`, async (o) => {
               await createBlankDatabase(name, { registerNpm: true, instanceName: name }, o);
               return 0;
-            }, 'next');
+            }, 'now');
           }}
           onCancel={goBack}
         />
@@ -268,13 +252,13 @@ export function AppRoutes({
         <CloneWizardScreen
           bundle={cloneBundle}
           onDeploy={(name) => {
-            const bundlePath = cloneBundle.bundlePath;
+            const bundle = cloneBundle;
             setCloneBundle(null);
             goBack();
-            runOpQueued(`Clone → ${name}`, async (o) => {
-              await cloneFromSnapshot(bundlePath, name, { registerNpm: true }, o);
+            runOpQueued(`Clone → "${name}"`, async (o) => {
+              await cloneFromSnapshot(bundle.bundlePath, name, { registerNpm: true }, o);
               return 0;
-            }, 'next');
+            }, 'now');
           }}
           onCancel={() => { setCloneBundle(null); goBack(); }}
         />

@@ -1,5 +1,6 @@
 // app/api/cart/items/route.ts
 import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { supabasePublicUrlFromImage } from "@/lib/images";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -20,7 +21,7 @@ async function getIdentity(req: NextRequest, supabase: Awaited<ReturnType<typeof
 }
 
 async function getOrCreateActiveCartId(
-  supabase: Awaited<ReturnType<typeof createServerClient>>,
+  supabase: any,
   identity: { userId: string | null; sessionId: string | null },
   createIfMissing: boolean
 ) {
@@ -79,8 +80,11 @@ function pickPrimaryImage(images: any[]) {
 // ─────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createServerClient();
-    const identity = await getIdentity(request, supabase);
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops, scoped in-app by identity (guest RLS is unusable).
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
+    const identity = await getIdentity(request, auth);
 
     if (!identity) {
       return jsonError(400, "NO_IDENTITY", "No user or session identified");
@@ -186,8 +190,11 @@ export async function GET(request: NextRequest) {
 // ─────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createServerClient();
-    const identity = await getIdentity(request, supabase);
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops, scoped in-app by identity (guest RLS is unusable).
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
+    const identity = await getIdentity(request, auth);
 
     if (!identity) {
       return jsonError(400, "NO_IDENTITY", "No user or session identified");

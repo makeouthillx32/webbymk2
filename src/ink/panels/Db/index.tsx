@@ -3,12 +3,11 @@
 // Database panel — three internal tabs:
 //
 //   [1] Core Supabase   — control-plane DB, metrics, actions, keys
-//   [2] Instances       — runtime branches / labs / side-projects
+//   [2] Runtime Instances — live deployed branches (NPM-proxied, public URLs)
 //   [3] Snapshots       — all captured snapshots across core + instances
 //
-// Philosophy:
-//   Core is sacred — the live platform. Instances are branches.
-//   Snapshots are the safety net that lets you experiment freely.
+// Note: StartupScreen [I] overlay also shows instances but as local-only
+// (no NPM, no domain routing). Project instances are the full deployment.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -35,6 +34,14 @@ import { useHostMonitor } from "../../hooks/useHostMonitor.ts";
 import { sparkline } from "../../utils/sparkline.ts";
 import { MetricCard } from "../../components/design-system/index.ts";
 import type { HostSnapshot } from "../../hooks/useHostMonitor.ts";
+import { npmFindHost, npmEnableHost, npmDisableHost } from "../../npm-api.ts";
+
+// ── Core Studio NPM host ───────────────────────────────────────────────────────
+// NPM proxy host #129: studio.unenter.live → http://<control-node-ip>:3002
+// This is the ONLY core resource intentionally kept local by default.
+// [P] in CoreSection toggles it on/off without touching any other hosts.
+const CORE_STUDIO_NPM_DOMAIN = `studio.${DOMAIN}`;
+const CORE_STUDIO_PUBLIC_URL  = `https://${CORE_STUDIO_NPM_DOMAIN}/project/default`;
 
 // ── Studio public URL helper ───────────────────────────────────────────────────
 // Returns the public Studio URL with /project/default path.
@@ -88,20 +95,21 @@ const CORE_INSTANCE: RuntimeInstance = {
 // ── Prop types ────────────────────────────────────────────────────────────────
 
 export interface DbPanelProps {
-  onLogs:           (container: string) => void;
-  onBackup:         () => void;
-  onCopy:           (text: string) => void;
-  onStart:          () => void;
-  onStop:           () => void;
-  onRestart:        () => void;
-  onHeal:           () => void;
-  onVerify:         () => void;
-  onNewInstance:    () => void;
-  onRestore:            (bundle: SnapshotBundle, instance: RuntimeInstance) => void;
-  onCloneFromSnapshot:  (bundle: SnapshotBundle) => void;
-  onInstanceAction:     (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", instance: RuntimeInstance) => void;
-  onGoBack:         () => void;
-  onSubCrumbs:      (crumbs: string[]) => void;
+  onLogs:              (container: string) => void;
+  onBackup:            () => void;
+  onCopy:              (text: string) => void;
+  onStart:             () => void;
+  onStop:              () => void;
+  onRestart:           () => void;
+  onHeal:              () => void;
+  onVerify:            () => void;
+  onGoBack:            () => void;
+  onSubCrumbs:         (crumbs: string[]) => void;
+  // ── Instance management ────────────────────────────────────────────────────
+  onNewInstance:       () => void;
+  onRestore:           (bundle: import("../../zone/snapshot.ts").SnapshotBundle, inst: RuntimeInstance) => void;
+  onCloneFromSnapshot: (bundle: import("../../zone/snapshot.ts").SnapshotBundle) => void;
+  onInstanceAction:    (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", inst: RuntimeInstance) => void;
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -569,7 +577,41 @@ function CoreSection({
   onNewInstance:  () => void;
   hostSnapshot:   HostSnapshot;
 }) {
-  const [didCopy, setDidCopy] = useState(false);
+  const [didCopy,        setDidCopy]        = useState(false);
+  // null = unknown (loading), true = public, false = local-only
+  const [studioPublic,   setStudioPublic]   = useState<boolean | null>(null);
+  const [studioToggling, setStudioToggling] = useState(false);
+  const [studioError,    setStudioError]    = useState<string | null>(null);
+
+  // Fetch current NPM state on mount
+  useEffect(() => {
+    let cancelled = false;
+    npmFindHost(CORE_STUDIO_NPM_DOMAIN)
+      .then((host) => { if (!cancelled) setStudioPublic(host ? host.enabled === 1 : false); })
+      .catch(() => { if (!cancelled) setStudioPublic(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleStudioPublic = useCallback(async () => {
+    if (studioToggling || studioPublic === null) return;
+    setStudioToggling(true);
+    setStudioError(null);
+    try {
+      const host = await npmFindHost(CORE_STUDIO_NPM_DOMAIN);
+      if (!host) { setStudioError("NPM host not found — run unaxis npm to set it up"); return; }
+      if (studioPublic) {
+        await npmDisableHost(host.id);
+        setStudioPublic(false);
+      } else {
+        await npmEnableHost(host.id);
+        setStudioPublic(true);
+      }
+    } catch (err) {
+      setStudioError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStudioToggling(false);
+    }
+  }, [studioPublic, studioToggling]);
 
   const doCopy = useCallback((text: string) => {
     onCopy(text);
@@ -578,7 +620,15 @@ function CoreSection({
   }, [onCopy]);
 
   useInput((input) => {
-    if (input === "u") { void openBrowser(STUDIO_PROJECT_URL); return; }
+    if (input === "u") {
+      if (studioPublic) {
+        void openBrowser(CORE_STUDIO_PUBLIC_URL);
+      } else {
+        void openBrowser(STUDIO_PROJECT_URL);
+      }
+      return;
+    }
+    if (input === "P") { void toggleStudioPublic(); return; }
     if (input === "s") { onStart();   return; }
     if (input === "x") { onStop();    return; }
     if (input === "r") { onRestart(); return; }
@@ -602,11 +652,22 @@ function CoreSection({
 
       {/* Quick-access URLs */}
       <Box flexDirection="column" paddingX={1} paddingBottom={1}>
-        <Box gap={1}>
+        <Box gap={1} alignItems="center">
           <Text dimColor>{"Studio  "}</Text>
-          <Text color="green">{STUDIO_PROJECT_URL}</Text>
+          {studioPublic === null && <Text dimColor>{STUDIO_PROJECT_URL}</Text>}
+          {studioPublic === true  && <Text color="cyan">{CORE_STUDIO_PUBLIC_URL}</Text>}
+          {studioPublic === false && <Text color="green">{STUDIO_PROJECT_URL}</Text>}
           <Text dimColor>  [u]</Text>
+          {studioPublic === null     && <Text dimColor>  ···</Text>}
+          {studioPublic === true     && <Text color="cyan">  ● public</Text>}
+          {studioPublic === false    && <Text dimColor>  ○ local</Text>}
+          {studioToggling            && <Text color="yellow">  toggling…</Text>}
         </Box>
+        {studioError && (
+          <Box paddingLeft={10}>
+            <Text color="red">{studioError}</Text>
+          </Box>
+        )}
         <Box gap={1}>
           <Text dimColor>{"API     "}</Text>
           <Text>{KONG_URL}</Text>
@@ -651,7 +712,8 @@ function CoreSection({
           { k: "g", label: "gallery"  },
         ]} />
         <ActionGroup label="Connect" hints={[
-          { k: "u", label: "Studio"           },
+          { k: "u", label: studioPublic ? "open Studio (public)" : "open Studio (local)" },
+          { k: "P", label: studioPublic ? "make Studio local-only" : "make Studio public" },
           { k: "c", label: "copy conn. sheet" },
           { k: "m", label: "copy MCP config"  },
         ]} />
@@ -737,18 +799,18 @@ function InstancesSection({
   }));
 
   useInput((input) => {
-    if (detailInst) return;  // detail view is open — let InstanceDetailScreen handle all input
+    if (detailInst) return;
     if (!highlighted) { if (input === "n") onNewInstance(); return; }
     if (input === "u") { doCopy(highlighted.secrets.dashboardPassword); void openBrowser(studioPublicUrl(highlighted)); return; }
     if (input === "c") {
       doCopy(buildConnectionSheet({
-        label:      highlighted.name,
-        kongUrl:    `http://localhost:${highlighted.ports.kong}`,
-        studioUrl:  instanceStudioPageUrl(highlighted),
+        label:        highlighted.name,
+        kongUrl:      `http://localhost:${highlighted.ports.kong}`,
+        studioUrl:    instanceStudioPageUrl(highlighted),
         studioMcpUrl: instanceStudioMcpPageUrl(highlighted),
-        anonKey:    highlighted.secrets.anonKey,
-        svcKey:     highlighted.secrets.serviceRoleKey,
-        pgConn:     postgresConnStr(highlighted.secrets.postgresPassword, highlighted.ports.postgres),
+        anonKey:      highlighted.secrets.anonKey,
+        svcKey:       highlighted.secrets.serviceRoleKey,
+        pgConn:       postgresConnStr(highlighted.secrets.postgresPassword, highlighted.ports.postgres),
       })); return;
     }
     if (input === "m") {
@@ -763,12 +825,12 @@ function InstancesSection({
     if (input === "d") { onInstanceAction("delete",   highlighted); return; }
     if (input === "s") { onInstanceAction("snapshot", highlighted); return; }
     if (input === "v") { onInstanceAction("verify",   highlighted); return; }
+    if (input === "n") { onInstanceAction("npm",      highlighted); return; }
     if (input === "g") { onOpenGallery(highlighted); return; }
-    if (input === "n") { onNewInstance(); return; }
+    if (input === "N") { onNewInstance(); return; }
     if (input === "f") { onRefresh(); return; }
   });
 
-  // Full-screen detail view when an instance is selected via [Enter]
   if (detailInst) {
     return (
       <InstanceDetailScreen
@@ -784,10 +846,9 @@ function InstancesSection({
   return (
     <Box flexDirection="column">
 
-      {/* Section identity */}
       <Box paddingX={1} paddingBottom={1} gap={2} alignItems="center">
         <Text bold color="magenta">⬡  Runtime Instances</Text>
-        <Text dimColor>branches · labs · side-project runtimes</Text>
+        <Text dimColor>deployed branches · NPM-proxied · public URLs</Text>
         {instances.length > 0 && (
           <Text dimColor>· {instances.length} instance{instances.length !== 1 ? "s" : ""}</Text>
         )}
@@ -798,12 +859,12 @@ function InstancesSection({
         <Box flexDirection="column" paddingX={2} gap={1}>
           <Text dimColor>No runtime instances yet.</Text>
           <Box flexDirection="column" paddingTop={1} gap={0}>
-            <Text dimColor bold>Start from Core Supabase:</Text>
-            <Text dimColor>  [n] blank instance   — fresh runtime, ready for MCP or Studio</Text>
-            <Text dimColor>  [3] → Snapshots       — restore or clone from a captured snapshot</Text>
+            <Text dimColor bold>Create one:</Text>
+            <Text dimColor>  [N] blank instance  — fresh DB, gets its own domain via NPM</Text>
+            <Text dimColor>  [3] → Snapshots      — clone from a captured snapshot</Text>
           </Box>
           <Box paddingTop={1} gap={2}>
-            <Text color="magenta">[n] new blank instance</Text>
+            <Text color="magenta">[N] new instance</Text>
             <Text dimColor>[1] → Core</Text>
             <Text dimColor>[3] → Snapshots</Text>
           </Box>
@@ -811,7 +872,6 @@ function InstancesSection({
 
       ) : (
         <>
-          {/* Instance list */}
           <Box paddingX={1}>
             <SelectMenu
               options={instanceOptions}
@@ -823,10 +883,8 @@ function InstancesSection({
 
           <Divider />
 
-          {/* Selected instance detail (inline summary) */}
           {highlighted && <InstanceDetail inst={highlighted} didCopy={didCopy} />}
 
-          {/* Action groups */}
           <Box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={0}>
             <ActionGroup label="Operate" hints={[
               { k: "r", label: "restart"  },
@@ -843,9 +901,10 @@ function InstancesSection({
               { k: "c", label: "copy conn. sheet" },
               { k: "m", label: "copy MCP config"  },
             ]} />
-            <ActionGroup label="New" hints={[
-              { k: "n", label: "new blank instance" },
-              { k: "f", label: "refresh list"       },
+            <ActionGroup label="New / Infra" hints={[
+              { k: "N", label: "new blank instance"  },
+              { k: "n", label: "re-register NPM"     },
+              { k: "f", label: "refresh list"        },
             ]} />
           </Box>
         </>
@@ -1061,18 +1120,18 @@ function SnapshotsSection({
 }
 
 // ── DbPanel — main ────────────────────────────────────────────────────────────
+// Tabs: [1] Core Supabase  [2] Runtime Instances  [3] Snapshots
 
 type DbSection = "core" | "instances" | "snapshots";
 
 export function DbPanel({
   onLogs, onBackup, onCopy, onStart, onStop, onRestart, onHeal, onVerify,
-  onNewInstance, onRestore, onCloneFromSnapshot, onInstanceAction, onGoBack, onSubCrumbs,
+  onGoBack, onSubCrumbs, onNewInstance, onRestore, onCloneFromSnapshot, onInstanceAction,
 }: DbPanelProps) {
 
   const [section,         setSection]         = useState<DbSection>("core");
   const [instances,       setInstances]       = useState<RuntimeInstance[]>([]);
   const [galleryInstance, setGalleryInstance] = useState<RuntimeInstance | null>(null);
-  // Lifted from InstancesSection so DbPanel.useInput can guard on it
   const [detailInst,      setDetailInst]      = useState<RuntimeInstance | null>(null);
 
   const hostSnapshot = useHostMonitor();
@@ -1106,14 +1165,13 @@ export function DbPanel({
 
   useInput((input, key) => {
     if (galleryInstance !== null) return;
-    if (detailInst !== null) return;  // InstanceDetailScreen owns all keys while open
+    if (detailInst !== null) return;
     if (input === "1") { setDetailInst(null); setSection("core");      return; }
     if (input === "2") { setDetailInst(null); setSection("instances"); return; }
     if (input === "3") { setDetailInst(null); setSection("snapshots"); return; }
     if (input === "q" || key.leftArrow) { onGoBack(); return; }
   });
 
-  // Gallery overlay
   if (galleryInstance !== null) {
     return (
       <SnapshotGalleryScreen

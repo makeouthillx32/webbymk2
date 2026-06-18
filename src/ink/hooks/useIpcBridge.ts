@@ -20,7 +20,7 @@ import {
   pingAgentHealth,
   saveAgentStatus,
 } from "../environment-store.ts";
-import { reconcileProxyRoutes } from "../proxy-config.ts";
+import { reconcileProxyRoutes, deriveZoneUpstream } from "../proxy-config.ts";
 import {
   appendTimeline,
   appendWatchText,
@@ -48,7 +48,7 @@ import {
 import { loadRegistry } from "../zone/supabase-factory.ts";
 import { NPM_HOST } from "../../config/stack.ts";
 import { addZoneRoute, getRoutes } from "../proxy-config.ts";
-import { buildZone, deployZone } from "../zone-build.ts";
+import { buildAndDeploy, deployZone } from "../zone-build.ts";
 import { deleteZone } from "../zone-scaffold.ts";
 import { doctorComposeService }    from "../docker.ts";
 import {
@@ -57,6 +57,7 @@ import {
 import { buildInfraServices, checkService, INFRA_SERVICES } from "../infra.ts";
 import { eventBus } from "../../utils/eventBus.js";
 import { UNAXIS_CLI_SCHEMA } from "../cli-schema.js";
+import type { NotificationType, NotificationPriority, NotificationOptions } from "../components/Notifications.js";
 
 declare const UNAXIS_VERSION: string;
 
@@ -66,6 +67,26 @@ type RunOpQueued = (
   priority?: "now" | "next" | "later",
 ) => void;
 
+// Spawn `docker <args>`, streaming output to onLine (indented), resolving the
+// exit code. Shared by the build-doctor / build-mem / builder-reset commands.
+async function dockerRun(
+  cmdArgs: string[],
+  onLine: (l: string) => void,
+  timeoutMs?: number,
+): Promise<number> {
+  const { spawn } = await import("child_process");
+  return new Promise((resolve) => {
+    const p = spawn("docker", cmdArgs, { env: { ...process.env } });
+    const emit = (b: Buffer) =>
+      b.toString().split("\n").forEach((l) => { if (l.trim()) onLine("  " + l.trimEnd()); });
+    p.stdout?.on("data", emit);
+    p.stderr?.on("data", emit);
+    const timer = timeoutMs ? setTimeout(() => { try { p.kill("SIGKILL"); } catch {} }, timeoutMs) : null;
+    p.on("close", (code) => { if (timer) clearTimeout(timer); resolve(code ?? 0); });
+    p.on("error", (e) => { if (timer) clearTimeout(timer); onLine(`  spawn error: ${e}`); resolve(1); });
+  });
+}
+
 type UseIpcBridgeParams = {
   view: string;
   bgOps: StackOp[];
@@ -73,6 +94,7 @@ type UseIpcBridgeParams = {
   refreshEnvs: () => void | Promise<void>;
   runOpQueued: RunOpQueued;
   coreDockerInstance: RuntimeInstance;
+  addNotification: (message: string, type?: NotificationType, opts?: NotificationOptions) => void;
 };
 
 export function useIpcBridge({
@@ -82,6 +104,7 @@ export function useIpcBridge({
   refreshEnvs,
   runOpQueued,
   coreDockerInstance,
+  addNotification,
 }: UseIpcBridgeParams) {  const ipcStateRef = useRef({
     view,
     bgOps,
@@ -96,6 +119,11 @@ export function useIpcBridge({
   // call refreshEnvs without closing over a stale version.
   const refreshEnvsRef = useRef(refreshEnvs);
   useEffect(() => { refreshEnvsRef.current = refreshEnvs; }, [refreshEnvs]);
+
+  // Stable ref for addNotification — lets the notify IPC handler always reach
+  // the current React context value without closing over a stale closure.
+  const addNotificationRef = useRef(addNotification);
+  useEffect(() => { addNotificationRef.current = addNotification; }, [addNotification]);
 
   // ── IPC server — CLI agent bridge ─────────────────────────────────────────
   // Starts a local TCP server (127.0.0.1:50505) so external CLI calls like
@@ -201,7 +229,8 @@ export function useIpcBridge({
       // Returns package version immediately, then pings agents concurrently.
       // Offline fallback is handled in cli.tsx (prints pkg version if TUI is down).
       version: async (_args, onLine) => {
-        onLine(`\nUNAXIS  ${UNAXIS_VERSION}\n`);
+        const _ver = (() => { try { return UNAXIS_VERSION; } catch { return "dev"; } })();
+        onLine(`\nUNAXIS  ${_ver}\n`);
         const all = await loadEnvironments();
         if (all.length === 0) {
           onLine("  (no environments configured)");
@@ -392,17 +421,13 @@ export function useIpcBridge({
 
 
       // unaxis sync-routes
-      // Rebuild proxy-config/routes.json from all live zones.
-      // The proxy hot-reloads this file — no restart needed.
+      // Rebuild proxy-config/routes.json from all live zones + environments.
+      // Upstreams are derived from zone.environmentId — container DNS for local
+      // zones, host IP for remote zones. The proxy hot-reloads this file.
       // TUI equivalent: CoreView → Proxy → [sync-routes] action.
       "sync-routes": async (_args, onLine) => {
-        const all = await loadZones();
-        const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
-        if (deployable.length === 0) { onLine("(no deployable zones)"); return 0; }
-        for (const z of deployable) {
-          await addZoneRoute(z.key, `http://${z.service}:3000`, onLine);
-        }
-        onLine(`✓ routes.json synced  (${deployable.length} zone${deployable.length !== 1 ? "s" : ""})`);
+        const [zones, envs] = await Promise.all([loadZones(), loadEnvironments()]);
+        await reconcileProxyRoutes(zones, envs, (name) => getStatus(name), onLine);
         return 0;
       },
 
@@ -410,14 +435,16 @@ export function useIpcBridge({
       // Verify every zone has a correct NPM proxy host — create or fix if not.
       // TUI equivalent: CoreView → Proxy → [audit-npm] action.
       "audit-npm": async (_args, onLine) => {
-        const all = await loadZones();
+        const [all, envs] = await Promise.all([loadZones(), loadEnvironments()]);
+        const envById = new Map(envs.map((e) => [e.id, e]));
         const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
         if (deployable.length === 0) { onLine("(no deployable zones)"); return 0; }
         let failed = 0;
         for (const z of deployable) {
+          const zoneEnv = z.environmentId ? (envById.get(z.environmentId) ?? null) : null;
           onLine(`
 ── ${z.label}  (${z.domain}) ──`);
-          const code = await npmAddZone(z, onLine);
+          const code = await npmAddZone(z, onLine, zoneEnv);
           if (code !== 0) failed++;
         }
         onLine(failed === 0
@@ -556,6 +583,24 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       env: async (args, onLine) => {
         const sub = args[0] ?? "status";
 
+        // ── Helpers local to the env handler ──────────────────────────────
+        // Resolve an optional env-name arg, report errors, return null to bail.
+        const resolveEnv = async (nameArg: string | undefined) => {
+          const all = await loadEnvironments();
+          const env = nameArg
+            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
+            : all.find((e) => e.isDefaultTarget) ?? all[0];
+          if (!env) {
+            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
+            return null;
+          }
+          if (!env.agentUrl) { onLine(`✗ ${env.name} has no agent configured`); return null; }
+          return env;
+        };
+        // Extract a positional name arg (skips flags like --json, --all).
+        const nameAt = (a: string[], idx = 1): string | undefined =>
+          a[idx] && !a[idx].startsWith("--") ? a[idx] : undefined;
+
         // unaxis env status  — show the active environment
         if (sub === "status") {
           const active = await getActiveEnvironment();
@@ -667,16 +712,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         // Groups containers by com.docker.compose.project label — no extra agent
         // endpoint needed, derived from the same fetchContainers data.
         if (sub === "stacks") {
-          const nameArg = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
-          const all     = await loadEnvironments();
-          const env     = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-          if (!env) {
-            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
-            return 1;
-          }
-          if (!env.agentUrl) { onLine(`✗ ${env.name} has no agent configured`); return 1; }
+          const env = await resolveEnv(nameAt(args));
+          if (!env) return 1;
           onLine(`Stacks on ${env.name} (${env.agentUrl})…`);
           const containers = await fetchContainers(env);
           if (!containers) { onLine(`✗ Could not reach agent — is ${env.name} online?`); return 1; }
@@ -737,23 +774,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           // Disambiguate: is the next arg an env name or a flag?
           const showAll    = args.includes("--all");
           const jsonOut    = args.includes("--json");
-          const nameArg    = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
-          const all        = await loadEnvironments();
-
-          let env = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-
-          if (!env) {
-            onLine(nameArg
-              ? `✗ environment not found: "${nameArg}"`
-              : "✗ no environments configured");
-            return 1;
-          }
-          if (!env.agentUrl) {
-            onLine(`✗ ${env.name} has no agent configured`);
-            return 1;
-          }
+          const env = await resolveEnv(nameAt(args));
+          if (!env) return 1;
 
           if (!jsonOut) onLine(`Fetching containers on ${env.name} (${env.agentUrl})…`);
           const containers = await fetchContainers(env);
@@ -793,16 +815,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         // Reuses EnvPanel → ImagesView → fetchImages() — same call, straight to CLI.
         if (sub === "images") {
           const jsonOut = args.includes("--json");
-          const nameArg = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
-          const all     = await loadEnvironments();
-          const env     = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-          if (!env) {
-            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
-            return 1;
-          }
-          if (!env.agentUrl) { onLine(`✗ ${env.name} has no agent configured`); return 1; }
+          const env = await resolveEnv(nameAt(args));
+          if (!env) return 1;
 
           onLine(`Fetching images on ${env.name} (${env.agentUrl})…`);
           const images = await fetchImages(env);
@@ -828,16 +842,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         // Reports: Privileged, User, CapAdd/CapDrop, SecurityOpt, writable mounts.
         if (sub === "security") {
           const jsonOut  = args.includes("--json");
-          const nameArg  = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
-          const all      = await loadEnvironments();
-          const targetEnv = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-          if (!targetEnv) {
-            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
-            return 1;
-          }
-          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+          const targetEnv = await resolveEnv(nameAt(args));
+          if (!targetEnv) return 1;
 
           onLine(`Auditing container security on ${targetEnv.name} (${targetEnv.agentUrl})…`);
           const containers = await fetchContainers(targetEnv);
@@ -910,16 +916,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             return 2;
           }
           const jsonOut   = args.includes("--json");
-          const nameArg   = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
-          const all       = await loadEnvironments();
-          const targetEnv = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-          if (!targetEnv) {
-            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
-            return 1;
-          }
-          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+          const targetEnv = await resolveEnv(nameAt(args, 2));
+          if (!targetEnv) return 1;
 
           onLine(`Fetching layer history for ${imageName} on ${targetEnv.name}…`);
           const layers = await fetchImageHistory(targetEnv, imageName);
@@ -988,16 +986,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           const sinceSec  = sinceIdx !== -1 && args[sinceIdx + 1]
             ? parseInt(args[sinceIdx + 1] ?? "3600", 10)
             : 3600;
-          const nameArg   = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
-          const all       = await loadEnvironments();
-          const targetEnv = nameArg
-            ? all.find((e) => e.name.toLowerCase() === nameArg.toLowerCase())
-            : all.find((e) => e.isDefaultTarget) ?? all[0];
-          if (!targetEnv) {
-            onLine(nameArg ? `✗ environment not found: "${nameArg}"` : "✗ no environments configured");
-            return 1;
-          }
-          if (!targetEnv.agentUrl) { onLine(`✗ ${targetEnv.name} has no agent configured`); return 1; }
+          const targetEnv = await resolveEnv(nameAt(args));
+          if (!targetEnv) return 1;
 
           const until = Math.floor(Date.now() / 1000);
           const since = until - sinceSec;
@@ -1048,8 +1038,41 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return updateRemoteAgent(target, onLine);
         }
 
+        // unaxis env volumes [<name>] [--json]
+        // List Docker volumes on the target environment.
+        // Mirrors the VolumesView two-call dangling-filter pattern (Portainer model).
+        if (sub === "volumes") {
+          const jsonOut = args.includes("--json");
+          const env = await resolveEnv(nameAt(args));
+          if (!env) return 1;
+
+          if (!jsonOut) onLine(`Fetching volumes on ${env.name} (${env.agentUrl})…`);
+          const volumes = await fetchVolumes(env);
+          if (!volumes) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: env.name, ts: new Date().toISOString(), volumes }, null, 2));
+            return 0;
+          }
+
+          if (volumes.length === 0) {
+            onLine(`  (no volumes)  —  ${env.name}`);
+            return 0;
+          }
+
+          for (const v of volumes) {
+            const dot    = v.dangling ? "○" : "●";
+            const state  = (v.dangling ? "unused" : "in use").padEnd(7);
+            const stack  = v.Labels?.["com.docker.compose.project"] ?? "—";
+            onLine(`  ${dot} ${v.Name.padEnd(30)} ${state}  ${v.Driver.padEnd(8)}  ${stack}`);
+          }
+          const unused = volumes.filter((v) => v.dangling).length;
+          onLine(`\n✓ ${volumes.length} volume${volumes.length !== 1 ? "s" : ""}  (${unused} unused)  —  ${env.name}`);
+          return 0;
+        }
+
         onLine(`✗ unknown env command: "${sub}"`);
-        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env images [<name>] | env stacks [<name>] | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name> | env security [<name>] [--json] | env audit-image <image> [<env>] [--json] | env events [<name>] [--since <sec>] [--json]");
+        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env images [<name>] | env volumes [<name>] | env stacks [<name>] | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name> | env security [<name>] [--json] | env audit-image <image> [<env>] [--json] | env events [<name>] [--since <sec>] [--json]");
         return 2;
       },
 
@@ -1104,6 +1127,99 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           onLine(`  #${op.id} ${state.padEnd(7)} ${op.title}${last ? ` · ${last}` : ""}`);
         }
         onLine(`✓ ${ops.length} stack item${ops.length !== 1 ? "s" : ""}`);
+        return 0;
+      },
+
+      // unaxis stacks [--tail N]  — show ALL stack ops AND a tail of each one's
+      // output in a single call. The aggregate view for watching several
+      // backgrounded zone builds/deploys at once.
+      stacks: async (args, onLine) => {
+        const ops = ipcStateRef.current.bgOps;
+        if (ops.length === 0) { onLine("✓ stacks empty"); return 0; }
+
+        const tailN = Math.max(1, parseTail(args) || 6);
+        for (const op of ops) {
+          const state = op.busy ? (op.dismissable ? "live" : "running") : "done";
+          onLine(`── #${op.id} [${state}] ${op.title} ──`);
+          const tail = op.lines.slice(-tailN);
+          if (tail.length === 0) onLine("   (no output yet)");
+          else for (const l of tail) onLine(`   ${l}`);
+          onLine("");
+        }
+        const running = ops.filter((o) => o.busy && !o.dismissable).length;
+        const live    = ops.filter((o) => o.busy && o.dismissable).length;   // dev/log
+        const done    = ops.filter((o) => !o.busy).length;
+        onLine(`✓ ${ops.length} stack item${ops.length !== 1 ? "s" : ""} · ${running} running, ${live} live, ${done} done`);
+        return 0;
+      },
+
+      // unaxis build-doctor [zone]  — diagnose why `next build` SSG hangs/OOMs.
+      // Reports Docker's real memory, then probes every endpoint the build might
+      // fetch FROM INSIDE the `unenter` network (same context as the build),
+      // using the zone's own image + bun fetch with a 6s timeout so a hanging
+      // fetch surfaces as TIMEOUT instead of stalling a 7-minute build.
+      "build-doctor": async (args, onLine) => {
+        const zoneName = args.find((a) => !a.startsWith("--")) ?? "unenter";
+        const zone = await resolveZone(zoneName);
+        if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
+
+        onLine(`Build doctor — ${zone.label} (${zone.image})`);
+
+        // 1) Docker engine resources — the memory cap the build actually gets.
+        onLine(`--- docker engine resources ---`);
+        await dockerRun(["info", "--format", "memory={{.MemTotal}} cpus={{.NCPU}}"], onLine, 20000);
+
+        // 2) Build-time reachability of every URL SSG might fetch, probed from a
+        //    throwaway container on the unenter network using bun's fetch.
+        const probes = [
+          "http://kong:8000/rest/v1/",
+          "http://kong:8000/auth/v1/health",
+          "http://kong:8000/storage/v1/object/public/product-images/",
+          "http://kong:8000/storage/v1/render/image/public/product-images/probe.webp",
+          "https://db.unenter.live/rest/v1/",
+          "https://www.unenter.live/",
+          "https://dev.unenter.live/",
+        ];
+        const probeJs =
+          `const us=${JSON.stringify(probes)};` +
+          `for(const u of us){const t=Date.now();` +
+          `try{const r=await fetch(u,{signal:AbortSignal.timeout(6000)});` +
+          `console.log((r.ok?'OK ':'HTTP')+r.status+' '+(Date.now()-t)+'ms  '+u)}` +
+          `catch(e){console.log('FAIL '+(Date.now()-t)+'ms  '+u+'  :: '+((e&&e.name)||e))}}`;
+
+        onLine(`--- build-network reachability (container on "unenter") ---`);
+        const probeCode = await dockerRun(
+          ["run", "--rm", "--network", "unenter", zone.image, "bun", "-e", probeJs],
+          onLine,
+          80000,
+        );
+        onLine(probeCode === 0
+          ? `✓ build-doctor complete — TIMEOUT/FAIL lines above are the build-time hang suspects`
+          : `⚠ probe container exited ${probeCode} (image may lack bun/certs) — partial results above`);
+        return probeCode === 0 ? 0 : 4;
+      },
+
+      // unaxis build-mem  — one snapshot of every container's memory usage AND
+      // limit. Run repeatedly during a build to watch the buildx builder
+      // (buildx_buildkit_*) climb: a hard cap below ~31GB → recreate builder
+      // with more memory; usage climbing to the cap → SSG runaway (reduce SSG).
+      "build-mem": async (_args, onLine) => {
+        onLine(`mem @ ${new Date().toLocaleTimeString()}`);
+        return dockerRun(["stats", "--no-stream", "--format", "{{.Name}}  {{.MemUsage}}  ({{.MemPerc}})"], onLine);
+      },
+
+      // unaxis builder-reset  — remove the unaxis-net buildx builder (e.g. after
+      // it OOM-died mid-build and left a build hung). The next zone build
+      // recreates it. Unsticks a zombie build holding a dead builder.
+      "builder-reset": async (_args, onLine) => {
+        onLine(`Removing buildx builder "unaxis-net"…`);
+        await dockerRun(["buildx", "rm", "--force", "unaxis-net"], onLine);
+        // The buildx builder entry and its buildkitd container are separate;
+        // an OOM-died builder leaves a stale container that blocks recreation
+        // ("context deadline exceeded"). Force-remove the container too.
+        onLine(`Removing stale buildkitd container…`);
+        await dockerRun(["rm", "-f", "buildx_buildkit_unaxis-net0"], onLine);
+        onLine(`✓ builder + container removed — next build recreates it clean`);
         return 0;
       },
 
@@ -1418,7 +1534,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         // Runs docker compose pull + up with restart-on-fail for all core services.
         if (sub === "heal") {
           onLine("Healing core Supabase stack…");
-          const code = await healCoreStack(onLine);
+          const code = await healCoreStack(coreDockerInstance, onLine);
           if (code === 0) onLine("✓ Core stack healed — services should be healthy shortly");
           return code;
         }
@@ -1852,7 +1968,39 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return runClone(onLine);
         }
 
-        onLine("✗ usage: db backup|logs|snapshot|snapshots|restore|clone|template-capture|templates|provision|blank|smoke-test|instance|instances");
+        // ── db migrate-control ─────────────────────────────────────────────
+        // One-time import from unenter.db Supabase → local SQLite control-db.
+        if (sub === "migrate-control") {
+          const { migrateControlDb } = await import("../control-db-migrate.js");
+          return await migrateControlDb(onLine);
+        }
+
+        // ── db control-info ────────────────────────────────────────────────
+        // Show local SQLite control-db stats (path, counts, schema version).
+        if (sub === "control-info") {
+          const { dbGetInfo } = await import("../control-db.js");
+          const info = dbGetInfo();
+          onLine(`  path:         ${info.path}`);
+          onLine(`  zones:        ${info.zoneCount}`);
+          onLine(`  environments: ${info.envCount}`);
+          onLine(`  migrations:   ${info.migrations}`);
+          return 0;
+        }
+
+        // ── db dedup-environments ──────────────────────────────────────────
+        // Merge duplicate environment rows that share a name (e.g. double POWER
+        // from auto-seed + migration).  Keeps the real UUID row, merges missing
+        // fields from the placeholder, then deletes the placeholder.
+        if (sub === "dedup-environments") {
+          const { dbDeduplicateEnvironments, dbGetInfo } = await import("../control-db.js");
+          const removed = dbDeduplicateEnvironments();
+          const info    = dbGetInfo();
+          onLine(`✓ Dedup complete — ${removed} duplicate(s) removed`);
+          onLine(`  environments now: ${info.envCount}`);
+          return 0;
+        }
+
+        onLine("✗ usage: db backup|logs|snapshot|snapshots|restore|clone|template-capture|templates|provision|blank|smoke-test|instance|instances|migrate-control|control-info");
         return 2;
       },
 
@@ -1940,6 +2088,84 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         }
 
         onLine("✗ usage: proxy <status|restart|build|agent-reset|push-agent> [--bg] [--clean]");
+        return 2;
+      },
+
+      // ── project <subcommand> ─────────────────────────────────────────────────
+      // Domain-level management for unenter.live — things that belong to the
+      // core project/domain rather than the Supabase DB layer.
+      //
+      //   project studio <public|local|toggle|status>
+      //     Toggle the NPM proxy host for studio.unenter.live on/off.
+      //     Lets you expose core Studio publicly (e.g. from your phone) then
+      //     lock it back down with a single command.
+      //     TUI equivalent: [P] on the Core Supabase DB panel.
+      //
+      project: async (args, onLine) => {
+        const sub = args[0] ?? "help";
+
+        if (sub === "help" || sub === "--help") {
+          onLine("unaxis project — core domain management for unenter.live");
+          onLine("");
+          onLine("  project studio status          — show whether Studio is public or local-only");
+          onLine("  project studio public           — expose studio.unenter.live via NPM");
+          onLine("  project studio local            — disable public access, local only");
+          onLine("  project studio toggle           — flip current state");
+          return 0;
+        }
+
+        if (sub === "studio") {
+          const action = args[1] ?? "status";
+          const { npmFindHost: findHost, npmEnableHost: enableHost, npmDisableHost: disableHost } = await import("../npm-api.ts");
+          const { DOMAIN, STUDIO_PROJECT_URL: studioLocalUrl } = await import("../../config/stack.ts");
+          const studioDomain = `studio.${DOMAIN}`;
+          const host = await findHost(studioDomain);
+          if (!host) {
+            onLine(`✗ No NPM proxy host found for ${studioDomain}`);
+            onLine(`  Create one in NPM pointing to http://<POWER>:3002 first.`);
+            return 1;
+          }
+          const isPublic = host.enabled === 1;
+
+          if (action === "status") {
+            onLine(`Studio  ${studioDomain}`);
+            onLine(`  ${isPublic ? "● public  (NPM host #" + host.id + " enabled)" : "○ local   (NPM host #" + host.id + " disabled)"}`);
+            onLine(`  → ${host.forward_scheme}://${host.forward_host}:${host.forward_port}`);
+            return 0;
+          }
+
+          const shouldEnable =
+            action === "public" ? true  :
+            action === "local"  ? false :
+            action === "toggle" ? !isPublic :
+            null;
+
+          if (shouldEnable === null) {
+            onLine("✗ usage: project studio <public|local|toggle|status>");
+            return 2;
+          }
+
+          if (shouldEnable === isPublic) {
+            onLine(`Studio is already ${isPublic ? "public" : "local-only"} — nothing to do.`);
+            return 0;
+          }
+
+          if (shouldEnable) {
+            await enableHost(host.id);
+            onLine(`✓ Studio is now PUBLIC`);
+            onLine(`  https://${studioDomain}/project/default`);
+            onLine(`  Run [project studio local] when you're done.`);
+          } else {
+            await disableHost(host.id);
+            onLine(`✓ Studio is now LOCAL-ONLY`);
+            onLine(`  ${studioLocalUrl}`);
+          }
+          return 0;
+        }
+
+        onLine("✗ unknown project subcommand: " + JSON.stringify(sub));
+        onLine("  available: studio");
+        onLine("  run [project help] for usage");
         return 2;
       },
 
@@ -2208,19 +2434,38 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         if (action === "build" || action === "rebuild") {
           const noCache = action === "rebuild" || args.includes("--no-cache");
-          onLine(`${noCache ? "Rebuild" : "Build"}  ${zone.label}…`);
-          const code = await buildZone(zone, onLine, { noCache });
-          if (code !== 0) return code;
-          onLine("--- pull + up ---");
-          return pullAndUp(zone, onLine);
+          const verb = noCache ? "Rebuild" : "Build";
+          // --bg: enqueue as a TUI stack op and return immediately (no socket
+          // wait). Lets the operator fire several zone builds concurrently and
+          // watch them via `unaxis stacks` instead of blocking for ~5 min.
+          if (args.includes("--bg")) {
+            runOpQueued(`${verb}  ${zone.label}`, (bgLine) => buildAndDeploy(zone, bgLine, { noCache }));
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `${verb}  ${zone.label}` }));
+            else onLine(`⚡ ${verb} ${zone.label} queued — watch: unaxis stacks`);
+            return 3;
+          }
+          onLine(`${verb}  ${zone.label}…`);
+          return buildAndDeploy(zone, onLine, { noCache });
         }
 
         if (action === "deploy") {
+          if (args.includes("--bg")) {
+            runOpQueued(`Deploy  ${zone.label}`, async (bgLine) => deployZone(zone, bgLine));
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `Deploy  ${zone.label}` }));
+            else onLine(`⚡ Deploy ${zone.label} queued — watch: unaxis stacks`);
+            return 3;
+          }
           onLine(`Deploy  ${zone.label}…`);
           return deployZone(zone, onLine);
         }
 
         if (action === "pull") {
+          if (args.includes("--bg")) {
+            runOpQueued(`Pull + up  ${zone.label}`, async (bgLine) => pullAndUp(zone, bgLine));
+            if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `Pull + up  ${zone.label}` }));
+            else onLine(`⚡ Pull ${zone.label} queued — watch: unaxis stacks`);
+            return 3;
+          }
           onLine(`Pull + up  ${zone.label}…`);
           return pullAndUp(zone, onLine);
         }
@@ -2247,14 +2492,19 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           const changed = doctorComposeService(zone, onLine);
           onLine(changed ? `  compose patched` : `  compose OK`);
           onLine(`--- proxy routes ---`);
+          const [doctorEnvs] = await Promise.all([loadEnvironments()]);
+          const doctorEnvById = new Map(doctorEnvs.map((e) => [e.id, e]));
+          const doctorEnv = zone.environmentId ? (doctorEnvById.get(zone.environmentId) ?? null) : null;
+          const { deriveZoneUpstream: dzUpstream } = await import("../proxy-config.js");
           const routes = getRoutes();
-          if (routes.zones?.[zone.key]) {
-            onLine(`✓ proxy route OK  →  ${zone.domain}  →  ${routes.zones[zone.key]}`);
+          const correctUpstream = dzUpstream(zone, doctorEnv);
+          if (routes.zones?.[zone.key] === correctUpstream) {
+            onLine(`✓ proxy route OK  →  ${zone.domain}  →  ${correctUpstream}`);
           } else {
-            await addZoneRoute(zone.key, `http://${zone.service}:3000`, onLine);
+            await addZoneRoute(zone.key, correctUpstream, onLine);
           }
           onLine(`--- NPM ---`);
-          await npmAddZone(zone, onLine);
+          await npmAddZone(zone, onLine, doctorEnv);
           return 0;
         }
 
@@ -2371,31 +2621,266 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         if (result.code === 0) onLine(`✓ ${target} logs (${result.tail} lines)`);
         return result.code;
       },
+
+      // ── unaxis snap [--save] [--label <name>] [--json] ───────────────────
+      // Captures the current live TUI screen — whatever the user sees right now.
+      // Reads frontFrame from the running Ink instance. Dev mode is tagged.
+      snap: async (args, onLine) => {
+        const save     = args.includes("--save");
+        const asJson   = args.includes("--json");
+        const labelIdx = args.indexOf("--label");
+        const label    = labelIdx >= 0 ? (args[labelIdx + 1] ?? "snap") : "snap";
+
+        const instances = (await import("../instances.js")).default;
+        const { cellAt } = await import("../screen.js");
+
+        const ink   = instances.get(process.stdout);
+        const frame = ink?.lastFrame();
+        const screen = frame?.screen;
+
+        if (!screen) {
+          onLine("✗ no live frame available");
+          return 1;
+        }
+
+        // Read screen cells row by row
+        const rows: string[] = [];
+        for (let y = 0; y < screen.height; y++) {
+          let row = "";
+          for (let x = 0; x < screen.width; x++) {
+            row += cellAt(screen, x, y)?.char ?? " ";
+          }
+          rows.push(row.trimEnd());
+        }
+        while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+        const text = rows.join("\n");
+
+        const isDev  = process.execPath.toLowerCase().includes("bun");
+        const mode   = isDev ? "dev" : "prod";
+        const { view } = ipcStateRef.current;
+
+        const metadata = {
+          label,
+          mode,
+          view,
+          width:     screen.width,
+          height:    screen.height,
+          lines:     rows.length,
+          timestamp: new Date().toISOString(),
+        };
+
+        if (asJson) {
+          onLine(JSON.stringify({ text, metadata }, null, 2));
+          return 0;
+        }
+
+        onLine(`\n── snap: ${view} [${mode}] ${"─".repeat(Math.max(0, 60 - view.length))}`);
+        onLine(text);
+        onLine("─".repeat(70));
+        onLine(`  ${rows.length} lines · ${screen.width}×${screen.height} · ${mode}`);
+
+        if (save) {
+          const { writeSnapshot } = await import("../../agent-view/writeSnapshot.js");
+          const snap = await writeSnapshot({
+            text,
+            ansi: "",
+            lines: rows,
+            metadata: { label: `${label}-${mode}`, componentName: view, width: screen.width, height: screen.height, renderMs: 0, timestamp: metadata.timestamp },
+          });
+          onLine(`  saved → ${snap.dir}`);
+        }
+
+        return 0;
+      },
+
+      // ── unaxis notify <message> [--type success|error|info] [--priority low|medium|high|immediate] [--timeout <ms>] [--key <key>] ──
+      // Push a notification into the running TUI from outside — CLI, agents, scripts.
+      notify: async (args, onLine) => {
+        const message = args[0];
+        if (!message) {
+          onLine("✗ usage: notify <message> [--type success|error|info] [--priority low|medium|high|immediate] [--timeout <ms>] [--key <key>]");
+          return 2;
+        }
+
+        const VALID_TYPES     = ["success", "error", "info"] as const;
+        const VALID_PRIORITIES = ["low", "medium", "high", "immediate"] as const;
+
+        const typeIdx     = args.indexOf("--type");
+        const prioIdx     = args.indexOf("--priority");
+        const timeoutIdx  = args.indexOf("--timeout");
+        const keyIdx      = args.indexOf("--key");
+
+        const rawType     = typeIdx     >= 0 ? args[typeIdx + 1]     : undefined;
+        const rawPriority = prioIdx     >= 0 ? args[prioIdx + 1]     : undefined;
+        const rawTimeout  = timeoutIdx  >= 0 ? args[timeoutIdx + 1]  : undefined;
+        const rawKey      = keyIdx      >= 0 ? args[keyIdx + 1]      : undefined;
+
+        const type: NotificationType = (VALID_TYPES as readonly string[]).includes(rawType ?? "")
+          ? (rawType as NotificationType) : "info";
+
+        const priority: NotificationPriority = (VALID_PRIORITIES as readonly string[]).includes(rawPriority ?? "")
+          ? (rawPriority as NotificationPriority) : "medium";
+
+        const timeoutMs = rawTimeout ? parseInt(rawTimeout, 10) : undefined;
+        const key       = rawKey ?? undefined;
+
+        const opts: NotificationOptions = {
+          priority,
+          ...(timeoutMs && !isNaN(timeoutMs) ? { timeoutMs } : {}),
+          ...(key ? { key } : {}),
+        };
+
+        addNotificationRef.current(message, type, opts);
+
+        onLine(`✓ notification sent: "${message}" [${type}/${priority}]${key ? ` key=${key}` : ""}`);
+        return 0;
+      },
+
+      // ── unaxis snapshot-view <panel> [--save] [--label <name>] [--json] ──
+      // Renders any Ink panel directly to a text frame. No TUI launch.
+      // ~25ms. Loading/empty state is fine — shows full UI chrome and layout.
+      //
+      // Panels: npm, infra, infra-dns, infra-ports, zones, db, env
+      "snapshot-view": async (args, onLine) => {
+        const target   = args[0] ?? "npm";
+        const save     = args.includes("--save");
+        const asJson   = args.includes("--json");
+        const labelIdx = args.indexOf("--label");
+        const label    = labelIdx >= 0 ? (args[labelIdx + 1] ?? target) : target;
+
+        const rowsIdx  = args.indexOf("--rows");
+        const rowsVal  = rowsIdx >= 0 ? parseInt(args[rowsIdx + 1] ?? "40", 10) : 40;
+        const colsIdx  = args.indexOf("--cols");
+        const colsVal  = colsIdx >= 0 ? parseInt(args[colsIdx + 1] ?? "120", 10) : 120;
+
+        const { renderPanelFrame } = await import("../../agent-view/renderPanelFrame.js");
+        const React = (await import("../reactRuntime.js")).default;
+        const noop  = () => {};
+
+        // ── Build element for the requested panel ──────────────────────────
+        let element: React.ReactElement | null = null;
+        let componentName = "";
+
+        if (target === "npm") {
+          const { NpmPanel } = await import("../panels/Npm/index.js");
+          const { npmGetStatus, npmListHosts } = await import("../npm/index.js");
+          componentName = "NpmPanel";
+          // Prefetch live host data so the panel renders with real content,
+          // not a "loading…" state.  Fall back to empty list on any error.
+          let initialHosts;
+          try {
+            const status = await npmGetStatus();
+            if (status.status === "connected" && status.token) {
+              initialHosts = await npmListHosts(status.token);
+            }
+          } catch { /* snapshot still renders chrome without data */ }
+          element = React.createElement(NpmPanel, { onCopy: noop, onGoBack: noop, initialHosts });
+
+        } else if (target.startsWith("infra")) {
+          const { InfraPanel } = await import("../panels/Infra/index.js");
+          componentName = "InfraPanel";
+          element = React.createElement(InfraPanel, {
+            activeEnv: null, infraSource: null, results: {},
+            checking: false, onCheckInfra: noop, onGoBack: noop,
+          });
+
+        } else if (target === "zones") {
+          const { ZonesPanel } = await import("../panels/Zones/index.js");
+          componentName = "ZonesPanel";
+          element = React.createElement(ZonesPanel, {
+            zones: [], zoneStatuses: {}, selected: 0,
+            emptyMessage: "No zones — snapshot view",
+          });
+
+        } else if (target === "db") {
+          const { DbPanel } = await import("../panels/Db/index.js");
+          componentName = "DbPanel";
+          const dbNoop = { onLogs: noop, onBackup: noop, onCopy: noop,
+            onStart: noop, onStop: noop, onRestart: noop, onHeal: noop,
+            onVerify: noop, onNewInstance: noop, onRestore: noop,
+            onCloneFromSnapshot: noop, onInstanceAction: noop,
+            onGoBack: noop, onSubCrumbs: noop };
+          element = React.createElement(DbPanel, dbNoop);
+
+        } else if (target === "env") {
+          const { EnvPanel } = await import("../panels/Env/index.js");
+          const { loadEnvironments } = await import("../environment-store.js");
+          componentName = "EnvPanel";
+          // Prefetch environments so the panel renders with real node cards.
+          let initialEnvs;
+          try {
+            initialEnvs = await loadEnvironments(false);
+          } catch { /* snapshot still renders chrome without data */ }
+          element = React.createElement(EnvPanel, {
+            onGoBack: noop, addNotification: noop, initialEnvs,
+          });
+
+        } else if (target === "startup") {
+          const { StartupScreen } = await import("../components/StartupScreen.js");
+          componentName = "StartupScreen";
+          element = React.createElement(StartupScreen, { onDone: noop, onQuit: noop, instant: true });
+
+        } else if (target === "welcome") {
+          const { WelcomeScreen } = await import("../../screens/WelcomeScreen.js");
+          componentName = "WelcomeScreen";
+          element = React.createElement(WelcomeScreen, {
+            zones: [], zoneStatuses: {}, proxyStatus: "running",
+            isActive: true, onManage: noop, onSettings: noop,
+            onQuit: noop, onRelease: noop, onBuild: noop,
+          });
+
+        } else if (target === "settings") {
+          const { SettingsScreen } = await import("../../screens/SettingsScreen.js");
+          componentName = "SettingsScreen";
+          element = React.createElement(SettingsScreen, {
+            zones: [], onTokenEditStart: noop, onTokenEditEnd: noop,
+          });
+
+        } else {
+          onLine(`✗ unknown target: ${target}`);
+          onLine(`  panels:  npm, infra, infra-dns, infra-ports, zones, db, env`);
+          onLine(`  screens: startup, welcome, settings`);
+          return 2;
+        }
+
+        const result = await renderPanelFrame(label, element, componentName, { columns: colsVal, rows: rowsVal });
+
+        if (asJson) {
+          onLine(JSON.stringify(result, null, 2));
+          return 0;
+        }
+
+        onLine(`\n── snapshot-view: ${target} (${componentName}) ${"─".repeat(Math.max(0, 50 - target.length))}`);
+        onLine(result.text);
+        onLine(`─`.repeat(70));
+        onLine(`  ${result.metadata.renderMs}ms · ${result.lines.length} lines · ${result.metadata.width}×${result.metadata.height}`);
+
+        if (save) {
+          const { writeSnapshot } = await import("../../agent-view/writeSnapshot.js");
+          const snap = await writeSnapshot(result);
+          onLine(`  saved → ${snap.dir}`);
+        }
+
+        return 0;
+      },
     });
 
-    // ── Remote IPC bridge (port 50506) ─────────────────────────────────────
-    // Authenticated tunnel: validates stored token, then pipes to local :50505.
-    // Always started — does nothing until a valid pairing key is generated.
-    const bridge = startRemoteIpcBridge(async () => {
-      const { getCredential } = await import('../../utils/secureStorage/index.js');
-      const token = await getCredential('remote_bridge_token');
-      const exp   = await getCredential('remote_bridge_token_exp');
-      if (!token || !exp) return null;
-      return { token, exp: parseInt(exp, 10) };
-    });
+    // Remote bridge removed — IPC server now binds 0.0.0.0 directly.
+    // Prod TUI: port 50505. Dev TUI: port 50507. No auth, no pairing keys.
 
-    return () => { server.close(); bridge.close(); };
+    return () => { server.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Proxy reconciliation on startup ───────────────────────────────────────
-  // Supabase is the source of truth for zones. On every TUI boot, rebuild
-  // routes.json from the live zone list + actual Docker container state so
-  // the proxy is always in sync — no manual routes.json edits needed.
+  // SQLite control-db is the source of truth for zones and environments.
+  // On every TUI boot, rebuild routes.json so the proxy is always correct:
+  //   - local zones → container-name DNS (same bridge)
+  //   - remote zones → host IP derived from zone.environmentId
   useEffect(() => {
-    loadZones()
-      .then((zones) => reconcileProxyRoutes(zones, (name) => getStatus(name)))
-      .catch(() => { /* Supabase or proxy unreachable at boot — leave routes as-is */ });
+    Promise.all([loadZones(), loadEnvironments()])
+      .then(([zones, envs]) => reconcileProxyRoutes(zones, envs, (name) => getStatus(name)))
+      .catch(() => { /* DB or proxy unreachable at boot — leave routes as-is */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

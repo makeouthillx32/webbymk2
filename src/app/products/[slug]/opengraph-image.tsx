@@ -110,9 +110,13 @@ export default async function Image({
 
   const primaryImg = pickPrimaryImage(product?.product_images ?? []);
 
-  // Use transformed image first for reliability in OG rendering.
-  const imageUrl =
-    buildTransformedOgImageUrl(primaryImg) ?? buildStorageUrl(primaryImg);
+  // Use the plain public-object URL, NOT the /storage/v1/render/image transform
+  // endpoint. Self-hosted Supabase ships without the image-transform service
+  // (imgproxy), so the transform URL never responds — during `next build` the
+  // OG generator's fetch hangs forever and SSG stalls at "Generating static
+  // pages (0/N)". The plain object URL is served by storage-api directly.
+  const imageUrl = buildStorageUrl(primaryImg);
+  void buildTransformedOgImageUrl; // retained for reference; intentionally unused
 
   const sand = "#F5E6C8";
   const rust = "#C0522A";

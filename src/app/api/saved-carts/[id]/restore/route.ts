@@ -4,7 +4,7 @@
 // so nothing is ever permanently lost.
 
 import { createServerClient } from "@/utils/supabase/server";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 function jsonOk(data: any) {
@@ -51,10 +51,7 @@ export async function POST(
   try {
     const { id: savedCartId } = await params;
     const supabase = await createServerClient();
-    const adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const adminClient = createAdminClient();
 
     // ── 1. Identify viewer ─────────────────────────────────────────────────
     const identity = await getIdentity(request, supabase);

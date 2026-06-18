@@ -42,6 +42,14 @@ export interface UseResourceOptions<T> {
   enabled?: boolean;
 
   /**
+   * Pre-seed the resource with data from outside React (e.g. snapshot-view).
+   * When provided the initial fetch is skipped and loading starts as false,
+   * so the panel renders immediately with real data instead of a loading state.
+   * Background polling continues as normal.
+   */
+  initialData?: T[];
+
+  /**
    * Called after every successful fetch (initial and poll).
    * Useful for side-effects like updating sibling state.
    */
@@ -99,9 +107,14 @@ export function useResource<T>(
   enabledRef.current = enabled;
   const inFlightRef = useRef(false);
 
+  // When initialData is provided (e.g. from snapshot-view), skip the initial
+  // fetch so the panel renders immediately with real data.
+  // Captured once at mount — a ref keeps it stable across re-renders.
+  const seededRef = useRef(options.initialData !== undefined);
+
   // ── Core state ────────────────────────────────────────────────────────────
-  const [data,    setData]    = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);   // true = "initial fetch pending"
+  const [data,    setData]    = useState<T[]>(options.initialData ?? []);
+  const [loading, setLoading] = useState(!seededRef.current);  // false if seeded
   const [error,   setError]   = useState<string | null>(null);
   const [selectedRaw, setSelectedRaw] = useState(0);
 
@@ -160,8 +173,9 @@ export function useResource<T>(
   }, []);  // stable — all deps accessed via refs
 
   // ── Initial fetch — re-triggers when `enabled` flips true ────────────────
+  // Skip when the hook was seeded with initialData — no fetch needed on mount.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || seededRef.current) return;
     doFetch(false);
   }, [enabled, doFetch]);
 

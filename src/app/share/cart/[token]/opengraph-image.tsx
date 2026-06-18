@@ -3,7 +3,7 @@
 // No manual metadata configuration needed — just drop this file in the route folder.
 
 import { ImageResponse } from "next/og";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "edge";
 export const size = { width: 1200, height: 630 };
@@ -17,10 +17,7 @@ export default async function OGImage({ params }: PageProps) {
   const { token } = await params;
 
   // Service role bypasses RLS — safe because this is a read-only server render
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const supabase = createAdminClient();
 
   const { data: cart } = await supabase
     .from("carts")

@@ -4,7 +4,7 @@ import { EmailIcon, PasswordIcon } from "@/assets/icons";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import InputGroup from "../FormElements/InputGroup";
 import { Checkbox } from "../FormElements/checkbox";
 
@@ -28,7 +28,28 @@ const getSafeRedirectPath = (candidate: string | null): string => {
 
 export default function SigninWithPassword() {
   const searchParams = useSearchParams();
-  const nextPath = getSafeRedirectPath(searchParams.get("next"));
+  const explicitNext = searchParams.get("next");
+  // Honor an explicit ?next=, otherwise fall back to the page that linked here
+  // (same-origin) so sign-in links without ?next= still return the user to where
+  // they were instead of dumping them on /dashboard/me.
+  const [nextPath, setNextPath] = useState(() => getSafeRedirectPath(explicitNext));
+
+  useEffect(() => {
+    if (explicitNext) {
+      setNextPath(getSafeRedirectPath(explicitNext));
+      return;
+    }
+    if (typeof document !== "undefined" && document.referrer) {
+      try {
+        const ref = new URL(document.referrer);
+        if (ref.origin === window.location.origin) {
+          setNextPath(getSafeRedirectPath(ref.pathname + ref.search));
+        }
+      } catch {
+        /* ignore malformed referrer */
+      }
+    }
+  }, [explicitNext]);
 
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState(process.env.NEXT_PUBLIC_DEMO_USER_MAIL || "");

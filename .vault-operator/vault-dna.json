@@ -1,0 +1,295 @@
+{
+  "scannedAt": "2026-06-18T19:21:02.023Z",
+  "agentVersion": "0.1.0",
+  "mode": "local",
+  "plugins": [
+    {
+      "id": "daily-notes",
+      "name": "Daily Notes",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "daily-notes.skill.md",
+      "description": "Create and navigate daily journal notes"
+    },
+    {
+      "id": "canvas",
+      "name": "Canvas",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "canvas.skill.md",
+      "description": "Visual canvas with cards, links, and spatial notes"
+    },
+    {
+      "id": "backlink",
+      "name": "Backlinks",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "backlink.skill.md",
+      "description": "View and navigate backlinks between notes"
+    },
+    {
+      "id": "note-composer",
+      "name": "Note Composer",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "note-composer.skill.md",
+      "description": "Split, merge, and extract content between notes"
+    },
+    {
+      "id": "workspace",
+      "name": "Workspace",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "workspace.skill.md",
+      "description": "Native workspace operations: PDF export, tab/pane management, file paths"
+    },
+    {
+      "id": "templates",
+      "name": "Templates",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "templates.skill.md",
+      "description": "Insert predefined note templates"
+    },
+    {
+      "id": "global-search",
+      "name": "Search",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "global-search.skill.md",
+      "description": "Full-text search across the vault"
+    },
+    {
+      "id": "switcher",
+      "name": "Quick Switcher",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "switcher.skill.md",
+      "description": "Quickly navigate to any note by name"
+    },
+    {
+      "id": "bookmarks",
+      "name": "Bookmarks",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "bookmarks.skill.md",
+      "description": "Bookmark and organize favorite notes"
+    },
+    {
+      "id": "outline",
+      "name": "Outline",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "outline.skill.md",
+      "description": "View heading structure of the current note"
+    },
+    {
+      "id": "tag-pane",
+      "name": "Tags",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "tag-pane.skill.md",
+      "description": "Browse all tags used in the vault"
+    },
+    {
+      "id": "random-note",
+      "name": "Random Note",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "disabled",
+      "source": "core",
+      "skillFile": "random-note.skill.md",
+      "description": "Open a random note from the vault"
+    },
+    {
+      "id": "app",
+      "name": "App",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "app.skill.md",
+      "description": "Core app operations: navigation, delete, reload, sidebars"
+    },
+    {
+      "id": "editor",
+      "name": "Editor",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "editor.skill.md",
+      "description": "Editor operations: formatting, headings, inserts, folding, view mode"
+    },
+    {
+      "id": "file-explorer",
+      "name": "File Explorer",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "file-explorer.skill.md",
+      "description": "File explorer: create, move, and reveal files"
+    },
+    {
+      "id": "markdown",
+      "name": "Markdown",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "markdown.skill.md",
+      "description": "Toggle between editing and reading view"
+    },
+    {
+      "id": "graph",
+      "name": "Graph View",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "graph.skill.md",
+      "description": "Visualize note connections as a graph"
+    },
+    {
+      "id": "slides",
+      "name": "Slides",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "disabled",
+      "source": "core",
+      "skillFile": "slides.skill.md",
+      "description": "Present notes as slideshows using --- separators"
+    },
+    {
+      "id": "open-with-default-app",
+      "name": "Open with Default App",
+      "type": "core",
+      "classification": "PARTIAL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "open-with-default-app.skill.md",
+      "description": "Open files in the system default app or file manager"
+    },
+    {
+      "id": "theme",
+      "name": "Theme",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "theme.skill.md",
+      "description": "Switch between light and dark mode or change themes"
+    },
+    {
+      "id": "window",
+      "name": "Window",
+      "type": "core",
+      "classification": "FULL",
+      "status": "enabled",
+      "source": "core",
+      "skillFile": "window.skill.md",
+      "description": "Window controls: zoom and always-on-top"
+    },
+    {
+      "id": "letta",
+      "name": "Letta",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "1.4.0",
+      "source": "vault-native",
+      "description": "Chat with a stateful AI agent powered by Letta that knows your vault contents and remembers your conversations. Features persistent memory, automatic vault sync, memory block management, and project-aware agent switching.",
+      "skillFile": "letta.skill.md"
+    },
+    {
+      "id": "obdrawio",
+      "name": "ObDrawIO",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "0.1.3",
+      "source": "vault-native",
+      "description": "Edit and manage draw.io diagrams (.drawio / .dio).",
+      "skillFile": "obdrawio.skill.md"
+    },
+    {
+      "id": "obsidian42-brat",
+      "name": "BRAT",
+      "type": "community",
+      "classification": "PARTIAL",
+      "status": "disabled",
+      "version": "2.0.7",
+      "source": "vault-native",
+      "description": "Easily install a beta version of a plugin for testing.",
+      "skillFile": "obsidian42-brat.skill.md"
+    },
+    {
+      "id": "star-notebooklm",
+      "name": "Star NotebookLM",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "1.2.4",
+      "source": "vault-native",
+      "description": "Send notes directly to Google NotebookLM as sources from an embedded NotebookLM view.",
+      "skillFile": "star-notebooklm.skill.md"
+    },
+    {
+      "id": "templater-obsidian",
+      "name": "Templater",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "2.20.5",
+      "source": "vault-native",
+      "description": "Advanced templating and automation using handlebars-like syntax.",
+      "skillFile": "templater-obsidian.skill.md"
+    },
+    {
+      "id": "vault-as-mcp",
+      "name": "Vault as MCP",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "0.8.1",
+      "source": "vault-native",
+      "description": "MCP server connecting Open WebUI, Claude Desktop, and other LLMs to your vault.",
+      "skillFile": "vault-as-mcp.skill.md"
+    },
+    {
+      "id": "vault-operator",
+      "name": "Vault Operator",
+      "type": "community",
+      "classification": "FULL",
+      "status": "enabled",
+      "version": "2.12.8",
+      "source": "vault-native",
+      "description": "Agentic AI operating layer for your vault. Discovers and uses installed plugins, maintains persistent unified memory, and adapts to your workflows, skills and tools with full safety controls.",
+      "skillFile": "vault-operator.skill.md"
+    }
+  ],
+  "archived": []
+}

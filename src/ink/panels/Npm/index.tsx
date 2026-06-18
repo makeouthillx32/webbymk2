@@ -7,12 +7,13 @@
 // Keyboard:
 //   [↑↓/j/k]  navigate
 //   [/]        search hosts
+//   [Esc]      clear search / go back
 //   [↵]        toggle enabled / disabled
 //   [c]        copy selected domain to clipboard
 //   [R]        refresh host list
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Box, Text, useInput }                   from "../../runtimeInk.js";
 import {
   npmGetStatus, npmListHosts,
@@ -21,14 +22,16 @@ import {
 } from "../../npm/index.ts";
 import { useResource }              from "../../hooks/useResource.ts";
 import { KeyHints }                 from "../../components/KeyHint.tsx";
-import { SearchInput }              from "../../components/SearchBox.tsx";
 import { fuzzyFilter }              from "../../utils/fuzzy.ts";
+import { useTermHeight }            from "../../hooks/useTermWidth.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface NpmPanelProps {
   onCopy:   (text: string) => void;
   onGoBack: () => void;
+  /** Pre-seeded host list for snapshot-view — skips the initial network fetch. */
+  initialHosts?: NpmProxyHost[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,10 +53,22 @@ function certLabel(host: NpmProxyHost): string {
   if (cert?.expires_on) {
     const exp  = new Date(cert.expires_on);
     const days = Math.ceil((exp.getTime() - Date.now()) / 86_400_000);
-    if (days < 0)  return "SSL expired";
-    if (days < 14) return `SSL exp ${days}d`;
+    if (days < 0)  return "SSL exp!";
+    if (days < 14) return `SSL ${days}d`;
   }
   return "SSL ✓";
+}
+
+function certColor(host: NpmProxyHost): string {
+  if (!host.certificate_id) return "gray";
+  const cert = host.certificate as { expires_on?: string | null } | null | undefined;
+  if (cert?.expires_on) {
+    const exp  = new Date(cert.expires_on);
+    const days = Math.ceil((exp.getTime() - Date.now()) / 86_400_000);
+    if (days < 0)  return "red";
+    if (days < 14) return "yellow";
+  }
+  return "green";
 }
 
 function hostSearchText(host: NpmProxyHost): string {
@@ -70,6 +85,21 @@ function hostSearchText(host: NpmProxyHost): string {
   ].join(" ");
 }
 
+// ── Layout constants ──────────────────────────────────────────────────────────
+
+// Fixed rows used by chrome outside the host list:
+//   1  header (NPM · status · count)
+//   1  search bar (always shown when hosts exist)
+//   1  blank gap
+//   1  key hints
+//   2  padding buffer
+const CHROME_ROWS = 6;
+
+// Column widths
+const COL_DOMAIN  = 32;
+const COL_TARGET  = 30;
+const COL_SSL     = 8;
+
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
@@ -82,7 +112,8 @@ const HINTS = [
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
+export function NpmPanel({ onCopy, onGoBack, initialHosts }: NpmPanelProps) {
+  const termRows = useTermHeight();
 
   // Connection status display state — set as a side-effect inside fetchHosts.
   const [connectStat, setConnectStat] = useState<NpmConnectStatus>("connected");
@@ -90,6 +121,7 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   const [selected,     setSelected]     = useState(0);
   const [searchQuery,  setSearchQuery]  = useState("");
   const [searchActive, setSearchActive] = useState(false);
+  const searchBuf = useRef("");  // internal buffer while typing
 
   // ── Resource: hosts list ──────────────────────────────────────────────────
   const fetchHosts = useCallback(async (): Promise<NpmProxyHost[]> => {
@@ -108,6 +140,7 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   } = useResource<NpmProxyHost>({
     fetch:        fetchHosts,
     pollInterval: 10_000,
+    initialData:  initialHosts,
   });
 
   const visibleHosts = useMemo(
@@ -116,23 +149,17 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   );
   const selectedHost = visibleHosts[selected] ?? null;
 
-  const handleSearchChange = useCallback((query: string) => {
-    setSearchQuery(query);
-    setSelected(0);
-  }, []);
-
-  const cancelSearch = useCallback(() => {
-    if (searchQuery) {
-      setSearchQuery("");
-      setSelected(0);
-    }
-    setSearchActive(false);
-  }, [searchQuery]);
-
+  // Keep selected in bounds when filtered list shrinks
   useEffect(() => {
     setSelected((s) => Math.min(s, Math.max(0, visibleHosts.length - 1)));
   }, [visibleHosts.length]);
 
+  // ── Scroll window ─────────────────────────────────────────────────────────
+  const listRows  = Math.max(1, termRows - CHROME_ROWS);
+  const scrollOff = Math.max(0, selected - listRows + 1);
+  const windowedHosts = visibleHosts.slice(scrollOff, scrollOff + listRows);
+
+  // ── Toggle ────────────────────────────────────────────────────────────────
   const toggleHost = useCallback((host: NpmProxyHost | null) => {
     if (!host) return;
     setHosts((prev) =>
@@ -142,8 +169,6 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   }, [setHosts]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
-  // Search focus lets SearchInput own printable characters while this panel
-  // keeps arrow navigation and Enter on the filtered result list.
   useInput((input, key) => {
     if (searchActive) {
       if (key.upArrow) {
@@ -159,11 +184,34 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
         setSearchActive(false);
         return;
       }
+      if (key.escape) {
+        if (searchBuf.current) {
+          searchBuf.current = "";
+          setSearchQuery("");
+          setSelected(0);
+        } else {
+          setSearchActive(false);
+        }
+        return;
+      }
+      if (key.backspace || key.delete) {
+        searchBuf.current = searchBuf.current.slice(0, -1);
+        setSearchQuery(searchBuf.current);
+        setSelected(0);
+        return;
+      }
+      // printable chars
+      if (input && !key.ctrl && !key.meta) {
+        searchBuf.current += input;
+        setSearchQuery(searchBuf.current);
+        setSelected(0);
+      }
       return;
     }
 
     if (key.escape) {
       if (searchQuery) {
+        searchBuf.current = "";
         setSearchQuery("");
         setSelected(0);
         return;
@@ -198,10 +246,14 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
   });
 
   // ── Render ────────────────────────────────────────────────────────────────
+  const countLabel = searchQuery
+    ? `${visibleHosts.length}/${hosts.length}`
+    : `${hosts.length}`;
+
   return (
     <Box flexDirection="column">
 
-      {/* ── Connection header ────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <Box paddingX={1} gap={2} marginBottom={1}>
         <Text bold color={statusColor(connectStat)}>NPM</Text>
         <Text dimColor>·</Text>
@@ -209,72 +261,98 @@ export function NpmPanel({ onCopy, onGoBack }: NpmPanelProps) {
         {!loading && connectStat === "connected" && (
           <>
             <Text dimColor>·</Text>
-            <Text dimColor>
-              {searchQuery
-                ? `${visibleHosts.length}/${hosts.length} host${hosts.length !== 1 ? "s" : ""}`
-                : `${hosts.length} host${hosts.length !== 1 ? "s" : ""}`}
-            </Text>
+            <Text dimColor>{countLabel} host{hosts.length !== 1 ? "s" : ""}</Text>
           </>
         )}
         {loading && <Text dimColor>  loading…</Text>}
+        {error && <Text color="red">  {error}</Text>}
       </Box>
 
+      {/* ── Search bar — always visible when hosts are loaded ───────────── */}
       {hosts.length > 0 && (
-        <Box paddingX={1} marginBottom={1} gap={2}>
-          <SearchInput
-            value={searchQuery}
-            onChange={handleSearchChange}
-            onCancel={cancelSearch}
-            placeholder="Search proxy hosts"
-            prefix="/"
-            width={42}
-            active={searchActive}
-          />
-          <Text dimColor>
+        <Box paddingX={1} marginBottom={1} gap={1}>
+          <Text dimColor>{searchActive ? "" : "/"}</Text>
+          <Text color={searchActive ? "cyan" : "gray"} bold={searchActive}>
             {searchActive
-              ? "[esc] clear"
+              ? (searchQuery || " ")
               : searchQuery
-                ? `${visibleHosts.length}/${hosts.length} matches`
-                : "[/] search"}
+                ? searchQuery
+                : "search…"}
           </Text>
+          {searchActive && <Text dimColor>|</Text>}
+          {!searchActive && !searchQuery && <Text dimColor>  [/] to filter</Text>}
+          {!searchActive && searchQuery && (
+            <Text dimColor>  {visibleHosts.length} match{visibleHosts.length !== 1 ? "es" : ""}  [esc] clear</Text>
+          )}
         </Box>
       )}
 
-      {/* ── Error ───────────────────────────────────────────────────────── */}
-      {error && (
-        <Box paddingX={2} marginBottom={1}>
-          <Text color="red">{error}</Text>
-        </Box>
-      )}
-
-      {/* ── Empty state ─────────────────────────────────────────────────── */}
+      {/* ── Empty / no-match states ──────────────────────────────────────── */}
       {!loading && hosts.length === 0 && !error && (
         <Box paddingX={2}><Text dimColor>No proxy hosts found.</Text></Box>
       )}
-
       {hosts.length > 0 && visibleHosts.length === 0 && (
-        <Box paddingX={2}><Text dimColor>{`No proxy hosts match "${searchQuery}"`}</Text></Box>
+        <Box paddingX={2}><Text dimColor>No hosts match "{searchQuery}"</Text></Box>
       )}
 
-      {visibleHosts.length > 0 && (
-        visibleHosts.map((host, i) => {
-          const focused = i === selected;
-          return (
-            <Box key={host.id} gap={2} paddingX={1}>
-              <Text color={focused ? "cyan" : undefined} bold={focused}>
-                {focused ? "›" : " "}
-              </Text>
-              <Box width={28}>
-                <Text color={focused ? "cyan" : undefined} bold={focused}>
-                  {host.domain_names[0] ?? "—"}
-                </Text>
-              </Box>
-              <Text dimColor={!focused} color={focused ? "gray" : undefined}>
-                {host.enabled ? "●" : "○"}  {host.forward_scheme}://{host.forward_host}:{host.forward_port}  {certLabel(host)}
+      {/* ── Host list (windowed) ─────────────────────────────────────────── */}
+      {windowedHosts.map((host, wi) => {
+        const absoluteIdx = wi + scrollOff;
+        const focused = absoluteIdx === selected;
+        const domain  = host.domain_names[0] ?? "—";
+        const target  = `${host.forward_scheme}://${host.forward_host}:${host.forward_port}`;
+        const ssl     = certLabel(host);
+        const sslCol  = certColor(host);
+        const enabled = Boolean(host.enabled);
+
+        return (
+          <Box key={host.id} gap={1} paddingX={1}>
+            {/* cursor */}
+            <Text color={focused ? "cyan" : undefined} bold={focused}>
+              {focused ? "›" : " "}
+            </Text>
+
+            {/* enabled dot */}
+            <Text color={enabled ? (focused ? "cyan" : "green") : "gray"}>
+              {enabled ? "●" : "○"}
+            </Text>
+
+            {/* domain — truncated */}
+            <Box width={COL_DOMAIN}>
+              <Text
+                color={focused ? "cyan" : undefined}
+                bold={focused}
+                wrap="truncate"
+              >
+                {domain}
               </Text>
             </Box>
-          );
-        })
+
+            {/* forward target */}
+            <Box width={COL_TARGET}>
+              <Text dimColor={!focused} wrap="truncate">
+                {target}
+              </Text>
+            </Box>
+
+            {/* SSL status */}
+            <Box width={COL_SSL}>
+              <Text color={focused ? sslCol : "gray"} dimColor={!focused}>
+                {ssl}
+              </Text>
+            </Box>
+          </Box>
+        );
+      })}
+
+      {/* ── Scroll indicator ────────────────────────────────────────────── */}
+      {visibleHosts.length > listRows && (
+        <Box paddingX={2} marginTop={0}>
+          <Text dimColor>
+            {scrollOff + 1}–{Math.min(scrollOff + listRows, visibleHosts.length)} of {visibleHosts.length}
+            {selected < visibleHosts.length - 1 ? "  ↓ more" : "  (end)"}
+          </Text>
+        </Box>
       )}
 
       <KeyHints hints={HINTS} />

@@ -1,9 +1,10 @@
-﻿import { logForDebugging } from '../utils/debug.js';
+import { logForDebugging } from '../utils/debug.js';
 import { type DOMElement, markDirty } from './dom.js';
 import type { Frame } from './frame.js';
 import { consumeAbsoluteRemovedFlag } from './node-cache.js';
 import Output from './output.js';
 import renderNodeToOutput, {
+  flushLayoutTrace,
   getScrollDrainNode,
   getScrollHint,
   resetLayoutShifted,
@@ -84,11 +85,11 @@ export default function createRenderer(
     // Alt-screen height management
     const height = options.altScreen ? terminalRows : yogaHeight;
     
+    // Note: yogaHeight should normally equal terminalRows since AlternateScreen
+    // sets height={rows}. If it doesn't, the screen buffer still clips safely.
     if (options.altScreen && yogaHeight > terminalRows) {
       logForDebugging(
-        `alt-screen: yoga height ${yogaHeight} > terminalRows ${terminalRows} — ` +
-        `something is rendering outside <AlternateScreen>. Overflow clipped.`,
-        { level: 'warn' }
+        `alt-screen: yogaHeight=${yogaHeight} > terminalRows=${terminalRows} (screen buffer clips)`,
       );
     }
     
@@ -105,6 +106,7 @@ export default function createRenderer(
     resetLayoutShifted();
     resetScrollHint();
     resetScrollDrainNode();
+    flushLayoutTrace();
 
     // Blit optimization safety
     const absoluteRemoved = consumeAbsoluteRemovedFlag();

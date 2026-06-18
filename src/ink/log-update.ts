@@ -159,7 +159,15 @@ export class LogUpdate {
     // where scrollTop moves. Falling through to the diff loop writes all
     // shifted rows: more bytes, no intermediate state. next.screen from
     // render-node-to-output's blit+shift is correct either way.
-    let scrollPatch: Diff = []
+    // Fullscreen frames are always anchored at home. The Ink renderer writes
+    // a complete viewport and intentionally skips cursor restoration in
+    // alt-screen mode, so the terminal's real cursor is otherwise wherever
+    // the previous write happened to end. Relative patches must start from
+    // the same known position as VirtualScreen or navigation updates land on
+    // stale rows and take several later frames to visually converge.
+    let scrollPatch: Diff = altScreen
+      ? [{ type: 'stdout', content: CURSOR_HOME }]
+      : []
     if (altScreen && next.scrollHint && decstbmSafe) {
       const { top, bottom, delta } = next.scrollHint
       if (
@@ -244,7 +252,10 @@ export class LogUpdate {
       }
     }
 
-    const screen = new VirtualScreen(prev.cursor, next.viewport.width)
+    const screen = new VirtualScreen(
+      altScreen ? { x: 0, y: 0 } : prev.cursor,
+      next.viewport.width,
+    )
 
     // Treat empty screen as height 1 to avoid spurious adjustments on first render
     const heightDelta =

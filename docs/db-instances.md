@@ -295,7 +295,7 @@ If delete failed partway through, hosts may remain in NPM. Run the cleanup Power
 # Or use the TUI: [n] on the instance → reregister NPM → then delete again
 ```
 
-Or delete manually via NPM UI at `http://192.168.50.75:81`.
+Or delete manually via the NPM UI (see your environment's `agentUrl`/`proxyHost` for the address — typically `http://<edge-node-ip>:81`).
 
 ### Restore fails: pg_restore errors
 `pg_restore` warnings about existing objects are normal (the `--clean --if-exists` flags handle drops). An exit code of 1 with only warnings is acceptable. An exit code of 2 indicates genuine errors — check the `pg:` prefixed lines in the TUI output.

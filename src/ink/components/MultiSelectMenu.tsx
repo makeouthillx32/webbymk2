@@ -19,8 +19,10 @@
 // the selection; the Set reference itself is not observed after mount.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Box, Text, useInput } from "../runtimeInk.js";
+import { useScrollIntoView } from "./ScrollBox.js";
+import type { DOMElement } from "../dom.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -116,41 +118,57 @@ export function MultiSelectMenu({
   return (
     <Box flexDirection="column" marginTop={1}>
 
-      {options.map((opt, i) => {
-        const focused = i === safeIdx;
-        const checked = selected.has(opt.id);
-        return (
-          <Box key={opt.id} gap={2} paddingX={1}>
-            {/* Cursor */}
-            <Text color={focused ? "cyan" : undefined} bold={focused}>
-              {focused ? "›" : " "}
-            </Text>
-            {/* Checkbox */}
-            <Text color={checked ? "green" : "gray"}>
-              {checked ? "[x]" : "[ ]"}
-            </Text>
-            {/* Label */}
-            <Box width={14}>
-              <Text
-                color={focused ? "cyan" : checked ? "green" : undefined}
-                bold={focused}
-              >
-                {opt.label}
-              </Text>
-            </Box>
-            {/* Description */}
-            {opt.desc && (
-              <Text dimColor={!focused}>{opt.desc}</Text>
-            )}
-          </Box>
-        );
-      })}
+      {options.map((opt, i) => (
+        <MultiSelectMenuItem
+          key={opt.id}
+          opt={opt}
+          focused={i === safeIdx}
+          checked={selected.has(opt.id)}
+        />
+      ))}
 
       {/* Hint bar */}
       <Box paddingX={2} marginTop={1}>
         <Text dimColor>[space] toggle  [↑↓/jk] navigate  [↵] confirm  [esc] back  [q] exit</Text>
       </Box>
 
+    </Box>
+  );
+}
+
+interface MultiSelectMenuItemProps {
+  opt: MultiSelectOption;
+  focused: boolean;
+  checked: boolean;
+}
+
+function MultiSelectMenuItem({ opt, focused, checked }: MultiSelectMenuItemProps) {
+  const ref = useRef<DOMElement>(null);
+  useScrollIntoView(ref, focused);
+
+  return (
+    <Box ref={ref} gap={2} paddingX={1}>
+      {/* Cursor */}
+      <Text color={focused ? "cyan" : undefined} bold={focused}>
+        {focused ? "›" : " "}
+      </Text>
+      {/* Checkbox */}
+      <Text color={checked ? "green" : "gray"}>
+        {checked ? "[x]" : "[ ]"}
+      </Text>
+      {/* Label */}
+      <Box width={14}>
+        <Text
+          color={focused ? "cyan" : checked ? "green" : undefined}
+          bold={focused}
+        >
+          {opt.label}
+        </Text>
+      </Box>
+      {/* Description */}
+      {opt.desc && (
+        <Text dimColor={!focused}>{opt.desc}</Text>
+      )}
     </Box>
   );
 }

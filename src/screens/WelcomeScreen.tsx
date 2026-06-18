@@ -1,7 +1,7 @@
 /** @jsxRuntime classic */
 // src/ink/screens/WelcomeScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Splash / home screen — fully responsive to any terminal size.
+// Project welcome screen — fully responsive to any terminal size.
 //
 // Adaptive layout tiers (checked in order — first match wins):
 //
@@ -28,8 +28,11 @@ import { KeyHints } from "../ink/components/KeyHint.jsx";
 import { useWidths } from "../ink/hooks/useTermWidth.js";
 import { useHostMonitor } from "../ink/hooks/useHostMonitor.js";
 import { useUpdateCheck } from "../ink/hooks/useUpdateCheck.js";
+import { useHealthSummary } from "../ink/hooks/useHealthSummary.js";
 import { MetricCard } from "../ink/components/design-system/MetricCard.jsx";
 import { sparkline } from "../ink/utils/sparkline.js";
+import type { ServiceResult } from "../ink/infra.js";
+
 
 declare const UNAXIS_VERSION: string | undefined;
 
@@ -50,14 +53,98 @@ const MENU_BASE = [
   { icon: "⚙", label: "Settings", desc: "view & edit local config", action: "settings" },
 ] as const;
 
-const MENU_DEV = [
-  { icon: "⚡", label: "Release", desc: "build + bump + publish to npm", action: "release" },
-  { icon: "⬡", label: "Build", desc: "local build only (no publish)", action: "build" },
-] as const;
+// Release + Build moved to StartupScreen (picker phase, [R] in dev/bun mode).
 
-type MenuAction = "manage" | "settings" | "release" | "build";
+type MenuAction = "manage" | "settings";
 
 const isDev = process.env.NODE_ENV !== "production";
+
+// ── Health Bar ────────────────────────────────────────────────────────────────
+
+interface HealthBarProps {
+  health: ReturnType<typeof useHealthSummary>;
+  narrow: boolean;
+}
+
+function HealthBar({ health, narrow }: HealthBarProps) {
+  const { servicesDown, dbDegraded, dbStopped, sslExpired, sslExpiringSoon, sslLoading } = health
+
+  // All clear — show a single green line
+  const allClear =
+    servicesDown === 0 &&
+    dbDegraded   === 0 &&
+    dbStopped    === 0 &&
+    sslExpired   === 0 &&
+    sslExpiringSoon === 0
+
+  if (allClear && !sslLoading) {
+    return (
+      <Box justifyContent="center" marginBottom={1}>
+        <Text color="green">{"✓ "}</Text>
+        <Text dimColor>{"all systems nominal"}</Text>
+      </Box>
+    )
+  }
+
+  // Build chips: only show non-zero counts, or SSL while still loading
+  const chips: Array<{ label: string; color: string }> = []
+
+  if (servicesDown > 0)
+    chips.push({ label: `${servicesDown} service${servicesDown > 1 ? "s" : ""} down`, color: "red" })
+
+  if (dbDegraded > 0)
+    chips.push({ label: `${dbDegraded} DB degraded`, color: "yellow" })
+
+  if (dbStopped > 0)
+    chips.push({ label: `${dbStopped} DB stopped`, color: "gray" })
+
+  if (sslExpired > 0)
+    chips.push({ label: `${sslExpired} SSL expired`, color: "red" })
+
+  if (sslExpiringSoon > 0)
+    chips.push({ label: `${sslExpiringSoon} SSL expiring`, color: "yellow" })
+
+  if (chips.length === 0 && sslLoading) {
+    // Infra/DB clear but SSL still loading — don't flash a false "all clear"
+    return null
+  }
+
+  const sep = narrow ? "\n" : "  ·  "
+
+  return (
+    <Box justifyContent="center" marginBottom={1} flexWrap="wrap">
+      <Text color="yellow">{"⚠  "}</Text>
+      {chips.map((chip, i) => (
+        <Box key={chip.label}>
+          <Text bold color={chip.color}>{chip.label}</Text>
+          {i < chips.length - 1 && <Text dimColor>{sep}</Text>}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+// ── Menu Item Component ───────────────────────────────────────────────────────
+
+interface WelcomeMenuItemProps {
+  item: typeof MENU_BASE[number];
+  active: boolean;
+  narrow: boolean;
+  blink: boolean;
+  color: string;
+}
+
+function WelcomeMenuItem({ item, active, narrow, blink, color }: WelcomeMenuItemProps) {
+  return (
+    <Box paddingX={1} gap={2}>
+      <Text color={active ? color : INACTIVE}>
+        {active ? (blink ? item.icon : " ") : " "}
+      </Text>
+      <Text bold={active} color={active ? color : INACTIVE}>{item.label}</Text>
+      {!narrow && <Text dimColor>{item.desc}</Text>}
+    </Box>
+  );
+}
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -66,24 +153,27 @@ export interface WelcomeScreenProps {
   zoneStatuses: StatusMap;
   proxyStatus: Status;
   busy?: boolean;
+  /** Infra check results from useEnvManager — used to populate the health bar */
+  infraResults?: Record<string, ServiceResult>;
   onManage: () => void;
   onSettings: () => void;
   onQuit: () => void;
-  onRelease?: () => void;
-  onBuild?: () => void;
   isActive: boolean;
 }
 
 export function WelcomeScreen({
   zones, zoneStatuses, proxyStatus, busy,
-  onManage, onSettings, onQuit, onRelease, onBuild, isActive,
+  infraResults = {},
+  onManage, onSettings, onQuit, isActive,
 }: WelcomeScreenProps) {
-  const MENU = isDev ? [...MENU_BASE, ...MENU_DEV] : [...MENU_BASE];
+  const MENU = [...MENU_BASE];
 
   const [selected, setSelected] = useState(0);
   const [blink, setBlink] = useState(true);
+
   const { tw, dw, th } = useWidths();
-  const host = useHostMonitor();
+  const host   = useHostMonitor();
+  const health = useHealthSummary(infraResults);
 
   const devUpdateCheckVersion = process.env.UNAXIS_UPDATE_CHECK_VERSION?.trim();
   const currentVersion =
@@ -95,13 +185,13 @@ export function WelcomeScreen({
   // ── Responsive breakpoints ────────────────────────────────────────────────
   const narrow = tw < 60;
   const vnarrow = tw < 40;
-  const compact = th < 26;
-  const short = th < 20;
+  const compact = th < 25;
+  const short = th < 22;
   const minimal = th < 14;
 
-  const showDiagram = !narrow && !compact;
-  const showStatus = !minimal;
-  const showDir = !short && !minimal;
+  const showDiagram = th >= 36 && !narrow;
+  const showStatus = th >= 22 && !minimal;
+  const showDir = th >= 24 && !minimal;
   const showBusy = busy && !minimal;
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
@@ -113,8 +203,6 @@ export function WelcomeScreen({
       const action = MENU[selected]?.action as MenuAction;
       if (action === "manage") { onManage(); return; }
       if (action === "settings") { onSettings(); return; }
-      if (action === "release") { onRelease?.(); return; }
-      if (action === "build") { onBuild?.(); return; }
       return;
     }
     if (input === "s") { onSettings(); return; }
@@ -125,9 +213,6 @@ export function WelcomeScreen({
       );
       return;
     }
-    // Dev-only hotkeys
-    if (isDev && input === "r") { onRelease?.(); return; }
-    if (isDev && input === "b") { onBuild?.(); return; }
   }, { isActive });
 
   useEffect(() => {
@@ -151,12 +236,12 @@ export function WelcomeScreen({
       borderStyle="double"
       borderColor={isDev ? DEV_COLOR : BRAND}
       paddingX={2}
-      paddingY={minimal ? 0 : 1}
+      paddingY={th < 25 ? 0 : 1}
       width={tw}
       overflow="hidden"
     >
       {/* ── Title ─────────────────────────────────────────────────────────── */}
-      <Box flexDirection="column" alignItems="center" marginBottom={minimal ? 0 : 1}>
+      <Box flexDirection="column" alignItems="center" marginBottom={th < 25 ? 0 : 1}>
         <Box gap={2} alignItems="center">
           <Text bold color={BRAND}>{"◈  UNAXIS"}</Text>
           {typeof UNAXIS_VERSION !== "undefined" && (
@@ -182,7 +267,7 @@ export function WelcomeScreen({
 
       {!minimal && (
         <Box justifyContent="center" marginBottom={0}>
-          <Text color="gray">welcome to </Text>
+          <Text color="gray">project welcome: </Text>
           <Text bold color="white">{DOMAIN || "unenter.live"}</Text>
         </Box>
       )}
@@ -193,6 +278,11 @@ export function WelcomeScreen({
           <Text dimColor>{"⌂  "}</Text>
           <Text color="cyan">{PROJECT_DIR}</Text>
         </Box>
+      )}
+
+      {/* ── Health bar ────────────────────────────────────────────────────── */}
+      {!minimal && (
+        <HealthBar health={health} narrow={narrow} />
       )}
 
       {/* ── Status + Performance NOC ───────────────────────────────────────── */}
@@ -283,41 +373,18 @@ export function WelcomeScreen({
       )}
 
       {/* ── Menu ─────────────────────────────────────────────────────────── */}
-      <Box flexDirection="column" gap={0} marginBottom={minimal ? 0 : 1}>
-        {MENU_BASE.map((item, i) => {
-          const active = selected === i;
-          return (
-            <Box key={item.label} paddingX={1} gap={2}>
-              <Text color={active ? BRAND_SEC : INACTIVE}>
-                {active ? (blink ? item.icon : " ") : " "}
-              </Text>
-              <Text bold={active} color={active ? BRAND_SEC : INACTIVE}>{item.label}</Text>
-              {!narrow && <Text dimColor>{item.desc}</Text>}
-            </Box>
-          );
-        })}
+      <Box flexDirection="column" gap={0} marginBottom={th < 25 ? 0 : 1}>
+        {MENU_BASE.map((item, i) => (
+          <WelcomeMenuItem
+            key={item.label}
+            item={item}
+            active={selected === i}
+            narrow={narrow}
+            blink={blink}
+            color={BRAND_SEC}
+          />
+        ))}
 
-        {/* Dev-only section — dead code in prod bundle */}
-        {isDev && (
-          <>
-            <Box paddingX={1} marginTop={0}>
-              <Text dimColor>{"  ─── dev ──────────────────────────"}</Text>
-            </Box>
-            {MENU_DEV.map((item, i) => {
-              const idx = MENU_BASE.length + i;
-              const active = selected === idx;
-              return (
-                <Box key={item.label} paddingX={1} gap={2}>
-                  <Text color={active ? DEV_COLOR : INACTIVE}>
-                    {active ? (blink ? item.icon : " ") : " "}
-                  </Text>
-                  <Text bold={active} color={active ? DEV_COLOR : INACTIVE}>{item.label}</Text>
-                  {!narrow && <Text dimColor>{item.desc}</Text>}
-                </Box>
-              );
-            })}
-          </>
-        )}
       </Box>
 
       {!minimal && <Divider width={Math.max(4, dw)} />}

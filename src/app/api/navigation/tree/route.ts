@@ -30,7 +30,9 @@ function buildTree(flat: DbCategory[]): NavNode[] {
     map.set(cat.id, {
       key: `cat-${cat.id}`,
       label: cat.name,
-      href: `/shop/category/${cat.slug}`,
+      // Category pages resolve at the root [categorySlug] route (e.g. /bottoms),
+      // not under /shop/category/. The latter has no route and 404s -> /error.
+      href: `/${cat.slug}`,
       type: "category",
       routeType: "real",
       _children: [],

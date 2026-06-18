@@ -1,5 +1,6 @@
 // app/api/cart/route.ts
 import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { supabasePublicUrlFromImage } from "@/lib/images";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -36,8 +37,12 @@ function pickPrimaryImage(images: any[]) {
 // ─────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createServerClient();
-    const identity = await getIdentity(request, supabase);
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops — the guest RLS policy is unusable over IPC, so
+    // we scope by the resolved identity (user_id/session_id) in-app instead.
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
+    const identity = await getIdentity(request, auth);
 
     if (!identity) {
       return jsonError(400, "NO_IDENTITY", "No user or session identified");
@@ -189,8 +194,12 @@ export async function GET(request: NextRequest) {
 // ─────────────────────────────────────────────
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = await createServerClient();
-    const identity = await getIdentity(request, supabase);
+    // `auth` = cookie client (verified getUser only). `supabase` = service-role
+    // client for cart-table ops — the guest RLS policy is unusable over IPC, so
+    // we scope by the resolved identity (user_id/session_id) in-app instead.
+    const auth = await createServerClient();
+    const supabase = createAdminClient();
+    const identity = await getIdentity(request, auth);
 
     if (!identity) {
       return jsonError(400, "NO_IDENTITY", "No user or session identified");

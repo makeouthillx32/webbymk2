@@ -53,6 +53,19 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+
+  // ── Build-worker cap ───────────────────────────────────────────────────────
+  // The build host has 32 cores, so Next.js spawns ~32 static-generation worker
+  // processes — each FORKED from the multi-GB build process. Under the Docker
+  // VM's memory-overcommit limits, fork() then reserves ~32 × (parent size) and
+  // fails with ENOMEM ("cannot allocate memory") the instant SSG starts — the
+  // builder dies at "Generating static pages (0/N)". Capping the worker count
+  // keeps total fork reservation well within the VM's bounds. Diagnosed via
+  // `unaxis build-mem` (builder died at ~4 GB, not the 31 GB cap → fork failure,
+  // not exhaustion).
+  experimental: {
+    cpus: 2,
+  },
   // ── Dev origins ────────────────────────────────────────────────────────────
   // Suppresses the "Cross origin request detected" warning when accessing the
   // app via dev.unenter.live (the Docker dev proxy host) instead of localhost.

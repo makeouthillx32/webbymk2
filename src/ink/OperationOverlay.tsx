@@ -110,6 +110,10 @@ export function OperationOverlay({
     if (input === "C")       { onCopyTail?.(lines.slice(-contentHeight));         return; }
     if (input === "r" && dismissable) { onRestart?.();                            return; }
     if (input === "O")       { onPopout?.();                                      return; }
+    // [o] detaches the overlay to the background stack (same as q/esc when !dismissable).
+    // useGlobalAppInput fires simultaneously and flips stackFocused, so the net
+    // effect is: overlay closes → focused stack pane opens in one keystroke.
+    if (input === "o")       { onEsc?.();                                          return; }
   });
 
   return (
@@ -139,10 +143,10 @@ export function OperationOverlay({
           {/* Exit hint — esc and q do different things depending on op type */}
           <Text dimColor>
             {dismissable
-              ? "[esc] stop · close  [q] back"
+              ? "[esc] stop · close  [q/o] back"
               : busy && mode === "output"
-                ? "[esc] detach  [q] back"
-                : "[esc/q] close"}
+                ? "[esc] detach  [q/o] back"
+                : "[esc/q/o] close"}
           </Text>
 
           {/* Copy + restart hints */}

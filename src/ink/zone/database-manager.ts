@@ -48,11 +48,10 @@ import {
 }                           from "./snapshot.ts";
 import {
   createRuntimeInstance,
-  initializeSupabaseCore,
   removeFromRegistry,
   spawnRun,
   envWithFile,
-  CORE_DIR,
+  INSTANCE_TEMPLATE,
   type RuntimeInstance,
 }                           from "./supabase-factory.ts";
 import { DOMAIN, STACK_HOST } from "../../config/stack.ts";
@@ -141,16 +140,18 @@ export async function assertDockerRunning(): Promise<void> {
 }
 
 /**
- * Assert supabase-core/docker is present (required for new instance scaffolding).
- * Returns immediately if present; throws with a clear install instruction if not.
+ * Assert the vendored DB init SQL files are present in the instance template.
+ * These are committed to the repo — if missing, the codebase is incomplete.
  */
 export function assertCoreDockerPresent(): void {
-  const coreDocker = join(CORE_DIR, "docker");
-  if (!existsSync(coreDocker)) {
+  const templateDbDir = join(INSTANCE_TEMPLATE, "volumes", "db");
+  const requiredFiles = ["_supabase.sql", "roles.sql", "jwt.sql", "realtime.sql", "webhooks.sql", "logs.sql"];
+  const missing = requiredFiles.filter((f) => !existsSync(join(templateDbDir, f)));
+  if (missing.length > 0) {
     throw new Error(
-      `supabase-core/docker not found at ${coreDocker}\n` +
-      `  Run:  unaxis unenter db template-capture\n` +
-      `  This will clone supabase/supabase and set up the template (one-time, ~2 min).`
+      `Instance template is missing DB init SQL files: ${missing.join(", ")}\n` +
+      `  Expected at: ${templateDbDir}\n` +
+      `  These files are committed to the repo — check your working tree.`
     );
   }
 }
@@ -508,7 +509,7 @@ export interface BlankDatabaseResult {
  * Spin up a brand-new, completely empty Supabase database instance.
  *
  * This is the FAST PATH — no snapshot, no clone, no template archive.
- * It scaffolds a fresh instance directly from supabase-core/docker,
+ * It scaffolds a fresh instance from the vendored template in
  * starts it, registers it publicly, and writes fully-wired MCP config
  * with real secrets available immediately.
  *
@@ -518,7 +519,7 @@ export interface BlankDatabaseResult {
  *   ~3min — Studio + all migrations fully up
  *
  * Steps:
- *   1. Ensure supabase-core/docker is present (clone if needed)
+ *   1. Scaffold instance from vendored SQL template (no GitHub clone)
  *   2. createRuntimeInstance() — scaffold with unique ports + fresh secrets
  *   3. docker compose up -d
  *   4. Wait for Postgres (pg_isready polling)
@@ -546,14 +547,7 @@ export async function createBlankDatabase(
   onLine(`🆕 Creating blank database: ${slug}`);
   onLine(`   Will be live at:  db.${slug}.${domain}  /  studio.${slug}.${domain}`);
 
-  // ── [1] Ensure supabase-core is present ───────────────────────────────────
-  if (!existsSync(join(CORE_DIR, "docker"))) {
-    onLine("  supabase-core not found — cloning supabase/supabase (one-time setup)...");
-    const { success, error } = await initializeSupabaseCore(onLine);
-    if (!success) throw new Error(`initializeSupabaseCore failed: ${error}`);
-  }
-
-  // ── [2] Scaffold instance ────────────────────────────────────────────────
+  // ── [1] Scaffold instance ────────────────────────────────────────────────
   onLine("\n[1/5] Scaffolding instance...");
   const instance = await createRuntimeInstance(label, onLine);
   onLine(`  ✓ slug:  ${instance.slug}`);
@@ -867,12 +861,12 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
     return result;
   }
 
-  onLine("[pre-flight] supabase-core/docker...");
+  onLine("[pre-flight] instance template SQL files...");
   try {
     assertCoreDockerPresent();
-    pass("supabase-core/docker present");
+    pass("DB init SQL files present");
   } catch (e) {
-    fail("supabase-core/docker missing", e);
+    fail("DB init SQL files missing", e);
     result.ok = false;
     return result;
   }

@@ -171,8 +171,7 @@ export async function POST(req: NextRequest) {
               receiver_id,
               title: `${senderName} sent you a message`,
               subtitle: short(content),
-              image_url:
-                "https://chsmesvozsjcgrwuimld.supabase.co/storage/v1/object/public/avatars/notification.png",
+              image_url: `${process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/notification.png`,
               action_url: "/dashboard/me/messages",
             });
 
