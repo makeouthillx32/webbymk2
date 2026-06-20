@@ -105,8 +105,12 @@ function HealthBar({ health, narrow }: HealthBarProps) {
     chips.push({ label: `${sslExpiringSoon} SSL expiring`, color: "yellow" })
 
   if (chips.length === 0 && sslLoading) {
-    // Infra/DB clear but SSL still loading — don't flash a false "all clear"
-    return null
+    // Return a placeholder of the same height to prevent layout shifts on load
+    return (
+      <Box justifyContent="center" marginBottom={1}>
+        <Text dimColor>{"checking systems health…"}</Text>
+      </Box>
+    )
   }
 
   const sep = narrow ? "\n" : "  ·  "
@@ -137,9 +141,11 @@ interface WelcomeMenuItemProps {
 function WelcomeMenuItem({ item, active, narrow, blink, color }: WelcomeMenuItemProps) {
   return (
     <Box paddingX={1} gap={2}>
-      <Text color={active ? color : INACTIVE}>
-        {active ? (blink ? item.icon : " ") : " "}
-      </Text>
+      <Box width={2}>
+        <Text color={active && blink ? color : INACTIVE}>
+          {active && blink ? item.icon : ""}
+        </Text>
+      </Box>
       <Text bold={active} color={active ? color : INACTIVE}>{item.label}</Text>
       {!narrow && <Text dimColor>{item.desc}</Text>}
     </Box>
@@ -252,16 +258,19 @@ export function WelcomeScreen({
       </Box>
 
       {/* ── Update banner ──────────────────────────────────────────────────── */}
-      {updateAvailable && !minimal && (
-        <Box justifyContent="center" marginBottom={0}>
-          <Text color="yellow">{"⬆  update available: v"}</Text>
-          <Text bold color="yellow">{latestVersion}</Text>
-          <Text dimColor>{"  [u] to see instructions"}</Text>
-        </Box>
-      )}
-      {isChecking && !updateAvailable && !minimal && (
-        <Box justifyContent="center" marginBottom={0}>
-          <Text dimColor>{"checking for updates…"}</Text>
+      {!minimal && (
+        <Box height={1} justifyContent="center" marginBottom={0}>
+          {updateAvailable ? (
+            <>
+              <Text color="yellow">{"⬆  update available: v"}</Text>
+              <Text bold color="yellow">{latestVersion}</Text>
+              <Text dimColor>{"  [u] to see instructions"}</Text>
+            </>
+          ) : isChecking ? (
+            <Text dimColor>{"checking for updates…"}</Text>
+          ) : (
+            <Text>{" "}</Text>
+          )}
         </Box>
       )}
 

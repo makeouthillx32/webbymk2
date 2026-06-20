@@ -31,6 +31,7 @@ The Obsidian vault root is `Z:\WEBSITES\webbymk2\` — the entire project repo. 
 
 ```
 vault/
+├── _CODEX.md           Codex-specific operating manual
 ├── CRITICAL_FACTS.md    Active IPs, ports, timezone, stack version
 ├── SOUL.md              System identity (Antigravity persona)
 ├── Home.md              Dashboard and index
@@ -51,7 +52,7 @@ vault/
 ## Session Orientation
 
 ```
-read_multiple_notes(["vault/CRITICAL_FACTS.md", "vault/Home.md"])
+read_multiple_notes(["vault/_CODEX.md", "vault/CRITICAL_FACTS.md", "vault/Home.md"])
 ```
 
 To read source alongside docs:
@@ -88,6 +89,6 @@ ai-first: true
 Invoke **obsidian-second-brain** (UNAXIS Edition) — correct MCP tool names, vault/ prefix, 44 commands including `/obsidian-compact`. Also load and follow the **unaxis-operator** skill for all TUI, dev container, and diagnostic operations (using only `unaxis` commands directly).
 
 ## Agent Companions
-- **Codex**: When the active agent is Codex, read `_CODEX.md` first for Codex-specific rules and overlays.
+- **Codex**: When the active agent is Codex, read `vault/_CODEX.md` first for Codex-specific rules and overlays.
 - **Antigravity**: When the active agent is Antigravity, read `_ANTIGRAVITY.md` first for Antigravity-specific rules and overlays.
 - `_CLAUDE.md` remains the shared vault contract.

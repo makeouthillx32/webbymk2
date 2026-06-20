@@ -602,9 +602,10 @@ async function ensureGhcrLogin(onLine?: (l: string) => void): Promise<void> {
  * newly-pulled image — prevents "stale container" confusion.
  */
 export async function pullAndUp(
-  zone:      Zone,
-  onLine?:   (l: string) => void,
+  zone:       Zone,
+  onLine?:    (l: string) => void,
   dockerUrl?: string,
+  options?:   { skipProxyReload?: boolean },
 ): Promise<number> {
   // Compose-file resolution, in priority order:
   //   1. Artifact-store copy (%APPDATA%/unenter/stacks/<key>/) — authoritative.
@@ -644,6 +645,26 @@ export async function pullAndUp(
   // Started", so a successful op would otherwise auto-dismiss with "Starting"
   // as its last visible line and look stuck. Emit a clear success marker.
   if (upCode === 0) onLine?.(`✓ deployed — ${(zone as any).domain || zone.label || zone.service} live`);
+  if (upCode !== 0) return upCode;
+
+  // Chain proxy reload so host-based routing always reflects the current
+  // docker-compose.yml.  This is what picks up any newly-added UPSTREAM_<KEY>
+  // env vars after a zone wizard run — without it, a freshly-scaffolded zone
+  // can silently fall through to the default upstream (core's app) and serve
+  // the wrong content for <zone>.unenter.live.
+  //
+  // Batch callers (deployAll) pass { skipProxyReload: true } and do a single
+  // reload at the end to avoid N brief proxy outages.  Treat a proxy-reload
+  // failure as a warning rather than flipping the deploy to failed — the zone
+  // container itself is already up, and the user can retry with [R] on the
+  // zones panel.
+  if (!options?.skipProxyReload) {
+    const proxyCode = await reloadProxy(onLine);
+    if (proxyCode !== 0) {
+      onLine?.(`⚠ proxy reload failed (exit ${proxyCode}) — ${(zone as any).domain || zone.label || zone.service} may still route to the old upstream. Retry with [R] on the zones panel.`);
+    }
+  }
+
   return upCode;
 }
 

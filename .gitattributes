@@ -1,0 +1,2 @@
+# Force LF line endings for .dockerignore to prevent Docker build context bloat
+.dockerignore text eol=lf

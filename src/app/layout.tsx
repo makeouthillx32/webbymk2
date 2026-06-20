@@ -12,6 +12,9 @@ import { cookies, headers } from "next/headers";
 import { Providers } from "./provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
 import ChunkReloader from "@/components/system/ChunkReloader";
+import { ZoneProvider } from "@/components/providers/ZoneProvider";
+import { getZoneContext } from "@/lib/zoneContext";
+import MovedHereToast from "@/components/system/MovedHereToast";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -44,7 +47,11 @@ function isValidLocale(v: string | undefined | null): v is Locale {
 }
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  const [cookieStore, headersList] = await Promise.all([cookies(), headers()]);
+  const [cookieStore, headersList, zoneCtx] = await Promise.all([
+    cookies(),
+    headers(),
+    getZoneContext(),
+  ]);
   const rawLocale =
     headersList.get("X-Next-Locale") ??
     cookieStore.get("Next-Locale")?.value;
@@ -59,7 +66,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body className={titillium.className} suppressHydrationWarning>
         <ChunkReloader />
         <Providers>
-          <ClientLayout locale={locale}>{children}</ClientLayout>
+          <ZoneProvider value={zoneCtx}>
+            <MovedHereToast />
+            <ClientLayout locale={locale}>{children}</ClientLayout>
+          </ZoneProvider>
         </Providers>
       </body>
     </html>

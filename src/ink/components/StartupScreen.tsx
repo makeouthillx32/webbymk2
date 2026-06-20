@@ -83,11 +83,16 @@ interface Props {
   onQuit:   () => void;
   /** Skip animation + picker (CI / no-splash mode). */
   instant?: boolean;
+  /** Active background ops (from useBackgroundOps). Surfaced on the picker so
+   *  agent/IPC activity is visible even before a project is selected — the ops
+   *  UI proper is gated on splashDone, so without this the picker is blind to
+   *  running builds/deploys. See [[Brain/unaxis-ops-stack-lifecycle]]. */
+  bgOps?: { title: string; busy: boolean }[];
 }
 
 // ── Coordinator Component ──────────────────────────────────────────────────────
 
-export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
+export function StartupScreen({ onDone, onQuit, instant = false, bgOps }: Props) {
   const { stdout } = useContext(StdinContext);
   const { columns } = useTerminalSize();
   // ── Coordinator States ─────────────────────────────────────────────────────
@@ -298,7 +303,7 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
           {knownProjects.map((proj, i) => {
             const isCursor = selected === i;
             return (
-              <Box key={proj.slug} gap={1}>
+              <Box key={proj.path || proj.slug} gap={1}>
                 <Text color={isCursor ? ACTIVE : DIM}>{isCursor ? "·" : " "}</Text>
                 <Text bold={isCursor} color={isCursor ? ACTIVE : "white"}>{proj.slug}</Text>
                 {showProjectPaths && (
@@ -319,6 +324,22 @@ export function StartupScreen({ onDone, onQuit, instant = false }: Props) {
           ⊕  Create new project…
         </Text>
       </Box>
+
+      {/* ── Active background ops (agent/IPC activity visible at the picker) ── */}
+      {(() => {
+        const active = (bgOps ?? []).filter((o) => o.busy);
+        if (active.length === 0) return null;
+        return (
+          <Box flexDirection="column" alignItems="center" marginBottom={1}>
+            <Text color={ACTIVE}>
+              ⚡ {active.length} background op{active.length !== 1 ? "s" : ""} running
+            </Text>
+            {active.slice(0, 3).map((o, i) => (
+              <Text key={i} color={SETTLED_GREY}>· {o.title}</Text>
+            ))}
+          </Box>
+        );
+      })()}
 
       {/* ── Key hints ── */}
       <Box gap={3}>

@@ -164,6 +164,42 @@ export function useBackgroundOps({
     [_startOp, refreshZones, finishOp],
   );
 
+  // Visible foreground runner — for IPC/agent ops that must ALSO stream back to
+  // their caller (the IPC socket) while showing in the human's stack.
+  //   - shows in the STACK pane (autoOverlay=false) so it doesn't hijack the
+  //     screen the way a keystroke build's full overlay does;
+  //   - tees every line to BOTH the stack and the external `sink` (socket);
+  //   - awaits and RETURNS the exit code, so foreground IPC commands keep their
+  //     blocking + exit-code semantics.
+  // This closes the gap where `zone <k> deploy` over IPC streamed only to the
+  // socket and never appeared in the TUI (see [[Brain/unaxis-ops-stack-lifecycle]]).
+  const runOpVisible = useCallback(
+    (title: string, op: OpFn, sink?: (l: string) => void): Promise<number> => {
+      const { id, addLine } = _startOp(title, false, false);
+      const tee = (l: string) => { addLine(l); sink?.(l); };
+      return Promise.resolve()
+        .then(() => op(tee))
+        .then(
+          (code) => {
+            addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
+            finishOp(id, code);
+            eventBus.emit("op_completed", { id, title, code });
+            refreshZones();
+            return code;
+          },
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            tee(`✗ ${msg}`);
+            finishOp(id, 1);
+            eventBus.emit("op_failed", { id, title });
+            refreshZones();
+            return 1;
+          },
+        );
+    },
+    [_startOp, refreshZones, finishOp],
+  );
+
   // Queued operation runner
   // Starts immediately when no build/lifecycle op is active; enqueues when
   // busy. Log-tail ops (isLog=true) are excluded from the busy check so
@@ -504,7 +540,7 @@ export function useBackgroundOps({
     stackFocusId,  setStackFocusId,
     anyBusy,
     logProcRef,    logOpIdRef,
-    runOp,         runOpQueued,
+    runOp,         runOpQueued,    runOpVisible,
     runCreateZone,
     openLogs,
     runDevModeOp,

@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 874.6461249999998 774.5" width="874.6461249999998" height="774.5" style="--bg:#1F1F1F;--fg:#CCCCCC;--line:#CCCCCC;--accent:#0078D4;--muted:#CCCCCCCC;--surface:#181818;--border:#CCCCCC;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="Windows_Host_OS_POWER" data-label="Windows Host OS (POWER)">
+  <rect x="126.55349999999997" y="265.20000000000005" width="708.0926249999998" height="469.3" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="126.55349999999997" y="265.20000000000005" width="708.0926249999998" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="138.55349999999999" y="279.20000000000005" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Windows Host OS (POWER)</text>
+<g class="subgraph" data-id="Docker_Desktop_VM" data-label="Docker Desktop VM">
+  <rect x="154.01591666666667" y="468.40000000000003" width="418.8109999999999" height="250.1" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="154.01591666666667" y="468.40000000000003" width="418.8109999999999" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="166.01591666666667" y="482.40000000000003" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Docker Desktop VM</text>
+</g>
+</g>
+<g class="subgraph" data-id="External_Network" data-label="External Network">
+  <rect x="40" y="40" width="205.10699999999994" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="40" y="40" width="205.10699999999994" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="52" y="54" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">External Network</text>
+</g>
+<polyline class="edge" data-from="git" data-to="native_docker" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Docker Context" points="588.8666249999999,80.9 588.8666249999999,173.2 303.77099999999996,173.2 303.77099999999996,247.19999999999996" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="tui" data-to="native_docker" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Spawns Docker commands" points="367.3821249999999,80.9 367.3821249999999,161.2 269.75675,161.2 269.75674999999995,247.19999999999996" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="appdata" data-to="native_docker" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Compose Manifests" points="138.117125,80.9 138.117125,161.2 235.74249999999998,161.2 235.74249999999998,247.19999999999996" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="npm" data-to="zones" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Direct LAN Proxy Route" points="142.55349999999999,120.9 142.55349999999999,426.40000000000003 240.06824999999998,426.40000000000003 240.06824999999998,665.5999999999999" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="native_docker" data-to="zones" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Runs" points="373.63408333333325,549.3000000000001 373.63408333333325,561.3000000000001 310.1205833333333,561.3000000000001 310.1205833333333,665.6" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="native_docker" data-to="builder" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Runs" points="418.9864166666666,549.3000000000001 418.9864166666666,561.3000000000001 482.4999166666666,561.3000000000001 482.4999166666666,665.6" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="git" data-to="native_docker" data-label="Docker Context">
+  <rect x="543.3666249999999" y="123.9" width="90.71200000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="588.7226249999999" y="139.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Docker Context</text>
+</g>
+<g class="edge-label" data-from="tui" data-to="native_docker" data-label="Spawns Docker commands">
+  <rect x="294.88212499999986" y="123.9" width="144.76600000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="367.2651249999999" y="139.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Spawns Docker commands</text>
+</g>
+<g class="edge-label" data-from="appdata" data-to="native_docker" data-label="Compose Manifests">
+  <rect x="83.11712499999999" y="123.9" width="109.12600000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="137.680125" y="139.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Compose Manifests</text>
+</g>
+<g class="edge-label" data-from="npm" data-to="zones" data-label="Direct LAN Proxy Route">
+  <rect x="77.55349999999996" y="185.9" width="129.916" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="142.51149999999996" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Direct LAN Proxy Route</text>
+</g>
+<g class="edge-label" data-from="native_docker" data-to="zones" data-label="Runs">
+  <rect x="288.62058333333334" y="592.3000000000001" width="42.598" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="309.9195833333333" y="607.45" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Runs</text>
+</g>
+<g class="edge-label" data-from="native_docker" data-to="builder" data-label="Runs">
+  <rect x="460.9999166666666" y="592.3000000000001" width="42.598" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="482.29891666666657" y="607.45" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Runs</text>
+</g>
+<g class="node" data-id="tui" data-label="UNAXIS TUI (Bun/Node)" data-shape="rectangle">
+  <rect x="403.67712499999993" y="309.20000000000005" width="180.51699999999997" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="493.9356249999999" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">UNAXIS TUI (Bun/Node)</text>
+</g>
+<g class="node" data-id="git" data-label="Git Repo (NTFS Workspace)" data-shape="rectangle">
+  <rect x="612.1941249999999" y="309.20000000000005" width="206.45199999999994" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="715.4201249999999" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Git Repo (NTFS Workspace)</text>
+</g>
+<g class="node" data-id="appdata" data-label="%APPDATA% (Stacks &amp; Config)" data-shape="rectangle">
+  <rect x="153.664125" y="309.20000000000005" width="222.01299999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="264.670625" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">%APPDATA% (Stacks &amp; Config)</text>
+</g>
+<g class="node" data-id="native_docker" data-label="Docker Daemon" data-shape="rectangle">
+  <rect x="328.28175" y="512.4000000000001" width="136.057" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="396.31025" y="530.8500000000001" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Docker Daemon</text>
+</g>
+<g class="node" data-id="builder" data-label="buildx (unaxis-net)" data-shape="rectangle">
+  <rect x="408.17291666666665" y="665.6" width="148.654" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="482.49991666666665" y="684.0500000000001" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">buildx (unaxis-net)</text>
+</g>
+<g class="node" data-id="zones" data-label="Zone Containers (Port :300x)" data-shape="rectangle">
+  <rect x="170.01591666666667" y="665.6" width="210.15699999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="275.09441666666663" y="684.0500000000001" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Zone Containers (Port :300x)</text>
+</g>
+<g class="node" data-id="npm" data-label="Gateway (L0VE / NPM)" data-shape="rectangle">
+  <rect x="56" y="84" width="173.10699999999994" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="142.55349999999999" y="102.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Gateway (L0VE / NPM)</text>
+</g>
+</svg>

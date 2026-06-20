@@ -127,7 +127,7 @@ export function App() {
     stackFocusId, setStackFocusId,
     anyBusy,
     logProcRef, logOpIdRef,
-    runOp, runOpQueued, runCreateZone, openLogs,
+    runOp, runOpQueued, runOpVisible, runCreateZone, openLogs,
     runDevModeOp, triggerDismissHook, triggerRestartHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
@@ -194,6 +194,7 @@ export function App() {
     proxyStatus,
     refreshEnvs,
     runOpQueued,
+    runOpVisible,
     coreDockerInstance: CORE_DOCKER_INSTANCE,
     addNotification,
   });

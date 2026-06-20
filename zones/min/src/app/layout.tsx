@@ -9,6 +9,8 @@ import { Providers }               from "@/app/provider";
 import ClientLayout                from "@/components/Layouts/ClientLayout";
 import "./globals.css";
 
+export const dynamic = "force-dynamic";
+
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
 export const viewport: Viewport = {

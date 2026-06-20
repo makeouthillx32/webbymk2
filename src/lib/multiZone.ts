@@ -120,6 +120,157 @@ export const ZONES: Record<ZoneName, ZoneConfig> = {
   },
 } as const;
 
+// ── Promotion registry ──────────────────────────────────────────────────────
+// A "Zone Promotion" is an intentional mapping of a Core-domain path to a
+// dedicated zone subdomain (e.g. unenter.live/shop → shop.unenter.live).
+//
+// This registry is the BRAIN of routing. Middleware (the gate) reads it to
+// decide what happens to an old Core path; the 404 (the fallback) reads it to
+// offer useful recovery. It is plain data — no runtime cost, trivially testable.
+//
+// The lifecycle the user described, encoded as `status`:
+//   • Before a zone is live  → status: "first-class"  → Core path stays served.
+//   • Once the zone is live   → status: "redirect"     → Core path 308s to the zone.
+// So "if no zone then /shop is available; if zone then redirect" is just data:
+// flip the status when the subdomain goes live. Nothing else changes.
+
+export type PromotionStatus =
+  | "first-class" // Core keeps serving this path; the zone is an alias, not a move.
+  | "compat"      // Core still serves it, but UI links should point at the zone.
+  | "handoff"     // Core renders <MovedToZone> — a soft, user-acknowledged move.
+  | "redirect"    // Middleware 308-redirects Core → zone host (the section moved).
+  | "deprecated"; // Explicitly legacy: scheduled for removal, no longer first-class.
+
+export interface ZonePromotion {
+  /** Core path prefix being promoted. Matches `path === from` or `path/...`. */
+  from: string;
+  /** Destination zone key (must exist in ZONES, or be a live scaffolded zone). */
+  toZone: ZoneName;
+  /** How the old Core path behaves. See PromotionStatus. */
+  status: PromotionStatus;
+  /**
+   * Where `from` lands on the zone. Defaults to `from` (identity — same path on
+   * the zone host). Override when the zone serves the section at a different
+   * mount point. The shop landing moved to the zone ROOT, so it maps "/shop"→"/".
+   * Any sub-path after `from` is preserved and appended.
+   */
+  toPath?: string;
+}
+
+/**
+ * Live promotions. Shop is our first functional promoted zone — its storefront
+ * paths now live at shop.unenter.live. The landing maps to the zone root; the
+ * other storefront sections keep their path on the zone host.
+ *
+ * NOT promoted here (intentionally first-class / shared): "/u" — the public
+ * profile + the /u/img and /u/doc service-role streaming routes are consumed
+ * server-to-server on Core too, so redirecting them would break image/doc fetch.
+ */
+export const ZONE_PROMOTIONS: ZonePromotion[] = [
+  { from: "/shop",        toZone: "shop", status: "redirect", toPath: "/" },
+  { from: "/products",    toZone: "shop", status: "redirect" },
+  { from: "/collections", toZone: "shop", status: "redirect" },
+  { from: "/checkout",    toZone: "shop", status: "redirect" },
+  { from: "/cart",        toZone: "shop", status: "redirect" },
+];
+
+/** Find the promotion entry that owns this pathname (longest `from` wins). */
+export function getPromotionForPath(pathname: string): ZonePromotion | null {
+  let best: ZonePromotion | null = null;
+  for (const p of ZONE_PROMOTIONS) {
+    if (pathname === p.from || pathname.startsWith(`${p.from}/`)) {
+      if (!best || p.from.length > best.from.length) best = p;
+    }
+  }
+  return best;
+}
+
+/** Join a zone base path with the remainder after the matched `from` prefix. */
+function joinZonePath(base: string, rest: string): string {
+  if (base === "/" || base === "") return rest || "/";
+  return rest ? `${base}${rest}` : base;
+}
+
+/**
+ * Resolve a Core path to its promoted-zone redirect target, or null when no
+ * `redirect` promotion applies. ONLY the caller (middleware) decides host
+ * context — this is a pure path/zone computation.
+ *
+ *   resolvePromotionRedirect("/shop")        → { zone:"shop", path:"/" }
+ *   resolvePromotionRedirect("/shop/sale")   → { zone:"shop", path:"/sale" }
+ *   resolvePromotionRedirect("/products")    → { zone:"shop", path:"/products" }
+ *   resolvePromotionRedirect("/products/42") → { zone:"shop", path:"/products/42" }
+ *   resolvePromotionRedirect("/about")       → null
+ */
+export function resolvePromotionRedirect(
+  pathname: string,
+): { zone: ZoneName; path: string } | null {
+  const p = getPromotionForPath(pathname);
+  if (!p || p.status !== "redirect") return null;
+  const rest = pathname.slice(p.from.length); // "" or "/sub/path"
+  const base = p.toPath ?? p.from;
+  return { zone: p.toZone, path: joinZonePath(base, rest) };
+}
+
+// ── Zone request context ──────────────────────────────────────────────────────
+// A single typed contract that middleware computes once and server/client code
+// reads back, instead of every layer recomputing zone facts from the host.
+
+export interface ZoneRequestContext {
+  /** Resolved zone key for this request. */
+  zone: string;
+  /** Normalized request host (no port). */
+  host: string;
+  /** Canonical host this request should be served from. */
+  canonicalHost: string;
+  /** True when the request is on the Core domain (www/apex), not a zone subdomain. */
+  isCoreHost: boolean;
+  /** True for localhost / dev.* hosts (path-based zone detection). */
+  isLocal: boolean;
+  /** If the current path is a promoted Core path, its promotion status. */
+  promotionStatus?: PromotionStatus;
+  /** If promoted, the destination zone key. */
+  promotedToZone?: ZoneName;
+}
+
+/**
+ * Build the zone request context from primitive request facts. Pure — safe to
+ * call from middleware (Edge) and to mirror into headers for downstream readers.
+ */
+export function buildZoneContext(args: {
+  host: string | null | undefined;
+  pathname: string;
+  isLocal: boolean;
+}): ZoneRequestContext {
+  const host          = normalizeHost(args.host);
+  const canonicalHost = getCanonicalHost(host);
+  const zone          = args.isLocal
+    ? getZoneFromPathname(args.pathname)
+    : getZoneFromHost(host);
+  const isCoreHost =
+    host === CORE_DOMAIN ||
+    host === `www.${CORE_DOMAIN}` ||
+    (args.isLocal && getZoneFromPathname(args.pathname) === "unenter") ||
+    zone === "unenter";
+
+  const promo = getPromotionForPath(args.pathname);
+  return {
+    zone,
+    host,
+    canonicalHost,
+    isCoreHost,
+    isLocal: args.isLocal,
+    promotionStatus: promo?.status,
+    promotedToZone:  promo?.toZone,
+  };
+}
+
+// ── Promotion context headers ──────────────────────────────────────────────
+// Middleware sets these so server components / the 404 can read the same facts.
+export const CORE_HOST_HEADER       = "x-unenter-core-host"   as const; // "1" | "0"
+export const PROMOTION_STATUS_HEADER = "x-unenter-promotion"  as const; // PromotionStatus
+export const PROMOTION_ZONE_HEADER   = "x-unenter-promoted-to" as const; // ZoneName
+
 // ── Host / zone resolution ────────────────────────────────────────────────────
 
 function stripPort(host: string): string {

@@ -28,7 +28,7 @@ import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
-import { composeRun, pullAndUp }             from "./docker.ts";
+import { composeRun, pullAndUp, reloadProxy } from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
 import { getCredential }                     from "../utils/secureStorage/index.js";
 import { log }                               from "./logger.ts";
@@ -317,10 +317,18 @@ async function spawnDocker(
 
 // ── Versioned image tag helpers ───────────────────────────────────────────────
 //
-// Every successful push produces three tags:
-//   :latest          — always the most recent build (mutable)
-//   :YYYY-MM-DD-HHmm — date+time snapshot (immutable, good for rollback)
-//   :v{semver}       — UNAXIS version at build time (immutable)
+// Every successful push produces these tags:
+//   :latest            — always the most recent build (mutable pointer)
+//   :YYYY-MM-DD-HHmm   — date+time snapshot (immutable, rollback target)
+//   :g<sha>[-dirty]    — SOURCE identity (git commit; -dirty = built from an
+//                        uncommitted working tree, so it matches NO commit)
+//
+// The UNAXIS build-tool version is deliberately NOT a tag — it lives as an OCI
+// image LABEL (live.unenter.unaxis-version), decoupled from app/zone content.
+// Tagging images `v{UNAXIS_VERSION}` was misleading: it looked like an app
+// semver, was identical across unrelated images, and moved on CLI releases
+// while staying put when zone code changed. The image DIGEST remains the
+// source of truth for current-vs-behind; the git tag makes it human-readable.
 //
 // The base image path is derived from zone.image by stripping the tag.
 // e.g.  ghcr.io/makeouthillx32/unenter-rappers:latest
@@ -342,23 +350,39 @@ function deploymentDateTag(): string {
   );
 }
 
-function unaxisVersionTag(): string {
-  const definedVersion =
-    typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION.trim() : "";
-  if (definedVersion && definedVersion !== "dev") {
-    return `v${definedVersion}`;
-  }
-
+/** The UNAXIS build-tool version (bare, no "v"). Stored as an image LABEL — it
+ *  identifies which CLI built the image, NOT the app/zone content version. */
+function resolveUnaxisVersion(): string {
+  const defined = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION.trim() : "";
+  if (defined && defined !== "dev") return defined;
   try {
     const pkgUrl = new URL("./package.json", import.meta.url);
     const pkg = JSON.parse(readFileSync(pkgUrl, "utf-8")) as { version?: string };
-    if (typeof pkg.version === "string" && pkg.version) {
-      if (pkg.version !== "dev") {
-        return `v${pkg.version}`;
-      }
-    }
+    if (typeof pkg.version === "string" && pkg.version && pkg.version !== "dev") return pkg.version;
   } catch {}
-  return "";
+  return "dev";
+}
+
+interface GitProvenance { shortSha: string; fullSha: string; dirty: boolean; }
+
+/** Source provenance of the build context — best-effort; degrades to "nogit". */
+function gitProvenance(): GitProvenance {
+  const run = (args: string[]): string => {
+    try {
+      const r = spawnSync("git", args, { cwd: PROJECT_DIR, encoding: "utf-8" });
+      return r.status === 0 ? (r.stdout ?? "").trim() : "";
+    } catch { return ""; }
+  };
+  const fullSha  = run(["rev-parse", "HEAD"]);
+  const shortSha = run(["rev-parse", "--short=8", "HEAD"]) || (fullSha ? fullSha.slice(0, 8) : "nogit");
+  // Non-empty porcelain = uncommitted changes → the image matches no commit.
+  const dirty = run(["status", "--porcelain"]).length > 0;
+  return { shortSha: shortSha || "nogit", fullSha, dirty };
+}
+
+/** Content/source identity tag: `g<sha>[-dirty]` — the meaningful "version". */
+function gitContentTag(prov: GitProvenance): string {
+  return `g${prov.shortSha}${prov.dirty ? "-dirty" : ""}`;
 }
 
 async function tagAndPush(
@@ -412,6 +436,16 @@ export async function buildZone(
     const buildArgs = loadBuildArgs(zone);
     const dockerEnvBuild = { DOCKER_CONFIG: dockerCfg.tmpDir };
 
+    // Provenance for tags + OCI labels. The git content tag identifies the
+    // SOURCE; the UNAXIS version becomes a label (build tool, not app version).
+    // buildId is unique per build (ms) AND carries provenance — it doubles as
+    // the SOURCE_REF cache-bust so the source layer always recompiles fresh.
+    const prov       = gitProvenance();
+    const unaxisVer  = resolveUnaxisVersion();
+    const createdIso = new Date().toISOString();
+    const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
+    if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
+
     // The default BuildKit builder can't attach RUN steps to a custom Docker
     // network, so Next.js SSG (`bun run build`) can't reach the internal
     // Supabase host (kong:8000) and hangs at "Generating static pages (0/92)"
@@ -442,6 +476,22 @@ export async function buildZone(
       "--load",
       "--progress=plain",
       "--build-arg", "BUILDKIT_INLINE_CACHE=1",
+      // Per-build cache-bust for the source/build layer. The Dockerfiles declare
+      // `ARG SOURCE_REF` right before `bun run build` and echo it, so a unique
+      // value here forces that RUN to re-execute against the freshly COPYed
+      // source every build — killing the stale-layer class of bugs WITHOUT the
+      // cost of a full `--no-cache` (the deps stage stays cached). Zones whose
+      // Dockerfiles don't declare the ARG yet just emit a harmless warning.
+      "--build-arg", `SOURCE_REF=${buildId}`,
+      // OCI labels — provenance lives in metadata, queryable via `docker
+      // inspect`, never confused with the image tag. This is where the UNAXIS
+      // build-tool version belongs (decoupled from app/zone content).
+      "--label", `org.opencontainers.image.revision=${prov.fullSha}`,
+      "--label", `org.opencontainers.image.created=${createdIso}`,
+      "--label", `live.unenter.unaxis-version=${unaxisVer}`,
+      "--label", `live.unenter.zone=${zone.key}`,
+      "--label", `live.unenter.source-dirty=${prov.dirty}`,
+      "--label", `live.unenter.build-id=${buildId}`,
       // --no-cache: bypass ALL layer caching.  Necessary when the Dockerfile
       // overlays files (zones/{key}/src/app/ → src/app/) whose inputs sometimes
       // hash-collide with prior builds of the same zone, reusing a stale
@@ -485,11 +535,11 @@ export async function buildZone(
     // always possible.  Failures here are logged but don't fail the build.
     logPush(`--- versioned tags ---`);
     const dateTag    = deploymentDateTag();
-    const versionTag = unaxisVersionTag();
-    await tagAndPush(zone.image, dateTag, logPush, dockerEnv);
-    if (versionTag) await tagAndPush(zone.image, versionTag, logPush, dockerEnv);
-    log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, versionTag: versionTag ?? null });
-    logPush(`OK: versioned tags pushed`);
+    const contentTag = gitContentTag(prov);   // g<sha>[-dirty] — source identity
+    await tagAndPush(zone.image, dateTag,    logPush, dockerEnv);
+    await tagAndPush(zone.image, contentTag, logPush, dockerEnv);
+    log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, contentTag, unaxisVersion: unaxisVer, dirty: prov.dirty });
+    logPush(`OK: versioned tags pushed — ${contentTag}${prov.dirty ? " (DIRTY working tree — matches no commit)" : ""}`);
 
     return 0;
 
@@ -522,16 +572,22 @@ export async function buildAndDeploy(
 /**
  * Pull the latest image from GHCR and restart the zone's container.
  * Equivalent to: docker compose pull <service> && docker compose up -d <service>
+ *
+ * pullAndUp now chains a proxy reload at the end so host-based routing is
+ * always in sync with the current compose file.  Batch callers (deployAll)
+ * pass { skipProxyReload: true } and reload the proxy once at the end of
+ * the batch to avoid recreating the proxy container N times.
  */
 export async function deployZone(
-  zone:   Zone,
-  onLine: (l: string) => void,
+  zone:    Zone,
+  onLine:  (l: string) => void,
+  options?: { skipProxyReload?: boolean },
 ): Promise<number> {
   const t0 = Date.now();
   log.info("deploy", "started", { zone: zone.key, image: zone.image });
   const logDeploy = (l: string) => { onLine(l); log.docker(zone.key, "deploy", l); };
   logDeploy(`--- deploy: ${zone.label} ---`);
-  const code = await pullAndUp(zone, logDeploy);
+  const code = await pullAndUp(zone, logDeploy, undefined, options);
   if (code !== 0) {
     log.error("deploy", "failed", { zone: zone.key, exit: code, ms: Date.now() - t0 });
   } else {
@@ -588,12 +644,22 @@ export async function deployAll(
 ): Promise<number> {
   onLine(`=== Deploy all (${zones.length} zone${zones.length !== 1 ? "s" : ""}) ===`);
 
+  // Skip per-zone proxy reloads — we'll do a single reload at the end so the
+  // proxy isn't torn down and recreated N times during a bulk deploy.
   for (const zone of zones) {
-    const code = await deployZone(zone, onLine);
+    const code = await deployZone(zone, onLine, { skipProxyReload: true });
     if (code !== 0) {
       onLine(`✗ Deploy failed for ${zone.label} (exit ${code}) — continuing`);
     }
     onLine("");
+  }
+
+  // Single proxy reload for the whole batch — picks up any env / upstream
+  // changes and guarantees routing is in sync with the current compose file.
+  onLine(`--- reload proxy (batch) ---`);
+  const proxyCode = await reloadProxy(onLine);
+  if (proxyCode !== 0) {
+    onLine(`⚠ proxy reload failed (exit ${proxyCode}) — retry with [R] on the zones panel.`);
   }
 
   onLine(`=== All zones restarted ===`);

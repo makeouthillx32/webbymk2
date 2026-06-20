@@ -19,9 +19,15 @@ import {
   getZoneFromPathname,
   isLocalDevelopmentHost,
   normalizeHost,
+  resolvePromotionRedirect,
+  buildZoneContext,
+  getZoneBaseUrl,
   CORE_DOMAIN,
   ZONE_HEADER,
   SITE_HOST_HEADER,
+  CORE_HOST_HEADER,
+  PROMOTION_STATUS_HEADER,
+  PROMOTION_ZONE_HEADER,
 } from "@/lib/multiZone";
 import { isProtectedRoute } from "@/lib/protectedRoutes";
 
@@ -71,22 +77,76 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 301);
   }
 
+  // Resolve locale before zone ownership and promotion. Otherwise a localized
+  // Core path such as /de/shop would be rewritten only after the promotion
+  // registry had already been skipped.
+  const locale = getLocaleFromPathname(url.pathname);
+  const effectivePathname = locale
+    ? stripLocaleFromPathname(url.pathname, locale)
+    : url.pathname;
+
   // ── 2. Determine zone ─────────────────────────────────────────────────────
   // In production, zone comes from the Host header (subdomain routing).
   // In local dev the monolith serves all zones, so fall back to path-based detection.
   // getZoneFromHost returns the subdomain key for dynamic zones not in ZONES.
   const zoneFromHost: string = isLocal
-    ? getZoneFromPathname(url.pathname)
+    ? getZoneFromPathname(effectivePathname)
     : getZoneFromHost(normalizedHost);
 
-  // ── 3. Locale stripping ───────────────────────────────────────────────────
-  const locale = getLocaleFromPathname(url.pathname);
+  // ── 2b. Zone Promotion redirect (Core path → promoted zone subdomain) ─────
+  // Only fires on the CORE host in production. A promoted Core path like /shop
+  // redirects to its zone (shop.unenter.live), preserving the deep path and
+  // query string. On the zone's OWN host that same path is the destination and
+  // must not redirect; in local dev the monolith serves every zone path-based,
+  // so we never cross-redirect there either. The redirect decision lives in the
+  // promotion registry (status: "redirect") — flip a zone to "first-class" there
+  // and its Core path is served normally again, no middleware change needed.
+  const onCoreHost = zoneFromHost === "unenter";
+  if (!isLocal && onCoreHost) {
+    const promo = resolvePromotionRedirect(effectivePathname);
+    if (promo) {
+      const target = new URL(`${getZoneBaseUrl(promo.zone)}${promo.path}`);
+      target.search = url.search; // preserve query string across the move
+      // Cross-zone signal: tell the destination zone which Core path moved, so
+      // it can show a "this section moved here — you've been redirected" toast.
+      // A query param (not a cookie) carries the signal across the subdomain
+      // boundary: it's scoped to THIS navigation, self-clears, and adds no
+      // cookie weight. The destination strips it after showing the toast.
+      target.searchParams.set("_moved", effectivePathname);
+      // 307 (temporary) during rollout — NOT cached by browsers, so a mistaken
+      // promotion can be undone instantly. Flip to 308 (permanent, SEO-positive
+      // but aggressively cached) once the redirect is confirmed correct in prod.
+      const redirectResponse = NextResponse.redirect(target, 307);
+      if (locale) {
+        redirectResponse.cookies.set(LOCALE_COOKIE, locale, {
+          path:     "/",
+          maxAge:   7 * 24 * 60 * 60,
+          sameSite: "lax",
+          secure:   true,
+        });
+      }
+      return redirectResponse;
+    }
+  }
 
+  // ── 3. Locale stripping ───────────────────────────────────────────────────
   // ── 4. Build mutated request headers ─────────────────────────────────────
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(ZONE_HEADER,      zoneFromHost);
   requestHeaders.set(SITE_HOST_HEADER, canonicalHost);
   if (locale) requestHeaders.set(LOCALE_HEADER, locale);
+
+  // Richer zone-request context for server components + the zone-aware 404.
+  // One typed contract computed once here; downstream reads it instead of
+  // recomputing zone facts from the host.
+  const zoneCtx = buildZoneContext({
+    host:     normalizedHost,
+    pathname: effectivePathname,
+    isLocal,
+  });
+  requestHeaders.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
+  if (zoneCtx.promotionStatus) requestHeaders.set(PROMOTION_STATUS_HEADER, zoneCtx.promotionStatus);
+  if (zoneCtx.promotedToZone)  requestHeaders.set(PROMOTION_ZONE_HEADER,  zoneCtx.promotedToZone);
 
   const requestInit = { headers: requestHeaders };
 
@@ -142,7 +202,7 @@ export async function middleware(request: NextRequest) {
       url.pathname === "/" ? zonePrimaryPrefix : `${zonePrimaryPrefix}${url.pathname}`;
   } else if (locale) {
     rewriteTarget = url.clone();
-    rewriteTarget.pathname = stripLocaleFromPathname(url.pathname, locale) || "/";
+    rewriteTarget.pathname = effectivePathname || "/";
   }
 
   // Zone-prefix injection uses a REDIRECT (not a rewrite) so the browser URL
@@ -158,6 +218,7 @@ export async function middleware(request: NextRequest) {
   // Propagate zone headers to the response (readable by client via fetch)
   response.headers.set(ZONE_HEADER,      zoneFromHost);
   response.headers.set(SITE_HOST_HEADER, canonicalHost);
+  response.headers.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
 
   // ── 6. Set locale cookie if missing / stale ───────────────────────────────
   if (locale) {
@@ -197,6 +258,7 @@ export async function middleware(request: NextRequest) {
           // Carry over our zone headers
           refreshed.headers.set(ZONE_HEADER,      zoneFromHost);
           refreshed.headers.set(SITE_HOST_HEADER, canonicalHost);
+          refreshed.headers.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
           supabaseResponse.current = refreshed;
         },
       },

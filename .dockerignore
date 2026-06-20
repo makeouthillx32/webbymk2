@@ -54,3 +54,37 @@ vault
 __pycache__
 .turbo
 .vercel
+
+# ── Non-app repo cruft — host-only tooling, vendored clones, dumps, scratch ──
+# The core image only needs src/, public/, zones/ overlays, i18n/, and config
+# files. Everything below is host-side and just bloats the build context (the
+# vendored Supabase monorepo clone alone is hundreds of MB) and slows every
+# build. The TUI references supabase-core/ etc. by path on the HOST, not from
+# inside the container, so excluding them here is safe for the app build.
+supabase-core
+supabase-instances
+github.com
+proxy
+proxy-config
+scratch
+sandbox
+state
+docs
+
+# Archives, host logs, PowerShell scripts, scratch files (*.dump already above)
+*.bak
+*.zip
+*.ps
+*.ps1
+*.log
+errors.txt
+snapshopts.txt
+
+# Editor / skill / scratch artifacts
+*.skill
+*.canvas
+*.base
+Untitled.*
+
+# Secrets — never bake into an image
+claude_desktop_config.json

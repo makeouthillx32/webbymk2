@@ -125,7 +125,10 @@ export async function createZonePipeline(
     await rollbackZone(zone, onLine);
     return 1;
   }
-  const deployCode = await pullAndUp(zone, onLine, dockerUrl);
+  // Skip the proxy reload that pullAndUp normally chains — this pipeline
+  // does its own proxy reload at step 6, AFTER NPM registration writes the
+  // route into routes.json, so the proxy picks up zone + route in one go.
+  const deployCode = await pullAndUp(zone, onLine, dockerUrl, { skipProxyReload: true });
   if (deployCode !== 0) {
     onLine(`✗ Deploy failed (exit ${deployCode})`);
     await rollbackZone(zone, onLine);

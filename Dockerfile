@@ -32,7 +32,13 @@ ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN bun run build
+# Cache-bust the source build layer. BuildKit can otherwise reuse a stale
+# `next build` layer (the zone-overlay hash-collision documented in
+# zone-build.ts), shipping PREVIOUS source. A per-build SOURCE_REF forces this
+# RUN to re-execute against the freshly COPYed source every build — while the
+# `deps` stage above stays cached, so it's far faster than a full --no-cache.
+ARG SOURCE_REF=dev
+RUN echo "unaxis source-ref: ${SOURCE_REF}" && bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
 FROM oven/bun:1.2-slim AS runner

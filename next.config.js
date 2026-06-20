@@ -54,15 +54,19 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
-  // ── Build-worker cap ───────────────────────────────────────────────────────
-  // The build host has 32 cores, so Next.js spawns ~32 static-generation worker
-  // processes — each FORKED from the multi-GB build process. Under the Docker
-  // VM's memory-overcommit limits, fork() then reserves ~32 × (parent size) and
-  // fails with ENOMEM ("cannot allocate memory") the instant SSG starts — the
-  // builder dies at "Generating static pages (0/N)". Capping the worker count
-  // keeps total fork reservation well within the VM's bounds. Diagnosed via
-  // `unaxis build-mem` (builder died at ~4 GB, not the 31 GB cap → fork failure,
-  // not exhaustion).
+  // ── Build-worker count ───────────────────────────────────────────────────
+  // The build VM has 32 cores + ~31 GB, BUT it concurrently runs ~25 containers
+  // (core Supabase + ~14 zone apps + runtime DB instances). With memory
+  // overcommit OFF, each SSG worker fork() RESERVES the full multi-GB parent
+  // size, so the usable worker count is bounded by *free* RAM, not core count.
+  // On a loaded box, 8 workers reserve more than the free headroom → fork fails
+  // the instant SSG starts → buildkit drops the stream (Unavailable/EOF), the
+  // "Generating static pages (0/N)" hang. 2 is the proven safe value here.
+  //
+  // To actually USE the 32 cores: enable overcommit in the Docker VM
+  // (vm.overcommit_memory=1) so forks are copy-on-write-cheap and decouple from
+  // resident memory — then this can rise to 16-32 regardless of what else runs.
+  // That's the real fix; this cap is the "works today on a packed box" setting.
   experimental: {
     cpus: 2,
   },

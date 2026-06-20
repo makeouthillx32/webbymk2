@@ -93,6 +93,10 @@ type UseIpcBridgeParams = {
   proxyStatus: string;
   refreshEnvs: () => void | Promise<void>;
   runOpQueued: RunOpQueued;
+  /** Foreground-visible runner: shows the op in the TUI stack AND tees output
+   *  to the socket sink, returning the exit code. Used so IPC build/deploy
+   *  ops appear in the human's stack instead of streaming only to the caller. */
+  runOpVisible: (title: string, op: (onLine: (l: string) => void) => Promise<number>, sink?: (l: string) => void) => Promise<number>;
   coreDockerInstance: RuntimeInstance;
   addNotification: (message: string, type?: NotificationType, opts?: NotificationOptions) => void;
 };
@@ -103,6 +107,7 @@ export function useIpcBridge({
   proxyStatus,
   refreshEnvs,
   runOpQueued,
+  runOpVisible,
   coreDockerInstance,
   addNotification,
 }: UseIpcBridgeParams) {  const ipcStateRef = useRef({
@@ -2444,8 +2449,9 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             else onLine(`⚡ ${verb} ${zone.label} queued — watch: unaxis stacks`);
             return 3;
           }
-          onLine(`${verb}  ${zone.label}…`);
-          return buildAndDeploy(zone, onLine, { noCache });
+          // Foreground build still blocks + returns the exit code to the IPC
+          // caller, but now ALSO appears in the human's stack (tees to both).
+          return runOpVisible(`${verb}  ${zone.label}`, (l) => buildAndDeploy(zone, l, { noCache }), onLine);
         }
 
         if (action === "deploy") {
@@ -2455,8 +2461,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             else onLine(`⚡ Deploy ${zone.label} queued — watch: unaxis stacks`);
             return 3;
           }
-          onLine(`Deploy  ${zone.label}…`);
-          return deployZone(zone, onLine);
+          return runOpVisible(`Deploy  ${zone.label}`, (l) => deployZone(zone, l), onLine);
         }
 
         if (action === "pull") {
@@ -2466,8 +2471,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             else onLine(`⚡ Pull ${zone.label} queued — watch: unaxis stacks`);
             return 3;
           }
-          onLine(`Pull + up  ${zone.label}…`);
-          return pullAndUp(zone, onLine);
+          return runOpVisible(`Pull + up  ${zone.label}`, (l) => pullAndUp(zone, l), onLine);
         }
 
         if (action === "delete") {

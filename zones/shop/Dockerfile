@@ -78,7 +78,11 @@ ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
-RUN bun run build
+# Cache-bust the source build layer (see core Dockerfile). A per-build
+# SOURCE_REF forces `next build` to re-run against the freshly COPYed overlay
+# instead of reusing a stale cross-zone layer; the deps stage stays cached.
+ARG SOURCE_REF=dev
+RUN echo "unaxis source-ref: ${SOURCE_REF}" && bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
 FROM oven/bun:1.2-slim AS runner

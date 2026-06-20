@@ -55,7 +55,7 @@ function isProjectRoot(path: string): boolean {
 
 // ── Fast-path flags ───────────────────────────────────────────────────────────
 
-if (args.includes('--version') || args.includes('-v')) {
+if (args.includes('--version') || args.includes('-version') || args.includes('-v')) {
   process.stdout.write(UNAXIS_VERSION + '\n')
   process.exit(0)
 }
@@ -73,7 +73,7 @@ if (args.includes('--help') || args.includes('-h')) {
     '\n' +
     '  Usage:\n' +
     '    unaxis                                       launch the TUI\n' +
-    '    unaxis --version                             print version\n' +
+    '    unaxis -version | --version | -v             print version\n' +
     '    unaxis --help                                show this message\n' +
     '\n' +
     '  Project commands  (requires TUI to be running):\n' +
@@ -137,6 +137,7 @@ if (args.includes('--help') || args.includes('-h')) {
     '                                                   (generate key: press K in picker)\n' +
     '    unaxis disconnect                            remove remote session\n' +
     '    unaxis version                               print installed version\n' +
+    '    unaxis update                                update global CLI installation\n' +
     '    unaxis events --watch                        stream TUI event bus\n' +
     '\n' +
     '  Config:\n' +
@@ -583,6 +584,24 @@ if (args[0] === 'events') {
   process.exit(await sendIpcCommand(args))
 }
 
+// ── update subcommand ─────────────────────────────────────────────────────────
+
+if (args[0] === 'update') {
+  const { spawnSync } = await import('child_process')
+  process.stdout.write('  Updating global UNAXIS CLI via npm...\n')
+  const result = spawnSync('npm', ['install', '-g', '@untsystems/unaxis@latest'], {
+    stdio: 'inherit',
+    shell: true,
+  })
+  if (result.status === 0) {
+    process.stdout.write('  ✓ Global UNAXIS CLI updated successfully!\n')
+  } else {
+    process.stderr.write('  ✗ Global UNAXIS CLI update failed.\n')
+    process.exit(result.status ?? 1)
+  }
+  process.exit(0)
+}
+
 // ── <slug> <command…> — project-scoped IPC routing ───────────────────────────
 // All TUI commands are namespaced under the project slug:
 //   unaxis unenter status
@@ -594,7 +613,7 @@ if (args[0] === 'events') {
 
 const GLOBAL_SUBCOMMANDS = new Set([
   'project', 'connect', 'disconnect', 'events', 'config', 'credentials', 'creds', 'version',
-  'snapshot-view', 'snap-view',
+  'snapshot-view', 'snap-view', 'update',
 ])
 
 if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMANDS.has(args[0])) {

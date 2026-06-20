@@ -19,7 +19,8 @@ import {
   ERASE_SCREEN,
 } from './termio/csi.js';
 import { LogUpdate } from './log-update.js';
-import { emptyFrame, type FrameEvent } from './frame.js';
+import { emptyFrame, type FrameEvent, type Diff } from './frame.js';
+import { optimize } from './optimizer.js';
 import {
   captureScrolledRows,
   clearSelection,
@@ -82,6 +83,7 @@ export default class Ink {
   private currentNode: ReactNode = null;
   private isUnmounted = false;
   private frontFrame: any = null;
+  private backFrame: any = null;
   isAltScreenActive = false;
   private isMouseTrackingActive = false;
   private selectionSubscribers = new Set<() => void>();
@@ -123,6 +125,21 @@ export default class Ink {
     });
     this.terminalColumns = options.stdout.columns || 80;
     this.terminalRows = options.stdout.rows || 24;
+
+    this.frontFrame = emptyFrame(
+      this.terminalRows,
+      this.terminalColumns,
+      this.stylePool,
+      this.charPool,
+      this.hyperlinkPool,
+    );
+    this.backFrame = emptyFrame(
+      this.terminalRows,
+      this.terminalColumns,
+      this.stylePool,
+      this.charPool,
+      this.hyperlinkPool,
+    );
 
     this.logUpdate = new LogUpdate({
       isTTY: true, // Force to true to fix Windows PowerShell false negatives
@@ -585,20 +602,42 @@ export default class Ink {
     this.lastRenderTime = now;
 
     const frameStartedAt = now;
-    const prevFrame = this.frontFrame || emptyFrame(this.terminalRows, this.terminalColumns, this.stylePool, this.charPool, this.hyperlinkPool);
+    const prevFrame = this.frontFrame;
 
-    const frame = this.renderer({
-      frontFrame: prevFrame,
-      backFrame: { screen: createScreen(this.terminalColumns, this.terminalRows, this.stylePool, this.charPool, this.hyperlinkPool) } as any,
-      isTTY: true,
-      terminalWidth: this.terminalColumns,
-      terminalRows: this.terminalRows,
-      altScreen: this.isAltScreenActive,
-      prevFrameContaminated:
-        (this.isAltScreenActive && !this.hasRenderedFullFrame) ||
-        this.previousFrameHadOverlay ||
-        this.lastFrameHadLayoutShift,
-    });
+    // Contamination is computed from the PREVIOUS frame's shift result, so the
+    // baseline below does not yet know whether THIS frame shifts.
+    const contaminatedBaseline =
+      (this.isAltScreenActive && !this.hasRenderedFullFrame) ||
+      this.previousFrameHadOverlay ||
+      this.lastFrameHadLayoutShift;
+
+    const renderFrame = (contaminated: boolean) =>
+      this.renderer({
+        frontFrame: prevFrame,
+        backFrame: this.backFrame,
+        isTTY: true,
+        terminalWidth: this.terminalColumns,
+        terminalRows: this.terminalRows,
+        altScreen: this.isAltScreenActive,
+        prevFrameContaminated: contaminated,
+      });
+
+    let frame = renderFrame(contaminatedBaseline);
+
+    // ── Same-frame layout-shift correction ──────────────────────────────────
+    // The contamination flag is one frame late: a frame in which the layout
+    // shifts THIS tick (e.g. a metric string grows a digit and nudges centered
+    // titles / wrapped rows) was just built by blitting the shifted regions
+    // from a STALE prev-screen, so those cells can come out blank. Previously
+    // the corruption showed for one frame and only the NEXT tick — which finally
+    // sees lastFrameHadLayoutShift=true — repaired it: the visible "flash".
+    // If a shift is detected now and we did not already force a clean baseline,
+    // rebuild this frame ONCE with contamination on (full rewrite of the moved
+    // rows) so it is correct immediately. One extra render pass, only on the
+    // rare frames where layout actually moves; nothing is hidden.
+    if (this.isAltScreenActive && !contaminatedBaseline && didLayoutShift()) {
+      frame = renderFrame(true);
+    }
 
     const selectionOverlayApplied = hasSelection(this.selection);
     if (selectionOverlayApplied) {
@@ -628,39 +667,40 @@ export default class Ink {
     // engine knows not to blit from a potentially stale base.
     this.lastFrameHadLayoutShift = didLayoutShift();
 
-    this.frontFrame = frame;
+
+
+    let diff: Diff;
 
     if (this.isAltScreenActive && !this.hasRenderedFullFrame) {
       // Full frame render ONLY for the first frame to fill conhost buffers with spaces.
       // This prevents the diff engine from seeing garbage in unwritten cells on first paint.
       this.hasRenderedFullFrame = true;
-      const fullFrameDiff = this.logUpdate.renderFullFrame(frame);
-      this.options.stdout.write(CURSOR_HOME);
-      writeDiffToTerminal(
-        { stdout: this.options.stdout, stderr: this.options.stderr },
-        fullFrameDiff,
-        !SYNC_OUTPUT_SUPPORTED,
-      );
+      diff = this.logUpdate.renderFullFrame(frame);
+      diff.unshift({ type: 'stdout', content: CURSOR_HOME });
     } else {
-      // For alt-screen, VirtualScreen always starts at {x:0,y:0} and uses
-      // purely RELATIVE cursor moves. After renderFullFrame (or any prior
-      // diff render) the actual terminal cursor is not at (0,0).
-      // Reset it here so every diff render's relative moves land correctly.
-      if (this.isAltScreenActive) {
-        this.options.stdout.write(CURSOR_HOME);
-      }
-      const diff = this.logUpdate.render(
+
+      diff = this.logUpdate.render(
         prevFrame,
         frame,
         this.isAltScreenActive,
         SYNC_OUTPUT_SUPPORTED,
       );
-      writeDiffToTerminal(
-        { stdout: this.options.stdout, stderr: this.options.stderr },
-        diff,
-        !SYNC_OUTPUT_SUPPORTED,
-      );
+      if (this.isAltScreenActive && diff.length > 0) {
+        diff.unshift({ type: 'stdout', content: CURSOR_HOME });
+      }
     }
+
+    // Swap buffers
+    this.backFrame = this.frontFrame;
+    this.frontFrame = frame;
+
+    const optimized = optimize(diff);
+
+    writeDiffToTerminal(
+      { stdout: this.options.stdout, stderr: this.options.stderr },
+      optimized,
+      !SYNC_OUTPUT_SUPPORTED,
+    );
 
     this.options.onFrame?.({
       durationMs: performance.now() - frameStartedAt,

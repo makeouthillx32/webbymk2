@@ -33,12 +33,36 @@ const KEY = 'known_projects'
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Canonical comparison key for a project path. On Windows the drive letter
+ * case is non-deterministic across runs (`Z:\…` vs `z:\…`), and slashes can
+ * vary — so two entries for the SAME directory could compare unequal and get
+ * registered twice (producing duplicate slugs → React duplicate-key warnings
+ * that smear the alt-screen). Normalize via resolve() + lowercase on win32.
+ */
+function pathKey(p: string): string {
+  const abs = resolve(p)
+  return process.platform === 'win32' ? abs.toLowerCase() : abs
+}
+
 async function load(): Promise<KnownProject[]> {
   const raw = await getSetting(KEY)
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as KnownProject[]) : []
+    if (!Array.isArray(parsed)) return []
+    // Collapse any pre-existing duplicates (same directory stored under a
+    // different drive-letter case / slash style). Keeps the first occurrence.
+    const seen = new Set<string>()
+    const deduped: KnownProject[] = []
+    for (const p of parsed as KnownProject[]) {
+      if (!p?.path) continue
+      const key = pathKey(p.path)
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(p)
+    }
+    return deduped
   } catch {
     return []
   }
@@ -71,8 +95,9 @@ export async function getKnownProjects(): Promise<KnownProject[]> {
  */
 export async function addKnownProject(projectPath: string): Promise<KnownProject> {
   const abs  = resolve(projectPath)
+  const key  = pathKey(abs)
   const list = await load()
-  const existing = list.find((p) => p.path === abs)
+  const existing = list.find((p) => pathKey(p.path) === key)
   if (existing) return existing
 
   const entry: KnownProject = {
@@ -90,8 +115,9 @@ export async function addKnownProject(projectPath: string): Promise<KnownProject
  */
 export async function removeKnownProject(slugOrPath: string): Promise<boolean> {
   const abs  = resolve(slugOrPath)
+  const key  = pathKey(abs)
   const list = await load()
-  const next = list.filter((p) => p.slug !== slugOrPath && p.path !== abs)
+  const next = list.filter((p) => p.slug !== slugOrPath && pathKey(p.path) !== key)
   if (next.length === list.length) return false
   await save(next)
   return true
@@ -108,16 +134,17 @@ export async function removeKnownProject(slugOrPath: string): Promise<boolean> {
  */
 export async function ensureCurrentProjectRegistered(projectPath: string): Promise<void> {
   const abs  = resolve(projectPath)
+  const key  = pathKey(abs)
   const list = await load()
 
-  const existing = list.find((p) => p.path === abs)
+  const existing = list.find((p) => pathKey(p.path) === key)
 
   if (existing && existing.slug === PROJECT_SLUG) return   // already correct
 
   if (existing) {
     // Slug is stale — update it in-place
     const updated = list.map((p) =>
-      p.path === abs ? { ...p, slug: PROJECT_SLUG } : p
+      pathKey(p.path) === key ? { ...p, slug: PROJECT_SLUG } : p
     )
     await save(updated)
     return
