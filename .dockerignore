@@ -34,6 +34,19 @@ npm-debug.log*
 supabase/.branches
 supabase/.temp
 
+# Zone overlays — the core app build doesn't need them, BUT zone builds share
+# this repo-root context and COPY zones/<key>/src/app/ (see zones/*/Dockerfile).
+# Exclude the bulk, re-include exactly what zone builds copy.
+zones/
+!zones/*/src
+!zones/*/src/**
+
+# Platform packages — agent + updater have their own build contexts
+packages/
+
+# Swarm / orchestration configs — host-side only
+swarm-orchestration/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -88,3 +101,8 @@ Untitled.*
 
 # Secrets — never bake into an image
 claude_desktop_config.json
+!src/zones/docs/content/*.md
+
+# Agent image needs the unified agent module (packages/agent-node/Dockerfile
+# COPYs it from repo-root context) — re-include despite the proxy/ exclusion.
+!proxy/agent.js

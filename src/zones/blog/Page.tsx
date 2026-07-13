@@ -1,12 +1,15 @@
 // src/zones/blog/Page.tsx
 // Core: Blog list page — served at blog.unenter.live/
+// Layout: GitButler-style — featured hero post, mixed card grid, newsletter band.
 
 import { Metadata }     from "next";
 import { cookies }      from "next/headers";
-import Link             from "next/link";
-import Image            from "next/image";
 import { createClient } from "@/utils/supabase/server";
-import Breadcrumb       from "@/components/Common/Breadcrumb";
+import { FeaturedCard, GridCard, RowCard } from "./_components/Cards";
+import NewsletterBand   from "./_components/NewsletterBand";
+import { fetchBlogSettings } from "./_components/settings";
+import { resolvePostCover } from "./_components/postImages";
+import type { BlogPostSummary } from "./_components/helpers";
 
 export const metadata: Metadata = {
   title:       "Blog | Unenter",
@@ -28,42 +31,31 @@ interface RawPost {
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
-async function fetchPosts(locale: string) {
+async function fetchPosts(locale: string): Promise<BlogPostSummary[]> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("blog_posts")
-    .select("id, slug, title, excerpt, cover_image, author, tags, published_at")
+    .select("id, slug, title, excerpt, cover_image, author, tags, published_at, blog_authors ( name )")
     .eq("is_published", true)
-    .order("published_at", { ascending: false })
-    .returns<RawPost[]>();
+    .order("published_at", { ascending: false });
 
   if (error) {
     console.error("[blog/page] fetch error:", error.message);
     return [];
   }
 
-  return (data ?? []).map((row) => ({
+  const rows = (data ?? []) as unknown as (RawPost & { blog_authors: { name: string } | null })[];
+  return Promise.all(rows.map(async (row) => ({
     id:          row.id,
     slug:        row.slug,
     title:       row.title?.[locale]   ?? row.title?.en   ?? "",
     excerpt:     row.excerpt?.[locale] ?? row.excerpt?.en ?? "",
-    coverImage:  row.cover_image,
-    author:      row.author,
+    coverImage:  await resolvePostCover(row.slug, row.cover_image),
+    author:      row.blog_authors?.name ?? row.author,
     tags:        row.tags ?? [],
     publishedAt: row.published_at,
-  }));
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "";
-  return new Date(iso).toLocaleDateString("en-US", {
-    year:  "numeric",
-    month: "long",
-    day:   "numeric",
-  });
+  })));
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -72,115 +64,77 @@ export default async function BlogPage() {
   const cookieStore = await cookies();
   const locale      = (cookieStore.get("Next-Locale")?.value ?? "en") as string;
 
-  const posts = await fetchPosts(locale);
+  const [posts, { promo, newsletter }] = await Promise.all([
+    fetchPosts(locale),
+    fetchBlogSettings(),
+  ]);
+
+  const [featured, ...rest] = posts;
+  const gridPosts = rest.slice(0, 4);
+  const rowPosts  = rest.slice(4);
 
   return (
     <>
-      <Breadcrumb
-        pageName="Blog"
-        description="Latest news, guides, and updates from the Unenter team."
-      />
-
-      <section className="py-16 md:py-20 lg:py-28">
+      {/* Posts — GitButler-style: straight into the featured card, no hero band */}
+      <section className="pb-14 pt-8 md:pb-20 md:pt-12">
         <div className="container">
-          {posts.length === 0 ? (
-            <div className="text-center py-20">
-              <p className="text-body-color text-lg">No posts published yet — check back soon.</p>
-            </div>
-          ) : (
-            <div className="-mx-4 flex flex-wrap">
-              {posts.map((post) => (
-                <div key={post.id} className="w-full px-4 md:w-2/3 lg:w-1/2 xl:w-1/3 mb-10">
-                  <BlogCard post={post} />
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="mx-auto max-w-4xl">
+            <h1 className="sr-only">Blog</h1>
+            {posts.length === 0 ? (
+              <p className="py-20 text-center text-lg text-[hsl(var(--muted-foreground))]">
+                No posts published yet — check back soon.
+              </p>
+            ) : (
+              <div className="space-y-14 md:space-y-20">
+                <FeaturedCard post={featured} />
+
+                {gridPosts.length > 0 && (
+                  <div className="grid gap-10 md:grid-cols-2 md:gap-x-8 md:gap-y-14">
+                    {gridPosts.map((post) => (
+                      <GridCard key={post.id} post={post} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Promo band (dashboard-managed, blog_settings.promo) */}
+                {promo.enabled && promo.title && (
+                  <a
+                    href={promo.url}
+                    className="group flex items-center justify-between gap-6 rounded-2xl bg-[hsl(var(--accent))] px-8 py-10 text-[hsl(var(--accent-foreground))] md:px-12 md:py-14"
+                  >
+                    <span className="max-w-md font-serif text-2xl leading-snug md:text-4xl">
+                      {promo.title}
+                    </span>
+                    {promo.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={promo.image} alt="" className="hidden h-24 w-auto shrink-0 md:block" />
+                    ) : (
+                      <svg
+                        width="48" height="24" viewBox="0 0 48 24" fill="none"
+                        stroke="currentColor" strokeWidth="2"
+                        className="shrink-0 transition-transform group-hover:translate-x-2"
+                        aria-hidden
+                      >
+                        <path d="M2 12h42M36 4l8 8-8 8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </a>
+                )}
+
+                {rowPosts.length > 0 && (
+                  <div className="space-y-10">
+                    {rowPosts.map((post) => (
+                      <RowCard key={post.id} post={post} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </section>
+
+      <NewsletterBand {...newsletter} />
     </>
-  );
-}
-
-// ── Blog Card ─────────────────────────────────────────────────────────────────
-
-function BlogCard({
-  post,
-}: {
-  post: {
-    slug:        string;
-    title:       string;
-    excerpt:     string;
-    coverImage:  string | null;
-    author:      string | null;
-    tags:        string[];
-    publishedAt: string | null;
-  };
-}) {
-  return (
-    <div className="group rounded-sm bg-white shadow-one hover:shadow-two duration-300 dark:bg-dark dark:shadow-three dark:hover:shadow-gray-dark overflow-hidden">
-      {/* Cover image */}
-      <Link href={`/${post.slug}`} className="relative block h-[220px] w-full overflow-hidden">
-        {post.coverImage ? (
-          <Image
-            src={post.coverImage}
-            alt={post.title}
-            fill
-            className="object-cover transition group-hover:scale-105 duration-500"
-          />
-        ) : (
-          <div className="h-full w-full bg-primary/10 flex items-center justify-center">
-            <span className="text-5xl text-primary/30">✎</span>
-          </div>
-        )}
-      </Link>
-
-      {/* Content */}
-      <div className="p-6 sm:p-8 md:py-8 md:px-6 lg:p-8 xl:py-8 xl:px-5 2xl:p-8">
-        {/* Tags */}
-        {post.tags.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2">
-            {post.tags.slice(0, 3).map((tag) => (
-              <span
-                key={tag}
-                className="inline-block rounded-full bg-primary/10 px-3 py-1 text-xs font-medium capitalize text-primary"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Title */}
-        <h3>
-          <Link
-            href={`/${post.slug}`}
-            className="mb-4 block text-xl font-bold text-black hover:text-primary dark:text-white dark:hover:text-primary sm:text-2xl"
-          >
-            {post.title}
-          </Link>
-        </h3>
-
-        {/* Excerpt */}
-        <p className="mb-6 text-base font-medium leading-relaxed text-body-color line-clamp-3">
-          {post.excerpt}
-        </p>
-
-        {/* Meta */}
-        <div className="flex items-center justify-between border-t border-body-color/10 pt-5 dark:border-white/10">
-          {post.author && (
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold uppercase">
-                {post.author.charAt(0)}
-              </div>
-              <span className="text-sm font-medium text-body-color">{post.author}</span>
-            </div>
-          )}
-          {post.publishedAt && (
-            <span className="text-sm text-body-color">{formatDate(post.publishedAt)}</span>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }

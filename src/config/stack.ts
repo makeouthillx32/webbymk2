@@ -50,7 +50,7 @@ export const PROJECT_DIR  = deriveProjectDir();
  * and CLI routing.  Overrides the directory-name auto-slug so the TUI always
  * shows "unenter" regardless of where the repo is cloned.
  */
-export const PROJECT_SLUG = "unenter";
+export const PROJECT_SLUG = "unenter.live";
 
 // ── Local config loader ───────────────────────────────────────────────────────
 

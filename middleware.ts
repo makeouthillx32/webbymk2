@@ -181,8 +181,15 @@ export async function middleware(request: NextRequest) {
   // /shop/* and 404. Only inject when there is exactly one non-root prefix.
   const zonePrimaryPrefix = nonRootPrefixes.length === 1 ? nonRootPrefixes[0] : null;
 
+  // Inside a flattened zone image (NEXT_PUBLIC_ZONE baked at build time), the
+  // zone's overlay pages are ROOT-mounted — the static ZONES prefixes describe
+  // the core monolith layout only. Injecting the prefix there 302s "/" into the
+  // zone's [slug] route (e.g. blog.unenter.live/ → /blog → "Post Not Found").
+  const isOwnZoneImage = process.env.NEXT_PUBLIC_ZONE === zoneFromHost;
+
   const needsZonePrefixRewrite =
     !isLocal &&
+    !isOwnZoneImage &&
     normalizedHost === zoneConfig.host &&
     normalizedHost !== CORE_DOMAIN &&   // core (incl. www) never needs path-prefix injection
     zonePrimaryPrefix !== null &&
@@ -265,7 +272,24 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Public-first outage resilience: if the auth backend (kong) is unreachable,
+  // an auth check must NEVER take the whole site down. Degrade to logged-out —
+  // public pages keep serving; protected routes redirect to sign-in as usual.
+  // (Chaos drill 2026-07-11: unhandled failure here = empty 500 on every route.)
+  //
+  // NOTE: this is only a 500-safety net, NOT the outage detector. For an
+  // anonymous visitor (no session cookie) getUser() returns "session missing"
+  // WITHOUT calling the backend, so it can't see an outage. The user-facing
+  // "data may not be fresh" toast is driven by a real health probe
+  // (/api/health/backend) that <BackendStatusToast> checks — that works for
+  // every visitor, logged-in or not.
+  let user: { id: string } | null = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    user = null;
+  }
 
   // Protect zones that require auth + individual protected routes
   const routeIsProtected = zoneConfig.requiresAuth || isProtectedRoute(url.pathname);

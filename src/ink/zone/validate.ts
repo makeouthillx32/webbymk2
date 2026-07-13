@@ -78,14 +78,14 @@ function checkDockerfile(z: DerivedZone): ValidationIssue[] {
 }
 
 function checkComposeArtifact(z: DerivedZone): ValidationIssue[] {
-  const path   = join(ARTIFACT_STORE_DIR, z.key, "docker-compose.yml");
+  const path   = join(ARTIFACT_STORE_DIR, "unenter-zones", "docker-compose.yml");
   const issues: ValidationIssue[] = [];
 
   if (!existsSync(path)) {
     return [{
       rule:   "file-exists",
-      file:   `stacks/${z.key}/docker-compose.yml`,
-      detail: "Compose artifact was not written to the artifact store.",
+      file:   `stacks/unenter-zones/docker-compose.yml`,
+      detail: "Unified compose artifact was not written to the artifact store.",
     }];
   }
 
@@ -96,7 +96,7 @@ function checkComposeArtifact(z: DerivedZone): ValidationIssue[] {
   if (/env_file:\s*\.\./.test(content)) {
     issues.push({
       rule:   "env-file-absolute",
-      file:   `stacks/${z.key}/docker-compose.yml`,
+      file:   `stacks/unenter-zones/docker-compose.yml`,
       detail: [
         `env_file uses a relative path (../../.env).`,
         `The compose artifact lives in the UNAXIS artifact store, not the repo root.`,
@@ -109,7 +109,7 @@ function checkComposeArtifact(z: DerivedZone): ValidationIssue[] {
   if (!content.includes(z.service)) {
     issues.push({
       rule:   "service-name",
-      file:   `stacks/${z.key}/docker-compose.yml`,
+      file:   `stacks/unenter-zones/docker-compose.yml`,
       detail: `Expected Docker service name "${z.service}" not found in compose file.`,
     });
   }
@@ -117,7 +117,7 @@ function checkComposeArtifact(z: DerivedZone): ValidationIssue[] {
   if (!content.includes(z.image)) {
     issues.push({
       rule:   "image-name",
-      file:   `stacks/${z.key}/docker-compose.yml`,
+      file:   `stacks/unenter-zones/docker-compose.yml`,
       detail: `Expected image "${z.image}" not referenced in compose file.`,
     });
   }

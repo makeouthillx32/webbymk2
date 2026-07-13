@@ -16,7 +16,7 @@ interface Presets {
 }
 
 const DOMAIN_PRESETS: Presets[] = [
-  { domain: "unenter.live", slug: "unenter", path: "Z:\\WEBSITES\\webbymk2" },
+  { domain: "unenter.live", slug: "unenter.live", path: "Z:\\WEBSITES\\webbymk2" },
   { domain: "makeouthill.xyz", slug: "makeouthill", path: "Z:\\WEBSITES\\makeouthill" },
   { domain: "unaxis.network", slug: "unaxis", path: "Z:\\WEBSITES\\unaxis" },
 ];

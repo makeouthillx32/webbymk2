@@ -274,7 +274,7 @@ export const ANON_KEY = envValue([
   "ANON_KEY",
 ]);
 
-const COMPOSE_PROJECT = "webbymk2";
+const COMPOSE_PROJECT = "unenter.live";
 
 // ── Supabase service definitions ──────────────────────────────────────────────
 
@@ -533,7 +533,8 @@ export async function listStorageBuckets(): Promise<BucketInfo[]> {
 import { promises as fsAsync }             from "fs";
 import { join as pathJoin }               from "path";
 import type { RuntimeInstance, HealthState } from "./zone/supabase-factory.ts";
-import { updateInstanceStatus, removeFromRegistry, loadRegistry, saveRegistry } from "./zone/supabase-factory.ts";
+import { updateInstanceStatus, removeFromRegistry, loadRegistry, saveRegistry, getInstanceProjectName } from "./zone/supabase-factory.ts";
+import { removeDatabaseRoutes } from "./proxy-config.ts";
 
 type OnLine = (line: string) => void;
 
@@ -733,7 +734,7 @@ export async function healCoreStack(
 
   // Step 1 — audit current state
   const { out: psOut } = await dockerRun([
-    "compose", "--project-name", instance.slug,
+    "compose", "--project-name", getInstanceProjectName(instance),
     "ps", "--format", "json",
   ]);
 
@@ -817,7 +818,7 @@ export async function verifyCoreStack(
   log(`🔍 Verifying  ${instance.name}  (${instance.slug})`);
 
   const { out: psOut, code } = await dockerRun([
-    "compose", "--project-name", instance.slug,
+    "compose", "--project-name", getInstanceProjectName(instance),
     "ps", "--format", "json",
   ]);
 
@@ -888,7 +889,7 @@ export async function deleteRuntimeInstance(
   // Step 2 — tear down containers + volumes
   onLine(`  ↓ docker compose down --volumes --remove-orphans`);
   const code = await composeStream(
-    ["down", "--volumes", "--remove-orphans"],
+    ["--project-name", getInstanceProjectName(instance), "down", "--volumes", "--remove-orphans"],
     instance.dockerPath,
     onLine,
     120_000,
@@ -908,6 +909,11 @@ export async function deleteRuntimeInstance(
 
   // Step 4 — deregister
   await removeFromRegistry(instance.id);
+  try {
+    await removeDatabaseRoutes(instance.name.toLowerCase());
+  } catch (e) {
+    onLine(`  ⚠ Could not remove database routes: ${e instanceof Error ? e.message : e}`);
+  }
   onLine(`✓ Instance deleted and removed from registry`);
   return true;
 }

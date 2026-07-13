@@ -9,6 +9,8 @@ import { Header as DashboardHeader } from "@/components/Layouts/dashboard";
 import { Header as ShopHeader } from "@/components/Layouts/shop/Header";
 import LandingHeader from "@/components/Layouts/Landing/Header";
 import LandingFooter from "@/components/Layouts/Landing/Footer";
+import BlogHeader from "@/components/Layouts/Blog/Header";
+import BlogFooter from "@/components/Layouts/Blog/Footer";
 import { Sidebar } from "@/components/Layouts/dashboard/sidebar";
 import { SidebarProvider } from "@/components/Layouts/dashboard/sidebar/sidebar-context";
 import MobileDrawer from "@/components/Layouts/shop/MobileDrawer";
@@ -44,6 +46,34 @@ export function MinimalLayout({ children, screenSize }: MinimalLayoutProps) {
       >
         {children}
       </main>
+      <AppAccessibility />
+      <AppCookieConsent screenSize={screenSize} />
+      <AppToaster />
+    </>
+  );
+}
+
+// Blog Layout
+// Dedicated chrome for the blog zone (NEXT_PUBLIC_ZONE=blog): slim serif
+// header + CTA footer, both driven by blog_settings. No cart, no shop chrome.
+
+interface BlogLayoutProps {
+  children: React.ReactNode;
+  screenSize: ScreenSize;
+}
+
+export function BlogLayout({ children, screenSize }: BlogLayoutProps) {
+  return (
+    <>
+      {/* blog-chrome: pins the iOS status-bar color to the taupe header
+          (hsl(var(--secondary))) in both themes — see layout-tokens.css. */}
+      <div data-layout="landing" className="blog-chrome">
+        <BlogHeader />
+        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>
+          {children}
+        </main>
+        <BlogFooter />
+      </div>
       <AppAccessibility />
       <AppCookieConsent screenSize={screenSize} />
       <AppToaster />

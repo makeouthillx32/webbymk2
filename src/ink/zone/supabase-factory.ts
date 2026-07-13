@@ -78,6 +78,13 @@ export interface RuntimeInstance {
   lastSnapshot?:    string;        // ISO-8601 | undefined
 }
 
+export function getInstanceProjectName(instance: { slug: string; containerPrefix?: string }): string {
+  if (instance.containerPrefix && instance.containerPrefix.startsWith("unaxis-inst-")) {
+    return instance.containerPrefix.slice(0, -1);
+  }
+  return instance.slug;
+}
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 function registryPath(): string {
@@ -452,15 +459,16 @@ function rewriteContainerNames(content: string, slug: string): string {
   for (const original of CONTAINER_TEMPLATES) {
     if (original.startsWith("realtime-dev.")) {
       const svcName     = original.slice("realtime-dev.".length);
-      const replacement = `realtime-dev.${slug}-${svcName.replace("supabase-", "")}`;
+      const replacement = `realtime-dev.unaxis-inst-${slug}-${svcName.replace("supabase-", "")}`;
       out = out.replace(new RegExp(`container_name: ${original}`, "g"), `container_name: ${replacement}`);
     } else {
       const shortName   = original.replace("supabase-", "");
-      const replacement = `${slug}-${shortName}`;
+      const replacement = `unaxis-inst-${slug}-${shortName}`;
       out = out.replace(new RegExp(`container_name: ${original}`, "g"), `container_name: ${replacement}`);
     }
   }
-  out = out.replace(/^name: supabase$/m, `name: ${slug}`);
+  out = out.replace(/^name: supabase$/m, `name: unaxis-inst-${slug}`);
+  out = out.replace(/unaxis\.instance: "supabase"/g, `unaxis.instance: "${slug}"`);
   return out;
 }
 
@@ -602,7 +610,7 @@ export async function createRuntimeInstance(
 
   const isWindows = process.platform === "win32";
   const [copyCmd, copyArgs] = isWindows
-    ? ["xcopy", [`"${templateVolumesDb}"`, `"${instanceVolumesDb}"`, "/E", "/I", "/H", "/K"]]
+    ? ["xcopy", [templateVolumesDb, instanceVolumesDb, "/E", "/I", "/H", "/K"]]
     : ["cp",    ["-r", templateVolumesDb + "/.", instanceVolumesDb]];
 
   const { code: cpCode, out: cpOut } = await spawnRun(copyCmd, copyArgs as string[]);
@@ -719,6 +727,7 @@ export async function createRuntimeInstance(
     dockerPath,
     ports,
     secrets,
+    containerPrefix: `unaxis-inst-${slug}-`,
     studioUrl:     `http://127.0.0.1:${ports.kong}/`,
     healthState:   "unknown",
     snapshotState: "none",

@@ -13,7 +13,10 @@
 // Auth: ECDSA P-256 TOFU (Trust on First Use) — zero configuration.
 //
 // Routes (all require valid TOFU signature):
-//   GET  /health            → { status, version, platform }
+//   GET  /health            → { status, version, platform, engine, host }
+//   GET  /db/status         → self-reported Supabase stacks (per-service state+health)
+//   GET  /zones/status      → self-reported unt_* zone containers
+//   GET  /proxy/status      → self-reported proxy / NPM containers
 //   GET  /docker/dashboard  → aggregated dashboard (Portainer-style)
 //   POST /stacks/deploy     → docker compose up -d  { name, yaml }
 //   POST /self-update       → rolling self-replacement via updater container { ref }
@@ -38,7 +41,7 @@ const subtle        = webcrypto.subtle;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const AGENT_VERSION = "1.0.0";
+const AGENT_VERSION = "1.1.1";
 const UPDATER_IMAGE = "ghcr.io/makeouthillx32/unaxis-updater:v0";
 
 const AGENT_PORT    = parseInt(process.env.AGENT_PORT    ?? "8888", 10);
@@ -142,6 +145,144 @@ function dockerGet(socketPath, apiPath, timeoutMs = 8_000) {
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`Timeout: Docker ${apiPath}`)));
     req.end();
   });
+}
+
+// ── Engine state probe ─────────────────────────────────────────────────────────
+// Self-reported Docker engine state — the agent sits ON the host, so it can
+// tell the TUI exactly what's happening instead of the TUI inferring from
+// outside. Surfaced in GET /health as { engine: { state, latencyMs, error } }.
+//
+//   up      engine answered /_ping
+//   wedged  /_ping timed out — daemon hung (zombie containerd task)
+//   off     socket/pipe refused or missing — Docker stopped or paused
+//   error   anything else (permissions, protocol)
+
+function dockerPingRaw(socketPath, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { socketPath, path: "/_ping", method: "GET" },
+      (res) => {
+        res.resume(); // drain — body is just "OK"
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(timeoutMs ?? 3000, () => req.destroy(new Error("ETIMEOUT: Docker /_ping")));
+    req.end();
+  });
+}
+
+async function probeEngineState() {
+  const started = Date.now();
+  try {
+    const status = await dockerPingRaw(DOCKER_SOCKET, 3000);
+    if (status >= 200 && status < 300) {
+      return { state: "up", latencyMs: Date.now() - started, error: null };
+    }
+    return { state: "error", latencyMs: Date.now() - started, error: "HTTP " + status };
+  } catch (err) {
+    const msg  = err && err.message ? err.message : String(err);
+    const code = err && err.code ? err.code : "";
+    if (msg.indexOf("ETIMEOUT") === 0) {
+      return { state: "wedged", latencyMs: null, error: "engine ping timed out — daemon hung" };
+    }
+    if (code === "ENOENT" || code === "ECONNREFUSED" || code === "EPIPE" || code === "EACCES") {
+      return { state: "off", latencyMs: null, error: "socket " + code + " — Docker stopped or paused" };
+    }
+    return { state: "error", latencyMs: null, error: msg };
+  }
+}
+
+function hostSnapshot() {
+  return {
+    uptimeSec:  Math.floor(os.uptime()),
+    memTotalMb: Math.round(os.totalmem() / 1048576),
+    memFreeMb:  Math.round(os.freemem() / 1048576),
+    cpus:       os.cpus().length,
+    loadAvg1m:  os.loadavg()[0],
+  };
+}
+
+// ── Self-report status endpoints ──────────────────────────────────────────────
+// The agent sits on the node, so it reports its own stacks instead of the TUI
+// probing from outside. Everything below derives from ONE /containers/json
+// call — no localhost port assumptions, works identically on every node.
+//
+//   GET /db/status     Supabase stacks (fingerprint: compose project with both
+//                      a "db" and a "kong" service) — per-service state+health
+//   GET /zones/status  unt_* zone containers — state, health, image, uptime
+//   GET /proxy/status  proxy / NPM containers — state + health
+//                      (cert expiry + route targets = v2, needs NPM API creds)
+
+function containerBrief(c) {
+  const name = (c.Names && c.Names[0] ? c.Names[0] : "").replace(/^\//, "");
+  return {
+    name,
+    service: (c.Labels && c.Labels["com.docker.compose.service"]) || name,
+    state:   c.State ?? "unknown",                       // running/exited/paused/restarting/dead
+    healthy: c.Status ? (c.Status.includes("(unhealthy)") ? false
+             : c.Status.includes("(healthy)") ? true : null) : null,
+    image:   c.Image ?? "",
+    status:  c.Status ?? "",                             // human string, includes uptime
+  };
+}
+
+function rollup(briefs) {
+  const running = briefs.filter((b) => b.state === "running").length;
+  const unhealthy = briefs.filter((b) => b.healthy === false).length;
+  return {
+    total: briefs.length, running, unhealthy,
+    state: briefs.length === 0 ? "empty"
+         : unhealthy > 0 ? "degraded"
+         : running === briefs.length ? "up"
+         : running > 0 ? "partial" : "down",
+  };
+}
+
+async function buildDbStatus() {
+  const containers = await dockerGet(DOCKER_SOCKET, "/containers/json?all=1");
+  const byProject = new Map();
+  for (const c of containers) {
+    const project = c.Labels && c.Labels[COMPOSE_STACK_NAME_LABEL];
+    if (!project) continue;
+    if (!byProject.has(project)) byProject.set(project, []);
+    byProject.get(project).push(c);
+  }
+  const stacks = [];
+  for (const [project, list] of byProject) {
+    const services = new Set(list.map((c) => c.Labels[ "com.docker.compose.service"] ?? ""));
+    // Supabase fingerprint: has both a database and a kong gateway service.
+    const looksSupabase = [...services].some((s) => s === "db" || s.startsWith("db"))
+                       && [...services].some((s) => s === "kong" || s.startsWith("kong"));
+    if (!looksSupabase) continue;
+    const briefs = list.map(containerBrief);
+    stacks.push({ stack: project, ...rollup(briefs), services: briefs });
+  }
+  return { stacks, probedAt: new Date().toISOString() };
+}
+
+async function buildZonesStatus() {
+  const containers = await dockerGet(DOCKER_SOCKET, "/containers/json?all=1");
+  const zones = containers
+    .filter((c) => (c.Names ?? []).some((n) => n.replace(/^\//, "").startsWith("unt_")))
+    .map(containerBrief);
+  return { ...rollup(zones), zones, probedAt: new Date().toISOString() };
+}
+
+async function buildProxyStatus() {
+  const containers = await dockerGet(DOCKER_SOCKET, "/containers/json?all=1");
+  const isProxyish = (c) => {
+    const name  = (c.Names && c.Names[0] ? c.Names[0] : "").replace(/^\//, "").toLowerCase();
+    const image = (c.Image ?? "").toLowerCase();
+    return name === "proxy" || name.includes("nginx-proxy") || name.includes("npm")
+        || image.includes("nginx-proxy-manager") || image.includes("jc21/nginx");
+  };
+  const proxies = containers.filter(isProxyish).map(containerBrief);
+  return {
+    ...rollup(proxies), proxies,
+    notes: "container-level only; cert expiry + route targets need NPM API creds (v2)",
+    probedAt: new Date().toISOString(),
+  };
 }
 
 async function withConcurrency(tasks, limit) {
@@ -429,10 +570,34 @@ function proxyToDocker(req, res) {
 
 // ── HTTP server ────────────────────────────────────────────────────────────────
 
+/**
+ * Loopback health exemption — the image HEALTHCHECK (wget from inside the
+ * container) cannot sign requests. Unsigned GET /health is allowed from
+ * loopback ONLY; every other route and every remote caller still requires a
+ * valid TOFU signature.
+ *
+ * WHY THIS EXISTS (hard-won): without it the healthcheck 401s, the container
+ * reports unhealthy after ~100s, and updater.sh's health gate ROLLS BACK
+ * every self-update — the TUI sees the new version answer, declares success,
+ * and 100 seconds later the old agent silently resurrects. (The L0V3
+ * "phantom v0.1.8" incident, 2026-07.)
+ */
+function isLoopbackHealthRequest(req) {
+  if (req.method !== "GET") return false;
+  const path = (req.url ?? "").split("?")[0];
+  if (path !== "/health") return false;
+  const addr = req.socket?.remoteAddress ?? "";
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
 const agentServer = http.createServer((req, res) => {
   res.setHeader("Content-Type", "application/json");
 
-  checkAuth(req).then((denied) => {
+  const authPromise = isLoopbackHealthRequest(req)
+    ? Promise.resolve(null)
+    : checkAuth(req);
+
+  authPromise.then((denied) => {
     if (denied) {
       log.wrn("request rejected", { status: denied.status, method: req.method, url: req.url });
       res.writeHead(denied.status);
@@ -445,8 +610,48 @@ const agentServer = http.createServer((req, res) => {
 
     // ── GET /health ─────────────────────────────────────────────────────────
     if (req.method === "GET" && url === "/health") {
-      res.writeHead(200);
-      res.end(JSON.stringify({ status: "online", version: AGENT_VERSION, platform: process.platform }));
+      probeEngineState()
+        .then((engine) => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            status:   "online",
+            version:  AGENT_VERSION,
+            platform: process.platform,
+            engine,
+            host: hostSnapshot(),
+          }));
+        })
+        .catch(() => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "online", version: AGENT_VERSION, platform: process.platform }));
+        });
+      return;
+    }
+
+    // ── Self-report status endpoints ────────────────────────────────────────
+    // GET /db/status | /zones/status | /proxy/status — node reports its own
+    // stacks. All derive from the Docker socket; safe read-only aggregations.
+    if (req.method === "GET" && (url === "/db/status" || url === "/zones/status" || url === "/proxy/status")) {
+      const build = url === "/db/status" ? buildDbStatus
+                  : url === "/zones/status" ? buildZonesStatus
+                  : buildProxyStatus;
+      build()
+        .then((data) => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(data));
+        })
+        .catch((err) => {
+          // Engine down/wedged → report it in-band instead of a bare 500,
+          // mirroring the /health engine tile semantics.
+          probeEngineState().then((engine) => {
+            res.writeHead(503, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error:  err && err.message ? err.message : String(err),
+              engine,
+              probedAt: new Date().toISOString(),
+            }));
+          });
+        });
       return;
     }
 
@@ -705,7 +910,7 @@ const agentServer = http.createServer((req, res) => {
     res.writeHead(404);
     res.end(JSON.stringify({
       error:   "Not found",
-      routes:  ["GET /health", "GET /docker/dashboard", "POST /stacks/deploy", "POST /self-update", "* /docker/*"],
+      routes:  ["GET /health", "GET /db/status", "GET /zones/status", "GET /proxy/status", "GET /docker/dashboard", "POST /stacks/deploy", "POST /self-update", "* /docker/*"],
       version: AGENT_VERSION,
     }));
   }).catch((err) => {
@@ -727,7 +932,7 @@ agentServer.listen(AGENT_PORT, AGENT_HOST, () => {
     state_file:    STATE_FILE,
   });
   log.inf("auth: tofu — first tui to connect pairs automatically", { auth: "tofu" });
-  log.inf("routes: GET /health | GET /docker/dashboard | POST /stacks/deploy | POST /self-update | * /docker/*", {});
+  log.inf("routes: GET /health | GET /db/status | GET /zones/status | GET /proxy/status | GET /docker/dashboard | POST /stacks/deploy | POST /self-update | * /docker/*", {});
 });
 
 process.on("SIGTERM", () => { agentServer.close(() => process.exit(0)); });

@@ -11,9 +11,14 @@ export const UNAXIS_CLI_SCHEMA = {
       }
     },
     stack: {
-      description: "Get the current background operations stack.",
+      description: "Get the current background operations stack, or `stack clear` to remove finished ops.",
+      subcommands: ["clear"],
+      arguments: [
+        { name: "opId", type: "string", required: false }
+      ],
       options: {
-        "--json": { type: "boolean", description: "Output as structured JSON." }
+        "--json":   { type: "boolean", description: "Output as structured JSON." },
+        "--failed": { type: "boolean", description: "With `clear`: remove only failed ops." }
       }
     },
     stacks: {
@@ -35,13 +40,22 @@ export const UNAXIS_CLI_SCHEMA = {
       description: "Remove the unaxis-net buildx builder (recreated on next build); unsticks a zombie build.",
     },
     zones: {
-      description: "List all zones managed by the control plane.",
+      description: "List all zones managed by the control plane, including public footer tag state.",
       options: {
         "--json": { type: "boolean", description: "Output as structured JSON." }
       }
     },
     "env list": {
       description: "List environment mappings and domains.",
+      options: {
+        "--json": { type: "boolean", description: "Output as structured JSON." }
+      }
+    },
+    "env health": {
+      description: "Deep state detection per environment: online, busy, sleeping (engine off), wedged, restarting, agent-down, or offline.",
+      arguments: [
+        { name: "envName", type: "string", required: false }
+      ],
       options: {
         "--json": { type: "boolean", description: "Output as structured JSON." }
       }
@@ -53,6 +67,19 @@ export const UNAXIS_CLI_SCHEMA = {
       ],
       options: {
         "--json": { type: "boolean", description: "Output as structured JSON." }
+      }
+    },
+    "env images": {
+      description: "List or clean Docker images on an environment.",
+      arguments: [
+        { name: "envName", type: "string", required: false }
+      ],
+      options: {
+        "--json": { type: "boolean", description: "Output as structured JSON." },
+        "--prune-stale": { type: "boolean", description: "Find stale UNAXIS image tags." },
+        "--dangling-only": { type: "boolean", description: "Limit stale-image pruning to dangling images." },
+        "--remove-repo": { type: "string", description: "Remove every local tag for one UNAXIS-owned repository." },
+        "--yes": { type: "boolean", description: "Apply an image cleanup instead of showing a dry run." }
       }
     },
     "env security": {
@@ -107,10 +134,32 @@ export const UNAXIS_CLI_SCHEMA = {
       }
     },
     zone: {
-      description: "Manage lifecycle of individual zones.",
+      description: "Manage lifecycle and public footer tags for individual zones.",
       arguments: [
-        { name: "action", type: "string", enum: ["build", "rebuild", "deploy", "pull", "restart", "delete"], required: true },
-        { name: "zoneName", type: "string", required: true }
+        { name: "zoneName", type: "string", required: true },
+        {
+          name: "action",
+          type: "string",
+          enum: [
+            "status",
+            "tag",
+            "untag",
+            "pin",
+            "unpin",
+            "pinned",
+            "tagged",
+            "logs",
+            "build",
+            "rebuild",
+            "deploy",
+            "pull",
+            "delete",
+            "doctor",
+            "dev"
+          ],
+          required: false,
+          default: "status"
+        }
       ],
       options: {
         "--bg": { type: "boolean", description: "Run operation in background." },

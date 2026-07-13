@@ -38,22 +38,22 @@ Do NOT ask the user to open Settings UI. Modify config directly.
 ```
 collapse-filter: false
 showTags: true
-showAttachments: false
+showAttachments: true
 hideUnresolved: false
 showOrphans: true
 collapse-color-groups: true
 collapse-display: false
-showArrow: false
+showArrow: true
 textFadeMultiplier: 0
 nodeSizeMultiplier: 1
 lineSizeMultiplier: 1
-collapse-forces: true
+collapse-forces: false
 centerStrength: 0.518713248970312
 repelStrength: 10
 linkStrength: 1
 linkDistance: 250
-scale: 0.26773394338740714
-close: true
+scale: 0.04231590268975903
+close: false
 ```
 
 For full settings, read: `.obsidian/graph.json`

@@ -28,6 +28,7 @@ import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
+import { dbRecordLedger } from "./control-db.ts";
 import { composeRun, pullAndUp, reloadProxy } from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
 import { getCredential }                     from "../utils/secureStorage/index.js";
@@ -564,7 +565,23 @@ export async function buildAndDeploy(
   const code = await buildZone(zone, onLine, opts);
   if (code !== 0) return code;
   onLine("--- pull + up ---");
-  return pullAndUp(zone, onLine);
+  const deployCode = await pullAndUp(zone, onLine);
+  if (deployCode === 0) recordZoneLedger(zone, "build+deploy");
+  return deployCode;
+}
+
+/** Best-effort deploy-ledger entry: correlates this zone's source identity
+ *  (git sha + dirty) with its image. Never throws — ledger is observability. */
+function recordZoneLedger(zone: Zone, action: string): void {
+  try {
+    dbRecordLedger({
+      zoneKey:       zone.key,
+      action,
+      sourceRef:     gitContentTag(gitProvenance()),
+      image:         zone.image,
+      environmentId: (zone as any).environmentId ?? null,
+    });
+  } catch { /* observability only — never fail a ship on the ledger */ }
 }
 
 // ── Deploy a single zone ──────────────────────────────────────────────────────

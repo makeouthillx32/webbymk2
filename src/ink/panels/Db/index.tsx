@@ -79,7 +79,7 @@ const CORE_OPTIONS: SelectOption[] = CORE_SERVICES.map((s) => ({
 const CORE_INSTANCE: RuntimeInstance = {
   id:              "core",
   name:            "Core Supabase",
-  slug:            "unenter",
+  slug:            "unenter.live",
   containerPrefix: "unt_",
   status:          "active",
   createdAt:       "",

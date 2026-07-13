@@ -15,6 +15,7 @@ import ChunkReloader from "@/components/system/ChunkReloader";
 import { ZoneProvider } from "@/components/providers/ZoneProvider";
 import { getZoneContext } from "@/lib/zoneContext";
 import MovedHereToast from "@/components/system/MovedHereToast";
+import { generateSiteMetadata } from "@/lib/zoneMetadata";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -31,13 +32,9 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default: "Unenter",
-    template: "%s | Unenter",
-  },
-  description: "Explore Unenter's projects, live streams, and community.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return generateSiteMetadata();
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];

@@ -6,8 +6,7 @@ plugin-type: core
 status: enabled
 class: FULL
 description: "Core app operations: navigation, delete, reload, sidebars"
-has-settings: false
-needs-setup: true
+has-settings: true
 commands:
   - id: "app:delete-file"
     name: "Delete current file"
@@ -41,10 +40,6 @@ Available commands:
 
 Note: For programmatic file deletion, prefer the delete_file tool. Use app:delete-file only when the user explicitly wants the native Obsidian delete behavior (trash + UI confirmation).
 
-## Setup Required
-
-Settings are empty. Plugin likely needs configuration via Obsidian Settings.
-
 ## Configuration File
 
 Settings path: `.obsidian/app.json`
@@ -55,6 +50,15 @@ To configure this plugin programmatically:
 3. Write changes: write_file(".obsidian/app.json", updatedJSON)
 
 Do NOT ask the user to open Settings UI. Modify config directly.
+
+## Current Configuration
+
+```
+alwaysUpdateLinks: true
+promptDelete: false
+```
+
+For full settings, read: `.obsidian/app.json`
 
 ## Documentation
 

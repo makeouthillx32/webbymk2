@@ -49,6 +49,7 @@ import {
   registerInstance,
   createRuntimeInstance,
   type RuntimeInstance,
+  getInstanceProjectName,
 } from "./supabase-factory.ts";
 import type { OnLine } from "./types.ts";
 
@@ -597,7 +598,7 @@ export async function restoreInstance(
     };
   }
 
-  const projectName = instance.slug;
+  const projectName = getInstanceProjectName(instance as RuntimeInstance);
 
   // Container names:
   //  • Clone flow: derive from TARGET instance naming (slug-based).
@@ -973,7 +974,7 @@ export async function captureTemplate(
     onLine("\n[2/5] Starting stack...");
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
       { cwd: instance.dockerPath, timeout: 120_000,
         env: envWithFile(`${instance.dockerPath}/.env`) },
     );
@@ -1039,7 +1040,7 @@ export async function captureTemplate(
     onLine("\n[5/5] Tearing down temporary instance...");
     await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "down", "--remove-orphans", "-v"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "down", "--remove-orphans", "-v"],
       { cwd: instance.dockerPath, timeout: 60_000 },
     ).catch(() => { /* best-effort */ });
     await removeFromRegistry(instance.id).catch(() => { /* best-effort */ });

@@ -123,6 +123,60 @@ const MIGRATIONS: string[] = [
     created_at                TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at                TEXT    NOT NULL DEFAULT (datetime('now'))
   );`,
+
+  // 002 — workspace control plane: promote Project to first-class, add the
+  // Workspace execution boundary, a Provider per workspace, a snapshot model,
+  // and a deploy ledger (source → image → deploy → snapshot). Additive only.
+  // See [[Project/big-plan-unfold-unaxis]].
+  `CREATE TABLE IF NOT EXISTS projects (
+    id             TEXT NOT NULL PRIMARY KEY,
+    slug           TEXT NOT NULL UNIQUE,
+    name           TEXT NOT NULL,
+    git_remote     TEXT NOT NULL DEFAULT '',
+    default_branch TEXT NOT NULL DEFAULT 'main',
+    root_path      TEXT NOT NULL DEFAULT '',
+    policy         TEXT NOT NULL DEFAULT '{}',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id              TEXT NOT NULL PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    environment_id  TEXT,
+    provider        TEXT NOT NULL DEFAULT 'local-windows',
+    root            TEXT NOT NULL DEFAULT '',
+    branch          TEXT NOT NULL DEFAULT '',
+    source_ref      TEXT NOT NULL DEFAULT '',
+    lifecycle_state TEXT NOT NULL DEFAULT 'active',
+    capabilities    TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS snapshots (
+    id           TEXT NOT NULL PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    workspace_id TEXT,
+    kind         TEXT NOT NULL DEFAULT 'workspace',
+    ref          TEXT NOT NULL DEFAULT '',
+    note         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS deploy_ledger (
+    id             TEXT NOT NULL PRIMARY KEY,
+    project_id     TEXT NOT NULL DEFAULT '',
+    workspace_id   TEXT,
+    zone_key       TEXT NOT NULL DEFAULT '',
+    action         TEXT NOT NULL DEFAULT 'deploy',
+    source_ref     TEXT NOT NULL DEFAULT '',
+    image          TEXT NOT NULL DEFAULT '',
+    image_digest   TEXT NOT NULL DEFAULT '',
+    environment_id TEXT,
+    snapshot_ref   TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );`,
 ];
 
 function runMigrations(db: Database): void {
@@ -265,6 +319,181 @@ function rowToEnvironment(r: EnvironmentRow): UnaxisEnvironment {
 function newUuid(): string {
   // crypto.randomUUID() is available in Bun
   return crypto.randomUUID();
+}
+
+// ── Workspace control plane (projects · workspaces · snapshots · ledger) ───────
+// Identity spine (2026-06-18). Project is now a first-class control object (was a
+// flat settings.json registry); Workspace is the execution boundary; provider
+// names the backend (local-windows today; wsl2/incus/cde/ssh/remote-docker
+// modeled for later); the ledger correlates source → image → deploy → snapshot.
+
+/** Backends that can materialize a workspace. "remote-docker" = the existing
+ *  agent path; engines for wsl2/incus/cde/ssh are modeled now, built later. */
+export type WorkspaceProvider =
+  | "local-windows" | "wsl2" | "incus" | "cde" | "ssh" | "remote-docker";
+
+export interface Project {
+  id: string; slug: string; name: string;
+  gitRemote: string; defaultBranch: string; rootPath: string;
+  policy: Record<string, unknown>;
+  createdAt?: string; updatedAt?: string;
+}
+
+export interface Workspace {
+  id: string; projectId: string; environmentId: string | null;
+  provider: WorkspaceProvider; root: string; branch: string;
+  sourceRef: string; lifecycleState: "active" | "suspended" | "archived";
+  capabilities: Record<string, unknown>;
+  createdAt?: string; updatedAt?: string;
+}
+
+export interface LedgerEntry {
+  id: string; projectId: string; workspaceId: string | null;
+  zoneKey: string; action: string; sourceRef: string;
+  image: string; imageDigest: string; environmentId: string | null;
+  snapshotRef: string; createdAt?: string;
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+export function dbUpsertProject(p: {
+  id?: string; slug: string; name: string;
+  gitRemote?: string; defaultBranch?: string; rootPath?: string;
+  policy?: Record<string, unknown>;
+}): string {
+  const db = getControlDb();
+  const id = p.id ?? newUuid();
+  db.run(
+    `INSERT INTO projects (id, slug, name, git_remote, default_branch, root_path, policy, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(slug) DO UPDATE SET
+       name = excluded.name, git_remote = excluded.git_remote,
+       default_branch = excluded.default_branch, root_path = excluded.root_path,
+       policy = excluded.policy, updated_at = datetime('now')`,
+    [id, p.slug, p.name, p.gitRemote ?? "", p.defaultBranch ?? "main",
+     p.rootPath ?? "", JSON.stringify(p.policy ?? {})],
+  );
+  return id;
+}
+
+function rowToProject(r: any): Project {
+  let policy: Record<string, unknown> = {};
+  try { policy = JSON.parse(r.policy); } catch { /* keep {} */ }
+  return {
+    id: r.id, slug: r.slug, name: r.name,
+    gitRemote: r.git_remote, defaultBranch: r.default_branch, rootPath: r.root_path,
+    policy, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export function dbGetProjects(): Project[] {
+  const db = getControlDb();
+  return (db.query("SELECT * FROM projects ORDER BY slug ASC").all() as any[]).map(rowToProject);
+}
+
+export function dbGetProjectBySlug(slug: string): Project | null {
+  const db = getControlDb();
+  const r = db.query("SELECT * FROM projects WHERE slug = ?").get(slug) as any;
+  return r ? rowToProject(r) : null;
+}
+
+// ── Workspaces ────────────────────────────────────────────────────────────────
+export function dbUpsertWorkspace(w: {
+  id?: string; projectId: string; environmentId?: string | null;
+  provider?: WorkspaceProvider; root?: string; branch?: string;
+  sourceRef?: string; lifecycleState?: Workspace["lifecycleState"];
+  capabilities?: Record<string, unknown>;
+}): string {
+  const db = getControlDb();
+  const id = w.id ?? newUuid();
+  db.run(
+    `INSERT INTO workspaces (id, project_id, environment_id, provider, root, branch, source_ref, lifecycle_state, capabilities, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       project_id = excluded.project_id, environment_id = excluded.environment_id,
+       provider = excluded.provider, root = excluded.root, branch = excluded.branch,
+       source_ref = excluded.source_ref, lifecycle_state = excluded.lifecycle_state,
+       capabilities = excluded.capabilities, updated_at = datetime('now')`,
+    [id, w.projectId, w.environmentId ?? null, w.provider ?? "local-windows",
+     w.root ?? "", w.branch ?? "", w.sourceRef ?? "", w.lifecycleState ?? "active",
+     JSON.stringify(w.capabilities ?? {})],
+  );
+  return id;
+}
+
+function rowToWorkspace(r: any): Workspace {
+  let capabilities: Record<string, unknown> = {};
+  try { capabilities = JSON.parse(r.capabilities); } catch { /* keep {} */ }
+  return {
+    id: r.id, projectId: r.project_id, environmentId: r.environment_id ?? null,
+    provider: r.provider as WorkspaceProvider, root: r.root, branch: r.branch,
+    sourceRef: r.source_ref, lifecycleState: r.lifecycle_state as Workspace["lifecycleState"],
+    capabilities, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export function dbGetWorkspaces(projectId?: string): Workspace[] {
+  const db = getControlDb();
+  const rows = projectId
+    ? db.query("SELECT * FROM workspaces WHERE project_id = ? ORDER BY created_at ASC").all(projectId)
+    : db.query("SELECT * FROM workspaces ORDER BY created_at ASC").all();
+  return (rows as any[]).map(rowToWorkspace);
+}
+
+// ── Deploy ledger ─────────────────────────────────────────────────────────────
+export function dbRecordLedger(e: {
+  projectId?: string; workspaceId?: string | null; zoneKey: string;
+  action?: string; sourceRef?: string; image?: string; imageDigest?: string;
+  environmentId?: string | null; snapshotRef?: string;
+}): void {
+  try {
+    const db = getControlDb();
+    db.run(
+      `INSERT INTO deploy_ledger (id, project_id, workspace_id, zone_key, action, source_ref, image, image_digest, environment_id, snapshot_ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [newUuid(), e.projectId ?? "", e.workspaceId ?? null, e.zoneKey,
+       e.action ?? "deploy", e.sourceRef ?? "", e.image ?? "", e.imageDigest ?? "",
+       e.environmentId ?? null, e.snapshotRef ?? ""],
+    );
+  } catch { /* ledger is best-effort — never fail a build/deploy on it */ }
+}
+
+function rowToLedger(r: any): LedgerEntry {
+  return {
+    id: r.id, projectId: r.project_id, workspaceId: r.workspace_id ?? null,
+    zoneKey: r.zone_key, action: r.action, sourceRef: r.source_ref,
+    image: r.image, imageDigest: r.image_digest, environmentId: r.environment_id ?? null,
+    snapshotRef: r.snapshot_ref, createdAt: r.created_at,
+  };
+}
+
+export function dbGetLedger(opts: { zoneKey?: string; limit?: number } = {}): LedgerEntry[] {
+  const db = getControlDb();
+  const limit = opts.limit ?? 25;
+  const rows = opts.zoneKey
+    ? db.query("SELECT * FROM deploy_ledger WHERE zone_key = ? ORDER BY created_at DESC LIMIT ?").all(opts.zoneKey, limit)
+    : db.query("SELECT * FROM deploy_ledger ORDER BY created_at DESC LIMIT ?").all(limit);
+  return (rows as any[]).map(rowToLedger);
+}
+
+// ── Snapshots (model only — provider-driven execution is the next slice) ───────
+export function dbRecordSnapshot(s: {
+  projectId: string; workspaceId?: string | null; kind?: string; ref?: string; note?: string;
+}): string {
+  const db = getControlDb();
+  const id = newUuid();
+  db.run(
+    `INSERT INTO snapshots (id, project_id, workspace_id, kind, ref, note)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, s.projectId, s.workspaceId ?? null, s.kind ?? "workspace", s.ref ?? "", s.note ?? ""],
+  );
+  return id;
+}
+
+export function dbGetSnapshots(projectId?: string): any[] {
+  const db = getControlDb();
+  return (projectId
+    ? db.query("SELECT * FROM snapshots WHERE project_id = ? ORDER BY created_at DESC").all(projectId)
+    : db.query("SELECT * FROM snapshots ORDER BY created_at DESC").all()) as any[];
 }
 
 // ── Zone API ──────────────────────────────────────────────────────────────────

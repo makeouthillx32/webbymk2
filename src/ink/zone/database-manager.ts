@@ -53,6 +53,7 @@ import {
   envWithFile,
   INSTANCE_TEMPLATE,
   type RuntimeInstance,
+  getInstanceProjectName,
 }                           from "./supabase-factory.ts";
 import { DOMAIN, STACK_HOST } from "../../config/stack.ts";
 import { loadRegistry, updateInstanceStatus } from "./supabase-factory.ts";
@@ -561,7 +562,7 @@ export async function createBlankDatabase(
     onLine("\n[2/5] Starting Supabase stack...");
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
       { cwd: instance.dockerPath, timeout: 120_000,
         env: envWithFile(`${instance.dockerPath}/.env`) },
     );
@@ -571,7 +572,9 @@ export async function createBlankDatabase(
 
     // ── [4] Wait for Postgres ────────────────────────────────────────────
     onLine("\n[3/5] Waiting for Postgres...");
-    const dbCont = `${instance.slug}-db`;
+    const dbCont = instance.containerPrefix
+      ? `${instance.containerPrefix}db`
+      : `${instance.slug}-db`;
     let pgReady = false;
     for (let i = 0; i < 30; i++) {   // up to 60s
       await new Promise((r) => setTimeout(r, 2000));
@@ -728,7 +731,7 @@ export async function cloneFromSnapshot(
     onLine(`\n[2/5] Starting lean stack...`);
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
       { cwd: instance.dockerPath, timeout: 120_000,
         env: envWithFile(`${instance.dockerPath}/.env`) },
     );
@@ -895,7 +898,9 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
 
     // ── Test 2: Postgres connectivity ────────────────────────────────────
     onLine("\n[2/6] Postgres connectivity...");
-    const dbCont = `${instance.slug}-db`;
+    const dbCont = instance.containerPrefix
+      ? `${instance.containerPrefix}db`
+      : `${instance.slug}-db`;
     const { out: pgOut } = await _dockerExec(["exec", dbCont, "pg_isready", "-U", "postgres"]);
     if (pgOut.includes("accepting connections")) {
       pass("Postgres accepting connections");
@@ -964,7 +969,7 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
       try {
         await spawnRun(
           "docker",
-          ["compose", "--project-name", instance.slug, "down", "--remove-orphans", "-v"],
+          ["compose", "--project-name", getInstanceProjectName(instance), "down", "--remove-orphans", "-v"],
           { cwd: instance.dockerPath, timeout: 60_000 },
         );
         await removeFromRegistry(instance.id);

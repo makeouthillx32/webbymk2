@@ -58,6 +58,24 @@ export const NAV_DATA = [
         ],
       },
 
+      // ── Blog ────────────────────────────────
+      {
+        title: "Blog",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Posts",
+            url: "/blog",
+            icon: Icons.Table,
+          },
+          {
+            title: "Chrome",
+            url: "/blog/chrome",
+            icon: Icons.FourCircle,
+          },
+        ],
+      },
+
       // ── Shop ────────────────────────────────
       {
         title: "Shop",
@@ -111,6 +129,11 @@ export const NAV_DATA = [
         title: "Admin",
         icon: Icons.SettingsIcon,
         items: [
+          {
+            title: "Sites & Apps",
+            url: "/settings/sites",
+            icon: Icons.FourCircle,
+          },
           {
             title: "Members",
             url: "/settings/members",

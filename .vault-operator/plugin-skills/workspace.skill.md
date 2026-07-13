@@ -78,6 +78,7 @@ right:
   children: [1 items: {...}...]
   direction: horizontal
   width: 308
+  collapsed: true
 left-ribbon:
   hiddenItems:
     switcher:Open quick switcher: false
@@ -96,7 +97,7 @@ left-ribbon:
     star-notebooklm:Open NotebookLM: false
     vault-operator:Vault Operator: false
 active: d99aa1c8cb93c596
-lastOpenFiles: [46 items: vault/Architecture/zone-aware-middleware-and-shared-runtime.md, src/ink/views/ZonesView.tsx.tmp.68288.4ddc13083d60, src/ink/hooks/useIpcBridge.ts.tmp.68288.40d5a7edb359...]
+lastOpenFiles: [47 items: docs/blog-zone-notes.md, zones/blog/src/app/rss/route.ts, zones/blog/src/app/rss...]
 ```
 
 For full settings, read: `.obsidian/workspace.json`

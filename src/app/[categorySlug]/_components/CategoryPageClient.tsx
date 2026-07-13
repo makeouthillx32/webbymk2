@@ -29,6 +29,12 @@ interface Product {
   badge?: string;
   is_featured: boolean;
   images: ProductImage[];
+  /** Distinct colors across active variants (derived server-side from
+   *  product_variants.options.color). */
+  colors?: { name: string; hex: string }[];
+  /** Count of distinct sizes — shown as a fallback when a product has no
+   *  color option (e.g. tee/crew products). */
+  sizeCount?: number;
 }
 
 interface Category {
@@ -234,6 +240,30 @@ export default function CategoryPageClient({
                       </span>
                     )}
                   </div>
+
+                  {/* Variant options — color swatches, or a size count fallback */}
+                  {product.colors && product.colors.length > 0 ? (
+                    <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                      {product.colors.slice(0, 6).map((c) => (
+                        <span
+                          key={c.name}
+                          title={c.name}
+                          aria-label={c.name}
+                          className="inline-block w-3.5 h-3.5 rounded-full border border-[var(--border)] shadow-sm"
+                          style={{ backgroundColor: c.hex || "transparent" }}
+                        />
+                      ))}
+                      <span className="text-xs text-muted-foreground">
+                        {product.colors.length === 1
+                          ? product.colors[0].name
+                          : `${product.colors.length} colors`}
+                      </span>
+                    </div>
+                  ) : product.sizeCount && product.sizeCount > 1 ? (
+                    <div className="pt-0.5 text-xs text-muted-foreground">
+                      {product.sizeCount} sizes
+                    </div>
+                  ) : null}
                 </div>
               </Link>
             );

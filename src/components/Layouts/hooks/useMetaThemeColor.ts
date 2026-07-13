@@ -34,13 +34,23 @@ function resolveToken(cssValue: string, parent: Element): string | null {
 }
 
 function setMeta(name: string, content: string) {
-  let el = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
-  if (!el) {
-    el = document.createElement("meta");
-    el.name = name;
-    document.head.appendChild(el);
+  const elements = Array.from(
+    document.querySelectorAll<HTMLMetaElement>(`meta[name="${name}"]`)
+  );
+
+  if (elements.length === 0) {
+    const element = document.createElement("meta");
+    element.name = name;
+    element.content = content;
+    document.head.appendChild(element);
+    return;
   }
-  if (el.content !== content) el.content = content;
+
+  // Next emits separate media-qualified theme-color tags for light and dark.
+  // Keep every variant synchronized so Safari cannot select a stale value.
+  elements.forEach((element) => {
+    if (element.content !== content) element.content = content;
+  });
 }
 
 export function useMetaThemeColor(layout: MetaLayout, themeType: "light" | "dark") {

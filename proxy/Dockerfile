@@ -9,4 +9,6 @@ COPY server.js ./
 
 EXPOSE 80
 
-CMD ["node", "--watch", "server.js"]
+# --watch is for local dev only (bind-mounted source hot-reloads).
+# The GHCR image runs plain node — no file watcher overhead in production.
+CMD ["node", "server.js"]

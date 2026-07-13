@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { StackOp } from "../components/DetachedStack.tsx";
 import type { RuntimeInstance } from "../zone/supabase-factory.ts";
 import type { Zone } from "../../config/zones.ts";
@@ -10,7 +10,8 @@ import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
 import { parseLogTail, snapshotContainerLogs } from "../log-snapshot.ts";
 import { loadZones } from "../zone-store.ts";
-import { fetchContainers, fetchContainerLogs, fetchImages, fetchVolumes, fetchNetworks, inspectContainer, fetchImageHistory, fetchDockerEvents } from "../agent-client.ts";
+import { fetchContainers, fetchContainerLogs, fetchImages, fetchVolumes, fetchNetworks, inspectContainer, fetchImageHistory, fetchDockerEvents, containerAction, fetchContainerStats, removeImage } from "../agent-client.ts";
+import { probeEnvironments, probeStateTile } from "../env-probe.ts";
 import { updateRemoteAgent } from "../agent-ops.ts";
 import {
   loadEnvironments,
@@ -49,14 +50,24 @@ import { loadRegistry } from "../zone/supabase-factory.ts";
 import { NPM_HOST } from "../../config/stack.ts";
 import { addZoneRoute, getRoutes } from "../proxy-config.ts";
 import { buildAndDeploy, deployZone } from "../zone-build.ts";
-import { deleteZone } from "../zone-scaffold.ts";
+import {
+  deleteZone, deriveZone, findNextDevPort, LAYOUT_OPTIONS,
+  type LayoutType, type AppFooterType,
+} from "../zone-scaffold.ts";
+import { createZonePipeline } from "../zone-pipeline.ts";
 import { doctorComposeService }    from "../docker.ts";
 import {
   npmAddZone, npmEnableHost, npmDisableHost,
 } from "../npm/index.ts";
 import { buildInfraServices, checkService, INFRA_SERVICES } from "../infra.ts";
 import { eventBus } from "../../utils/eventBus.js";
+import {
+  ensureRuntimeEnv,
+  getRuntimeKongUrl,
+  getRuntimeServiceKey,
+} from "../../utils/runtimeEnv.js";
 import { UNAXIS_CLI_SCHEMA } from "../cli-schema.js";
+import { fetchZoneVisibility, setZoneVisibility, type ZoneVisibility } from "../zone-visibility.js";
 import type { NotificationType, NotificationPriority, NotificationOptions } from "../components/Notifications.js";
 
 declare const UNAXIS_VERSION: string;
@@ -66,6 +77,103 @@ type RunOpQueued = (
   run: (onLine: (line: string) => void) => Promise<number> | number,
   priority?: "now" | "next" | "later",
 ) => void;
+
+type ZoneFooterPinRow = {
+  key: string;
+  label: string;
+  domain: string;
+  footer_pinned: boolean;
+};
+
+const ZONE_FOOTER_PIN_SELECT = "key,label,domain,footer_pinned";
+const ZONE_FOOTER_PIN_USAGE =
+  "zone <zone-key> status|tag|untag|pinned|logs|build|rebuild|deploy|pull|delete|doctor|dev <start|stop|restart|logs>";
+
+function getSupabaseRestConfig() {
+  ensureRuntimeEnv(true);
+  const kongUrl = getRuntimeKongUrl().replace(/\/+$/, "");
+  const serviceKey = getRuntimeServiceKey();
+
+  if (!serviceKey) {
+    throw new Error("SERVICE_ROLE_KEY not loaded; cannot update Supabase zone tags");
+  }
+
+  return { kongUrl, serviceKey };
+}
+
+function supabaseRestHeaders(serviceKey: string, extra?: Record<string, string>) {
+  return {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
+function zoneKeyFilter(zoneKey: string) {
+  return `eq.${encodeURIComponent(zoneKey)}`;
+}
+
+async function fetchZoneFooterPins(): Promise<Map<string, boolean>> {
+  const { kongUrl, serviceKey } = getSupabaseRestConfig();
+  const response = await fetch(
+    `${kongUrl}/rest/v1/zones?select=key,footer_pinned&order=sort_order.asc`,
+    { headers: supabaseRestHeaders(serviceKey) },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Supabase zone tag read failed (${response.status}): ${await response.text()}`);
+  }
+
+  const rows = await response.json() as Pick<ZoneFooterPinRow, "key" | "footer_pinned">[];
+  return new Map(rows.map((row) => [row.key, row.footer_pinned === true]));
+}
+
+async function fetchZoneFooterPin(zoneKey: string): Promise<ZoneFooterPinRow | null> {
+  const { kongUrl, serviceKey } = getSupabaseRestConfig();
+  const response = await fetch(
+    `${kongUrl}/rest/v1/zones?key=${zoneKeyFilter(zoneKey)}&select=${ZONE_FOOTER_PIN_SELECT}&limit=1`,
+    { headers: supabaseRestHeaders(serviceKey) },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Supabase zone tag read failed (${response.status}): ${await response.text()}`);
+  }
+
+  const rows = await response.json() as ZoneFooterPinRow[];
+  return rows[0] ?? null;
+}
+
+async function setZoneFooterPinned(zoneKey: string, pinned: boolean): Promise<ZoneFooterPinRow> {
+  const { kongUrl, serviceKey } = getSupabaseRestConfig();
+  const response = await fetch(
+    `${kongUrl}/rest/v1/zones?key=${zoneKeyFilter(zoneKey)}&select=${ZONE_FOOTER_PIN_SELECT}`,
+    {
+      method: "PATCH",
+      headers: supabaseRestHeaders(serviceKey, { Prefer: "return=representation" }),
+      body: JSON.stringify({
+        footer_pinned: pinned,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Supabase zone tag update failed (${response.status}): ${await response.text()}`);
+  }
+
+  const rows = await response.json() as ZoneFooterPinRow[];
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`Supabase zone not found: ${zoneKey}`);
+  }
+
+  return row;
+}
+
+// Zone visibility helpers live in ../zone-visibility.ts (shared with the zones
+// panel's [P] toggle so both drive the same catalog write).
 
 // Spawn `docker <args>`, streaming output to onLine (indented), resolving the
 // exit code. Shared by the build-doctor / build-mem / builder-reset commands.
@@ -99,6 +207,10 @@ type UseIpcBridgeParams = {
   runOpVisible: (title: string, op: (onLine: (l: string) => void) => Promise<number>, sink?: (l: string) => void) => Promise<number>;
   coreDockerInstance: RuntimeInstance;
   addNotification: (message: string, type?: NotificationType, opts?: NotificationOptions) => void;
+  /** Remove an op from the stack state (used by `stack clear`). */
+  setBgOps: Dispatch<SetStateAction<StackOp[]>>;
+  /** Fire an op's registered dismiss hook (dev/log cleanup) when clearing it. */
+  triggerDismissHook: (opId: number) => void;
 };
 
 export function useIpcBridge({
@@ -110,6 +222,8 @@ export function useIpcBridge({
   runOpVisible,
   coreDockerInstance,
   addNotification,
+  setBgOps,
+  triggerDismissHook,
 }: UseIpcBridgeParams) {  const ipcStateRef = useRef({
     view,
     bgOps,
@@ -129,6 +243,12 @@ export function useIpcBridge({
   // the current React context value without closing over a stale closure.
   const addNotificationRef = useRef(addNotification);
   useEffect(() => { addNotificationRef.current = addNotification; }, [addNotification]);
+
+  // Stable refs so `stack clear` (handler defined once) can mutate stack state.
+  const setBgOpsRef = useRef(setBgOps);
+  useEffect(() => { setBgOpsRef.current = setBgOps; }, [setBgOps]);
+  const triggerDismissHookRef = useRef(triggerDismissHook);
+  useEffect(() => { triggerDismissHookRef.current = triggerDismissHook; }, [triggerDismissHook]);
 
   // ── IPC server — CLI agent bridge ─────────────────────────────────────────
   // Starts a local TCP server (127.0.0.1:50505) so external CLI calls like
@@ -153,8 +273,26 @@ export function useIpcBridge({
       onLine(`${zone.label} · ${zone.domain}`);
       onLine(`  key       : ${zone.key}`);
       onLine(`  container : ${zone.container}`);
+      try {
+        const row = await fetchZoneFooterPin(zone.key);
+        onLine(`  footer    : ${row?.footer_pinned ? "tagged" : "not tagged"}`);
+      } catch (error) {
+        onLine(`  footer    : unavailable (${error instanceof Error ? error.message : String(error)})`);
+      }
       onLine(`  dev       : ${await formatDevStatus(zone)} (${devContainerName(zone)})`);
       onLine(`✓ zone status`);
+      return 0;
+    };
+
+    const printZoneFooterPinStatus = async (zone: Zone, onLine: (line: string) => void) => {
+      const row = await fetchZoneFooterPin(zone.key);
+      if (!row) {
+        onLine(`✗ zone not found in Supabase: "${zone.key}"`);
+        return 1;
+      }
+
+      onLine(`${row.label} · ${row.domain}`);
+      onLine(`  footer : ${row.footer_pinned ? "tagged" : "not tagged"}`);
       return 0;
     };
 
@@ -713,6 +851,49 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return failed > 0 ? 1 : 0;
         }
 
+        // unaxis env health [<name>] [--json]
+        // Deep state detection: host / agent / engine tiles per environment.
+        // States: online · busy · sleeping (engine-off) · wedged · restarting
+        //         · agent-down · offline · unknown
+        if (sub === "health") {
+          const targetName = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const all        = await loadEnvironments();
+          if (all.length === 0) { onLine("(no environments configured)"); return 0; }
+
+          const targets = targetName
+            ? all.filter((e) => e.name.toLowerCase() === targetName.toLowerCase())
+            : all;
+          if (targets.length === 0) {
+            onLine(`✗ environment not found: "${targetName}"`);
+            onLine(`  available: ${all.map((e) => e.name).join(", ")}`);
+            return 1;
+          }
+
+          onLine(`Probing ${targets.length} environment${targets.length !== 1 ? "s" : ""}…`);
+          const results = await probeEnvironments(targets);
+
+          if (args.includes("--json")) {
+            const out = targets.map((e) => ({ name: e.name, ...results.get(e.id)! }));
+            onLine(JSON.stringify(out, null, 2));
+            return 0;
+          }
+
+          let unhealthy = 0;
+          for (const env of targets) {
+            const r    = results.get(env.id)!;
+            const tile = probeStateTile(r.state);
+            if (r.state !== "online" && r.state !== "busy") unhealthy++;
+
+            const lat = r.engineLatencyMs != null ? ` ${r.engineLatencyMs}ms`
+                      : r.agentLatencyMs  != null ? ` ${r.agentLatencyMs}ms` : "";
+            onLine(`  ${tile.icon} ${env.name.padEnd(16)} ${tile.label.padEnd(11)}${lat}`);
+            onLine(`      host ${r.host.padEnd(8)} agent ${r.agent.padEnd(8)} engine ${r.engine}`);
+            onLine(`      ${r.detail}`);
+          }
+          onLine(`✓ health probe complete — ${targets.length - unhealthy} healthy, ${unhealthy} attention`);
+          return unhealthy > 0 ? 4 : 0;
+        }
+
         // unaxis env stacks [<name>]
         // Groups containers by com.docker.compose.project label — no extra agent
         // endpoint needed, derived from the same fetchContainers data.
@@ -789,9 +970,19 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             return 1;
           }
 
-          const visible = showAll
+          let visible = showAll
             ? containers
             : containers.filter((c) => c.Names.some((n) => n.replace(/^\//, "").startsWith("unt_")));
+
+          // --label k=v  → filter by an exact container label match (was ignored before)
+          const labelIdx = args.indexOf("--label");
+          if (labelIdx !== -1 && args[labelIdx + 1]) {
+            const [lk, lv] = args[labelIdx + 1].split("=");
+            visible = visible.filter((c) => {
+              const lbls = (c.Labels ?? {}) as Record<string, string>;
+              return lv === undefined ? lk in lbls : lbls[lk] === lv;
+            });
+          }
 
           if (jsonOut) {
             onLine(JSON.stringify({ env: env.name, ts: new Date().toISOString(), containers: visible }, null, 2));
@@ -819,6 +1010,142 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         // List Docker images on the target environment.
         // Reuses EnvPanel → ImagesView → fetchImages() — same call, straight to CLI.
         if (sub === "images") {
+          // Targeted recovery for image tags left by an already-deleted zone.
+          // Dry-run by default and restricted to UNAXIS-owned repositories.
+          const removeRepoAt = args.indexOf("--remove-repo");
+          if (removeRepoAt >= 0) {
+            const repo = args[removeRepoAt + 1];
+            const ownRepo = /(^|\/)(unenter|unaxis)(?:[-/]|$)/i;
+            if (!repo || repo.startsWith("--") || !ownRepo.test(repo)) {
+              onLine(`✗ --remove-repo requires an UNAXIS-owned repository name`);
+              return 2;
+            }
+
+            const envArg = args.find(
+              (arg, index) =>
+                index > 0 &&
+                index !== removeRepoAt + 1 &&
+                !arg.startsWith("--"),
+            );
+            const env = await resolveEnv(envArg);
+            if (!env) return 1;
+
+            const images = await fetchImages(env);
+            if (!images) {
+              onLine(`✗ could not reach agent — is ${env.name} online?`);
+              return 1;
+            }
+
+            const tags = [
+              ...new Set(
+                images.flatMap((item) =>
+                  (item.RepoTags ?? []).filter((tag) =>
+                    tag.startsWith(`${repo}:`),
+                  ),
+                ),
+              ),
+            ];
+            if (tags.length === 0) {
+              onLine(`✓ no local image tags found for ${repo} on ${env.name}`);
+              return 0;
+            }
+
+            const doDelete = args.includes("--yes");
+            onLine(
+              `${doDelete ? "Removing" : "Would remove"} ${tags.length} local image tag${tags.length === 1 ? "" : "s"} for ${repo}:`,
+            );
+            for (const tag of tags) onLine(`  ${tag}`);
+            if (!doDelete) {
+              onLine(`\n  dry-run — re-run with --yes to remove these tags.`);
+              return 0;
+            }
+
+            let removed = 0;
+            for (const tag of tags) {
+              if (await removeImage(env, tag)) removed++;
+            }
+            onLine(
+              `\n✓ removed ${removed}/${tags.length} image tags from ${env.name}`,
+            );
+            return removed === tags.length ? 0 : 4;
+          }
+
+          // ── unaxis env images --prune-stale [<env>] [--yes] ───────────────
+          // Ledger-aware image GC. DRY-RUN unless --yes. Keeps: images backing
+          // running containers, every :latest, ledger-referenced images, and
+          // the newest 2 dated tags per repo (rollback). Removes: dangling
+          // <none> + older dated tags. Tagged images are removed by tag-ref
+          // (untag-safe); dangling by id.
+          if (args.includes("--prune-stale")) {
+            const doDelete = args.includes("--yes");
+            // env name = first non-flag positional after the "images" sub
+            // (nameAt only reads args[1], which here is the --prune-stale flag).
+            const envArg = args.find((a, i) => i > 0 && !a.startsWith("--"));
+            const env = await resolveEnv(envArg);
+            if (!env) return 1;
+
+            const [images, containers] = await Promise.all([fetchImages(env), fetchContainers(env)]);
+            if (!images) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+
+            const keepIds  = new Set<string>();
+            const keepTags = new Set<string>();
+            for (const c of containers ?? []) { keepIds.add(c.ImageID); keepTags.add(c.Image); }
+            try {
+              const { dbGetLedger } = await import("../control-db.js");
+              for (const e of dbGetLedger({ limit: 500 }) as Array<{ image?: string }>) if (e.image) keepTags.add(e.image);
+            } catch { /* ledger optional */ }
+
+            const KEEP_RECENT  = 2;
+            const danglingOnly = args.includes("--dangling-only");
+            // Tagged deletes are restricted to OUR published repos. Third-party
+            // images (postgres, bun, supabase, …) are NEVER removed by tag — only
+            // ever reclaimed if they go dangling. This is the "nothing bad" guard.
+            const OWN = /(^|\/)(unenter|unaxis)/i;
+            const sizeById = new Map(images.map((i) => [i.Id, i.Size]));
+            const del: { label: string; target: string; size: number }[] = [];
+
+            // dangling <none> → always reclaim (unless an id backs a running container)
+            for (const img of images) {
+              const tags = img.RepoTags ?? [];
+              if ((tags.length === 0 || tags[0] === "<none>:<none>") && !keepIds.has(img.Id)) {
+                del.push({ label: "<none>", target: img.Id, size: img.Size });
+              }
+            }
+            // tagged tail → only OUR repos, keep newest KEEP_RECENT + protected
+            if (!danglingOnly) {
+              const byRepo = new Map<string, { tag: string; id: string; created: number }[]>();
+              for (const img of images) {
+                for (const t of img.RepoTags ?? []) {
+                  if (t === "<none>:<none>") continue;
+                  const repo = t.slice(0, t.lastIndexOf(":"));
+                  (byRepo.get(repo) ?? byRepo.set(repo, []).get(repo)!).push({ tag: t, id: img.Id, created: img.Created });
+                }
+              }
+              for (const [repo, list] of byRepo) {
+                if (!OWN.test(repo)) continue;   // never delete third-party images by tag
+                let kept = 0;
+                for (const { tag, id } of list.sort((a, b) => b.created - a.created)) {
+                  if (tag.endsWith(":latest") || keepTags.has(tag) || keepIds.has(id)) continue;
+                  if (kept < KEEP_RECENT) { kept++; continue; }
+                  del.push({ label: tag, target: tag, size: sizeById.get(id) ?? 0 });
+                }
+              }
+            }
+
+            const totalMb = del.reduce((s, d) => s + d.size, 0) / 1048576;
+            if (del.length === 0) { onLine(`✓ nothing to prune on ${env.name} — already lean`); return 0; }
+            onLine(`\n  prune-stale ${doDelete ? "(LIVE)" : "(dry-run)"}${danglingOnly ? " · dangling-only" : ""} — ${env.name}`);
+            onLine(`  ${"─".repeat(56)}`);
+            for (const d of del) onLine(`  ${(doDelete ? "rm" : "would rm").padEnd(8)} ${d.label.padEnd(46)} ${(d.size / 1048576).toFixed(0)}MB`);
+            onLine(`  ─ ${del.length} images · ~${totalMb.toFixed(0)}MB reclaimable`);
+            if (!doDelete) { onLine(`\n  dry-run — nothing deleted. Re-run with --yes to reclaim.`); return 0; }
+
+            let okCount = 0, freed = 0;
+            for (const d of del) if (await removeImage(env, d.target)) { okCount++; freed += d.size; }
+            onLine(`\n✓ removed ${okCount}/${del.length} images · freed ~${(freed / 1048576).toFixed(0)}MB — ${env.name}`);
+            return okCount === del.length ? 0 : 4;
+          }
+
           const jsonOut = args.includes("--json");
           const env = await resolveEnv(nameAt(args));
           if (!env) return 1;
@@ -1076,8 +1403,124 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return 0;
         }
 
+        // unaxis env inspect <container> [<env>] [--json]
+        // Surfaces a single container's unaxis.* imprint: labels, compose
+        // project, image, state. Labels already arrive in /containers/json,
+        // so no extra inspect round-trip is needed. Matches by exact name,
+        // "unt_"-prefixed name, or Id prefix.
+        if (sub === "inspect") {
+          const jsonOut    = args.includes("--json");
+          const positional = args.filter((a) => !a.startsWith("--"));
+          // positional[0] is the subcommand token ("inspect")
+          const target     = positional[1];
+          if (!target) { onLine("  usage: env inspect <container> [<env>] [--json]"); return 2; }
+          const env = await resolveEnv(positional[2]);
+          if (!env) return 1;
+
+          const containers = await fetchContainers(env);
+          if (!containers) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+
+          const match = containers.find((c) =>
+            c.Names.some((n) => { const nm = n.replace(/^\//, ""); return nm === target || nm === `unt_${target}`; })
+            || (c.Id as string).startsWith(target));
+          if (!match) { onLine(`✗ container not found: "${target}" on ${env.name}`); return 1; }
+
+          const labels  = (match.Labels ?? {}) as Record<string, string>;
+          const name    = match.Names[0]?.replace(/^\//, "") ?? (match.Id as string).slice(0, 12);
+          const project = labels["com.docker.compose.project"] ?? "(none)";
+          const unaxis  = Object.entries(labels).filter(([k]) => k.startsWith("unaxis."));
+
+          if (jsonOut) {
+            onLine(JSON.stringify({ env: env.name, name, project, image: match.Image, state: match.State,
+              unaxis: Object.fromEntries(unaxis), labels }, null, 2));
+            return 0;
+          }
+
+          onLine(`\n  ${name}  ·  ${env.name}`);
+          onLine(`  ─────────────────────────────────────────────`);
+          onLine(`  state    : ${match.State}`);
+          onLine(`  image    : ${match.Image}`);
+          onLine(`  project  : ${project}`);
+          if (unaxis.length === 0) {
+            onLine(`  imprint  : ✗ NO unaxis.* labels — unstamped`);
+          } else {
+            onLine(`  imprint  : ✓ ${unaxis.length} unaxis.* label${unaxis.length !== 1 ? "s" : ""}`);
+            for (const [k, v] of unaxis.sort(([a], [b]) => a.localeCompare(b))) onLine(`     ${k.padEnd(20)} ${v}`);
+          }
+          onLine(`✓ inspect`);
+          return 0;
+        }
+
+        // unaxis env stats [<container>] [--json]
+        // Live CPU/mem per container (Portainer delta formula). With a name,
+        // just that one; otherwise every running unt_* container.
+        if (sub === "stats") {
+          const jsonOut    = args.includes("--json");
+          const positional = args.filter((a) => !a.startsWith("--"));
+          const target     = positional[1];
+          const env = await resolveEnv(undefined);
+          if (!env) return 1;
+          const containers = await fetchContainers(env);
+          if (!containers) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+          const pick = target
+            ? containers.filter((c) => c.Names.some((n) => { const nm = n.replace(/^\//, ""); return nm === target || nm === `unt_${target}`; }))
+            : containers.filter((c) => c.State === "running" && c.Names.some((n) => n.replace(/^\//, "").startsWith("unt_")));
+          if (pick.length === 0) { onLine(`✗ no matching container(s) for "${target ?? "unt_*"}"`); return 1; }
+          const rows: { name: string; cpu: number; memMb: number; memPct: number }[] = [];
+          for (const c of pick) {
+            const s = await fetchContainerStats(env, c.Id as string);
+            if (!s) continue;
+            rows.push({ name: (c.Names[0] ?? "").replace(/^\//, ""), cpu: s.cpuPercent, memMb: s.memUsed / 1048576, memPct: s.memPercent });
+          }
+          if (jsonOut) { onLine(JSON.stringify({ env: env.name, ts: new Date().toISOString(), stats: rows })); return 0; }
+          onLine(`\n  ${"container".padEnd(22)} ${"cpu%".padStart(7)} ${"mem".padStart(10)} ${"mem%".padStart(7)}`);
+          onLine(`  ${"─".repeat(48)}`);
+          for (const r of rows) onLine(`  ${r.name.padEnd(22)} ${r.cpu.toFixed(1).padStart(7)} ${(r.memMb.toFixed(0) + "MB").padStart(10)} ${r.memPct.toFixed(1).padStart(7)}`);
+          onLine(`✓ ${rows.length} container${rows.length !== 1 ? "s" : ""}  —  ${env.name}`);
+          return 0;
+        }
+
+        // unaxis env networks [<env>] [--json]
+        if (sub === "networks") {
+          const jsonOut = args.includes("--json");
+          const env = await resolveEnv(nameAt(args));
+          if (!env) return 1;
+          onLine(`Fetching networks on ${env.name} (${env.agentUrl})…`);
+          const nets = await fetchNetworks(env);
+          if (!nets) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+          if (jsonOut) { onLine(JSON.stringify({ env: env.name, networks: nets })); return 0; }
+          for (const n of nets as Array<Record<string, unknown>>) {
+            onLine(`  ${String(n.Name ?? "?").padEnd(28)} ${String(n.Driver ?? "?").padEnd(10)} ${String(n.Scope ?? "")}`);
+          }
+          onLine(`✓ ${(nets as unknown[]).length} networks  —  ${env.name}`);
+          return 0;
+        }
+
+        // unaxis env <start|stop|restart> <container> [<env>]
+        // Reversible lifecycle via the agent. Destructive removes (rm/prune)
+        // are intentionally NOT exposed here — they require explicit human action.
+        if (sub === "start" || sub === "stop" || sub === "restart") {
+          const positional = args.filter((a) => !a.startsWith("--"));
+          const target = positional[1];
+          if (!target) { onLine(`  usage: env ${sub} <container> [<env>]`); return 2; }
+          const env = await resolveEnv(positional[2]);
+          if (!env) return 1;
+          const containers = await fetchContainers(env);
+          if (!containers) { onLine(`✗ could not reach agent — is ${env.name} online?`); return 1; }
+          const match = containers.find((c) =>
+            c.Names.some((n) => { const nm = n.replace(/^\//, ""); return nm === target || nm === `unt_${target}`; })
+            || (c.Id as string).startsWith(target));
+          if (!match) { onLine(`✗ container not found: "${target}" on ${env.name}`); return 1; }
+          const cname = (match.Names[0] ?? "").replace(/^\//, "");
+          onLine(`${sub === "restart" ? "Restarting" : sub === "stop" ? "Stopping" : "Starting"} ${cname} on ${env.name}…`);
+          const ok = await containerAction(env, match.Id as string, sub as "start" | "stop" | "restart");
+          if (!ok) { onLine(`✗ ${sub} failed for ${cname}`); return 1; }
+          onLine(`✓ ${cname} — ${sub} ok`);
+          return 0;
+        }
+
         onLine(`✗ unknown env command: "${sub}"`);
-        onLine("  usage: env list | env ping [<name>] | env containers [<name>] [--all] | env images [<name>] | env volumes [<name>] | env stacks [<name>] | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name> | env security [<name>] [--json] | env audit-image <image> [<env>] [--json] | env events [<name>] [--since <sec>] [--json]");
+        onLine("  usage: env list | env health [<name>] [--json] | env ping [<name>] | env containers [<name>] [--all] [--label k=v] | env images [<name>] | env volumes [<name>] | env networks [<name>] | env stacks [<name>] | env stats [<container>] | env inspect <container> [--json] | env start|stop|restart <container> | env logs <env> <container> [--tail <n>] | env update <name> | env status | env use <name> | env security [<name>] [--json] | env audit-image <image> [<env>] [--json] | env events [<name>] [--since <sec>] [--json]");
         return 2;
       },
 
@@ -1116,6 +1559,44 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
       // unaxis stack  — compact list of visible TUI ops
       stack: async (args, onLine) => {
+        // unaxis stack clear [<id>|--failed]
+        // Remove FINISHED ops (done + failed) from the stack. Running/live
+        // (dev/log-tail) ops are never yanked. Failed ops linger by design for
+        // inspection, but a stale one gets in the way — this clears it without
+        // needing the interactive [x]/DismissAll keys in the TUI.
+        if (args[0] === "clear") {
+          const arg2      = args[1];
+          const targetId  = arg2 && !arg2.startsWith("--") ? arg2 : undefined;
+          const failedOnly = args.includes("--failed");
+          const ops = ipcStateRef.current.bgOps;
+
+          const lastLine = (o: StackOp) => o.lines[o.lines.length - 1] ?? "";
+          const isFailed = (o: StackOp) => /✗|exit [1-9]/.test(lastLine(o));
+
+          const toRemove = ops.filter((o) => {
+            if (o.busy || o.isLog) return false;        // never clear running/live ops
+            if (targetId)   return String(o.id) === targetId;
+            if (failedOnly) return isFailed(o);
+            return true;                                 // all finished (done + failed)
+          });
+
+          if (toRemove.length === 0) {
+            onLine(
+              targetId   ? `no finished op #${targetId} to clear`
+              : failedOnly ? "✓ no failed ops to clear"
+              : "✓ nothing to clear — no finished ops",
+            );
+            return 0;
+          }
+
+          const removeIds = new Set(toRemove.map((o) => o.id));
+          for (const o of toRemove) triggerDismissHookRef.current(o.id);
+          setBgOpsRef.current((prev) => prev.filter((o) => !removeIds.has(o.id)));
+
+          onLine(`✓ cleared ${toRemove.length} op${toRemove.length !== 1 ? "s" : ""}: ${[...removeIds].map((id) => `#${id}`).join(", ")}`);
+          return 0;
+        }
+
         const ops = ipcStateRef.current.bgOps;
 
         if (args.includes("--json")) {
@@ -2110,12 +2591,77 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         const sub = args[0] ?? "help";
 
         if (sub === "help" || sub === "--help") {
-          onLine("unaxis project — core domain management for unenter.live");
+          onLine("unaxis project — projects, workspaces, and the deploy ledger");
           onLine("");
-          onLine("  project studio status          — show whether Studio is public or local-only");
-          onLine("  project studio public           — expose studio.unenter.live via NPM");
-          onLine("  project studio local            — disable public access, local only");
-          onLine("  project studio toggle           — flip current state");
+          onLine("  project ls                      — list registered projects (control.db)");
+          onLine("  project workspaces              — list workspaces (provider, root, env)");
+          onLine("  project ledger [<zone>]         — recent source→image→deploy ledger entries");
+          onLine("  project studio <public|local|toggle|status>  — core Studio exposure");
+          return 0;
+        }
+
+        // ── workspace control plane (projects · workspaces · deploy ledger) ──
+        // Lazily seed this machine's project as control.db project #1 + a
+        // local-windows workspace, so the spine has real data to show/test.
+        const seedDefaultProject = async () => {
+          const cdb = await import("../control-db.js");
+          if (cdb.dbGetProjects().length > 0) return;
+          let slug = "unenter.live", root = process.cwd();
+          try {
+            const cfg: any = await import("../../config/stack.ts");
+            if (cfg.PROJECT_SLUG) slug = cfg.PROJECT_SLUG;
+            if (cfg.PROJECT_DIR)  root = cfg.PROJECT_DIR;
+          } catch { /* fall back to cwd */ }
+          let gitRemote = "", branch = "main";
+          try {
+            const { spawnSync } = await import("child_process");
+            const g = (a: string[]) => { try { const r = spawnSync("git", a, { cwd: root, encoding: "utf-8" }); return r.status === 0 ? (r.stdout ?? "").trim() : ""; } catch { return ""; } };
+            gitRemote = g(["remote", "get-url", "origin"]);
+            branch    = g(["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+          } catch { /* best-effort */ }
+          const pid = cdb.dbUpsertProject({ slug, name: slug, gitRemote, defaultBranch: branch, rootPath: root });
+          cdb.dbUpsertWorkspace({ projectId: pid, provider: "local-windows", root, branch, lifecycleState: "active" });
+        };
+
+        if (sub === "ls" || sub === "list") {
+          await seedDefaultProject();
+          const { dbGetProjects } = await import("../control-db.js");
+          const projects = dbGetProjects();
+          if (args.includes("--json")) { onLine(JSON.stringify(projects, null, 2)); return 0; }
+          if (projects.length === 0) { onLine("  (no projects)"); return 0; }
+          for (const p of projects) {
+            onLine(`  ${p.slug.padEnd(16)} ${p.name.padEnd(18)} ${p.rootPath}`);
+            onLine(`     git: ${p.gitRemote || "—"}   branch: ${p.defaultBranch}`);
+          }
+          onLine(`✓ ${projects.length} project${projects.length !== 1 ? "s" : ""}`);
+          return 0;
+        }
+
+        if (sub === "workspaces" || sub === "ws") {
+          await seedDefaultProject();
+          const { dbGetWorkspaces } = await import("../control-db.js");
+          const ws = dbGetWorkspaces();
+          if (args.includes("--json")) { onLine(JSON.stringify(ws, null, 2)); return 0; }
+          if (ws.length === 0) { onLine("  (no workspaces)"); return 0; }
+          for (const w of ws) {
+            onLine(`  ${w.id.slice(0, 8)}  provider=${w.provider.padEnd(13)} state=${w.lifecycleState}`);
+            onLine(`     root: ${w.root || "—"}   env: ${w.environmentId ?? "—"}`);
+          }
+          onLine(`✓ ${ws.length} workspace${ws.length !== 1 ? "s" : ""}`);
+          return 0;
+        }
+
+        if (sub === "ledger") {
+          const { dbGetLedger } = await import("../control-db.js");
+          const zoneKey = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+          const entries = dbGetLedger({ zoneKey, limit: 20 });
+          if (args.includes("--json")) { onLine(JSON.stringify(entries, null, 2)); return 0; }
+          if (entries.length === 0) { onLine("  (ledger empty — build/deploy a zone to populate it)"); return 0; }
+          for (const e of entries) {
+            onLine(`  ${(e.createdAt ?? "").slice(0, 19)}  ${e.action.padEnd(12)} ${e.zoneKey.padEnd(12)} ${e.sourceRef || "—"}`);
+            if (e.image) onLine(`     ${e.image}`);
+          }
+          onLine(`✓ ${entries.length} ledger entr${entries.length !== 1 ? "ies" : "y"}`);
           return 0;
         }
 
@@ -2400,30 +2946,141 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // unaxis zones [--json]
       zones: async (args, onLine) => {
         const all = await loadZones();
+        let footerPins = new Map<string, boolean>();
+        let footerPinError: string | null = null;
+        try {
+          footerPins = await fetchZoneFooterPins();
+        } catch (error) {
+          footerPinError = error instanceof Error ? error.message : String(error);
+        }
+
         if (args.includes("--json")) {
-          onLine(JSON.stringify(all, null, 2));
+          onLine(JSON.stringify(
+            all.map((zone) => ({
+              ...zone,
+              footerPinned: footerPins.get(zone.key) === true,
+              footerTagKnown: footerPins.has(zone.key),
+            })),
+            null,
+            2,
+          ));
           return 0;
         }
         if (all.length === 0) { onLine("  (no zones)"); return 0; }
         for (const z of all) {
-          onLine(`  ${z.key.padEnd(20)} ${z.label.padEnd(20)} ${z.domain}`);
+          const footerTag = footerPins.get(z.key) === true ? "tagged" : "not tagged";
+          onLine(`  ${z.key.padEnd(20)} ${z.label.padEnd(20)} ${z.domain.padEnd(30)} ${footerTag}`);
         }
+        if (footerPinError) onLine(`  tag state unavailable: ${footerPinError}`);
         return 0;
       },
 
       // unaxis zone <name> status
+      // unaxis zone <name> tag|untag|pinned
       // unaxis zone <name> logs [--tail <lines>]
       // unaxis zone <name> dev start|stop|restart
       // unaxis zone <name> dev logs [--tail <lines>]
       zone: async (args, onLine) => {
         const zoneName = args[0];
-        if (!zoneName) { onLine("✗ usage: zone <zone-key> status|logs|dev <start|stop|restart|logs>"); return 2; }
+        if (!zoneName) { onLine(`✗ usage: ${ZONE_FOOTER_PIN_USAGE}`); return 2; }
+
+        // ── create: scaffold a NEW zone (headless equivalent of the TUI wizard) ──
+        // unaxis zone <key> create [--layout app|landing|shop|minimal] [--footer none|shop|landing] [--label "Name"]
+        // Runs the same deriveZone + createZonePipeline the wizard uses, backgrounded
+        // (the pipeline is multi-minute: scaffold → build → deploy → proxy → NPM cert),
+        // so it returns "queued" immediately and is watchable via `unaxis stacks`.
+        if (args[1] === "create") {
+          if (!/^[a-z0-9-]+$/.test(zoneName)) {
+            onLine("✗ invalid zone key — lowercase letters, numbers, hyphens only"); return 2;
+          }
+          if (await resolveZone(zoneName)) { onLine(`✗ zone "${zoneName}" already exists`); return 1; }
+          const layout = (argValue(args, "--layout") ?? "app") as LayoutType;
+          if (!LAYOUT_OPTIONS.some((o) => o.type === layout)) {
+            onLine("✗ invalid --layout — one of: landing | shop | app | minimal"); return 2;
+          }
+          const footer = (argValue(args, "--footer") ?? "none") as AppFooterType;
+          const label  = argValue(args, "--label") ?? (zoneName.charAt(0).toUpperCase() + zoneName.slice(1));
+          const port   = await findNextDevPort();
+          const z = deriveZone(
+            { key: zoneName, label, layoutType: layout, appFooter: footer, dynamicSections: [] },
+            port,
+          );
+          runOpQueued(`Create  ${z.label}`, (l) => createZonePipeline(z, l));
+          if (args.includes("--json")) {
+            onLine(JSON.stringify({ status: "queued", taskId: `Create  ${z.label}`, key: z.key, domain: z.domain, layout, footer }));
+          } else {
+            onLine(`⚡ Creating ${z.label} → ${z.domain} (layout: ${layout}${layout === "app" ? `, footer: ${footer}` : ""}) — watch: unaxis stacks`);
+          }
+          return 3;
+        }
+
         const zone = await resolveZone(zoneName);
         if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
 
         const action = args[1] ?? "status";
         if (action === "status") {
           return printZoneStatus(zone, onLine);
+        }
+
+        if (action === "pinned" || action === "tagged") {
+          try {
+            return await printZoneFooterPinStatus(zone, onLine);
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        if (action === "pin" || action === "tag") {
+          try {
+            const row = await setZoneFooterPinned(zone.key, true);
+            onLine(`✓ ${row.label} tagged for public footer`);
+            onLine(`  ${row.domain}`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        if (action === "unpin" || action === "untag" || action === "untage") {
+          try {
+            const row = await setZoneFooterPinned(zone.key, false);
+            onLine(`✓ ${row.label} removed from public footer`);
+            onLine(`  ${row.domain}`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        // ── Public visibility (Sites & Apps) ──────────────────────────────
+        // `public` → visibility=public, `private` → private, `unlisted` →
+        // unlisted, `visibility` → read current. Separate from footer tag/pin.
+        if (action === "public" || action === "private" || action === "unlisted") {
+          try {
+            const row = await setZoneVisibility(zone.key, action as ZoneVisibility);
+            onLine(`✓ ${row.label} is now ${row.visibility}`);
+            onLine(`  ${row.domain}`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        if (action === "visibility") {
+          try {
+            const row = await fetchZoneVisibility(zone.key);
+            if (!row) { onLine(`✗ zone not found in catalog: ${zone.key}`); return 1; }
+            onLine(`  ${row.label}  ·  ${row.domain}`);
+            onLine(`  visibility : ${row.visibility}`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
         }
 
         if (action === "logs") {
@@ -2485,9 +3142,9 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
             return 1;
           }
           onLine(`Deleting zone  ${zone.label}…`);
-          const code = await deleteZone(zone, onLine);
-          if (code === 0) onLine(`✓ Zone "${zone.key}" deleted`);
-          return code;
+          const { exitCode } = await deleteZone(zone, onLine);
+          if (exitCode === 0) onLine(`✓ Zone "${zone.key}" deleted`);
+          return exitCode;
         }
 
         if (action === "doctor") {
@@ -2514,7 +3171,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         if (action !== "dev") {
           onLine(`✗ unknown zone action: ${action}`);
-          onLine("  usage: zone <zone-key> status|logs|build|rebuild|deploy|pull|delete|doctor|dev <start|stop|restart|logs>");
+          onLine(`  usage: ${ZONE_FOOTER_PIN_USAGE}`);
           return 2;
         }
 

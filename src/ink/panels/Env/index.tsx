@@ -35,6 +35,7 @@ import {
   type AgentStatus,
 }                               from "../../environment-store.ts";
 import { buildAndPushAgent, updateRemoteAgent } from "../../agent-ops.ts";
+import { probeEnvironments, probeStateTile, type EnvProbeResult } from "../../env-probe.ts";
 import { KeyHints }             from "../../components/KeyHint.tsx";
 import { LoadingState }         from "../../components/design-system/index.ts";
 
@@ -101,13 +102,14 @@ const HINTS = [
 
 // ── Environment card ──────────────────────────────────────────────────────────
 
-function EnvCard({ env, focused, pinging, updating, expanded, pingError }: {
+function EnvCard({ env, focused, pinging, updating, expanded, pingError, probe }: {
   env:       UnaxisEnvironment;
   focused:   boolean;
   pinging:   boolean;
   updating:  boolean;
   expanded:  boolean;
   pingError: string | null;
+  probe:     EnvProbeResult | null;
 }) {
   const typeClr   = environmentTypeColor(env.type) as any;
   const borderClr = focused ? "cyan" : env.isDefaultTarget ? "#D4A27F" : "gray";
@@ -133,6 +135,12 @@ function EnvCard({ env, focused, pinging, updating, expanded, pingError }: {
 
         {env.machineRole && <Text dimColor>{env.machineRole}</Text>}
 
+        {/* Deep state tile — online / busy / sleeping / wedged / restarting */}
+        {probe && (() => {
+          const tile = probeStateTile(probe.state);
+          return <Text color={tile.color} bold>{tile.icon} {tile.label}</Text>;
+        })()}
+
         {/* Default target badge */}
         {env.isDefaultTarget && (
           <Text color="#D4A27F" bold>★ default</Text>
@@ -142,7 +150,32 @@ function EnvCard({ env, focused, pinging, updating, expanded, pingError }: {
         {updating && focused && <Text color="magenta">updating agent…</Text>}
       </Box>
 
-      {/* ── Row 2: agent status + URL ──────────────────────────────────── */}
+      {/* ── Row 2: endpoint tiles (host / agent / engine) ─────────────── */}
+      {probe && (
+        <Box gap={2} paddingLeft={3}>
+          <Text dimColor>host</Text>
+          <Text color={probe.host === "up" ? "green" : probe.host === "down" ? "red" : "gray"}>
+            {probe.host}
+          </Text>
+          <Text dimColor>agent</Text>
+          <Text color={probe.agent === "up" ? "green" : probe.agent === "down" ? "red" : "gray"}>
+            {probe.agent}
+          </Text>
+          <Text dimColor>engine</Text>
+          <Text color={
+            probe.engine === "up" ? "green"
+            : probe.engine === "wedged" ? "red"
+            : probe.engine === "off" ? "blue"
+            : "gray"
+          }>
+            {probe.engine}
+          </Text>
+          {probe.engineLatencyMs != null && <Text dimColor>{probe.engineLatencyMs}ms</Text>}
+          <Text dimColor wrap="truncate">{probe.detail}</Text>
+        </Box>
+      )}
+
+      {/* ── Row 3: agent status + URL ──────────────────────────────────── */}
       <Box gap={2} paddingLeft={3}>
         {/* Agent dot */}
         <Text color={agent.color}>{agent.dot}</Text>
@@ -209,6 +242,8 @@ export function EnvPanel({
   const [expanded,   setExpanded]   = useState<number | null>(null);
   /** Per-env last ping failure detail — cleared on successful ping. */
   const [pingErrors, setPingErrors] = useState<Record<string, string>>({});
+  /** Deep probe results (online/busy/sleeping/wedged/…) — polled every 15 s. */
+  const [probes,     setProbes]     = useState<Record<string, EnvProbeResult>>({});
 
   const didInit = useRef(false);
   // Skip the initial Supabase fetch when pre-seeded (e.g. from snapshot-view).
@@ -231,6 +266,28 @@ export function EnvPanel({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Deep state probes (host / agent / engine tiles) ─────────────────────
+  // Probe all environments on mount and every 15 s. Parallel, bounded
+  // timeouts inside probeEnvironments — worst case a cycle takes ~10 s.
+  useEffect(() => {
+    if (envs.length === 0) return;
+    let cancelled = false;
+
+    const runProbes = async () => {
+      const results = await probeEnvironments(envs);
+      if (cancelled) return;
+      setProbes((prev) => {
+        const next = { ...prev };
+        for (const [id, r] of results) next[id] = r;
+        return next;
+      });
+    };
+
+    runProbes();
+    const timer = setInterval(runProbes, 15_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [envs]);
 
   const handlePing = useCallback(async () => {
     const target = envs[selected];
@@ -399,6 +456,7 @@ export function EnvPanel({
           updating={updating}
           expanded={expanded === idx}
           pingError={pingErrors[env.id] ?? null}
+          probe={probes[env.id] ?? null}
         />
       ))}
 

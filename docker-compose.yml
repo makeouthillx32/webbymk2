@@ -1,3 +1,19 @@
+# Compose PROJECT NAME — must be a plain token ([a-z0-9_-]); dots are illegal,
+# so this can't be "unenter.live". The dotted identity lives in the labels
+# (unaxis.project / unaxis.domain = "unenter.live") where dots are legal.
+# Volumes below are pinned to their original webbymk2_ names so this project
+# rename does NOT orphan the production DB data.
+#
+# Set to "unenterlive" to MATCH the actually-running production stack (its
+# containers carry com.docker.compose.project=unenterlive since first bring-up).
+# A prior edit set this to "unenter" as an intended rename, but core deploy was
+# broken (compose service-resolution bug) so the rename never reached the
+# running stack — the mismatch then blocked every core deploy with a container
+# name conflict. With one project managing one domain, the token is just a
+# label; matching reality is the least-surprise state. Revisit only if the
+# platform ever grows to multiple projects. (2026-07-11)
+name: unenterlive
+
 networks:
   unenter:
     driver: bridge
@@ -6,7 +22,9 @@ networks:
 
 volumes:
   unt-db-data:
+    name: webbymk2_unt-db-data
   unt-storage-data:
+    name: webbymk2_unt-storage-data
   # unt-ink-modules and unt-tui-modules removed — TUI now runs natively via Bun (tui/run.ps1)
 
 services:
@@ -31,6 +49,13 @@ services:
       retries: 10
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "data"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   kong:
     image: kong:2.8.1
@@ -50,6 +75,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   auth:
     image: supabase/gotrue:v2.151.0
@@ -83,6 +115,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   rest:
     image: postgrest/postgrest:v12.2.0
@@ -100,6 +139,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   realtime:
     image: supabase/realtime:v2.25.50
@@ -131,6 +177,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   imgproxy:
     image: darthsim/imgproxy:v3.8.0
@@ -146,6 +199,13 @@ services:
       - unt-storage-data:/var/lib/storage:ro
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   storage:
     image: ghcr.io/supabase/storage-api:v1.37.8
@@ -177,6 +237,13 @@ services:
         condition: service_started
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   meta:
     image: supabase/postgres-meta:v0.84.2
@@ -194,6 +261,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   studio:
     image: supabase/studio:latest
@@ -221,6 +295,13 @@ services:
         condition: service_started
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   # ── Reverse proxy ─────────────────────────────────────────────────────────────
   # Routes requests to the correct zone by Host header (subdomain).
@@ -239,6 +320,10 @@ services:
       dockerfile: Dockerfile
     container_name: unt_proxy
     restart: unless-stopped
+    # Local-dev override: the GHCR/prod image CMD is plain `node server.js`
+    # (no watcher). Here server.js + agent.js are bind-mounted, so run with
+    # --watch to keep the zero-rebuild hot-reload workflow alive.
+    command: ["node", "--watch", "server.js"]
     ports:
       - "3080:3080"
       - "127.0.0.1:3081:3081"
@@ -265,6 +350,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "proxy"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
 
   # ── Zone services ─────────────────────────────────────────────────────────────
@@ -313,6 +405,13 @@ services:
         condition: service_started
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
 
 

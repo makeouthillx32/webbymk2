@@ -14,8 +14,7 @@
     "onemore": "http://unt_onemore:3000",
     "logs": "http://unt_logs:3000",
     "logz": "http://unt_logz:3000",
-    "nick": "http://unt_nick:3000",
-    "nick2": "http://unt_nick2:3000"
+    "docs": "http://unt_docs:3000"
   },
   "databases": {
     "testubg": {

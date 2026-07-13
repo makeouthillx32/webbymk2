@@ -46,6 +46,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   kong:
     image: kong:2.8.1
@@ -64,6 +70,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   auth:
     image: supabase/gotrue:v2.151.0
@@ -95,6 +107,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   rest:
     image: postgrest/postgrest:v12.2.0
@@ -110,6 +128,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   realtime:
     image: supabase/realtime:v2.25.50
@@ -137,6 +161,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   imgproxy:
     image: darthsim/imgproxy:v3.8.0
@@ -150,6 +180,12 @@ services:
       IMGPROXY_MAX_SRC_RESOLUTION: "50"
     volumes:
       - supabase-storage-data:/var/lib/storage:ro
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   storage:
     image: ghcr.io/supabase/storage-api:v1.37.8
@@ -175,6 +211,12 @@ services:
         condition: service_healthy
       imgproxy:
         condition: service_started
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   meta:
     image: supabase/postgres-meta:v0.84.2
@@ -190,6 +232,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"
 
   studio:
     image: supabase/studio:latest
@@ -215,3 +263,9 @@ services:
         condition: service_started
       meta:
         condition: service_started
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: ""
+      unaxis.role: "instance"
+      unaxis.instance: "supabase"

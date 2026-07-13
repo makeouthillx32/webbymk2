@@ -90,6 +90,17 @@ export function useBackgroundOps({
   const anyBusy   = bgOps.some((o) => o.busy);
   const overlayOp = bgOps.find((o) => o.id === overlayOpId) ?? null;
 
+  // Safety net: if the op shown in the detail overlay no longer exists (it was
+  // auto-dismissed after success, cleared via `stack clear`, or manually
+  // dismissed), close the overlay. Without this the overlay stays open pointing
+  // at nothing and renders the "starting…" fallback until the user presses
+  // Enter/Esc. Covers every op-removal path, not just finishOp. (2026-07-13)
+  useEffect(() => {
+    if (overlayOpId !== null && !bgOps.some((o) => o.id === overlayOpId)) {
+      setOverlayOpId(null);
+    }
+  }, [overlayOpId, bgOps]);
+
   // Internal: allocate an op slot
   // autoOverlay=true  => starts in full overlay (user watches it immediately)
   // autoOverlay=false => starts directly in the background stack
@@ -135,6 +146,13 @@ export function useBackgroundOps({
       setTimeout(() => {
         setBgOps((prev) => prev.filter((o) => !(o.id === id && !o.isLog && !o.dismissable)));
         dismissHooks.current.delete(id);
+        // If this op's detail overlay is still open, close it when the op is
+        // auto-dismissed. Otherwise the overlay lingers pointing at a removed
+        // op with zero lines and renders the "starting…" fallback forever until
+        // the user presses Enter/Esc. runOp opens the overlay automatically, so
+        // every successful r/R (restart/rebuild) hit this. (2026-07-13)
+        setOverlayOpId((cur) => (cur === id ? null : cur));
+        setStackFocusId((cur) => (cur === id ? null : cur));
       }, AUTO_DISMISS_MS);
     }
   }, []);

@@ -36,10 +36,12 @@
     --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
     --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.10);
     --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.10);
-    /* Layout-token fallbacks for LandingLayout */
+    /* Blog chrome tokens. The status bar follows the header's --secondary. */
     --gp-bg: hsl(var(--background));
-    --lt-header-bg: hsl(var(--background));
+    --lt-bg: hsl(var(--secondary));
+    --lt-header-bg: var(--lt-bg);
     --lt-footer-bg: hsl(var(--background));
+    --lt-status-bar: var(--lt-bg);
     --x: 50%;
     --y: 50%;
   }
@@ -65,8 +67,10 @@
     --input: 0 0% 26.67%;
     --ring: 139.66 52.73% 43.14%;
     --gp-bg: hsl(var(--background));
-    --lt-header-bg: hsl(var(--background));
+    --lt-bg: hsl(var(--secondary));
+    --lt-header-bg: var(--lt-bg);
     --lt-footer-bg: hsl(var(--background));
+    --lt-status-bar: var(--lt-bg);
   }
 }
 

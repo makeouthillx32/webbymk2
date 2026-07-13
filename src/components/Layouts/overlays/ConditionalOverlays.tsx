@@ -8,6 +8,7 @@ import CartDrawer from "@/components/Layouts/overlays/cart/CartDrawer";
 
 export default function ConditionalOverlays() {
   const pathname = usePathname();
+  const isShopZone = process.env.NEXT_PUBLIC_ZONE === "shop";
 
   // Exclude overlays from app and dashboard pages
   const isAppPage = pathname?.startsWith('/app');
@@ -22,13 +23,13 @@ export default function ConditionalOverlays() {
   return (
     <>
       {/* 🛒 Cart Button - bottom left */}
-      <CartButton />
+      {isShopZone && <CartButton />}
       
       {/* ♿ Accessibility Overlay - bottom right */}
       <AccessibilityOverlay />
       
       {/* 🛒 Cart Drawer - slide-out panel */}
-      <CartDrawer />
+      {isShopZone && <CartDrawer />}
     </>
   );
 }

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme, useAuth } from "@/app/provider";
 import { classifyRoute } from "@/components/Layouts/routeClassifier";
 import { useScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 import { useMetaThemeColor } from "@/components/Layouts/hooks/useMetaThemeColor";
-import { DashboardLayout, AuthLayout, ShopLayout, LandingLayout, MinimalLayout, AppLayout, type AppFooterType } from "@/components/Layouts/LayoutBranches";
+import { DashboardLayout, AuthLayout, ShopLayout, LandingLayout, MinimalLayout, AppLayout, BlogLayout, type AppFooterType } from "@/components/Layouts/LayoutBranches";
 import PullToRefresh from "@/components/Layouts/shop/PullToRefresh";
+import BackendStatusToast from "@/components/system/BackendStatusToast";
 import { setCookie } from "@/lib/cookieUtils";
 import analytics from "@/lib/analytics";
 
@@ -81,49 +82,59 @@ export default function ClientLayout({
     }
   }, []);
 
+  // Resolve the route's layout branch into a single element so we can render
+  // one universal, cross-zone sibling alongside it. ClientLayout is rendered by
+  // EVERY zone (core + each zone's own layout), so anything mounted here shows
+  // on every zone — the right home for cross-zone system toasts.
+  let branch: ReactNode;
+
   if (route.isDashboardPage) {
-    return <DashboardLayout screenSize={screenSize}>{children}</DashboardLayout>;
-  }
-
-  if (route.isAuthPage) {
-    return <AuthLayout>{children}</AuthLayout>;
-  }
-
-  // Minimal zones: no header, no footer — just theme + children.
-  // Must be checked before isLandingPage so minimal zones don't accidentally
-  // fall through to LandingLayout (which adds LandingHeader + LandingFooter).
-  if (route.isMinimalLayout) {
-    return <MinimalLayout screenSize={screenSize}>{children}</MinimalLayout>;
-  }
-
-  // App zones get their own layout with a configurable footer.
-  // isShopRoute=true  → ShopFooter,  isLandingPage=true → LandingFooter,
-  // both false → no footer.  These flags are set by genRouteOverride in
-  // zone-scaffold.ts based on the footer choice made in the wizard.
-  if (route.isAppLayout) {
+    branch = <DashboardLayout screenSize={screenSize}>{children}</DashboardLayout>;
+  } else if (route.isAuthPage) {
+    branch = <AuthLayout>{children}</AuthLayout>;
+  } else if (route.isMinimalLayout) {
+    // Minimal zones: no header, no footer — just theme + children.
+    // Checked before isLandingPage so minimal zones don't fall through to
+    // LandingLayout (which adds LandingHeader + LandingFooter).
+    branch = <MinimalLayout screenSize={screenSize}>{children}</MinimalLayout>;
+  } else if (route.isAppLayout) {
+    // App zones get their own layout with a configurable footer.
+    // isShopRoute → ShopFooter, isLandingPage → LandingFooter, else none.
     const footer: AppFooterType =
       route.isShopRoute  ? "shop"
       : route.isLandingPage ? "landing"
       : "none";
-    return <AppLayout screenSize={screenSize} footer={footer}>{children}</AppLayout>;
-  }
-
-  if (route.isLandingPage) {
-    return <LandingLayout screenSize={screenSize} locale={locale}>{children}</LandingLayout>;
+    branch = <AppLayout screenSize={screenSize} footer={footer}>{children}</AppLayout>;
+  } else if (route.isLandingPage && process.env.NEXT_PUBLIC_ZONE === "blog") {
+    // Blog zone gets its own chrome (blog_settings-driven header/footer)
+    // instead of the shared landing shell. Build-time constant — dead code
+    // in every other zone image.
+    branch = <BlogLayout screenSize={screenSize}>{children}</BlogLayout>;
+  } else if (route.isLandingPage) {
+    branch = <LandingLayout screenSize={screenSize} locale={locale}>{children}</LandingLayout>;
+  } else {
+    branch = (
+      <>
+        <PullToRefresh />
+        <ShopLayout
+          screenSize={screenSize}
+          sessionUserId={session?.user?.id}
+          useAppHeader={route.useAppHeader}
+          showNav={!route.isAuthPage && (route.isShopRoute || route.useAppHeader)}
+          showFooter={!route.isAuthPage && route.isShopRoute}
+        >
+          {children}
+        </ShopLayout>
+      </>
+    );
   }
 
   return (
     <>
-      <PullToRefresh />
-      <ShopLayout
-        screenSize={screenSize}
-        sessionUserId={session?.user?.id}
-        useAppHeader={route.useAppHeader}
-        showNav={!route.isAuthPage && (route.isShopRoute || route.useAppHeader)}
-        showFooter={!route.isAuthPage && route.isShopRoute}
-      >
-        {children}
-      </ShopLayout>
+      {/* Cross-zone system toast: raised on any zone when middleware detects the
+          backend is unreachable. Renders nothing until then. */}
+      <BackendStatusToast />
+      {branch}
     </>
   );
 }

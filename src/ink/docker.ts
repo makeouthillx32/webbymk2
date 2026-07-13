@@ -4,13 +4,17 @@
 // Uses Node's child_process so the bundled dist/cli.js runs under plain Node.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { spawn }       from "child_process";
+import { spawn, spawnSync }       from "child_process";
 import type { ChildProcess } from "child_process";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join }         from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join, dirname }         from "path";
 import { PROJECT_DIR, PROXY, GHCR_USER, type Zone } from "../config/zones.ts";
 import { ARTIFACT_STORE_DIR }                        from "../config/stack.ts";
 import { getCredential } from "../utils/secureStorage/index.js";
+import { DOCKER_ENV } from "./utils/dockerEnv.ts";
+import { dbGetZones } from "./control-db.ts";
+import { genZonesCompose } from "./zone-templates.ts";
+
 
 export type Status =
   | "running"    // up and healthy (or no healthcheck configured)
@@ -32,13 +36,8 @@ export type Status =
 // socket explicitly.  On Windows, Docker Desktop handles routing automatically.
 
 function makeDockerEnv(dockerUrl?: string): Record<string, string> {
-  const localSocket =
-    process.platform !== "win32"
-      ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
-      : {};
   return {
-    ...(process.env as Record<string, string>),
-    ...localSocket,
+    ...DOCKER_ENV,
     ...(dockerUrl ? { DOCKER_HOST: dockerUrl } : {}),
   };
 }
@@ -255,24 +254,30 @@ export function classifyDockerError(message: string): string {
 
 // ── Zone-compose helpers ──────────────────────────────────────────────────────
 
-/**
- * Absolute path to a zone's managed compose artifact.
- *
- * Compose files are managed artifacts — they live outside the source repo
- * in the UNAXIS artifact store, mirroring Portainer's /data/compose/{id}/
- * pattern.  The repo's zones/<key>/docker-compose.yml is a scaffold template
- * only; the authoritative runtime copy lives here.
- *
- *   Windows:     %APPDATA%\unenter\stacks\<key>\docker-compose.yml
- *   macOS/Linux: ~/.unenter/stacks/<key>/docker-compose.yml
- */
-export function zoneComposePath(key: string): string {
-  return join(ARTIFACT_STORE_DIR, key, "docker-compose.yml");
+export function zoneComposePath(key?: string): string {
+  return join(ARTIFACT_STORE_DIR, "unenter-zones", "docker-compose.yml");
 }
 
 /** True when the zone's managed compose artifact exists in the artifact store. */
 export function zoneComposeExists(key: string): boolean {
-  return existsSync(zoneComposePath(key));
+  return existsSync(zoneComposePath());
+}
+
+/** Synchronize the unified compose file in the artifact store containing all enabled zones. */
+export async function syncSharedZonesCompose(onLine?: (l: string) => void): Promise<void> {
+  try {
+    const zones = dbGetZones();
+    const composeContent = genZonesCompose(zones);
+    const filePath = zoneComposePath();
+    const dir = dirname(filePath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    writeFileSync(filePath, composeContent, "utf8");
+    onLine?.("✓ Synchronized unified zones compose file");
+  } catch (e) {
+    onLine?.(`✗ Failed to synchronize compose file: ${e}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,7 +621,16 @@ export async function pullAndUp(
   //   3. Root docker-compose.yml — legacy zones whose service lives there.
   const repoCompose = join(process.cwd(), "zones", zone.key, "docker-compose.yml");
   let file: string | undefined;
-  if (zoneComposeExists(zone.key)) {
+  // Core (key "unenter", service "app") lives ONLY in the root docker-compose.yml.
+  // The shared zones artifact (unenter-zones/docker-compose.yml) contains the
+  // deployable ZONE services (blog, shop, docs…) and has NO `app` service, so
+  // routing core through it fails with "no such service: app". zoneComposeExists
+  // ignores its key arg and just checks that shared artifact — hence core must
+  // be special-cased to the root file. (Chaos-drill deploy bug, 2026-07-11.)
+  if (zone.key === "unenter") {
+    file = undefined;                 // undefined ⇒ composeRun auto-discovers root docker-compose.yml
+    doctorComposeService(zone, onLine);
+  } else if (zoneComposeExists(zone.key)) {
     file = zoneComposePath(zone.key);
   } else if (existsSync(repoCompose)) {
     file = repoCompose;
@@ -639,8 +653,15 @@ export async function pullAndUp(
     onLine?.("If the image is not cached locally, Docker will fail during startup.");
   }
 
-  onLine?.(`Starting ${zone.service} (force-recreate)...`);
-  const upCode = await composeRun(["up", "-d", "--no-build", "--force-recreate", zone.service], onLine, file, dockerUrl);
+  // Core safety: `--no-deps` so recreating the stateless `app` container never
+  // drags in / recreates its dependencies (unt_db Postgres, kong). The core
+  // stack's data services are long-lived and must survive an app redeploy
+  // untouched. Zones have no such dependencies, so this only matters for core.
+  const upArgs = zone.key === "unenter"
+    ? ["up", "-d", "--no-build", "--no-deps", "--force-recreate", zone.service]
+    : ["up", "-d", "--no-build", "--force-recreate", zone.service];
+  onLine?.(`Starting ${zone.service} (force-recreate${zone.key === "unenter" ? ", no-deps" : ""})...`);
+  const upCode = await composeRun(upArgs, onLine, file, dockerUrl);
   // Explicit terminal line: `docker compose up` ends on "Container … Starting/
   // Started", so a successful op would otherwise auto-dismiss with "Starting"
   // as its last visible line and look stuck. Emit a clear success marker.
@@ -765,21 +786,48 @@ export async function removeZoneDockerArtifacts(
     }
   }
 
-  // 2 — Remove the local image to free disk space
-  onLine(`Removing image  ${image}…`);
-  const { code: rmiCode, err: rmiErr } = await dockerRun(["rmi", "-f", image]);
+  // 2 — Remove every local tag for this zone repository. A zone build keeps
+  // dated rollback tags alongside :latest; deleting only the configured tag
+  // leaves hundreds of MB behind after the zone itself is gone.
+  const lastSlash = image.lastIndexOf("/");
+  const lastColon = image.lastIndexOf(":");
+  const repository = lastColon > lastSlash ? image.slice(0, lastColon) : image;
+  onLine(`Removing local images  ${repository}:*…`);
+
+  const listed = await dockerRun([
+    "image",
+    "ls",
+    "--filter",
+    `reference=${repository}:*`,
+    "--format",
+    "{{.Repository}}:{{.Tag}}",
+  ]);
+  if (listed.code !== 0) {
+    onLine(`⚠ Could not list zone images — ${listed.err || "docker image ls failed"}`);
+    return;
+  }
+
+  const tags = [...new Set(listed.out.split(/\r?\n/).filter(
+    (tag) => tag.startsWith(`${repository}:`) && !tag.endsWith(":<none>"),
+  ))];
+  if (tags.length === 0) {
+    onLine(`  No local images present for ${repository}`);
+    return;
+  }
+
+  const { code: rmiCode, err: rmiErr } = await dockerRun([
+    "rmi",
+    "-f",
+    ...tags,
+  ]);
   if (rmiCode === 0) {
-    onLine(`✓ Image removed  (${image})`);
-  } else if (rmiErr.toLowerCase().includes("no such image") || rmiErr.toLowerCase().includes("not found")) {
-    onLine(`  Image not present locally — nothing to remove`);
+    onLine(`✓ Removed ${tags.length} local image tag${tags.length === 1 ? "" : "s"}`);
   } else {
-    onLine(`⚠ docker rmi exited ${rmiCode} — ${rmiErr || "image may already be gone"}`);
+    onLine(`⚠ docker rmi exited ${rmiCode} — ${rmiErr || "some image tags may remain"}`);
   }
 }
 
 // ── Log tailing ───────────────────────────────────────────────────────────────
-
-import { DOCKER_ENV } from "./utils/dockerEnv.ts";
 
 /** Spawn `docker logs --follow` for a container. Caller owns the process. */
 export function spawnLogTail(

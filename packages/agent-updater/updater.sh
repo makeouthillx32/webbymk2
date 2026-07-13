@@ -94,14 +94,29 @@ while [ $i -lt 20 ]; do
   i=$((i + 1))
   sleep 5
 
+  # Primary: exec INSIDE the new container — loopback requests are exempt from
+  # TOFU signing (agent >= 1.1.1), so this works against a fully locked agent.
+  # (The old bridge-IP wget got 401 Unauthorized once /health required
+  # signatures — wget treats 401 as failure, so EVERY update rolled back.
+  # That was the L0V3 "phantom v0.1.8" incident.)
+  if docker exec "$CONTAINER" wget -T 3 -qO- "http://127.0.0.1:8888/health" >/dev/null 2>&1; then
+    log "health check ${i}/20: HTTP OK (loopback exec)"
+    HEALTHY=1
+    break
+  fi
+
   if [ -n "$CONTAINER_IP" ]; then
-    # Primary: direct HTTP check to container bridge IP
-    if wget -T 3 -qO- "http://${CONTAINER_IP}:8888/health" >/dev/null 2>&1; then
-      log "health check ${i}/20: HTTP OK"
+    # Fallback: bridge-IP probe. An HTTP 401 means the agent is UP and
+    # correctly rejecting unsigned callers — that counts as alive.
+    # wget exit codes: 0 = 2xx OK, 8 = server issued an error response (e.g. 401).
+    wget -T 3 -qO- "http://${CONTAINER_IP}:8888/health" >/dev/null 2>&1
+    RC=$?
+    if [ "$RC" -eq 0 ] || [ "$RC" -eq 8 ]; then
+      log "health check ${i}/20: HTTP alive (rc=${RC})"
       HEALTHY=1
       break
     else
-      log "health check ${i}/20: not yet healthy"
+      log "health check ${i}/20: not yet healthy (rc=${RC})"
     fi
   else
     # Fallback: docker inspect health status
@@ -118,6 +133,12 @@ done
 if [ "$HEALTHY" -eq 1 ]; then
   log "update successful — removing rollback container"
   docker rm "$ROLLBACK_NAME" 2>/dev/null || true
+  # Reclaim the image layers orphaned by the tag swap. `prune -f` removes ONLY
+  # dangling (<none>) images, so it can never touch a tagged or in-use image
+  # (agent, open-webui, mail, etc. are all safe). This is the fix for the
+  # <none> pile-up that accumulated ~6GB on L0V3.
+  PRUNED=$(docker image prune -f 2>/dev/null | tail -n 1)
+  log "pruned dangling layers: ${PRUNED:-none}"
   log "done — ${CONTAINER} is running ${NEW_REF}"
 else
   log "ERROR: health check failed — rolling back to previous version"

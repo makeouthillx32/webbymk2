@@ -1,5 +1,5 @@
 {
-  "scannedAt": "2026-06-18T19:21:02.023Z",
+  "scannedAt": "2026-07-13T22:51:34.590Z",
   "agentVersion": "0.1.0",
   "mode": "local",
   "plugins": [
@@ -214,6 +214,17 @@
       "description": "Window controls: zoom and always-on-top"
     },
     {
+      "id": "advanced-exclude",
+      "name": "Advanced Exclude",
+      "type": "community",
+      "classification": "NONE",
+      "status": "enabled",
+      "version": "2.1.5",
+      "source": "vault-native",
+      "description": "Enhances the Excluded files setting bringing gitignore syntax.",
+      "reason": "No agentifiable commands"
+    },
+    {
       "id": "letta",
       "name": "Letta",
       "type": "community",
@@ -223,6 +234,17 @@
       "source": "vault-native",
       "description": "Chat with a stateful AI agent powered by Letta that knows your vault contents and remembers your conversations. Features persistent memory, automatic vault sync, memory block management, and project-aware agent switching.",
       "skillFile": "letta.skill.md"
+    },
+    {
+      "id": "mehrmaid",
+      "name": "Mehrmaid",
+      "type": "community",
+      "classification": "NONE",
+      "status": "enabled",
+      "version": "0.0.2",
+      "source": "vault-native",
+      "description": "Enables you to put Markdown inside of Mermaid diagrams.",
+      "reason": "No agentifiable commands"
     },
     {
       "id": "obdrawio",

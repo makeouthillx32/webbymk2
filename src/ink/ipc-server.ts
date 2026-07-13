@@ -138,8 +138,25 @@ export function startIpcServer(handlers: IpcHandlers): net.Server {
     socket.on("error", () => { /* client disconnected early — ignore */ });
   });
 
-  server.on("error", () => {
-    // Port busy (another TUI instance) — silent no-op.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    // NEVER silent — an unbound IPC port means every `unaxis` CLI call gets
+    // "connection refused" with zero clues. Windows gotcha: Hyper-V/WSL
+    // "excluded port ranges" shift when Docker Desktop restarts and can
+    // swallow 50505/50507 (EACCES). Diagnose:
+    //   netsh interface ipv4 show excludedportrange protocol=tcp
+    // Fix: net stop winnat && net start winnat  (admin), then restart TUI.
+    process.stderr.write(
+      `[ipc-server] FAILED to bind ${IPC_HOST}:${IPC_PORT} — ${err.code ?? ""} ${err.message}\n` +
+      (err.code === "EACCES"
+        ? `[ipc-server] likely Hyper-V excluded port range (Docker restart shifts it) — run: netsh interface ipv4 show excludedportrange protocol=tcp\n`
+        : err.code === "EADDRINUSE"
+          ? `[ipc-server] port held by another process (zombie TUI?)\n`
+          : ""),
+    );
+  });
+
+  server.on("listening", () => {
+    process.stderr.write(`[ipc-server] listening on ${IPC_HOST}:${IPC_PORT}\n`);
   });
 
   server.listen(IPC_PORT, IPC_HOST);

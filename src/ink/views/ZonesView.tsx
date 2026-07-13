@@ -210,6 +210,25 @@ export function ZonesView({
         });
         break;
 
+      case "publish":
+        runOp(`Public toggle  ${zone.label}`, async (o) => {
+          const { toggleZoneVisibility } = await import("../zone-visibility.js");
+          try {
+            const row = await toggleZoneVisibility(zone.key);
+            o(`✓ ${row.label} is now ${row.visibility}`);
+            o(`  ${row.domain}`);
+            addNotification(
+              `${row.label} → ${row.visibility}`,
+              row.visibility === "public" ? "success" : "info",
+            );
+            return 0;
+          } catch (e) {
+            o(`✗ ${e instanceof Error ? e.message : String(e)}`);
+            return 1;
+          }
+        });
+        break;
+
       case "sections": {
         const layout = getZoneLayout(zone.key);
         if (!layout) {

@@ -60,7 +60,7 @@ import type { Zone } from "../config/zones.ts";
 const CORE_DOCKER_INSTANCE: RuntimeInstance = {
   id:              "core",
   name:            "Core Supabase",
-  slug:            "unenter",
+  slug:            "unenter.live",
   containerPrefix: "unt_",    // containers: unt_db, unt_storage, unt_kong, …
   status:          "active",
   createdAt:       "",
@@ -197,6 +197,8 @@ export function App() {
     runOpVisible,
     coreDockerInstance: CORE_DOCKER_INSTANCE,
     addNotification,
+    setBgOps,
+    triggerDismissHook,
   });
   useGlobalAppInput({
     view,

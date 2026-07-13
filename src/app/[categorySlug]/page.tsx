@@ -93,19 +93,42 @@ export default async function CategoryPage({ params }: { params: Promise<{ categ
           alt_text,
           position,
           is_primary
+        ),
+        product_variants (
+          options,
+          is_active
         )
       )
     `)
     .eq("category_id", category.id);
 
-  // Extract and filter active products with images
+  // Extract and filter active products with images. Derive the display options
+  // (distinct colors + size count) from each product's active variants so the
+  // grid card can show swatches without shipping the full variant tree.
   const products = (productCategories || [])
     .map((pc: any) => pc.products)
     .filter((p: any) => p && p.status === "active")
-    .map((product: any) => ({
-      ...product,
-      images: product.product_images || [],
-    }));
+    .map((product: any) => {
+      const variants = (product.product_variants || []).filter(
+        (v: any) => v?.is_active !== false
+      );
+      const colorMap = new Map<string, { name: string; hex: string }>();
+      const sizes = new Set<string>();
+      for (const v of variants) {
+        const c = v?.options?.color;
+        if (c && typeof c === "object" && typeof c.name === "string" && c.name && !colorMap.has(c.name)) {
+          colorMap.set(c.name, { name: c.name, hex: typeof c.hex === "string" ? c.hex : "" });
+        }
+        const s = v?.options?.size;
+        if (typeof s === "string" && s) sizes.add(s);
+      }
+      return {
+        ...product,
+        images: product.product_images || [],
+        colors: [...colorMap.values()],
+        sizeCount: sizes.size,
+      };
+    });
 
   // Build breadcrumb trail
   const breadcrumbs = [];

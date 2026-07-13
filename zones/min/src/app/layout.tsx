@@ -7,6 +7,7 @@ import type { ReactNode }          from "react";
 import { cookies, headers }        from "next/headers";
 import { Providers }               from "@/app/provider";
 import ClientLayout                from "@/components/Layouts/ClientLayout";
+import { generateSiteMetadata }    from "@/lib/zoneMetadata";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -20,13 +21,9 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default:  "Min | Unenter",
-    template: "%s | Min – Unenter",
-  },
-  description: "Welcome to the Min zone.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return generateSiteMetadata();
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];
