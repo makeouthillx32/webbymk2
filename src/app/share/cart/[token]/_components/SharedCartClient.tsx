@@ -394,14 +394,14 @@ export default function SharedCartClient({
             href="/collections/all"
             className="inline-flex items-center gap-2 text-sm font-semibold text-[hsl(var(--primary))] hover:underline"
           >
-            Browse the full Desert Cowgirl shop
+            Browse the full Unenter Solutions shop
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
 
         {/* Brand footer */}
         <p className="mt-10 text-center text-xs text-[hsl(var(--muted-foreground))]">
-          ✦ Desert Cowgirl Co. · Western-inspired boutique fashion ✦
+          ✦ Unenter Solutions · Western-inspired boutique fashion ✦
         </p>
       </div>
     </div>

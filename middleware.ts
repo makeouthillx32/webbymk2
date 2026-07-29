@@ -185,6 +185,18 @@ export async function middleware(request: NextRequest) {
   // zone's overlay pages are ROOT-mounted — the static ZONES prefixes describe
   // the core monolith layout only. Injecting the prefix there 302s "/" into the
   // zone's [slug] route (e.g. blog.unenter.live/ → /blog → "Post Not Found").
+  //
+  // 2026-07-29: this check was already correct in source but the running
+  // blog image kept 302-redirecting EVERY request — including _next/static/*
+  // and public assets — to /blog/*, 404ing them all (unstyled page, broken
+  // images). A `unaxis zone blog build` alone did not fix it; only rebuilt
+  // after this exact file's content changed did the fix take. Conclusion:
+  // Next's own incremental build cache can survive a "fresh" Docker build and
+  // keep emitting a stale middleware bundle when none of the COPYed source
+  // files changed since the cache was seeded. If a zone is behaving like an
+  // older version of this file after a build, don't trust it — touch
+  // middleware.ts (or `unaxis zone <key> rebuild` for a real --no-cache pass)
+  // before assuming the bug is somewhere else.
   const isOwnZoneImage = process.env.NEXT_PUBLIC_ZONE === zoneFromHost;
 
   const needsZonePrefixRewrite =

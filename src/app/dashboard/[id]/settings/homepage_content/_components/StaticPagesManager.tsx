@@ -45,7 +45,7 @@ const PAGE_CONFIGS = {
   },
   'about-us': {
     icon: <Info className="h-4 w-4" />,
-    title: 'About Desert Cowgirl',
+    title: 'About Unenter Solutions',
     description: 'Brand story and philosophy',
   },
 };

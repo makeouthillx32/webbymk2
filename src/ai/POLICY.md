@@ -1,5 +1,5 @@
 # POLICY.md — System 5 Identity & Rules
-> Desert Cowgirl Co. VSM — Viable System Model
+> Unenter Solutions VSM — Viable System Model
 > Owner: Unenter | Machine: P0WER + L0V3
 > THIS FILE IS READ-ONLY. No agent may modify it. Ever.
 
@@ -7,7 +7,7 @@
 
 ## Identity
 
-This system is the autonomous development organism for Desert Cowgirl Co. (DCG.CO).
+This system is the autonomous development organism for Unenter Solutions (webbymk2).
 It exists to improve the codebase continuously, safely, and without human intervention overnight.
 It is self-coordinating, self-healing, and self-aware of its own limits.
 
@@ -28,12 +28,12 @@ It is self-coordinating, self-healing, and self-aware of its own limits.
 
 ## Project Identity
 
-- **Project**: Desert Cowgirl Co. (DCG.CO)
-- **Root**: `Z:\WEBSITES\DCG.CO`
+- **Project**: Unenter Solutions (webbymk2)
+- **Root**: `Z:\WEBSITES\webbymk2`
 - **Stack**: Next.js 15, Supabase, Stripe, Tailwind, shadcn/ui, TypeScript
 - **Deployment**: Vercel
-- **VSM State Dir**: `Z:\WEBSITES\DCG.CO\.vsm\`
-- **AI Docs Dir**: `Z:\WEBSITES\DCG.CO\ai\`
+- **VSM State Dir**: `Z:\WEBSITES\webbymk2\.vsm\`
+- **AI Docs Dir**: `Z:\WEBSITES\webbymk2\ai\`
 
 ---
 
@@ -58,7 +58,7 @@ These apply to every agent in every system. No exceptions. Ever.
 - Modify `openclaw.json` or any openclaw config
 
 ### Always Do
-- Read `Z:\WEBSITES\DCG.CO\UNENTER.md` before touching any source file
+- Read `Z:\WEBSITES\webbymk2\CLAUDE.md` before touching any source file
 - Read `.vsm/LOCKS.md` before touching any source file
 - Read `.vsm/ACTIVE.md` before starting any task
 - Make one focused change per cycle

@@ -1,24 +1,17 @@
 "use client";
-// Blog image uploader: drag & drop (reuses the shared DragDropUpload wrapper)
-// or click to browse. Uploads straight to the public blog-images bucket,
-// records metadata, hands back the public URL.
+// Standalone image uploader: drag & drop or click to browse, upload into the
+// blog-images bucket, record metadata, hand back the public URL. Used by the
+// chrome manager for promo/banner artwork.
+//
+// The upload itself goes through lib/blog/images → lib/storage, so it obeys the
+// same bucket, size and cache rules as every other upload in the dashboard.
 
 import { useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { ImagePlus } from "lucide-react";
 import DragDropUpload from "@/components/documents/DragDropUpload";
-import { createBrowserClient } from "@/utils/supabase/client";
 import { cn } from "@/utils/cn";
-
-const BUCKET = "blog-images";
-
-function ext(name: string) {
-  const i = name.lastIndexOf(".");
-  return i >= 0 ? name.slice(i + 1).toLowerCase() : "jpg";
-}
-function rid() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
+import { uploadLooseImage } from "@/lib/blog/images";
 
 export function BlogImageUploader({
   postId,
@@ -34,40 +27,22 @@ export function BlogImageUploader({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const upload = async (file: File) => {
-    if (!file.type.startsWith("image/")) return toast.error("Not an image file");
     setBusy(true);
     try {
-      const supabase = createBrowserClient();
-      const object_path = `posts/${postId ?? "unattached"}/${rid()}.${ext(file.name)}`;
-
-      const up = await supabase.storage.from(BUCKET).upload(object_path, file, {
-        upsert: false,
-        cacheControl: "3600",
-        contentType: file.type || "image/jpeg",
-      });
-      if (up.error) throw new Error(up.error.message);
-
-      // Metadata row (non-fatal — the file is already usable)
-      await fetch(`/api/blog/admin/${postId ?? "unattached"}/images`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bucket_name: BUCKET, object_path, alt_text: altText || null }),
-      }).catch(() => null);
-
-      const { data } = supabase.storage.from(BUCKET).getPublicUrl(object_path);
+      const uploaded = await uploadLooseImage({ postId, file, altText: altText || null });
       toast.success("Image uploaded");
-      onUploaded(data.publicUrl, altText);
+      onUploaded(uploaded.publicUrl, altText);
       setAltText("");
-    } catch (e: any) {
-      toast.error(e?.message ?? "Upload failed");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Upload failed");
     } finally {
       setBusy(false);
     }
   };
 
   const handleFiles = (files: File[]) => {
-    const image = files.find((f) => f.type.startsWith("image/"));
-    if (image) upload(image);
+    const image = files.find((file) => file.type.startsWith("image/"));
+    if (image) void upload(image);
     else toast.error("No image in the dropped files");
   };
 
@@ -84,7 +59,7 @@ export function BlogImageUploader({
             busy && "opacity-60",
           )}
         >
-          <ImagePlus size={22} className="text-[hsl(var(--muted-foreground))]" />
+          <ImagePlus size={22} className="text-[hsl(var(--muted-foreground))]" aria-hidden="true" />
           <span className="text-xs text-[hsl(var(--muted-foreground))]">
             {busy ? "Uploading…" : label}
           </span>
@@ -96,16 +71,16 @@ export function BlogImageUploader({
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) upload(f);
-          e.target.value = "";
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void upload(file);
         }}
       />
 
       <input
         value={altText}
-        onChange={(e) => setAltText(e.target.value)}
+        onChange={(event) => setAltText(event.target.value)}
         placeholder="Alt text (optional, set before dropping)"
         className="w-full rounded border border-[hsl(var(--border))] bg-transparent px-2 py-1 text-xs text-[hsl(var(--foreground))]"
       />

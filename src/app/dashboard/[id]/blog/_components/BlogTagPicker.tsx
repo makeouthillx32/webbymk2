@@ -1,24 +1,15 @@
 "use client";
+// Tag search / select / create. Catalogue state and the create-or-find call
+// live in useBlogTags; this file is presentation and keyboard handling.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Loader2, Plus, Search, X } from "lucide-react";
-import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/cn";
+import { useBlogTags } from "@/hooks/blog/useBlogTags";
+import type { BlogTag } from "@/types/blog";
 
-export interface TagRow {
-  id: string;
-  slug: string;
-  name: string;
-}
-
-async function readJson(response: Response) {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
+export type { BlogTag as TagRow };
 
 export function BlogTagPicker({
   value,
@@ -27,44 +18,28 @@ export function BlogTagPicker({
   value: string[];
   onChange: (tagIds: string[]) => void;
 }) {
-  const [tags, setTags] = useState<TagRow[]>([]);
+  const { tags, loading, resolveTag } = useBlogTags();
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    fetch("/api/blog/admin/tags", { signal: controller.signal })
-      .then(readJson)
-      .then((result) => {
-        if (result?.ok) setTags(result.data);
-        else toast.error(result?.error?.message ?? "Failed to load tags");
-      })
-      .catch((error) => {
-        if (error?.name !== "AbortError") toast.error("Failed to load tags");
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, []);
-
   const normalizedQuery = query.trim().toLowerCase();
+
   const filteredTags = useMemo(() => {
     if (!normalizedQuery) return tags;
-    return tags.filter((tag) =>
-      tag.name.toLowerCase().includes(normalizedQuery) ||
-      tag.slug.toLowerCase().includes(normalizedQuery),
+    return tags.filter(
+      (tag) =>
+        tag.name.toLowerCase().includes(normalizedQuery) ||
+        tag.slug.toLowerCase().includes(normalizedQuery),
     );
   }, [normalizedQuery, tags]);
+
   const selectedTags = tags.filter((tag) => value.includes(tag.id));
   const exactMatch = tags.find(
     (tag) => tag.name.toLowerCase() === normalizedQuery || tag.slug.toLowerCase() === normalizedQuery,
   );
 
-  const toggleTag = (tagId: string) => {
+  const toggleTag = (tagId: string) =>
     onChange(value.includes(tagId) ? value.filter((id) => id !== tagId) : [...value, tagId]);
-  };
 
   const resolveQuery = async () => {
     const name = query.trim();
@@ -78,27 +53,11 @@ export function BlogTagPicker({
 
     setCreating(true);
     try {
-      const response = await fetch("/api/blog/admin/tags", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const result = await readJson(response);
-      if (!response.ok || !result?.ok) {
-        throw new Error(result?.error?.message ?? "Tag creation failed");
+      const created = await resolveTag(name);
+      if (created) {
+        if (!value.includes(created.id)) onChange([...value, created.id]);
+        setQuery("");
       }
-
-      const created = result.data as TagRow;
-      setTags((current) =>
-        [...current.filter((tag) => tag.id !== created.id), created].sort((a, b) =>
-          a.name.localeCompare(b.name),
-        ),
-      );
-      if (!value.includes(created.id)) onChange([...value, created.id]);
-      setQuery("");
-      toast.success(`Tag ${created.name} is ready`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Tag creation failed");
     } finally {
       setCreating(false);
     }
@@ -132,8 +91,8 @@ export function BlogTagPicker({
         <div className="relative min-w-0 flex-1">
           <Search
             size={15}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]"
             aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]"
           />
           <input
             value={query}
@@ -145,7 +104,7 @@ export function BlogTagPicker({
               }
             }}
             placeholder="Search or create tag"
-            className="w-full rounded border border-[hsl(var(--border))] bg-transparent py-2 pl-9 pr-3 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-primary"
+            className="w-full rounded-[var(--radius)] border border-[hsl(var(--border))] bg-transparent py-2 pl-9 pr-3 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
         {normalizedQuery && !exactMatch && (

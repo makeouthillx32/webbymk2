@@ -5,7 +5,7 @@ import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
 import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
 import { devContainerName, startDevContainer, stopDevContainer } from "../dev-container.ts";
-import { getStatus, pullAndUp, removeZoneDockerArtifacts } from "../docker.ts";
+import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
 import { parseLogTail, snapshotContainerLogs } from "../log-snapshot.ts";
@@ -1636,6 +1636,65 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         const live    = ops.filter((o) => o.busy && o.dismissable).length;   // dev/log
         const done    = ops.filter((o) => !o.busy).length;
         onLine(`✓ ${ops.length} stack item${ops.length !== 1 ? "s" : ""} · ${running} running, ${live} live, ${done} done`);
+        return 0;
+      },
+
+      // unaxis up — THE cold-start command. Brings the core compose stack
+      // (db, kong, auth, rest, storage, app, proxy…) up from dead, waits for
+      // db + kong health, then hydrates the local control DB from unenter.db
+      // so zones/environments exist even on a fresh install. Exists because a
+      // control plane that needs `docker compose up` typed by hand isn't one.
+      // Idempotent: running services are untouched; hydration UPSERTs.
+      up: async (args, onLine) => {
+        const skipHydrate = args.includes("--no-hydrate");
+        onLine("── unaxis up · core stack cold-start ──");
+
+        // 1. Docker daemon reachable?
+        const dcode = await dockerRun(["version", "--format", "docker server {{.Server.Version}}"], onLine, 15000);
+        if (dcode !== 0) {
+          onLine("✗ Docker daemon unreachable — start Docker Desktop, then re-run: unaxis up");
+          return 1;
+        }
+
+        // 2. Core compose project up (root docker-compose.yml, project `unenter`)
+        onLine("→ compose up -d (core stack)…");
+        const ccode = await composeRun(["up", "-d"], onLine);
+        if (ccode !== 0) {
+          onLine("✗ compose up failed — see lines above");
+          return ccode;
+        }
+
+        // 3. Wait (bounded) for the two services everything else depends on
+        const CRITICAL = ["unt_db", "unt_kong"];
+        onLine("→ waiting for db + kong health (max 120s)…");
+        const deadline = Date.now() + 120_000;
+        let healthy = false;
+        while (Date.now() < deadline) {
+          const st = await getStatuses(CRITICAL);
+          if (CRITICAL.every((c) => st[c] === "running")) { healthy = true; break; }
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        const finalSt = await getStatuses(CRITICAL);
+        for (const c of CRITICAL) onLine(`  ${c.padEnd(10)} ${finalSt[c]}`);
+        if (!healthy) {
+          onLine("✗ db/kong not healthy after 120s — inspect: unaxis logs db --tail 60");
+          return 1;
+        }
+
+        // 4. Hydrate control DB (zones + environments). Safe to re-run.
+        if (skipHydrate) {
+          onLine("✓ core stack up (hydration skipped via --no-hydrate)");
+          return 0;
+        }
+        onLine("→ hydrating control DB from unenter.db…");
+        const { migrateControlDb } = await import("../control-db-migrate.js");
+        const mcode = await migrateControlDb(onLine);
+        if (mcode !== 0) {
+          onLine("⚠ stack is UP but hydration failed — retry: unaxis db migrate-control");
+          return 4;
+        }
+
+        onLine("✓ core stack up · control DB hydrated · unaxis fully operational");
         return 0;
       },
 

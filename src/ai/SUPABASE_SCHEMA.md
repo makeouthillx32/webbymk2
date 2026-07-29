@@ -77,7 +77,7 @@ create table if not exists public.home_hero (
   key text not null unique,              -- e.g. 'default'
   is_enabled boolean not null default true,
 
-  pill_text text null,                   -- "Desert Cowgirl • Western-inspired..."
+  pill_text text null,                   -- "Unenter Solutions • Western-inspired..."
   headline_line1 text not null,          -- "Wear the desert."
   headline_line2 text null,              -- "Keep it classic."
   subtext text null,

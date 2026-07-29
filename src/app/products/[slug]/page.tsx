@@ -49,14 +49,14 @@ export async function generateMetadata({
     .single();
 
   if (!product) {
-    return { title: "Product Not Found | Desert Cowgirl Co." };
+    return { title: "Product Not Found | Unenter Solutions" };
   }
 
-  const title = `${product.title} | Desert Cowgirl Co.`;
+  const title = `${product.title} | Unenter Solutions`;
   const ogTitle = product.title;
   const description =
     product.description ??
-    `Shop ${product.title} at Desert Cowgirl — western-inspired boutique fashion.`;
+    `Shop ${product.title} at Unenter Solutions — western-inspired boutique fashion.`;
   const url = `/products/${slug}`;
   const ogImageVersion = encodeURIComponent(
     product.updated_at ?? product.title,
@@ -70,7 +70,7 @@ export async function generateMetadata({
       title: ogTitle,
       description,
       url,
-      siteName: "Desert Cowgirl",
+      siteName: "Unenter Solutions",
       type: "website",
       images: [
         {

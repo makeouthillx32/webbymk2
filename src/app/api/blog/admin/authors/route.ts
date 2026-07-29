@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
-import { jsonError, requireAdmin, slugify } from "../_lib";
+import { jsonError, requireAdmin, slugify, AUTHOR_SELECT } from "../_lib";
 
 export async function GET() {
   const supabase = await createServerClient();
@@ -12,7 +12,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("blog_authors")
-    .select("id, slug, name, avatar_url, bio, website_url, github_url, bluesky_url, x_url")
+    .select(AUTHOR_SELECT)
     .order("name");
 
   if (error) return jsonError(500, "BLOG_AUTHORS_LIST_FAILED", error.message, error);
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       bluesky_url: body.bluesky_url ?? null,
       x_url:       body.x_url ?? null,
     })
-    .select("id, slug, name")
+    .select(AUTHOR_SELECT)
     .single();
 
   if (error) return jsonError(500, "BLOG_AUTHOR_CREATE_FAILED", error.message, error);

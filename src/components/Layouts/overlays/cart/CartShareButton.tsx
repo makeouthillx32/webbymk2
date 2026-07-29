@@ -23,8 +23,8 @@ export default function CartShareButton() {
 
   // Only render when sharing is active
   const shareUrl = cart?.share_url ?? null;
-  const shareName = cart?.share_name ?? "My Desert Cowgirl Wishlist";
-  const shareMessage = cart?.share_message ?? "Check out my wishlist on Desert Cowgirl Co.!";
+  const shareName = cart?.share_name ?? "My Unenter Solutions Wishlist";
+  const shareMessage = cart?.share_message ?? "Check out my wishlist on Unenter Solutions!";
 
   const handleShare = useCallback(async () => {
     if (!shareUrl) return;

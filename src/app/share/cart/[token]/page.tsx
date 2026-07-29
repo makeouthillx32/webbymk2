@@ -70,11 +70,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const cart = await getSharedCart(token);
 
   if (!cart) {
-    return { title: "Wishlist Not Found | Desert Cowgirl Co." };
+    return { title: "Wishlist Not Found | Unenter Solutions" };
   }
 
-  const shareName = cart.share_name ?? "A Desert Cowgirl Wishlist";
-  const shareMessage = cart.share_message ?? "Check out this wishlist from Desert Cowgirl Co.!";
+  const shareName = cart.share_name ?? "A Unenter Solutions Wishlist";
+  const shareMessage = cart.share_message ?? "Check out this wishlist from Unenter Solutions!";
   const itemCount = (cart.cart_items ?? []).reduce(
     (sum: number, item: any) => sum + (item.quantity ?? 1),
     0
@@ -83,20 +83,20 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.unenter.live";
 
   return {
-    title: `${shareName} | Desert Cowgirl Co.`,
+    title: `${shareName} | Unenter Solutions`,
     description,
     metadataBase: new URL(siteUrl),
     openGraph: {
-      title: `${shareName} | Desert Cowgirl Co.`,
+      title: `${shareName} | Unenter Solutions`,
       description,
       url: `${siteUrl}/share/cart/${token}`,
-      siteName: "Desert Cowgirl Co.",
+      siteName: "Unenter Solutions",
       type: "website",
       // opengraph-image.tsx in this same folder is picked up automatically
     },
     twitter: {
       card: "summary_large_image",
-      title: `${shareName} | Desert Cowgirl Co.`,
+      title: `${shareName} | Unenter Solutions`,
       description,
     },
   };

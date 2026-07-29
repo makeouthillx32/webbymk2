@@ -36,6 +36,20 @@ const ImageAttachment = z.object({
   alt:          z.string().max(200).optional(),
 });
 
+// Single-image upload — add or replace one slot on a post (existing or not
+// yet created) without resending title/content/tags/etc. Lets an agent stage
+// images under a slug first (cover, image-1, image-2, …) and reference them
+// with post://<slot> in a post.upsert that comes later, or drop a new image
+// into an already-published post without touching a word of its body.
+const ImageUploadSchema = z.object({
+  command:      z.literal("image.upload"),
+  slug:         z.string().regex(/^[a-z0-9-]+$/, "lowercase letters, digits, dashes").max(96),
+  slot:         z.string().regex(/^[\w][\w.-]*$/, "letters, digits, dot, dash, underscore").max(80),
+  data:         z.string().min(1),
+  content_type: z.string().regex(/^image\//).optional(),
+  alt:          z.string().max(200).optional(),
+}).strict();
+
 const TagName = z.string().trim().min(1).max(60);
 const TagCommandSchema = z.discriminatedUnion("command", [
   z.object({ command: z.literal("tags.list") }).strict(),
@@ -72,6 +86,66 @@ function extFromType(ct: string | undefined, name: string): string {
   const i = name.lastIndexOf(".");
   if (i >= 0) return name.slice(i + 1).toLowerCase();
   return "jpg";
+}
+
+/** Thrown by uploadImageToSlot; callers translate it straight to fail(). */
+class IngestError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Decode + write one base64 image to posts/<slug>/<slot>.<ext>, evicting any
+ * stale same-slot file left over from a different extension. Shared by
+ * post.upsert's attachments[] loop and the standalone image.upload command —
+ * one upload path, so both ever produce the same storage layout.
+ */
+async function uploadImageToSlot(opts: {
+  supabase: ReturnType<typeof createAdminClient>;
+  slug: string;
+  slot: string;
+  data: string;
+  contentType?: string;
+}): Promise<{ path: string; publicUrl: string }> {
+  const b64 = opts.data.replace(/^data:image\/[a-z+.-]+;base64,/, "");
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(b64, "base64");
+  } catch {
+    throw new IngestError(422, "VALIDATION_FAILED", `${opts.slot}: invalid base64`);
+  }
+  if (buf.length === 0) throw new IngestError(422, "VALIDATION_FAILED", `${opts.slot}: empty after decode`);
+  if (buf.length > MAX_IMAGE_BYTES) {
+    throw new IngestError(413, "IMAGE_TOO_LARGE", `${opts.slot}: ${buf.length} bytes exceeds ${MAX_IMAGE_BYTES}`);
+  }
+
+  const cleanSlot = opts.slot.replace(/[^\w.-]/g, "");
+  const folder = `posts/${opts.slug}`;
+  const object_path = `${folder}/${cleanSlot}.${extFromType(opts.contentType, opts.slot)}`;
+
+  // Evict same-slot files with a different extension so one slot = one file.
+  const { data: existing } = await opts.supabase.storage.from("blog-images").list(folder, { limit: 100 });
+  const stale = (existing ?? [])
+    .filter((f) => f.name.replace(/\.[^.]+$/, "") === cleanSlot && `${folder}/${f.name}` !== object_path)
+    .map((f) => `${folder}/${f.name}`);
+  if (stale.length > 0) await opts.supabase.storage.from("blog-images").remove(stale);
+
+  const { error: upErr } = await opts.supabase.storage
+    .from("blog-images")
+    .upload(object_path, buf, {
+      upsert: true,
+      cacheControl: "3600",
+      contentType: opts.contentType ?? "image/jpeg",
+    });
+  if (upErr) throw new IngestError(500, "IMAGE_UPLOAD_FAILED", `${opts.slot}: ${upErr.message}`);
+
+  const { data } = opts.supabase.storage.from("blog-images").getPublicUrl(object_path);
+  return { path: object_path, publicUrl: data.publicUrl };
 }
 
 export async function POST(req: NextRequest) {
@@ -119,6 +193,48 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (commandName === "image.upload") {
+    const command = ImageUploadSchema.safeParse(raw);
+    if (!command.success) {
+      return fail(422, "VALIDATION_FAILED", "Command payload rejected", command.error.flatten());
+    }
+    const { slug, slot, data, content_type, alt } = command.data;
+    const supabase = createAdminClient();
+    try {
+      const uploaded = await uploadImageToSlot({ supabase, slug, slot, data, contentType: content_type });
+
+      // Best-effort: if a post already exists at this slug, record the image
+      // and let it show up in the dashboard's library too. If not — this is
+      // a pre-stage upload, fine, a post.upsert referencing post://<slot>
+      // later will find the file already sitting in posts/<slug>/.
+      const { data: post } = await supabase.from("blog_posts").select("id").eq("slug", slug).maybeSingle();
+      if (post?.id) {
+        await supabase.from("blog_post_images").insert({
+          post_id: post.id,
+          bucket_name: "blog-images",
+          object_path: uploaded.path,
+          alt_text: alt ?? null,
+        });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        data: {
+          command: "image.upload",
+          slug,
+          slot,
+          ref: `post://${slot}`,
+          url: uploaded.publicUrl,
+          linked_post: Boolean(post?.id),
+        },
+      });
+    } catch (error) {
+      if (error instanceof IngestError) return fail(error.status, error.code, error.message);
+      const message = error instanceof Error ? error.message : "Image upload failed";
+      return fail(500, "IMAGE_UPLOAD_FAILED", message);
+    }
+  }
+
   const parsed = IngestSchema.safeParse(raw);
   if (!parsed.success) {
     return fail(422, "VALIDATION_FAILED", "Payload rejected", parsed.error.flatten());
@@ -154,41 +270,26 @@ export async function POST(req: NextRequest) {
   const slug = body.slug || slugify(body.title.en);
 
   // ── Upload attachments ────────────────────────────────────────────────────
+  // Shared with the standalone image.upload command — one upload path, so a
+  // post.upsert's images[] and a later solo image.upload against the same
+  // slot always produce the identical storage layout.
   const urlMap = new Map<string, string>(); // name → public URL
+  const pathMap = new Map<string, string>(); // name → storage object path
   for (const img of body.images) {
-    const b64 = img.data.replace(/^data:image\/[a-z+.-]+;base64,/, "");
-    let buf: Buffer;
     try {
-      buf = Buffer.from(b64, "base64");
-    } catch {
-      return fail(422, "VALIDATION_FAILED", `images.${img.name}: invalid base64`);
-    }
-    if (buf.length === 0)               return fail(422, "VALIDATION_FAILED", `images.${img.name}: empty after decode`);
-    if (buf.length > MAX_IMAGE_BYTES)   return fail(413, "IMAGE_TOO_LARGE", `images.${img.name}: ${buf.length} bytes exceeds ${MAX_IMAGE_BYTES}`);
-
-    // Predictable slot path: posts/<slug>/<name>.<ext> — the same name is
-    // addressable as post://<name> in this and any later version of the post.
-    const cleanName = img.name.replace(/[^\w.-]/g, "");
-    const object_path = `posts/${slug}/${cleanName}.${extFromType(img.content_type, img.name)}`;
-
-    // Evict same-slot files with a different extension so one slot = one file.
-    const { data: existing } = await supabase.storage.from("blog-images").list(`posts/${slug}`, { limit: 100 });
-    const stale = (existing ?? [])
-      .filter((f) => f.name.replace(/\.[^.]+$/, "") === cleanName && `posts/${slug}/${f.name}` !== object_path)
-      .map((f) => `posts/${slug}/${f.name}`);
-    if (stale.length > 0) await supabase.storage.from("blog-images").remove(stale);
-
-    const { error: upErr } = await supabase.storage
-      .from("blog-images")
-      .upload(object_path, buf, {
-        upsert: true,
-        cacheControl: "3600",
-        contentType: img.content_type ?? "image/jpeg",
+      const uploaded = await uploadImageToSlot({
+        supabase,
+        slug,
+        slot: img.name,
+        data: img.data,
+        contentType: img.content_type,
       });
-    if (upErr) return fail(500, "IMAGE_UPLOAD_FAILED", `images.${img.name}: ${upErr.message}`);
-
-    const { data } = supabase.storage.from("blog-images").getPublicUrl(object_path);
-    urlMap.set(img.name, data.publicUrl);
+      urlMap.set(img.name, uploaded.publicUrl);
+      pathMap.set(img.name, uploaded.path);
+    } catch (error) {
+      if (error instanceof IngestError) return fail(error.status, error.code, `images.${img.name}: ${error.message}`);
+      throw error;
+    }
   }
 
   // ── Resolve post://<slot> references ──────────────────────────────────────
@@ -264,13 +365,13 @@ export async function POST(req: NextRequest) {
   if (postErr) return fail(500, "POST_FAILED", postErr.message);
 
   // ── Image metadata rows (non-fatal) ───────────────────────────────────────
-  if (urlMap.size > 0) {
+  if (pathMap.size > 0) {
     const metaRows = body.images
-      .filter((img) => urlMap.has(img.name))
+      .filter((img) => pathMap.has(img.name))
       .map((img) => ({
         post_id:     saved.id,
         bucket_name: "blog-images",
-        object_path: new URL(urlMap.get(img.name)!).pathname.split("/blog-images/")[1] ?? urlMap.get(img.name)!,
+        object_path: pathMap.get(img.name)!,
         alt_text:    img.alt ?? null,
       }));
     await supabase.from("blog_post_images").insert(metaRows);

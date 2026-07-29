@@ -109,7 +109,7 @@ export default async function Image({
     .eq("status", "active")
     .maybeSingle();
 
-  const title = product?.title ?? "Shop Desert Cowgirl";
+  const title = product?.title ?? "Shop Unenter Solutions";
   const price = product?.price_cents
     ? `$${(product.price_cents / 100).toFixed(2)}`
     : null;
@@ -193,7 +193,7 @@ export default async function Image({
                 textTransform: "uppercase",
               }}
             >
-              Desert Cowgirl
+              Unenter Solutions
             </span>
           </div>
           <div

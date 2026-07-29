@@ -138,7 +138,7 @@ export default function Footer() {
             </div>
 
             <p className="max-w-[32rem] text-sm text-[var(--lt-fg)] opacity-80">
-              Desert Cowgirl™ — western essentials, everyday staples, and drops worth waiting for.
+              Unenter Solutions™ — western essentials, everyday staples, and drops worth waiting for.
             </p>
 
             {/* Member shoutout */}
@@ -200,7 +200,7 @@ export default function Footer() {
         </div>
 
         <div className="mt-12 flex flex-col gap-4 border-t border-[var(--lt-border)] pt-8 text-xs text-[var(--lt-fg)] opacity-60 md:flex-row md:items-center md:justify-between">
-          <p>© {new Date().getFullYear()} Desert Cowgirl™. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Unenter Solutions™. All rights reserved.</p>
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             <Link className="hover:underline" href="/legal/privacy-policy">
               Privacy

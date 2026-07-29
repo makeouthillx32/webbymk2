@@ -57,7 +57,7 @@ export default async function SignUpPage({
         Create an Account
       </h1>
       <p className="text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] mb-6">
-        Join Desert Cowgirl and start shopping faster.
+        Join Unenter Solutions and start shopping faster.
       </p>
 
       {/* ✅ Google button now uses w-full internally, so it will center correctly */}

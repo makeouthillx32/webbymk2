@@ -37,7 +37,7 @@ export default async function OGImage({ params }: PageProps) {
     .single();
 
   // Graceful fallbacks for missing / expired carts
-  const shareName = cart?.share_name ?? "A Desert Cowgirl Wishlist";
+  const shareName = cart?.share_name ?? "A Unenter Solutions Wishlist";
   const shareMessage = cart?.share_message ?? null;
   const items: any[] = cart?.cart_items ?? [];
   const isExpired =
@@ -128,7 +128,7 @@ export default async function OGImage({ params }: PageProps) {
                 display: "flex",
               }}
             >
-              ✦ Desert Cowgirl Co. ✦
+              ✦ Unenter Solutions ✦
             </div>
 
             <div

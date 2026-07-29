@@ -55,7 +55,7 @@ export async function printStoredLabel(orderId: string): Promise<LabelPrintResul
 // Rendered hidden in the DOM; window.print() triggers @media print CSS
 // which shows only #dcg-print-slip and hides everything else.
 
-const STORE_NAME = 'Desert Cowgirl Co.';
+const STORE_NAME = 'Unenter Solutions';
 const STORE_ADDRESS = [
   process.env.NEXT_PUBLIC_STORE_STREET  ?? 'Return Address Line 1',
   [

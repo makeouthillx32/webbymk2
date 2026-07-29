@@ -20,7 +20,7 @@ If a lock is older than 20 minutes it is considered stale and S2 removes it.
 
 ```
 ### LOCK-001
-- file: Z:\WEBSITES\DCG.CO\components\ExampleComponent.tsx
+- file: Z:\WEBSITES\webbymk2\components\ExampleComponent.tsx
 - locked_by: s1-worker-1
 - locked_at: YYYY-MM-DD HH:MM
 - task_id: TASK-001

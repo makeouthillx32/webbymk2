@@ -10,6 +10,11 @@
 // that pings the Supabase gateway (kong). This works for EVERY visitor, unlike
 // the middleware auth check which only touches the backend for logged-in users.
 //
+// The probe reports PostgREST and GoTrue separately (2026-07-27), because they
+// fail independently — GoTrue can be dead while content serves perfectly. The
+// message is chosen from `degraded` so we never tell a visitor their content is
+// stale when the only broken thing is sign-in.
+//
 // The toast fires through the existing react-hot-toast <AppToaster> already in
 // every zone's layout, so it rides the same cross-zone toast system as
 // <MovedHereToast>. Deduped by a stable id; probes are throttled across
@@ -21,6 +26,21 @@ import toast from "react-hot-toast";
 
 const TOAST_ID  = "backend-degraded";
 const THROTTLE_MS = 60_000; // don't re-probe within a minute of the last check
+
+type Degraded = "rest" | "auth" | "both" | null;
+
+/**
+ * The probe reports which subsystem is down, so say the true thing. An
+ * auth-only outage leaves every public page correct and current — telling
+ * those visitors "content may not be up to date" would be wrong, and telling
+ * them nothing leaves anyone clicking Sign in with a silent failure.
+ */
+function outageMessage(degraded: Degraded): string {
+  if (degraded === "auth") {
+    return "Signing in is temporarily unavailable — we're on it. Everything else is working normally.";
+  }
+  return "We're having trouble reaching our servers — some content may not be up to date. We're on it; please check back shortly.";
+}
 
 // Module-level: survives client-side navigations (component remounts) so we
 // probe at most once per THROTTLE_MS window per tab.
@@ -39,12 +59,12 @@ export default function BackendStatusToast() {
     (async () => {
       try {
         const res  = await fetch("/api/health/backend", { cache: "no-store" });
-        const data = (await res.json()) as { ok?: boolean };
+        const data = (await res.json()) as { ok?: boolean; degraded?: Degraded };
         if (cancelled) return;
 
         if (data?.ok === false) {
           toast(
-            "We're having trouble reaching our servers — some content may not be up to date. We're on it; please check back shortly.",
+            outageMessage(data.degraded ?? null),
             {
               id: TOAST_ID, // stable id ⇒ never stacks across navigations
               icon: "⚠️",

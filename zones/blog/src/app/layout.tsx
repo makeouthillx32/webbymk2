@@ -58,10 +58,22 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   return (
     <html lang={locale} style={fontVars} suppressHydrationWarning>
-      <head />
-      {/* fontSans.className sets the body's default family to the theme sans;
-          font-serif / font-mono utility classes pick up the inline vars above. */}
-      <body className={fontSans.className} suppressHydrationWarning>
+      <head>
+        <link
+          rel="alternate"
+          type="application/rss+xml"
+          title="Unenter Blog RSS"
+          href="/rss.xml"
+        />
+      </head>
+      {/* body uses `font-sans` (→ var(--font-sans)), NOT fontSans.className.
+          next/font's class hardcodes the family directly on <body>, which
+          blocked the theme system: ThemeProvider applies each theme's fonts by
+          setting --font-* on <html> (and dynamicFontManager loads them), so
+          base text must resolve through the var. The inline fontVars above are
+          only the pre-hydration fallback; setProperty overrides them once the
+          active theme (vintage, notebook, …) applies. */}
+      <body className="font-sans" suppressHydrationWarning>
         <Providers>
           <ClientLayout locale={locale}>{children}</ClientLayout>
         </Providers>

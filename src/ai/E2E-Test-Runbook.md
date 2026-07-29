@@ -192,7 +192,7 @@ On the confirmation page:
 1. In the Order Details dialog, click **Print Slip**
 2. Your browser's print dialog opens
 3. You should see a clean shipping slip with:
-   - Desert Cowgirl Co. header
+   - Unenter Solutions header
    - Ship To address block
    - Package weight (in oz)
    - Packing list with qty, item name, variant, SKU, price
@@ -347,4 +347,4 @@ The most common failure points are:
 
 ---
 
-*Desert Cowgirl Co. — Internal Test Runbook*
+*Unenter Solutions — Internal Test Runbook*

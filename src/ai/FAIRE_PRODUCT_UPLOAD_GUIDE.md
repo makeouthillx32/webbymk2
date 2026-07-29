@@ -1,4 +1,4 @@
-# 📦 Product Upload Guide: Faire.com to Desert Cowgirl
+# 📦 Product Upload Guide: Faire.com to Unenter Solutions
 
 ## Product Type 1: Multi-Size, Single-Color Products
 
@@ -32,7 +32,7 @@ From the Faire product page, collect:
 
 #### 2. **Open Create Product Modal**
 
-In Desert Cowgirl dashboard → Products → Click "Create Product"
+In Unenter Solutions dashboard → Products → Click "Create Product"
 
 ---
 

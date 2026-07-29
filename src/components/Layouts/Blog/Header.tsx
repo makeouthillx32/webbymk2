@@ -64,10 +64,6 @@ export default function BlogHeader() {
             </Link>
             {settings.show_rss && (
               <a
-                // No `download` attribute on purpose: on iOS/WebKit it routes
-                // through the "web download" path (top banner). A plain link to
-                // a resource served with Content-Disposition: attachment gives
-                // the classic BOTTOM download action sheet — matching GitButler.
                 href="/rss"
                 aria-label="Download RSS feed"
                 title="Download RSS feed"

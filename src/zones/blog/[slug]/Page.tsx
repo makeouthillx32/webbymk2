@@ -10,6 +10,7 @@ import Link             from "next/link";
 import { createClient } from "@/utils/supabase/server";
 import { GridCard }     from "../_components/Cards";
 import ShareRail        from "../_components/ShareRail";
+import ChartHydrator    from "../_components/ChartHydrator";
 import NewsletterBand   from "../_components/NewsletterBand";
 import { fetchBlogSettings } from "../_components/settings";
 import { fetchPostImageMap, resolvePostCover, resolvePostRefs } from "../_components/postImages";
@@ -41,6 +42,8 @@ interface RawPost {
   author:         string | null;
   tags:           string[];
   published_at:   string | null;
+  updated_at:     string | null;
+  revision:       number | null;
   blog_authors:   RawAuthor | null;
   blog_post_tags: { blog_tags: { slug: string; name: string } }[] | null;
 }
@@ -58,7 +61,7 @@ async function fetchPost(slug: string, locale: string) {
     .from("blog_posts")
     .select(`
       id, slug, title, excerpt, content, content_format, cover_image,
-      author, tags, published_at,
+      author, tags, published_at, updated_at, revision,
       blog_authors ( id, slug, name, avatar_url, bio, website_url, github_url, bluesky_url, x_url ),
       blog_post_tags ( blog_tags ( slug, name ) )
     `)
@@ -86,6 +89,8 @@ async function fetchPost(slug: string, locale: string) {
     tags:          tagLinks.map((tag) => tag.name),
     tagLinks,
     publishedAt:   data.published_at,
+    updatedAt:     data.updated_at,
+    revision:      data.revision ?? 1,
   };
 }
 
@@ -232,6 +237,20 @@ export default async function BlogPostPage({ params }: PageProps) {
                   <span className="opacity-50">{"\u2022"}</span>
                 )}
                 <span>{readTime(post.content)}</span>
+                {/* Revision badge \u2014 only once a post has actually been revised.
+                    rev 1 is just "published"; the counter earns its pixels at 2+. */}
+                {post.revision > 1 && (
+                  <>
+                    <span className="opacity-50">{"\u2022"}</span>
+                    <span
+                      className="rounded-full border border-current px-2 py-0.5 font-mono text-xs opacity-75"
+                      title={post.updatedAt ? `Last revised ${formatDate(post.updatedAt)}` : undefined}
+                    >
+                      rev {post.revision}
+                      {post.updatedAt ? ` \u00b7 ${formatDate(post.updatedAt)}` : ""}
+                    </span>
+                  </>
+                )}
               </div>
 
               {post.tagLinks.length > 0 && (
@@ -275,6 +294,9 @@ export default async function BlogPostPage({ params }: PageProps) {
                 className="blog-content text-lg leading-relaxed text-[hsl(var(--foreground))]/90"
                 dangerouslySetInnerHTML={{ __html: contentHtml }}
               />
+              {/* Hydrates any ``` chart ``` blocks in the content above into
+                  interactive, theme-colored Chart.js charts. No-op if none. */}
+              <ChartHydrator />
 
               {/* Author card */}
               {post.authorName && (

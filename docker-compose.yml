@@ -92,7 +92,13 @@ services:
       GOTRUE_API_PORT: 9999
       API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://unenter.live}
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      # search_path=auth is REQUIRED. GoTrue's migrator reads an unqualified
+      # `schema_migrations`; supabase_admin's search_path puts public first, so
+      # it was reading a stale public.schema_migrations (stopped at 2022-11) and
+      # replaying migration 20221208132122 forever — which fails with
+      # "operator does not exist: uuid = text" against the modern auth schema.
+      # Pinning the path makes it read auth.schema_migrations, the real history.
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres?search_path=auth
       GOTRUE_SITE_URL: ${SITE_URL:-https://unenter.live}
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_JWT_EXP: 3600

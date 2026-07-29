@@ -203,6 +203,12 @@ export const UNAXIS_CLI_SCHEMA = {
         { name: "action", type: "string", enum: ["public", "local", "toggle", "status"], required: false, default: "status" }
       ]
     },
+    up: {
+      description: "Cold-start the platform: bring the core compose stack (db, kong, auth, app, proxy…) up, wait for db+kong health, then hydrate the control DB from unenter.db. Idempotent — THE command to run after a reboot or when everything is down.",
+      options: {
+        "--no-hydrate": { type: "boolean", description: "Only start containers; skip the control-DB hydration step." }
+      }
+    },
     "db migrate-control": {
       description: "One-time import: migrate zones + environments from unenter.db (Supabase) into the local SQLite control-plane DB. Safe to re-run.",
     },

@@ -181,3 +181,105 @@ html, body {
   border-top: 1px solid hsl(var(--border));
   margin: 2rem 0;
 }
+
+/* Tables (GFM) */
+.blog-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.95em;
+}
+.blog-content th,
+.blog-content td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  vertical-align: top;
+}
+.blog-content th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+/* Code block language label */
+.blog-content .code-lang {
+  display: inline-block;
+  margin: 1.5rem 0 -1.4rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid hsl(var(--border));
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.blog-content .code-lang + pre {
+  margin-top: 1.4rem;
+  border-top-left-radius: 0;
+}
+
+/* Syntax highlighting (highlight.js) — theme-var driven */
+.blog-content .hljs-comment,
+.blog-content .hljs-quote { color: hsl(var(--muted-foreground)); font-style: italic; }
+.blog-content .hljs-keyword,
+.blog-content .hljs-selector-tag,
+.blog-content .hljs-built_in,
+.blog-content .hljs-type,
+.blog-content .hljs-tag { color: hsl(var(--primary)); }
+.blog-content .hljs-string,
+.blog-content .hljs-attr,
+.blog-content .hljs-symbol,
+.blog-content .hljs-addition { color: hsl(var(--primary) / 0.7); }
+.blog-content .hljs-title,
+.blog-content .hljs-function .hljs-title,
+.blog-content .hljs-section,
+.blog-content .hljs-name { color: hsl(var(--foreground)); font-weight: 600; }
+.blog-content .hljs-number,
+.blog-content .hljs-literal,
+.blog-content .hljs-deletion { color: hsl(var(--destructive) / 0.9); }
+.blog-content .hljs-emphasis { font-style: italic; }
+.blog-content .hljs-strong { font-weight: 700; }
+
+/* Heading anchors: offset for sticky headers */
+.blog-content h1[id],
+.blog-content h2[id],
+.blog-content h3[id] {
+  scroll-margin-top: 6rem;
+}
+
+/* Interactive charts (``` chart ``` → ChartHydrator / Chart.js) */
+.blog-content .blog-chart {
+  margin: 2rem 0;
+  padding: 1.25rem 1.25rem 1rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.35);
+}
+.blog-content .blog-chart-caption {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  text-align: center;
+}
+.blog-content .blog-chart-canvas {
+  position: relative;
+  width: 100%;
+  height: 320px;
+}
+.blog-content .blog-chart-canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.blog-content .blog-chart-fallback {
+  display: block;
+  padding: 2rem 0;
+  text-align: center;
+  font-size: 0.9rem;
+  color: hsl(var(--muted-foreground));
+}

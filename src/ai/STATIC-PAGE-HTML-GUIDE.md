@@ -1,4 +1,4 @@
-# Desert Cowgirl Co. — Static Page HTML Authoring Guide
+# Unenter Solutions — Static Page HTML Authoring Guide
 
 > **Read this before writing any HTML for a static page stored in Supabase.**
 
@@ -206,7 +206,7 @@ Copy this every time you start a new static page:
   </main>
 
   <footer style="width:100%; padding:60px 0; text-align:center; border-top:1px solid hsla(var(--foreground),0.05); font-family:var(--font-family-base); opacity:0.6; font-size:0.9rem;">
-    <p>© 2026 Desert Cowgirl. All Rights Reserved.</p>
+    <p>© 2026 Unenter Solutions. All Rights Reserved.</p>
   </footer>
 
 </body>

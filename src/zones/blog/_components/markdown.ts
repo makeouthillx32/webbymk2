@@ -46,6 +46,34 @@ export function renderMarkdown(src: string): { html: string; toc: TocEntry[] } {
       },
       code({ text, lang }) {
         const language = (lang ?? "").trim().split(/\s+/)[0];
+
+        // ``` chart ``` → interactive chart placeholder (hydrated client-side by
+        // ChartHydrator). Body is a JSON spec: { type, labels, datasets, … }.
+        // Invalid JSON falls through to a normal (highlighted) code block so a
+        // typo never blanks the post.
+        if (language === "chart") {
+          try {
+            const spec = JSON.parse(text);
+            const caption =
+              typeof spec.title === "string" && spec.title.trim()
+                ? `<figcaption class="blog-chart-caption">${escapeHtml(spec.title)}</figcaption>`
+                : "";
+            // Escape for an HTML ATTRIBUTE — must include quotes, or the JSON's
+            // own double-quotes truncate the attribute and break hydration.
+            const cfg = JSON.stringify(spec)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#39;");
+            // data-chart-config carries the spec; canvas is injected on hydrate.
+            // The inner text is a graceful fallback if JS never runs.
+            return `<figure class="blog-chart" data-chart-config="${cfg}">${caption}<div class="blog-chart-canvas"><span class="blog-chart-fallback">Interactive chart — enable JavaScript to view.</span></div></figure>\n`;
+          } catch {
+            /* fall through to normal code rendering below */
+          }
+        }
+
         let body: string;
         try {
           body = language && hljs.getLanguage(language)

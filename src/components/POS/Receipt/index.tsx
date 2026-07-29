@@ -117,7 +117,7 @@ export function Receipt({
         <div className="pos-receipt__card" id="pos-receipt-printable">
           <div className="pos-receipt__card-header">
             <div>
-              <p className="pos-receipt__card-label">Desert Cowgirl Co.</p>
+              <p className="pos-receipt__card-label">Unenter Solutions</p>
               <p className="pos-receipt__card-sublabel">{orderNumber}</p>
             </div>
             <p className="pos-receipt__card-date">{fmtDate()}</p>
@@ -242,7 +242,7 @@ export function Receipt({
       {/* ── Print-only view — rendered by window.print() ────────── */}
       <div className="pos-receipt-print" aria-hidden>
         <div className="pos-receipt-print__header">
-          <strong>Desert Cowgirl Co.</strong><br />
+          <strong>Unenter Solutions</strong><br />
           {orderNumber}<br />
           {fmtDate()}
         </div>

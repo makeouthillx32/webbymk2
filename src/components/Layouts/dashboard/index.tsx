@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { SearchIcon } from "@/assets/icons";
 import Image from "next/image";
 import Link from "next/link";
@@ -11,9 +12,33 @@ import SwitchtoDarkMode from "@/components/Layouts/SwitchtoDarkMode";
 
 export function Header() {
   const { toggleSidebar, isMobile } = useSidebarContext();
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Publish the real rendered height as a CSS var so anything ELSE that's
+  // sticky inside the dashboard (e.g. the blog editor's own header) can pin
+  // itself just below this bar instead of guessing a pixel value. Without
+  // this, two `sticky top-0` elements stack on top of each other the moment
+  // both are visible at once — this header wraps to a taller layout on
+  // narrow/mobile widths (search bar grows, icons wrap), so a hardcoded
+  // offset would drift out of sync anyway. ResizeObserver keeps it correct
+  // across breakpoint changes and orientation flips, not just mount.
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node) return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty("--dashboard-header-h", `${node.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <header data-layout="dashboard" className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--lt-border)] bg-[var(--lt-bg)] px-4 py-5 shadow-[var(--lt-shadow)] md:px-5 2xl:px-10">
+    <header
+      ref={headerRef}
+      data-layout="dashboard"
+      className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--lt-border)] bg-[var(--lt-bg)] px-4 py-5 shadow-[var(--lt-shadow)] md:px-5 2xl:px-10"
+    >
       <button
         onClick={toggleSidebar}
         className="rounded-[var(--radius)] border border-[hsl(var(--border))] px-1.5 py-1 dark:border-[hsl(var(--sidebar-border))] dark:bg-[hsl(var(--background))] hover:dark:bg-[hsla(var(--background),0.1)] lg:hidden"
