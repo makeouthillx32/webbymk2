@@ -496,6 +496,28 @@ export async function restartZone(
   return composeRun(["restart", zone.service], onLine, file);
 }
 
+// ── Core-stack service recreate ─────────────────────────────────────────────
+//
+// Why this exists: `docker restart` / `env restart <container>` (agent HTTP
+// path) both just stop+start the EXISTING container — they reuse whatever
+// environment it was created with. Editing `.env` and restarting `auth` (or
+// any other root-compose service) silently does nothing; the new values
+// never reach the process. `docker compose up -d --force-recreate` is the
+// only thing that re-resolves `.env` and actually rebuilds the container
+// against it. `--no-deps` keeps this scoped to the one service — it won't
+// cascade into recreating db/kong/everything else that depends on it.
+//
+// Targets the root docker-compose.yml (PROJECT_DIR) — i.e. core services
+// (auth, app, db, kong, rest, realtime, storage, meta, studio, proxy), not
+// zone containers (those go through restartZone / zone-specific compose
+// files instead).
+export async function recreateCoreService(
+  service: string,
+  onLine?: (l: string) => void
+): Promise<number> {
+  return composeRun(["up", "-d", "--force-recreate", "--no-deps", service], onLine);
+}
+
 /**
  * @deprecated New zones use per-zone compose files (zones/<key>/docker-compose.yml)
  * which always contain a correct `image:` field — no patching needed.

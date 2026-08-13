@@ -198,7 +198,7 @@ function InstanceDetail({ inst, didCopy }: InstanceDetailProps) {
   const localApi    = `http://localhost:${inst.ports.kong}`;
   const pgConn      = postgresConnStr(inst.secrets.postgresPassword, inst.ports.postgres);
   // Public URLs — stored at provision time, or derived from name (short user slug) + domain.
-  // inst.slug is the compose project name (e.g. "dcg-1779838801168"); inst.name is "dcg".
+  // inst.slug is the compose project name (e.g. "unenter-1779838801168"); inst.name is "unenter".
   const shortSlug   = inst.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const pubStudio   = inst.npmStudioUrl ?? `https://studio.${shortSlug}.${DOMAIN}`;
   const pubApi      = inst.npmApiUrl    ?? `https://db.${shortSlug}.${DOMAIN}`;

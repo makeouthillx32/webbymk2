@@ -180,13 +180,14 @@ export const DNS_RECORDS: { type: string; name: string; value: string }[] = [
   { type: "CNAME", name: "www",                 value: `${DDNS_PROVIDER.hostname}.`             },
   { type: "CNAME", name: "npm / mail / ai",     value: `${DDNS_PROVIDER.hostname}.`             },
   { type: "CNAME", name: "mc / db",             value: `${DDNS_PROVIDER.hostname}.`             },
-  { type: "CNAME", name: "brevo1._domainkey",   value: "<Brevo DKIM target — see dashboard>"     },
-  { type: "CNAME", name: "brevo2._domainkey",   value: "<Brevo DKIM target — see dashboard>"     },
   { type: "MX",    name: "@",                   value: "mail.unenter.live.  (pri 10)"           },
   { type: "TXT",   name: "@",                   value: "v=spf1 mx a include:<ddns-provider-domain> ~all" },
   { type: "TXT",   name: "_dmarc",              value: "p=none  rua=admin@mail.unenter.live"    },
-  { type: "TXT",   name: "@",                   value: "<Brevo domain-verification code — see dashboard>" },
   { type: "NS",    name: "@",                   value: "ns53 / ns54.domaincontrol.com."         },
+  // Brevo rows (brevo1/2._domainkey CNAMEs + verification TXT) removed
+  // 2026-08-09 — Brevo is fully retired, mail now runs entirely on the
+  // self-hosted poste.io at mail.unenter.live. If those records are still
+  // live in the GoDaddy zone, delete them there too.
 ];
 
 // ── Port Forwards (GT-BE98 Pro) ───────────────────────────────────────────────

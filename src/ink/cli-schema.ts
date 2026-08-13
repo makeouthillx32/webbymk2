@@ -209,6 +209,12 @@ export const UNAXIS_CLI_SCHEMA = {
         "--no-hydrate": { type: "boolean", description: "Only start containers; skip the control-DB hydration step." }
       }
     },
+    "recreate-core": {
+      description: "Force-recreate one root docker-compose.yml service (auth, app, db, kong, rest, realtime, storage, meta, studio, proxy) so it picks up the current .env. `restart` / `env restart <container>` only stop+start the existing container and keep whatever env it was created with — this is the one that actually re-reads .env. Runs `docker compose up -d --force-recreate --no-deps <service>`; --no-deps keeps it scoped to just that one service.",
+      arguments: [
+        { name: "service", type: "string", required: true }
+      ]
+    },
     "db migrate-control": {
       description: "One-time import: migrate zones + environments from unenter.db (Supabase) into the local SQLite control-plane DB. Safe to re-run.",
     },

@@ -90,6 +90,11 @@ export function AppRoutes({
   // Bundle captured when user picks a snapshot to clone — passed to CloneWizardScreen
   const [cloneBundle, setCloneBundle] = useState<SnapshotBundle | null>(null);
 
+  // Zone key captured when Welcome's [1-9] shortcut fires — consumed once by
+  // ZonesView on mount to pre-select + open that zone's action panel, so
+  // "go to a zone" from Welcome lands on the zone instead of core.
+  const [pendingZoneKey, setPendingZoneKey] = useState<string | null>(null);
+
   const handleInstanceAction = (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", inst: RuntimeInstance) => {
     if (action === "snapshot") {
       runOpQueued(`Snapshot ${inst.name}`, async (o) => {
@@ -136,6 +141,7 @@ export function AppRoutes({
           infraResults={infraResults}
           onManage={() => navigate("core")}
           onSettings={() => navigate("settings")}
+          onOpenZone={(key) => { setPendingZoneKey(key); navigate("zones"); }}
           onQuit={() => gracefulShutdownSync(0)}
           isActive={!stackFocused}
           activeEnv={activeEnv}
@@ -180,6 +186,8 @@ export function AppRoutes({
           onNewZone={() => navigate("wizard")}
           onSubCrumbs={setSubCrumbs}
           isActive={!stackFocused}
+          initialZoneKey={pendingZoneKey}
+          onConsumeInitialZoneKey={() => setPendingZoneKey(null)}
         />
       )}
 

@@ -5,7 +5,7 @@ import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
 import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
 import { devContainerName, startDevContainer, stopDevContainer } from "../dev-container.ts";
-import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts } from "../docker.ts";
+import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts, recreateCoreService } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
 import { parseLogTail, snapshotContainerLogs } from "../log-snapshot.ts";
@@ -49,7 +49,7 @@ import {
 import { loadRegistry } from "../zone/supabase-factory.ts";
 import { NPM_HOST } from "../../config/stack.ts";
 import { addZoneRoute, getRoutes } from "../proxy-config.ts";
-import { buildAndDeploy, deployZone } from "../zone-build.ts";
+import { buildAndDeploy, deployZone, deployAll } from "../zone-build.ts";
 import {
   deleteZone, deriveZone, findNextDevPort, LAYOUT_OPTIONS,
   type LayoutType, type AppFooterType,
@@ -194,6 +194,87 @@ async function dockerRun(
     p.on("error", (e) => { if (timer) clearTimeout(timer); onLine(`  spawn error: ${e}`); resolve(1); });
   });
 }
+
+// The core stack cold-start: compose up -d, wait for db+kong health, then
+// hydrate the control DB. This is the exact body of the `unaxis up` IPC
+// command (see the `up:` handler below), pulled out to a standalone function
+// so it can ALSO run automatically once at TUI boot (see the "self-heal on
+// startup" effect near the end of this hook) — one code path for "I typed
+// `unaxis up`" and "the TUI just launched and the stack is cold". Idempotent:
+// running services are untouched; hydration UPSERTs.
+export async function coldStartCoreStack(
+  onLine: (l: string) => void,
+  opts: { skipHydrate?: boolean } = {},
+): Promise<number> {
+  onLine("── unaxis up · core stack cold-start ──");
+
+  // 1. Docker daemon reachable? Retry with backoff instead of failing on the
+  // first check — at PC-boot time Docker Desktop is often still initializing
+  // (10-60s is normal), and this function also runs automatically at TUI
+  // launch (see the startup self-heal effect), so a single-shot check would
+  // spuriously fail every reboot race. Bounded at 90s; a human running
+  // `unaxis up` by hand with Docker Desktop truly not running still gets a
+  // clear answer, just not an instant one.
+  const daemonDeadline = Date.now() + 90_000;
+  let daemonUp = false;
+  let attempt = 0;
+  while (Date.now() < daemonDeadline) {
+    attempt++;
+    const dcode = await dockerRun(["version", "--format", "docker server {{.Server.Version}}"], () => {}, 10000);
+    if (dcode === 0) { daemonUp = true; break; }
+    onLine(`  waiting for Docker daemon… (attempt ${attempt})`);
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  if (!daemonUp) {
+    onLine("✗ Docker daemon unreachable after 90s — start Docker Desktop, then re-run: unaxis up");
+    return 1;
+  }
+
+  // 2. Core compose project up (root docker-compose.yml, project `unenter`)
+  onLine("→ compose up -d (core stack)…");
+  const ccode = await composeRun(["up", "-d"], onLine);
+  if (ccode !== 0) {
+    onLine("✗ compose up failed — see lines above");
+    return ccode;
+  }
+
+  // 3. Wait (bounded) for the two services everything else depends on
+  const CRITICAL = ["unt_db", "unt_kong"];
+  onLine("→ waiting for db + kong health (max 120s)…");
+  const deadline = Date.now() + 120_000;
+  let healthy = false;
+  while (Date.now() < deadline) {
+    const st = await getStatuses(CRITICAL);
+    if (CRITICAL.every((c) => st[c] === "running")) { healthy = true; break; }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  const finalSt = await getStatuses(CRITICAL);
+  for (const c of CRITICAL) onLine(`  ${c.padEnd(10)} ${finalSt[c]}`);
+  if (!healthy) {
+    onLine("✗ db/kong not healthy after 120s — inspect: unaxis logs db --tail 60");
+    return 1;
+  }
+
+  // 4. Hydrate control DB (zones + environments). Safe to re-run.
+  if (opts.skipHydrate) {
+    onLine("✓ core stack up (hydration skipped via --no-hydrate)");
+    return 0;
+  }
+  onLine("→ hydrating control DB from unenter.db…");
+  const { migrateControlDb } = await import("../control-db-migrate.js");
+  const mcode = await migrateControlDb(onLine);
+  if (mcode !== 0) {
+    onLine("⚠ stack is UP but hydration failed — retry: unaxis db migrate-control");
+    return 4;
+  }
+
+  onLine("✓ core stack up · control DB hydrated · unaxis fully operational");
+  return 0;
+}
+
+// Guards the boot-time auto-heal (see the effect near the end of this hook)
+// so it fires exactly once per process, not once per component remount.
+let autoColdStartFired = false;
 
 type UseIpcBridgeParams = {
   view: string;
@@ -426,6 +507,28 @@ export function useIpcBridge({
         const stopCode = await stopDevContainer(zone, onLine);
         if (stopCode !== 0) return stopCode;
         return startDevContainer(zone, onLine);
+      },
+
+      // unaxis recreate-core <service>  — force-recreate a ROOT docker-compose.yml
+      // service (auth, app, db, kong, rest, realtime, storage, meta, studio, proxy)
+      // so it picks up the current .env. Plain `restart` / `env restart <container>`
+      // only stop+start the existing container, which keeps whatever env it was
+      // created with — this is the one that actually re-reads .env, via
+      // `docker compose up -d --force-recreate --no-deps <service>`.
+      "recreate-core": async (args, onLine) => {
+        const service = args[0];
+        if (!service) {
+          onLine("✗ usage: recreate-core <service>  (e.g. auth, app, storage — root docker-compose.yml service name)");
+          return 2;
+        }
+        onLine(`Recreating "${service}" from root docker-compose.yml (force-recreate, re-reads .env)…`);
+        const code = await recreateCoreService(service, onLine);
+        if (code !== 0) {
+          onLine(`✗ recreate failed for ${service} — see lines above`);
+          return code;
+        }
+        onLine(`✓ ${service} recreated with current .env`);
+        return 0;
       },
 
       // unaxis list  — show all zones and their dev container status
@@ -1646,56 +1749,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // control plane that needs `docker compose up` typed by hand isn't one.
       // Idempotent: running services are untouched; hydration UPSERTs.
       up: async (args, onLine) => {
-        const skipHydrate = args.includes("--no-hydrate");
-        onLine("── unaxis up · core stack cold-start ──");
-
-        // 1. Docker daemon reachable?
-        const dcode = await dockerRun(["version", "--format", "docker server {{.Server.Version}}"], onLine, 15000);
-        if (dcode !== 0) {
-          onLine("✗ Docker daemon unreachable — start Docker Desktop, then re-run: unaxis up");
-          return 1;
-        }
-
-        // 2. Core compose project up (root docker-compose.yml, project `unenter`)
-        onLine("→ compose up -d (core stack)…");
-        const ccode = await composeRun(["up", "-d"], onLine);
-        if (ccode !== 0) {
-          onLine("✗ compose up failed — see lines above");
-          return ccode;
-        }
-
-        // 3. Wait (bounded) for the two services everything else depends on
-        const CRITICAL = ["unt_db", "unt_kong"];
-        onLine("→ waiting for db + kong health (max 120s)…");
-        const deadline = Date.now() + 120_000;
-        let healthy = false;
-        while (Date.now() < deadline) {
-          const st = await getStatuses(CRITICAL);
-          if (CRITICAL.every((c) => st[c] === "running")) { healthy = true; break; }
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-        const finalSt = await getStatuses(CRITICAL);
-        for (const c of CRITICAL) onLine(`  ${c.padEnd(10)} ${finalSt[c]}`);
-        if (!healthy) {
-          onLine("✗ db/kong not healthy after 120s — inspect: unaxis logs db --tail 60");
-          return 1;
-        }
-
-        // 4. Hydrate control DB (zones + environments). Safe to re-run.
-        if (skipHydrate) {
-          onLine("✓ core stack up (hydration skipped via --no-hydrate)");
-          return 0;
-        }
-        onLine("→ hydrating control DB from unenter.db…");
-        const { migrateControlDb } = await import("../control-db-migrate.js");
-        const mcode = await migrateControlDb(onLine);
-        if (mcode !== 0) {
-          onLine("⚠ stack is UP but hydration failed — retry: unaxis db migrate-control");
-          return 4;
-        }
-
-        onLine("✓ core stack up · control DB hydrated · unaxis fully operational");
-        return 0;
+        return coldStartCoreStack(onLine, { skipHydrate: args.includes("--no-hydrate") });
       },
 
       // unaxis build-doctor [zone]  — diagnose why `next build` SSG hangs/OOMs.
@@ -3604,5 +3658,19 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Core stack self-heal on startup ───────────────────────────────────────
+  // A PC reboot brings Docker Desktop back up, but individual containers
+  // (proxy/agent especially) can come back down or half-started, and nobody
+  // is around to type `unaxis up`. Run the exact same cold-start automatically
+  // once per process launch, as a normal visible stack op — so a fresh TUI
+  // process always finds (or brings) the stack healthy without manual docker
+  // commands. Safe to run even when everything is already up: `compose up -d`
+  // no-ops on running services, and hydration UPSERTs.
+  useEffect(() => {
+    if (autoColdStartFired) return;
+    autoColdStartFired = true;
+    void runOpVisible("Startup self-heal (unaxis up)", (onLine) => coldStartCoreStack(onLine));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 }

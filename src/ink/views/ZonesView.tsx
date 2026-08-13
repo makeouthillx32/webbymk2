@@ -90,6 +90,10 @@ interface ZonesViewProps {
   onSubCrumbs:     (crumbs: string[]) => void;
   /** false while the global stack pane is focused — suppresses zone cursor keys */
   isActive:        boolean;
+  /** Zone key to pre-select + auto-open on mount (from Welcome's [1-9] shortcut). */
+  initialZoneKey?: string | null;
+  /** Called once initialZoneKey has been applied, so the caller can clear it. */
+  onConsumeInitialZoneKey?: () => void;
 }
 
 // ── ZonesView ─────────────────────────────────────────────────────────────────
@@ -98,6 +102,7 @@ export function ZonesView({
   zones, zoneStatuses, proxyStatus,
   setZones, runOp, openLogs, addNotification,
   onGoBack, onNewZone, onSubCrumbs, isActive,
+  initialZoneKey, onConsumeInitialZoneKey,
 }: ZonesViewProps) {
 
   // Strip core (key="unenter") — it's not a zone and doesn't belong here.
@@ -147,6 +152,25 @@ export function ZonesView({
   useEffect(() => {
     setSelected((s) => Math.min(s, Math.max(0, visibleZones.length - 1)));
   }, [visibleZones.length]);
+
+  // Consume a pending zone key handed off from Welcome's [1-9] shortcut:
+  // select it and open its action panel immediately, same as pressing Enter
+  // on it manually. Runs once per incoming key, then clears it via the
+  // caller-supplied callback so re-mounts/re-renders don't re-trigger it.
+  useEffect(() => {
+    if (!initialZoneKey) return;
+    const idx = visibleZones.findIndex((z) => z.key === initialZoneKey);
+    if (idx >= 0) {
+      const zone = visibleZones[idx]!;
+      setSelected(idx);
+      actionNav.reset(firstEnabled(zone));
+      setActionOpen(true);
+    }
+    onConsumeInitialZoneKey?.();
+  // Only re-run when the incoming key itself changes — visibleZones/actionNav
+  // are read fresh each time but shouldn't retrigger this on their own.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialZoneKey]);
 
   // ── Breadcrumb sync ──────────────────────────────────────────────────────
   // Declaratively derives sub-crumbs from local state so the breadcrumb trail
