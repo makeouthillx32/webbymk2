@@ -1,0 +1,10 @@
+{
+  "name": "@unenter/labs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3011",
+    "build": "next build",
+    "start": "next start"
+  }
+}
