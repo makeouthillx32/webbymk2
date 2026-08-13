@@ -19,6 +19,36 @@ import type { CredentialKey }                        from '../utils/secureStorag
 import { existsSync, readFileSync }                 from 'fs'
 import { join, resolve, dirname, isAbsolute }       from 'path'
 import * as net                                     from 'net'
+import { spawnSync }                                from 'child_process'
+
+// ── Bun self-relaunch guard ───────────────────────────────────────────────────
+// UNAXIS must run under Bun: control-db.ts (the SQLite-backed zones +
+// environments store) hard-requires `bun:sqlite`, with no Node fallback.
+// Every launch path can still end up invoking this bundled file with plain
+// `node`: npm's Windows shims (unaxis.cmd / unaxis.ps1) hardcode a call to
+// node.exe and ignore the shebang line build.ts injects, and nothing stops
+// a script (or a person) from running `node dist/cli.js` directly. Rather
+// than chase down and fix every entry point one at a time -- global install,
+// this repo's own scripts, whatever gets written next -- self-relaunch under
+// bun transparently right here, before any other module gets a chance to
+// reach control-db.ts.
+//
+// Discovered 2026-08-08: the prod autostart path silently left the TUI with
+// zero zones and zero environments loaded, because control-db hydration
+// threw "Cannot find module 'bun:sqlite'" under node and nothing caught it.
+if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
+  const result = spawnSync('bun', [process.argv[1] as string, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+  })
+  if (result.error) {
+    process.stderr.write(
+      '\nUNAXIS requires Bun to run (bun:sqlite backs the local zones/environments store).\n' +
+      'Install it from https://bun.sh, then re-run.\n\n'
+    )
+    process.exit(1)
+  }
+  process.exit(result.status ?? 1)
+}
 
 const args = process.argv.slice(2)
 
@@ -805,8 +835,20 @@ if (args[0] === 'credentials' || args[0] === 'creds') {
   }
 
   console.error(`  Unknown credentials subcommand: ${sub}`)
-  console.error('  Try: unaxis credentials set|get|list')
-  process.exit(1)
+}
+
+// ── push subcommand (independent repo push) ──────────────────────────────────
+if (args[0] === 'push') {
+  const { execSync } = await import('child_process')
+  console.log('  Pushing UNAXIS to dedicated remote (github.com/makeouthillx32/unaxis)...')
+  try {
+    execSync('git subtree push --prefix=src/ink unaxis main', { stdio: 'inherit' })
+    console.log('✓ UNAXIS pushed successfully!')
+    process.exit(0)
+  } catch (err: any) {
+    console.error('✗ Push failed:', err?.message || err)
+    process.exit(1)
+  }
 }
 
 // ── Early .env load before any bundled TUI modules can initialize ─────────────

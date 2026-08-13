@@ -79,10 +79,10 @@ export function useCart() {
 // ─────────────────────────────────────────────
 function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return "";
-  let sessionId = localStorage.getItem("dcg_session_id");
+  let sessionId = localStorage.getItem("unenter_session_id");
   if (!sessionId) {
     sessionId = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("dcg_session_id", sessionId);
+    localStorage.setItem("unenter_session_id", sessionId);
   }
   return sessionId;
 }

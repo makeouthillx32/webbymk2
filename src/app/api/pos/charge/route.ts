@@ -14,8 +14,8 @@
 //   discount_code       - optional
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/utils/supabase/server";
 import Stripe from "stripe";
+import { requireAdmin } from "@/lib/require-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -31,22 +31,38 @@ function generateOrderNumber(): string {
   const now = new Date();
   const ymd = now.toISOString().slice(0, 10).replace(/-/g, "");
   const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `DCG-POS-${ymd}-${rand}`;
+  return `UNENTER-POS-${ymd}-${rand}`;
 }
 
 export async function POST(req: NextRequest) {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: "2024-11-20.acacia",
-  });
-  const supabase = await createServerClient();
+  // Constructed in its own try/catch, ahead of this handler's main try block
+  // (below) — if STRIPE_SECRET_KEY is missing/blank, the SDK throws
+  // synchronously, and an uncaught throw here would give the client an
+  // empty response body it can't even JSON.parse(), instead of the JSON
+  // error every other failure path in this route returns. Same class of
+  // bug found and fixed in /api/checkout and /api/research-checkout's
+  // create-payment-intent routes via E2E checkout test, 2026-08-06.
+  let stripe: Stripe;
+  try {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  } catch (err: any) {
+    return jsonError(500, "STRIPE_CONFIG", err?.message || "Stripe is not configured");
+  }
 
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !user) return jsonError(401, "UNAUTHORIZED", "Authentication required");
+  // Was previously "any signed-in user," not admin/staff, and trusted
+  // items[].price_cents straight from the request body with no server-side
+  // lookup — a signed-in customer could POST a real product_id with
+  // price_cents: 1 and mint a PaymentIntent for a penny. Fixed 2026-08-10
+  // ahead of taking Stripe out of test mode: real admin check + prices
+  // recomputed from product_variants below.
+  const guard = await requireAdmin();
+  if ("error" in guard) return guard.error;
+  const supabase = guard.admin;
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id")
-    .eq("auth_user_id", user.id)
+    .select("id, email")
+    .eq("id", guard.userId)
     .maybeSingle();
 
   const body = await req.json();
@@ -62,6 +78,32 @@ export async function POST(req: NextRequest) {
 
   if (!items.length && !custom_items.length) {
     return jsonError(400, "EMPTY_CART", "Cart is empty");
+  }
+
+  // ── Recompute real product prices server-side ──────────────────
+  // items[].price_cents was previously trusted straight from the request
+  // body — a real product_id/variant_id with a fabricated price_cents would
+  // mint a PaymentIntent for whatever the client claimed. custom_items
+  // remain client-supplied by design (the POS "custom amount" keypad has no
+  // product to look up), which is fine now that this route requires a real
+  // admin/staff session.
+  const variantIds = [...new Set(items.map((i: any) => i.variant_id).filter(Boolean))];
+  let priceByVariant = new Map<string, number>();
+  if (variantIds.length > 0) {
+    const { data: variantRows, error: variantErr } = await supabase
+      .from("product_variants")
+      .select("id, product_id, price_cents")
+      .in("id", variantIds);
+    if (variantErr) return jsonError(500, "VARIANT_LOOKUP_FAILED", variantErr.message);
+    priceByVariant = new Map((variantRows ?? []).map((v: any) => [v.id, v.price_cents]));
+  }
+
+  for (const item of items) {
+    const realPrice = priceByVariant.get(item.variant_id);
+    if (realPrice == null) {
+      return jsonError(400, "UNKNOWN_VARIANT", `Variant ${item.variant_id} not found — cannot verify price`);
+    }
+    item.price_cents = realPrice;
   }
 
   // ── Totals ────────────────────────────────────────────────────
@@ -106,7 +148,7 @@ export async function POST(req: NextRequest) {
       source: "pos",
       pos_staff_profile_id: profile?.id ?? null,
       profile_id: profile?.id ?? null,
-      auth_user_id: user.id,
+      auth_user_id: guard.userId,
       subtotal_cents,
       shipping_cents: 0,
       tax_cents: 0,
@@ -117,7 +159,7 @@ export async function POST(req: NextRequest) {
       customer_email: customer_email ?? null,
       customer_first_name: customer_first_name ?? null,
       customer_last_name: customer_last_name ?? null,
-      email: customer_email ?? profile?.email ?? user.email ?? null,
+      email: customer_email ?? profile?.email ?? null,
       internal_notes: "[POS] In-person sale",
     })
     .select("id, order_number, total_cents")
@@ -174,7 +216,7 @@ export async function POST(req: NextRequest) {
         order_id: order.id,
         order_number: order.order_number,
         order_source: "pos",
-        staff_user_id: user.id,
+        staff_user_id: guard.userId,
       },
       description: `POS — ${order.order_number}`,
     });

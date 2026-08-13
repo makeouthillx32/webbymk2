@@ -4,11 +4,12 @@
 import { useState } from 'react';
 import LandingManager from './_components/LandingManager';
 import './_components/landing.scss';
-import { ShoppingBag, Home } from 'lucide-react';
+import { ShoppingBag, Home, FlaskConical } from 'lucide-react';
 
 const TABS = [
-  { id: 'shop',  label: 'Shop Landing', icon: ShoppingBag, desc: 'Manage shop hero carousel sections and their order' },
-  { id: 'home',  label: 'Home Heroes',  icon: Home,        desc: 'Edit Kick, Discord, Pickme and slogan sections on the home page' },
+  { id: 'shop',  label: 'Shop Landing', icon: ShoppingBag,  desc: 'Manage shop hero carousel sections and their order' },
+  { id: 'home',  label: 'Home Heroes',  icon: Home,         desc: 'Edit Kick, Discord, Pickme and slogan sections on the home page' },
+  { id: 'labs',  label: 'Labs Landing', icon: FlaskConical, desc: 'Manage the Unenter Labs landing page sections and their order' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -53,6 +54,9 @@ export default function LandingSettingsPage() {
       </div>
       <div className={activeTab === 'home' ? 'block' : 'hidden'}>
         <LandingManager embedded page="home" />
+      </div>
+      <div className={activeTab === 'labs' ? 'block' : 'hidden'}>
+        <LandingManager embedded page="labs" />
       </div>
     </div>
   );

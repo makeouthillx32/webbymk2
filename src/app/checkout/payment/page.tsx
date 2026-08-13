@@ -89,6 +89,7 @@ export default function CheckoutPaymentPage() {
     const shippingRateId = sessionStorage.getItem('checkout_shipping_rate_id');
     const shippingRateData = sessionStorage.getItem('checkout_shipping_rate_data');
     const promoCode = sessionStorage.getItem('promo_code');
+    const marketingOptIn = sessionStorage.getItem('checkout_marketing_opt_in') === 'true';
 
     if (!email || !shippingAddress || !cart?.id) {
       router.push('/checkout');
@@ -102,6 +103,7 @@ export default function CheckoutPaymentPage() {
       shipping_rate_id: shippingRateId,
       shipping_rate_data: shippingRateData ? JSON.parse(shippingRateData) : null,
       promo_code: promoCode,
+      marketing_opt_in: marketingOptIn,
     });
   }, [cart, router]);
 
@@ -116,7 +118,7 @@ export default function CheckoutPaymentPage() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-session-id': localStorage.getItem('dcg_session_id') || '',
+          'x-session-id': localStorage.getItem('unenter_session_id') || '',
         },
         body: JSON.stringify({
           cart_id: cart?.id,

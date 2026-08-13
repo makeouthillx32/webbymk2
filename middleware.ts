@@ -10,8 +10,8 @@
 //   5. Forward Supabase auth cookie state
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createServerClient }                        from "@supabase/ssr";
-import { NextResponse, type NextRequest }            from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   getCanonicalHost,
   getZoneFromHost,
@@ -33,7 +33,7 @@ import { isProtectedRoute } from "@/lib/protectedRoutes";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const LOCALES       = ["en", "de"] as const;
+const LOCALES = ["en", "de"] as const;
 const LOCALE_COOKIE = "Next-Locale";
 const LOCALE_HEADER = "X-Next-Locale";
 
@@ -44,36 +44,37 @@ type Locale = (typeof LOCALES)[number];
 function getLocaleFromPathname(pathname: string): Locale | null {
   return (
     LOCALES.find(
-      (l) => pathname === `/${l}` || pathname.startsWith(`/${l}/`)
+      (l) => pathname === `/${l}` || pathname.startsWith(`/${l}/`),
     ) ?? null
   );
 }
 
 function stripLocaleFromPathname(pathname: string, locale: Locale): string {
   if (pathname === `/${locale}`) return "/";
-  if (pathname.startsWith(`/${locale}/`)) return pathname.slice(locale.length + 1);
+  if (pathname.startsWith(`/${locale}/`))
+    return pathname.slice(locale.length + 1);
   return pathname;
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 export async function middleware(request: NextRequest) {
-  const url            = request.nextUrl.clone();
+  const url = request.nextUrl.clone();
   // Prefer x-forwarded-host (set by NPM/OpenResty) over host so the zone
   // resolver sees the original public hostname even when the reverse proxy
   // rewrites the Host header to the upstream service address.
-  const rawHost        =
+  const rawHost =
     request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
     request.headers.get("host") ||
     "";
   const normalizedHost = normalizeHost(rawHost);
-  const canonicalHost  = getCanonicalHost(normalizedHost);
-  const isLocal        = isLocalDevelopmentHost(normalizedHost);
+  const canonicalHost = getCanonicalHost(normalizedHost);
+  const isLocal = isLocalDevelopmentHost(normalizedHost);
 
   // ── 1. www → canonical redirect ───────────────────────────────────────────
   if (!isLocal && normalizedHost !== canonicalHost) {
     url.hostname = canonicalHost;
-    url.port     = "";   // strip internal container port — public URL has none
+    url.port = ""; // strip internal container port — public URL has none
     return NextResponse.redirect(url, 301);
   }
 
@@ -119,10 +120,10 @@ export async function middleware(request: NextRequest) {
       const redirectResponse = NextResponse.redirect(target, 307);
       if (locale) {
         redirectResponse.cookies.set(LOCALE_COOKIE, locale, {
-          path:     "/",
-          maxAge:   7 * 24 * 60 * 60,
+          path: "/",
+          maxAge: 7 * 24 * 60 * 60,
           sameSite: "lax",
-          secure:   true,
+          secure: true,
         });
       }
       return redirectResponse;
@@ -132,7 +133,7 @@ export async function middleware(request: NextRequest) {
   // ── 3. Locale stripping ───────────────────────────────────────────────────
   // ── 4. Build mutated request headers ─────────────────────────────────────
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set(ZONE_HEADER,      zoneFromHost);
+  requestHeaders.set(ZONE_HEADER, zoneFromHost);
   requestHeaders.set(SITE_HOST_HEADER, canonicalHost);
   if (locale) requestHeaders.set(LOCALE_HEADER, locale);
 
@@ -140,13 +141,15 @@ export async function middleware(request: NextRequest) {
   // One typed contract computed once here; downstream reads it instead of
   // recomputing zone facts from the host.
   const zoneCtx = buildZoneContext({
-    host:     normalizedHost,
+    host: normalizedHost,
     pathname: effectivePathname,
     isLocal,
   });
   requestHeaders.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
-  if (zoneCtx.promotionStatus) requestHeaders.set(PROMOTION_STATUS_HEADER, zoneCtx.promotionStatus);
-  if (zoneCtx.promotedToZone)  requestHeaders.set(PROMOTION_ZONE_HEADER,  zoneCtx.promotedToZone);
+  if (zoneCtx.promotionStatus)
+    requestHeaders.set(PROMOTION_STATUS_HEADER, zoneCtx.promotionStatus);
+  if (zoneCtx.promotedToZone)
+    requestHeaders.set(PROMOTION_ZONE_HEADER, zoneCtx.promotedToZone);
 
   const requestInit = { headers: requestHeaders };
 
@@ -179,7 +182,8 @@ export async function middleware(request: NextRequest) {
   // /shop, /products, /checkout, /collections, /cart, /u) serve their overlay at
   // ROOT, so injecting the primary prefix would 302 every non-primary route to
   // /shop/* and 404. Only inject when there is exactly one non-root prefix.
-  const zonePrimaryPrefix = nonRootPrefixes.length === 1 ? nonRootPrefixes[0] : null;
+  const zonePrimaryPrefix =
+    nonRootPrefixes.length === 1 ? nonRootPrefixes[0] : null;
 
   // Inside a flattened zone image (NEXT_PUBLIC_ZONE baked at build time), the
   // zone's overlay pages are ROOT-mounted — the static ZONES prefixes describe
@@ -203,7 +207,7 @@ export async function middleware(request: NextRequest) {
     !isLocal &&
     !isOwnZoneImage &&
     normalizedHost === zoneConfig.host &&
-    normalizedHost !== CORE_DOMAIN &&   // core (incl. www) never needs path-prefix injection
+    normalizedHost !== CORE_DOMAIN && // core (incl. www) never needs path-prefix injection
     zonePrimaryPrefix !== null &&
     !url.pathname.startsWith(zonePrimaryPrefix);
 
@@ -218,7 +222,9 @@ export async function middleware(request: NextRequest) {
     // /my-post  →  /blog/my-post
     // /         →  /blog
     rewriteTarget.pathname =
-      url.pathname === "/" ? zonePrimaryPrefix : `${zonePrimaryPrefix}${url.pathname}`;
+      url.pathname === "/"
+        ? zonePrimaryPrefix
+        : `${zonePrimaryPrefix}${url.pathname}`;
   } else if (locale) {
     rewriteTarget = url.clone();
     rewriteTarget.pathname = effectivePathname || "/";
@@ -235,7 +241,7 @@ export async function middleware(request: NextRequest) {
   let response: NextResponse = createRoutedResponse();
 
   // Propagate zone headers to the response (readable by client via fetch)
-  response.headers.set(ZONE_HEADER,      zoneFromHost);
+  response.headers.set(ZONE_HEADER, zoneFromHost);
   response.headers.set(SITE_HOST_HEADER, canonicalHost);
   response.headers.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
 
@@ -244,10 +250,10 @@ export async function middleware(request: NextRequest) {
     const existing = request.cookies.get(LOCALE_COOKIE)?.value;
     if (existing !== locale) {
       response.cookies.set(LOCALE_COOKIE, locale, {
-        path:     "/",
-        maxAge:   7 * 24 * 60 * 60,
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60,
         sameSite: "lax",
-        secure:   !isLocal,
+        secure: !isLocal,
       });
     }
   }
@@ -259,6 +265,21 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // Must match utils/supabase/server.ts and utils/supabase/client.ts —
+      // see the comment there. Without a pinned name, this client (built
+      // from the internal kong:8000 URL) and the browser client (built from
+      // the public db.unenter.live URL) derive different default cookie
+      // names and never share a session.
+      //
+      // domain: shares the session across every *.unenter.live subdomain —
+      // see utils/supabase/server.ts for the full story. Gated off for
+      // local/dev-container hosts the same way the locale cookie's `secure`
+      // flag is above (isLocal), since Domain=.unenter.live is invalid on
+      // a bare `localhost` request.
+      cookieOptions: {
+        name: "sb-unenter-auth-token",
+        domain: isLocal ? undefined : `.${CORE_DOMAIN}`,
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -267,21 +288,24 @@ export async function middleware(request: NextRequest) {
           // Refresh Supabase auth cookies on each request.
           // Must preserve any rewrite target so zone-subdomain routing isn't lost.
           cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
+            request.cookies.set(name, value),
           );
           requestHeaders.set("cookie", request.cookies.toString());
           const refreshed = createRoutedResponse();
           cookiesToSet.forEach(({ name, value, options }) =>
-            refreshed.cookies.set(name, value, options ?? {})
+            refreshed.cookies.set(name, value, options ?? {}),
           );
           // Carry over our zone headers
-          refreshed.headers.set(ZONE_HEADER,      zoneFromHost);
+          refreshed.headers.set(ZONE_HEADER, zoneFromHost);
           refreshed.headers.set(SITE_HOST_HEADER, canonicalHost);
-          refreshed.headers.set(CORE_HOST_HEADER, zoneCtx.isCoreHost ? "1" : "0");
+          refreshed.headers.set(
+            CORE_HOST_HEADER,
+            zoneCtx.isCoreHost ? "1" : "0",
+          );
           supabaseResponse.current = refreshed;
         },
       },
-    }
+    },
   );
 
   // Public-first outage resilience: if the auth backend (kong) is unreachable,
@@ -303,13 +327,44 @@ export async function middleware(request: NextRequest) {
     user = null;
   }
 
-  // Protect zones that require auth + individual protected routes
-  const routeIsProtected = zoneConfig.requiresAuth || isProtectedRoute(url.pathname);
+  // Protect zones that require auth + individual protected routes.
+  // Research checkout is gated at the route level (not the whole labs zone —
+  // catalog browsing stays public) so a "researcher" must sign in only when
+  // they try to check out, matching the shop's guest-checkout-allowed model.
+  const isLabsResearchCheckout =
+    zoneFromHost === "labs" &&
+    effectivePathname.startsWith("/research-checkout");
+  const isTankBackstage =
+    zoneFromHost === "tank" &&
+    (effectivePathname === "/admin" || effectivePathname.startsWith("/admin/"));
+  const routeIsProtected =
+    zoneConfig.requiresAuth ||
+    isProtectedRoute(effectivePathname) ||
+    isLabsResearchCheckout ||
+    isTankBackstage;
 
   if (routeIsProtected && !user) {
-    const signInUrl = request.nextUrl.clone();
-    signInUrl.pathname = "/sign-in";
-    signInUrl.searchParams.set("next", url.pathname);
+    // /sign-in only lives on the core zone (www.unenter.live) — cloning the
+    // current request URL and swapping the pathname 404s on every zone
+    // subdomain (app.unenter.live, which is entirely requiresAuth:true;
+    // labs.unenter.live/research-checkout; any future protected zone).
+    // Locally all zones share one host via path-based routing, so the
+    // original same-host redirect is still correct there.
+    // Found via E2E checkout test, 2026-08-06.
+    if (isLocal || onCoreHost) {
+      const signInUrl = request.nextUrl.clone();
+      signInUrl.pathname = "/sign-in";
+      signInUrl.searchParams.set("next", url.pathname);
+      return NextResponse.redirect(signInUrl);
+    }
+
+    // request.nextUrl's origin is the internal upstream address behind the
+    // proxy (e.g. 0.0.0.0:3000), not the public host — must rebuild from
+    // canonicalHost (already resolved from x-forwarded-host above) instead,
+    // same as getPublicOrigin() in app/auth/sign-in/route.ts.
+    const signInUrl = new URL(`https://www.${CORE_DOMAIN}/sign-in`);
+    const publicNextUrl = `https://${canonicalHost}${url.pathname}${url.search}`;
+    signInUrl.searchParams.set("next", publicNextUrl);
     return NextResponse.redirect(signInUrl);
   }
 

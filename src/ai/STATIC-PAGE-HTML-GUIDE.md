@@ -6,7 +6,7 @@
 
 ## The Core Problem This Prevents
 
-Static pages are embedded inside the DCG shop layout via `extractHtmlParts()` in `app/pages/[slug]/page.tsx`. Your HTML's `<style>` block gets scoped to `.static-page-content` and injected into the live page. This means:
+Static pages are embedded inside the UNENTER shop layout via `extractHtmlParts()` in `app/pages/[slug]/page.tsx`. Your HTML's `<style>` block gets scoped to `.static-page-content` and injected into the live page. This means:
 
 - `body {}` rules become `.static-page-content {}` rules
 - Any layout you set on `body` affects the **content wrapper div**, not a standalone page
@@ -32,8 +32,8 @@ body {
 ```css
 body {
   background-color: hsl(var(--background));
-  color: var(--foreground);
-  font-family: var(--font-family-base);
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
   line-height: 1.6;
   /* nothing else — no display, no align-items */
 }
@@ -94,10 +94,10 @@ The page is rendered inside the live shop theme. Use these variables — never h
 | Variable | Use |
 |---|---|
 | `hsl(var(--background))` | Page/section backgrounds |
-| `var(--foreground)` | All text colors |
-| `var(--font-family-base)` | All text |
-| `hsla(var(--foreground), 0.1)` | Borders, dividers |
-| `hsla(var(--foreground), 0.05)` | Subtle section backgrounds |
+| `hsl(var(--foreground))` | All text colors |
+| `var(--font-sans)` | All text |
+| `hsl(var(--foreground) / 0.1)` | Borders, dividers |
+| `hsl(var(--foreground) / 0.05)` | Subtle section backgrounds |
 
 **❌ Wrong:**
 ```css
@@ -106,7 +106,7 @@ body { background: #fff; color: #333; font-family: Arial; }
 
 **✅ Correct:**
 ```css
-body { background-color: hsl(var(--background)); color: var(--foreground); font-family: var(--font-family-base); }
+body { background-color: hsl(var(--background)); color: hsl(var(--foreground)); font-family: var(--font-sans); }
 ```
 
 ---
@@ -163,8 +163,8 @@ Copy this every time you start a new static page:
     /* ✅ body — plain block, NO flex, NO align-items */
     body {
       background-color: hsl(var(--background));
-      color: var(--foreground);
-      font-family: var(--font-family-base);
+      color: hsl(var(--foreground));
+      font-family: var(--font-sans);
       line-height: 1.6;
     }
 
@@ -205,7 +205,7 @@ Copy this every time you start a new static page:
     <!-- page content -->
   </main>
 
-  <footer style="width:100%; padding:60px 0; text-align:center; border-top:1px solid hsla(var(--foreground),0.05); font-family:var(--font-family-base); opacity:0.6; font-size:0.9rem;">
+  <footer style="width:100%; padding:60px 0; text-align:center; border-top:1px solid hsl(var(--foreground) / 0.05); font-family:var(--font-sans); opacity:0.6; font-size:0.9rem;">
     <p>© 2026 Unenter Solutions. All Rights Reserved.</p>
   </footer>
 
@@ -220,7 +220,7 @@ Copy this every time you start a new static page:
 - [ ] `body` has **no** `display`, `flex-direction`, or `align-items`
 - [ ] `main` uses `margin: [top] auto 0` (not just `margin-top`)
 - [ ] No element has a fixed `width` in pixels — only `max-width` + `width: %`
-- [ ] All colors use `var(--foreground)` / `hsl(var(--background))`
-- [ ] All fonts use `var(--font-family-base)`
+- [ ] All colors use `hsl(var(--foreground))` / `hsl(var(--background))`
+- [ ] All fonts use `var(--font-sans)`
 - [ ] Hero header uses `width: 100%` with mask gradient
 - [ ] Tested mentally: "if this `<style>` block is scoped to `.static-page-content`, will it still look right?"

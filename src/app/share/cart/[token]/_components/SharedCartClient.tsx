@@ -68,10 +68,10 @@ function getOptionSummary(options: Record<string, any> | null): string {
 
 function getSessionId(): string {
   if (typeof window === "undefined") return `anon_${Date.now()}`;
-  let id = localStorage.getItem("dcg_session_id");
+  let id = localStorage.getItem("unenter_session_id");
   if (!id) {
     id = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("dcg_session_id", id);
+    localStorage.setItem("unenter_session_id", id);
   }
   return id;
 }

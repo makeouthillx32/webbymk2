@@ -1,6 +1,6 @@
 ## Admin Contract v1 (Back Office Users)
 
-An **admin** is an authenticated member with elevated role permissions stored in `profiles.role` (or equivalent role system). Admins operate the back office of DCG.
+An **admin** is an authenticated member with elevated role permissions stored in `profiles.role` (or equivalent role system). Admins operate the back office of UNENTER.
 
 We define **two admin classes** under one umbrella:
 

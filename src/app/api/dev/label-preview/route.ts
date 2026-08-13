@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
   const toZip     = '78701-2345';
 
   // ─── Mock order info ──────────────────────────────────────────
-  const orderNumber = 'DCG-TEST-001';
+  const orderNumber = 'UNENTER-TEST-001';
   const weightLb    = Math.floor(weightOz / 16);
   const remOz       = Math.round((weightOz % 16) * 100) / 100;
   const weightStr   = weightLb > 0 ? `${weightLb} LB ${remOz} OZ` : `${remOz} OZ`;

@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/provider";
+import { useSignInHref } from "@/lib/useSignInHref";
 import { AuthIcons } from "./icons";
 
 interface AuthButtonProps {
@@ -14,6 +15,7 @@ interface AuthButtonProps {
 
 export const AuthButton = ({ onAction, isMobileVariant = false }: AuthButtonProps) => {
   const { session } = useAuth();
+  const signInHref = useSignInHref();
 
   const handleAccountClick = () => {
     if (onAction) onAction();
@@ -27,7 +29,7 @@ export const AuthButton = ({ onAction, isMobileVariant = false }: AuthButtonProp
   if (!session) {
     return (
       <Link
-        href="/sign-in"
+        href={signInHref}
         className="auth-button text-[var(--lt-fg)] hover:text-primary transition-colors focus:ring-primary"
         aria-label="Sign in"
         onClick={handleSignInClick}

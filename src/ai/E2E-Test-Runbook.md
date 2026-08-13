@@ -1,7 +1,7 @@
-# DCG End-to-End Test Runbook
+# UNENTER End-to-End Test Runbook
 **Version:** 1.0 — Member Checkout + Admin Fulfillment  
 **Last updated:** February 2026  
-**URL:** https://dcg-co.vercel.app
+**URL:** https://unenter-co.vercel.app
 
 ---
 
@@ -45,20 +45,20 @@ Use these at the payment step. All use any future expiry date and any 3-digit CV
 |---|---|
 | Email | `makeouthillx32@gmail.com` |
 | Role | `member` |
-| Sign-in URL | https://dcg-co.vercel.app/sign-in |
+| Sign-in URL | https://unenter-co.vercel.app/sign-in |
 
 ### Admin (fulfillment)
 | Field | Value |
 |---|---|
 | Email | _(your admin account)_ |
 | Role | `admin` |
-| Dashboard | https://dcg-co.vercel.app/dashboard/me/Orders |
+| Dashboard | https://unenter-co.vercel.app/dashboard/me/Orders |
 
 ---
 
 ## Phase 1 — Sign In as Member
 
-1. Go to https://dcg-co.vercel.app/sign-in
+1. Go to https://unenter-co.vercel.app/sign-in
 2. Enter Member Man's email and password
 3. Press **Sign In**
 
@@ -69,7 +69,7 @@ Use these at the payment step. All use any future expiry date and any 3-digit CV
 
 ## Phase 2 — Add Items to Cart
 
-1. Go to https://dcg-co.vercel.app/shop
+1. Go to https://unenter-co.vercel.app/shop
 2. Click any product that has a variant (size or color)
 3. Select a variant (e.g. size **M** or color **Black**)
 4. Click **Add to Cart**
@@ -127,7 +127,7 @@ Fill in the shipping form with any real-looking test address:
 2. Click **Pay Now**
 3. Wait for processing (usually 2–4 seconds)
 
-✅ **Pass:** Redirected to `/checkout/confirmation/[order-id]`. Order number shown (e.g. `DCG-000-...`). 
+✅ **Pass:** Redirected to `/checkout/confirmation/[order-id]`. Order number shown (e.g. `UNENTER-000-...`).
 🔴 **Fail:** "Payment failed" message → try card `4242 4242 4242 4242` again. If stripe shows a different error, note the exact message.
 
 ---
@@ -150,7 +150,7 @@ On the confirmation page:
 
 ✅ **Pass:** Returned to home/shop as guest. Account menu gone.
 
-3. Go to https://dcg-co.vercel.app/sign-in
+3. Go to https://unenter-co.vercel.app/sign-in
 4. Sign in with your **admin account**
 
 ✅ **Pass:** Admin account signed in. Footer or nav shows Dashboard link.
@@ -159,7 +159,7 @@ On the confirmation page:
 
 ## Phase 5 — Find the Order in Orders Manager
 
-1. Go to https://dcg-co.vercel.app/dashboard/me/Orders
+1. Go to https://unenter-co.vercel.app/dashboard/me/Orders
 2. The order list loads (newest first)
 3. Look for the order number from Phase 3D — it should be at or near the top
 

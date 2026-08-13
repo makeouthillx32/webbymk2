@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
+import { sendOrderShippedEmail } from '@/lib/mail/sendOrderShipped';
 
 function err(status: number, message: string) {
   return NextResponse.json({ error: message }, { status });
@@ -99,6 +100,28 @@ export async function PATCH(
       .from('orders')
       .update({ tracking_number: tracking_number.trim(), tracking_url: tracking_url?.trim() ?? null })
       .eq('id', orderId);
+  }
+
+  // ── Shipped notification email ──────────────────────────────────
+  // Non-fatal — the fulfillment itself already succeeded above, matches the
+  // pattern used for every other post-fulfillment side effect in this app
+  // (see the webhook's order-confirmation email). sendOrderShippedEmail is
+  // idempotent (checks orders.shipped_email_sent_at) so repeat PATCH calls
+  // for the same order (e.g. adding tracking after an initial fulfill)
+  // won't re-send.
+  try {
+    const result = await sendOrderShippedEmail(
+      orderId,
+      tracking_number?.trim() || null,
+      tracking_url?.trim() || null
+    );
+    console.log(
+      result.sent
+        ? `[Mail] ✅ Shipped notice sent for order ${orderId}`
+        : `[Mail] ⚠️ Shipped notice not sent: ${result.reason}`
+    );
+  } catch (mailErr) {
+    console.error('[Mail] ⚠️ Failed to send shipped notice:', mailErr);
   }
 
   return NextResponse.json({ ok: true, fulfillment_id: fulfillmentId });

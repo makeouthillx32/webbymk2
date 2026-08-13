@@ -19,13 +19,19 @@
 // in the proxy — nothing else needs to change.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const CORE_DOMAIN  = "unenter.live" as const;
-export const ZONE_HEADER  = "x-unenter-zone"  as const;
+export const CORE_DOMAIN = "unenter.live" as const;
+export const ZONE_HEADER = "x-unenter-zone" as const;
 export const SITE_HOST_HEADER = "x-unenter-host" as const;
 
 // ── Zone definitions ──────────────────────────────────────────────────────────
 
-export type ZoneName = "unenter" | "blog" | "dashboard" | "shop" | "app";
+export type ZoneName =
+  | "unenter"
+  | "blog"
+  | "dashboard"
+  | "shop"
+  | "app"
+  | "tank";
 
 export interface ZoneConfig {
   /** Zone identifier */
@@ -46,13 +52,13 @@ export interface ZoneConfig {
 
 export const ZONES: Record<ZoneName, ZoneConfig> = {
   unenter: {
-    name:         "unenter",
+    name: "unenter",
     // Internal routing key only — NOT the public canonical URL.
     // The public URL is www.unenter.live (see getCanonicalHost).
     // Keeping this as bare CORE_DOMAIN so the middleware's zone-prefix-rewrite
     // guard (normalizedHost === zoneConfig.host) never fires for www requests.
-    host:         CORE_DOMAIN,
-    port:         3000,
+    host: CORE_DOMAIN,
+    port: 3000,
     routePrefixes: [
       "/",
       "/about",
@@ -76,47 +82,50 @@ export const ZONES: Record<ZoneName, ZoneConfig> = {
   },
 
   blog: {
-    name:         "blog",
-    host:         `blog.${CORE_DOMAIN}`,
-    port:         3000,  // monolith for now — update when split
+    name: "blog",
+    host: `blog.${CORE_DOMAIN}`,
+    port: 3000, // monolith for now — update when split
     routePrefixes: ["/blog"],
     requiresAuth: false,
   },
 
   dashboard: {
-    name:         "dashboard",
-    host:         `dashboard.${CORE_DOMAIN}`,
-    port:         3001,
+    name: "dashboard",
+    host: `dashboard.${CORE_DOMAIN}`,
+    port: 3001,
     routePrefixes: ["/dashboard"],
     requiresAuth: true,
   },
 
   shop: {
-    name:         "shop",
-    host:         `shop.${CORE_DOMAIN}`,
-    port:         3002,
+    name: "shop",
+    host: `shop.${CORE_DOMAIN}`,
+    port: 3002,
     routePrefixes: [
       "/shop",
       "/products",
       "/checkout",
       "/collections",
       "/cart",
-      "/u",           // user-facing shop profile
+      "/u", // user-facing shop profile
     ],
     requiresAuth: false,
   },
 
   app: {
-    name:         "app",
-    host:         `app.${CORE_DOMAIN}`,
-    port:         3003,
-    routePrefixes: [
-      "/profile",
-      "/settings",
-      "/client",
-      "/protected",
-    ],
+    name: "app",
+    host: `app.${CORE_DOMAIN}`,
+    port: 3003,
+    routePrefixes: ["/profile", "/settings", "/client", "/protected"],
     requiresAuth: true,
+  },
+
+  tank: {
+    name: "tank",
+    host: `tank.${CORE_DOMAIN}`,
+    port: 3000,
+    routePrefixes: ["/"],
+    requiresAuth: false,
   },
 } as const;
 
@@ -136,9 +145,9 @@ export const ZONES: Record<ZoneName, ZoneConfig> = {
 
 export type PromotionStatus =
   | "first-class" // Core keeps serving this path; the zone is an alias, not a move.
-  | "compat"      // Core still serves it, but UI links should point at the zone.
-  | "handoff"     // Core renders <MovedToZone> — a soft, user-acknowledged move.
-  | "redirect"    // Middleware 308-redirects Core → zone host (the section moved).
+  | "compat" // Core still serves it, but UI links should point at the zone.
+  | "handoff" // Core renders <MovedToZone> — a soft, user-acknowledged move.
+  | "redirect" // Middleware 308-redirects Core → zone host (the section moved).
   | "deprecated"; // Explicitly legacy: scheduled for removal, no longer first-class.
 
 export interface ZonePromotion {
@@ -167,11 +176,11 @@ export interface ZonePromotion {
  * server-to-server on Core too, so redirecting them would break image/doc fetch.
  */
 export const ZONE_PROMOTIONS: ZonePromotion[] = [
-  { from: "/shop",        toZone: "shop", status: "redirect", toPath: "/" },
-  { from: "/products",    toZone: "shop", status: "redirect" },
+  { from: "/shop", toZone: "shop", status: "redirect", toPath: "/" },
+  { from: "/products", toZone: "shop", status: "redirect" },
   { from: "/collections", toZone: "shop", status: "redirect" },
-  { from: "/checkout",    toZone: "shop", status: "redirect" },
-  { from: "/cart",        toZone: "shop", status: "redirect" },
+  { from: "/checkout", toZone: "shop", status: "redirect" },
+  { from: "/cart", toZone: "shop", status: "redirect" },
 ];
 
 /** Find the promotion entry that owns this pathname (longest `from` wins). */
@@ -242,9 +251,9 @@ export function buildZoneContext(args: {
   pathname: string;
   isLocal: boolean;
 }): ZoneRequestContext {
-  const host          = normalizeHost(args.host);
+  const host = normalizeHost(args.host);
   const canonicalHost = getCanonicalHost(host);
-  const zone          = args.isLocal
+  const zone = args.isLocal
     ? getZoneFromPathname(args.pathname)
     : getZoneFromHost(host);
   const isCoreHost =
@@ -261,15 +270,15 @@ export function buildZoneContext(args: {
     isCoreHost,
     isLocal: args.isLocal,
     promotionStatus: promo?.status,
-    promotedToZone:  promo?.toZone,
+    promotedToZone: promo?.toZone,
   };
 }
 
 // ── Promotion context headers ──────────────────────────────────────────────
 // Middleware sets these so server components / the 404 can read the same facts.
-export const CORE_HOST_HEADER       = "x-unenter-core-host"   as const; // "1" | "0"
-export const PROMOTION_STATUS_HEADER = "x-unenter-promotion"  as const; // PromotionStatus
-export const PROMOTION_ZONE_HEADER   = "x-unenter-promoted-to" as const; // ZoneName
+export const CORE_HOST_HEADER = "x-unenter-core-host" as const; // "1" | "0"
+export const PROMOTION_STATUS_HEADER = "x-unenter-promotion" as const; // PromotionStatus
+export const PROMOTION_ZONE_HEADER = "x-unenter-promoted-to" as const; // ZoneName
 
 // ── Host / zone resolution ────────────────────────────────────────────────────
 
@@ -308,7 +317,7 @@ export function getZoneFromHost(host: string | null | undefined): string {
   // first so the middleware uses path-based detection, but if it ever reaches
   // getZoneFromHost we still return the right zone instead of "unenter".
   if (h.startsWith("dev.")) {
-    const stripped = h.slice(4);  // remove "dev."
+    const stripped = h.slice(4); // remove "dev."
     for (const zone of Object.values(ZONES)) {
       if (stripped === zone.host) return zone.name;
     }
@@ -336,11 +345,11 @@ export function getZoneConfig(key: string): ZoneConfig {
   if (key in ZONES) return ZONES[key as ZoneName];
   // Dynamic zone default: public, root-mounted, no auth required.
   return {
-    name:          key as ZoneName,
-    host:          `${key}.${CORE_DOMAIN}`,
-    port:          3000,
+    name: key as ZoneName,
+    host: `${key}.${CORE_DOMAIN}`,
+    port: 3000,
     routePrefixes: ["/"],
-    requiresAuth:  false,
+    requiresAuth: false,
   };
 }
 
@@ -354,7 +363,8 @@ export function getZoneConfig(key: string): ZoneConfig {
 export function getCanonicalHost(host: string | null | undefined): string {
   const h = normalizeHost(host);
   // Both www and bare apex → canonical is www
-  if (h === CORE_DOMAIN || h === `www.${CORE_DOMAIN}`) return `www.${CORE_DOMAIN}`;
+  if (h === CORE_DOMAIN || h === `www.${CORE_DOMAIN}`)
+    return `www.${CORE_DOMAIN}`;
   // Known zone host → return as-is
   for (const zone of Object.values(ZONES)) {
     if (h === zone.host) return h;
@@ -417,9 +427,9 @@ export function crossZoneUrl(zone: ZoneName, pathname: string): string {
 
 export function isLocalDevelopmentHost(host: string): boolean {
   return (
-    host === "localhost"  ||
+    host === "localhost" ||
     host === "127.0.0.1" ||
-    host === "0.0.0.0"   ||
+    host === "0.0.0.0" ||
     // Any dev.* subdomain under the core domain — covers ALL dev containers:
     //   dev.unenter.live        (core dev container)
     //   dev.blog.unenter.live   (blog zone dev container)
@@ -427,7 +437,8 @@ export function isLocalDevelopmentHost(host: string): boolean {
     //   dev.dashboard.unenter.live  (dashboard zone dev container)
     // These get path-based zone detection in middleware (not host-based) so
     // they are never incorrectly redirected to the canonical production host.
-    (host.startsWith("dev.") && (host === `dev.${CORE_DOMAIN}` || host.endsWith(`.${CORE_DOMAIN}`)))
+    (host.startsWith("dev.") &&
+      (host === `dev.${CORE_DOMAIN}` || host.endsWith(`.${CORE_DOMAIN}`)))
   );
 }
 
@@ -437,7 +448,10 @@ export function getBrowserSupabaseUrl(): string {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ??
     process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL_BROWSER or NEXT_PUBLIC_SUPABASE_URL");
+  if (!url)
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL_BROWSER or NEXT_PUBLIC_SUPABASE_URL",
+    );
   return url;
 }
 

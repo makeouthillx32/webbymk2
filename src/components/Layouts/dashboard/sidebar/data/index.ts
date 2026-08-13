@@ -46,6 +46,11 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
+            title: "Hero Carousel",
+            url: "/settings/hero-carousel",
+            icon: Icons.FourCircle,
+          },
+          {
             title: "Pages",
             url: "/settings/static-pages",
             icon: Icons.Table,
@@ -124,6 +129,37 @@ export const NAV_DATA = [
         ],
       },
 
+      // ── Labs ────────────────────────────────
+      {
+        title: "Labs",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Research Chemicals",
+            url: "/settings/research-products",
+            icon: Icons.Authentication,
+          },
+          {
+            title: "Creators",
+            url: "/settings/creators",
+            icon: Icons.User,
+          },
+        ],
+      },
+
+      // ── LIMS & Peptide Testing Engine ───────
+      {
+        title: "LIMS & Peptide Testing Engine",
+        icon: Icons.PieChart,
+        items: [
+          {
+            title: "Overview",
+            url: "/settings/lims",
+            icon: Icons.Table,
+          },
+        ],
+      },
+
       // ── Admin ───────────────────────────────
       {
         title: "Admin",
@@ -148,6 +184,11 @@ export const NAV_DATA = [
             title: "Theme Maker",
             url: "/settings/thememaker",
             icon: Icons.SettingsIcon,
+          },
+          {
+            title: "Mail",
+            url: "/settings/mail",
+            icon: Icons.MessageIcon,
           },
         ],
       },

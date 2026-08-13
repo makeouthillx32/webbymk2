@@ -44,7 +44,7 @@ export const useTheme = (): EnhancedThemeContextType => {
 
 function dismissPreloader() {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event("dcg-theme-ready"));
+  window.dispatchEvent(new Event("unenter-theme-ready"));
 }
 
 // ── ThemeProviderWrapper ──────────────────────────────────────────────────────
@@ -193,8 +193,8 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
         try {
           const bgValue = variables["--background"];
           const primaryValue = variables["--primary"];
-          if (bgValue) localStorage.setItem(`dcg-preloader-bg-${themeType}`, bgValue);
-          if (primaryValue) localStorage.setItem("dcg-preloader-primary", primaryValue);
+          if (bgValue) localStorage.setItem(`unenter-preloader-bg-${themeType}`, bgValue);
+          if (primaryValue) localStorage.setItem("unenter-preloader-primary", primaryValue);
         } catch (_) { /* non-critical */ }
 
         console.log(`✅ Theme applied: ${theme.name} (${themeType})`);

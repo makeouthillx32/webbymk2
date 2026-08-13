@@ -14,6 +14,7 @@ import Avatar from "./Avatar";
 import AvatarUpload from "./AvatarUpload";
 import DeleteAccount from "./DeleteAccount";
 import { ProfileOrders } from "./ProfileOrders";
+import CreatorBlock from "./CreatorBlock";
 
 interface Profile {
   id: string;
@@ -138,6 +139,9 @@ export default function ProfileCard({ profile, displayName, roleLabel }: Profile
           </div>
         </aside>
       </div>
+
+      {/* Creator program — only renders once this profile is a creator */}
+      <CreatorBlock />
     </div>
   );
 }

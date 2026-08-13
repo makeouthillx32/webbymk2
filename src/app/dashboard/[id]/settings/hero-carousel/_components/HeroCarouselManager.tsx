@@ -52,7 +52,7 @@ type HeroSlide = {
   updated_at: string;
 };
 
-export function HeroCarouselManager() {
+export function HeroCarouselManager({ page = 'shop' }: { page?: string }) {
   const [slides, setSlides] = useState<HeroSlide[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export function HeroCarouselManager() {
   useEffect(() => {
     fetchSlides();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [page]);
 
   async function fetchSlides() {
     try {
@@ -77,6 +77,7 @@ export function HeroCarouselManager() {
       const { data, error } = await supabase
         .from('hero_slides')
         .select('*')
+        .eq('page', page)
         .order('position', { ascending: true });
 
       if (error) throw error;
@@ -465,6 +466,7 @@ export function HeroCarouselManager() {
       {isCreateModalOpen && (
         <HeroSlideModal
           mode="create"
+          page={page}
           onClose={() => setIsCreateModalOpen(false)}
           onSuccess={() => {
             setIsCreateModalOpen(false);
@@ -476,6 +478,7 @@ export function HeroCarouselManager() {
       {isEditModalOpen && selectedSlide && (
         <HeroSlideModal
           mode="edit"
+          page={page}
           slide={selectedSlide}
           onClose={() => {
             setIsEditModalOpen(false);

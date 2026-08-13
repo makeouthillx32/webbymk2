@@ -92,6 +92,7 @@ export function classifyRoute(pathname: string): RouteInfo {
     !lower.startsWith("/share") &&
     !lower.startsWith("/error") &&
     !lower.startsWith("/blog") &&
+    !lower.startsWith("/edge") &&
     cleanPathname !== "/";
 
   const isHome             = cleanPathname === "/";
@@ -112,7 +113,8 @@ export function classifyRoute(pathname: string): RouteInfo {
     lower.startsWith("/hero") ||
     lower.startsWith("/calendar") ||
     lower.startsWith("/blog") ||
-    lower.startsWith("/error");
+    lower.startsWith("/error") ||
+    lower.startsWith("/edge");
 
   const isShopRoute =
     isProductsPage ||

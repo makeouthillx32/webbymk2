@@ -7,7 +7,7 @@ import { ProductTile } from "../ProductTile";
 import type { POSProduct } from "../types";
 import "./styles.scss";
 
-const STORAGE_KEY = "dcg_pos_favorites";
+const STORAGE_KEY = "unenter_pos_favorites";
 
 interface FavoritesProps {
   products: POSProduct[];

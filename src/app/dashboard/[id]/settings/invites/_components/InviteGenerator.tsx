@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Copy } from "lucide-react";
 
-export default function InviteGenerator({ defaultRole = "client" }: { defaultRole?: string }) {
+export default function InviteGenerator({ defaultRole = "member" }: { defaultRole?: string }) {
   const [role, setRole] = useState(defaultRole);
   const [inviteLink, setInviteLink] = useState("");
   const [copied, setCopied] = useState(false);
@@ -49,10 +49,11 @@ export default function InviteGenerator({ defaultRole = "client" }: { defaultRol
         value={role}
         onChange={(e) => setRole(e.target.value)}
       >
+        <option value="guest">Guest</option>
+        <option value="member">Member</option>
+        <option value="researcher">Researcher</option>
+        <option value="affiliate">Affiliate</option>
         <option value="admin">Admin</option>
-        <option value="jobcoach">Job Coach</option> {/* updated */}
-        <option value="client">Client</option>
-        <option value="user">Anonymous</option>      {/* updated */}
       </select>
 
       <button

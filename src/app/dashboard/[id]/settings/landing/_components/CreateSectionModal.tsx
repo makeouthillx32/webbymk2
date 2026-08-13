@@ -44,10 +44,44 @@ const SHOP_SECTION_TYPES = [
     description: "Display products from a specific collection",
     config: { title: "Featured Collection", description: "Shop our curated selection", collection: "best-sellers", limit: 8, sortBy: "featured", viewAllHref: "/collections/best-sellers" }
   },
+  {
+    value: "featured_research_carousel",
+    label: "Featured Products Carousel Bar",
+    description: "Vibrant pastel gradient carousel displaying active featured research compounds with dual pill buttons",
+    config: { title: "Featured Products", limit: 8, category: "" }
+  },
+];
+
+// Labs reads from research_products, not shop's products/categories/collections
+// tables — products_grid / categories_grid would silently show Shop inventory
+// on the Labs page (see zones/labs/Page.tsx). research_products_grid is the
+// Labs-safe counterpart.
+const LABS_SECTION_TYPES = [
+  SHOP_SECTION_TYPES[0], // top_banner
+  SHOP_SECTION_TYPES[1], // hero_carousel
+  SHOP_SECTION_TYPES[3], // static_html
+  {
+    value: "research_products_grid",
+    label: "Research Chemicals Grid",
+    description: "Display research chemicals from a specific category (or all active products)",
+    config: { title: "Research Chemicals", description: "Explore our research compound library", category: "", limit: 8, sortBy: "newest", viewAllHref: "/search" }
+  },
+  {
+    value: "featured_research_carousel",
+    label: "Featured Products Carousel Bar",
+    description: "Vibrant pastel gradient carousel displaying active featured research compounds with dual pill buttons",
+    config: { title: "Featured Products", limit: 8, category: "" }
+  },
+  {
+    value: "family_highlight",
+    label: "Family Highlight Showcase",
+    description: "Highlight a single compound family (e.g. GHK-Cu, BPC-157) showcasing all forms in one row",
+    config: { title: "Featured GHK-Cu Family", family: "ghk", badge: "Highlighted Family", description: "Explore all formulations of the GHK-Cu compound family.", limit: 4 }
+  },
 ];
 
 export function CreateSectionModal({ open, onClose, onSuccess, page = 'shop' }: CreateSectionModalProps) {
-  const SECTION_TYPES = [...SHOP_SECTION_TYPES];
+  const SECTION_TYPES = page === 'labs' ? [...LABS_SECTION_TYPES] : [...SHOP_SECTION_TYPES];
   const defaultType = SECTION_TYPES[0].value;
 
   const [type, setType] = useState(defaultType);

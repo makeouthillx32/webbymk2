@@ -9,12 +9,24 @@
 // itself exists on a fresh load, so a single full reload fixes it.
 //
 // A sessionStorage throttle prevents reload loops if a chunk is genuinely gone.
+//
+// Incident 2026-08-08: a stale tab left open across several same-session core
+// zone rebuilds hit a persistently mismatched chunk hash — every reload
+// fetched fresh HTML that referenced yet another now-superseded hash while
+// the rebuild churn continued, so the time-only throttle below (10s) never
+// stopped it: users saw an effectively infinite reload loop, reported as
+// "reboot loop" / "reloading every ~20 seconds". Fixed by adding a hard
+// attempt cap alongside the time throttle — after MAX_ATTEMPTS, stop
+// reloading and let the user recover manually instead of hammering forever.
+// See vault/Logs/2026-08-08.md and vault postmortem for full writeup.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect } from "react";
 
 const RELOAD_KEY = "__chunk_reload_ts";
+const COUNT_KEY = "__chunk_reload_count";
 const THROTTLE_MS = 10_000;
+const MAX_ATTEMPTS = 3;
 
 function isChunkError(value: unknown): boolean {
   if (!value) return false;
@@ -33,7 +45,19 @@ export default function ChunkReloader() {
       try {
         const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
         if (Date.now() - last < THROTTLE_MS) return; // already tried recently — avoid loop
+
+        const attempts = Number(sessionStorage.getItem(COUNT_KEY) || 0) + 1;
+        if (attempts > MAX_ATTEMPTS) {
+          // Hard stop: a real fix (or manual refresh) is needed at this point.
+          // Reloading kept us here before — see incident note above.
+          console.error(
+            `[ChunkReloader] Giving up after ${MAX_ATTEMPTS} reload attempts — chunk mismatch persists. Manual refresh required.`
+          );
+          return;
+        }
+
         sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+        sessionStorage.setItem(COUNT_KEY, String(attempts));
       } catch {
         /* sessionStorage unavailable — fall through to reload */
       }

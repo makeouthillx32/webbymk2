@@ -1,6 +1,7 @@
 // app/api/navigation/tree/route.ts
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
+import { getZoneContext } from "@/lib/zoneContext";
 
 export const dynamic = "force-dynamic";
 
@@ -74,22 +75,45 @@ function buildTree(flat: DbCategory[]): NavNode[] {
 export async function GET() {
   try {
     const supabase = await createServerClient();
+    const { zone } = await getZoneContext();
+    const isLabs = zone === "labs";
 
-    // Fetch all active categories in one query, ordered by position
-    const { data: categories, error } = await supabase
-      .from("categories")
-      .select("id, name, slug, parent_id, position, is_active")
-      .eq("is_active", true)
-      .eq("section", "shop")
-      .order("position", { ascending: true })
-      .order("name", { ascending: true });
+    // Labs has its own category table (research_categories) — separate from
+    // shop's apparel `categories` table. research_categories has no
+    // meaningful `section` split (single section, values are null) and
+    // orders by `sort_order` rather than `position`.
+    const { data: categories, error } = isLabs
+      ? await supabase
+          .from("research_categories")
+          .select("id, name, slug, parent_id, sort_order, is_active")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true })
+      : await supabase
+          .from("categories")
+          .select("id, name, slug, parent_id, position, is_active")
+          .eq("is_active", true)
+          .eq("section", "shop")
+          .order("position", { ascending: true })
+          .order("name", { ascending: true });
 
     if (error) {
       console.error("[navigation/tree] categories error:", error.message);
       return NextResponse.json({ nodes: [] });
     }
 
-    const nodes = buildTree((categories as DbCategory[]) ?? []);
+    // Normalize research_categories' `sort_order` to the shared `position`
+    // field buildTree() expects.
+    const normalized: DbCategory[] = ((categories as any[]) ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      parent_id: c.parent_id,
+      position: isLabs ? c.sort_order ?? 0 : c.position ?? 0,
+      is_active: c.is_active,
+    }));
+
+    const nodes = buildTree(normalized);
 
     return NextResponse.json({ nodes });
   } catch (err) {

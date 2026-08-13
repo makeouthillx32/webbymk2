@@ -4,6 +4,7 @@
 
 import { Marked } from "marked";
 import hljs from "highlight.js";
+import markedKatex from "marked-katex-extension";
 
 export interface TocEntry {
   id:    string;
@@ -89,6 +90,14 @@ export function renderMarkdown(src: string): { html: string; toc: TocEntry[] } {
       },
     },
   });
+
+  // Render $...$ and $$...$$ as static KaTeX HTML + MathML. Keeping this in
+  // the shared server-side renderer means article pages and RSS use the same
+  // math semantics, with no client-side hydration requirement.
+  marked.use(markedKatex({
+    output: "htmlAndMathml",
+    throwOnError: false,
+  }));
 
   const html = marked.parse(src, { async: false }) as string;
   return { html, toc };

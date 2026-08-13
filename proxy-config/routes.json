@@ -2,8 +2,14 @@
   "coreDomain": "unenter.live",
   "coreUpstream": "http://unt_app:3000",
   "zones": {
+    "unenter": "http://unt_app:3000",
     "blog": "http://unt_blog:3000",
-    "shop": "http://unt_shop:3000"
+    "shop": "http://unt_shop:3000",
+    "auth": "http://unt_auth_zone:3000",
+    "docs": "http://unt_docs:3000",
+    "labs": "http://unt_labs:3000",
+    "tank": "http://unt_tank:3000",
+    "dev.tank": "http://dev-tank:3000"
   },
   "databases": {
     "testubg": {

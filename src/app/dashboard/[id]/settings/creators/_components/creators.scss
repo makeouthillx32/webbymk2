@@ -1,0 +1,19 @@
+/* app/settings/creators/_components/creators.scss */
+
+.creators-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .creators-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .creators-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

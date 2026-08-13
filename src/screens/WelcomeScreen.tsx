@@ -164,13 +164,15 @@ export interface WelcomeScreenProps {
   onManage: () => void;
   onSettings: () => void;
   onQuit: () => void;
+  /** Jump straight into a zone's action panel (bypasses core). Keyed 1-9 to zones[]. */
+  onOpenZone?: (zoneKey: string) => void;
   isActive: boolean;
 }
 
 export function WelcomeScreen({
   zones, zoneStatuses, proxyStatus, busy,
   infraResults = {},
-  onManage, onSettings, onQuit, isActive,
+  onManage, onSettings, onQuit, onOpenZone, isActive,
 }: WelcomeScreenProps) {
   const MENU = [...MENU_BASE];
 
@@ -212,6 +214,12 @@ export function WelcomeScreen({
       return;
     }
     if (input === "s") { onSettings(); return; }
+    // Digit shortcut: jump straight into zones[N-1]'s action panel, skipping
+    // core. Zone dot rows render in `zones` order, so 1 = first dot, etc.
+    if (onOpenZone && /^[1-9]$/.test(input)) {
+      const z = zones[Number(input) - 1];
+      if (z) { onOpenZone(z.key); return; }
+    }
     if (input === "u" && updateAvailable) {
       process.stdout.write(
         "\n  Update available: v" + latestVersion + "\n" +
@@ -411,6 +419,7 @@ export function WelcomeScreen({
         hints={[
           { k: "↑↓", label: "navigate" },
           { k: "↵", label: "select" },
+          ...(onOpenZone && zones.length > 0 ? [{ k: "1-9", label: "open zone" }] : []),
           { k: "q", label: "quit" },
           ...(updateAvailable ? [{ k: "u", label: "update" }] : []),
           ...(isDev ? [

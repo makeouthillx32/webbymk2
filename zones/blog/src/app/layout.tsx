@@ -12,6 +12,7 @@ import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
 import { generateSiteMetadata } from "@/lib/zoneMetadata";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 // Load the THEME's declared fonts (globals.css: --font-sans / --font-serif /

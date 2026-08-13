@@ -9,23 +9,41 @@ import { authLogger } from "@/lib/authLogger";
 
 import type { ProfileUpsertRow } from "./types";
 import { getAndClearLastPage, populateUserCookies, clearAuthCookies } from "./cookies";
+import { CORE_DOMAIN } from "@/lib/multiZone";
+
+const isBlockedAuthPath = (pathOnly: string): boolean =>
+  pathOnly === "/sign-in" ||
+  pathOnly === "/sign-up" ||
+  pathOnly === "/forgot-password" ||
+  pathOnly === "/reset-password" ||
+  pathOnly.startsWith("/auth/");
 
 const safeRedirectPath = (candidate: unknown): string | null => {
-  if (typeof candidate !== "string") return null;
-  if (!candidate.startsWith("/") || candidate.startsWith("//")) return null;
+  if (typeof candidate !== "string" || !candidate) return null;
 
-  const pathOnly = candidate.split("#")[0].split("?")[0];
-  if (
-    pathOnly === "/sign-in" ||
-    pathOnly === "/sign-up" ||
-    pathOnly === "/forgot-password" ||
-    pathOnly === "/reset-password" ||
-    pathOnly.startsWith("/auth/")
-  ) {
-    return null;
+  // Same-origin relative path — original behavior.
+  if (candidate.startsWith("/") && !candidate.startsWith("//")) {
+    const pathOnly = candidate.split("#")[0].split("?")[0];
+    if (isBlockedAuthPath(pathOnly)) return null;
+    return candidate;
   }
 
-  return candidate;
+  // Cross-zone absolute URL. Sign-in only lives on the core zone, so a
+  // visitor who hits "Add to Cart" unauthenticated on labs.unenter.live (or
+  // any other zone) needs `next` to point back at that zone's URL, not a
+  // same-origin path that would 404 on core. Restricted to *.unenter.live /
+  // unenter.live so this can't become an open redirect.
+  try {
+    const url = new URL(candidate);
+    const host = url.hostname.toLowerCase();
+    const isOwnDomain = host === CORE_DOMAIN || host.endsWith(`.${CORE_DOMAIN}`);
+    if (!isOwnDomain) return null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (isBlockedAuthPath(url.pathname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 };
 
 const safeOrigin = async (): Promise<string> => {
@@ -40,9 +58,15 @@ export const signUpAction = async (formData: FormData) => {
   const password = formData.get("password")?.toString() || "";
   const firstName = formData.get("first_name")?.toString().trim() || "";
   const lastName = formData.get("last_name")?.toString().trim() || "";
+  const acceptedTerms = formData.get("accept_terms")?.toString() === "on";
 
   if (!email || !password) return encodedRedirect("error", "/sign-up", "Email and password are required.");
   if (!firstName || !lastName) return encodedRedirect("error", "/sign-up", "First and last name are required.");
+  // Required — accepting this is what grants the "researcher" role that
+  // gates research-compound checkout. No checkbox, no account.
+  if (!acceptedTerms) {
+    return encodedRedirect("error", "/sign-up", "You must accept the Terms of Service to create an account.");
+  }
 
   const supabase = await createClient();
   const origin = await safeOrigin();
@@ -67,14 +91,17 @@ export const signUpAction = async (formData: FormData) => {
   // ── Profile upsert ────────────────────────────────────────────
   // auth_user_id and email are required for role checks, order linkage,
   // admin UI, and the customers identity system.
+  // role: "researcher" — accepting ToS at sign-up is what grants research-
+  // checkout eligibility; see src/lib/research/requireResearcherRole.ts.
   const payload: ProfileUpsertRow = {
     id: userId,
     auth_user_id: userId, // ← same as id for email/password signups
     email: email.toLowerCase().trim(),
-    role: "member",
+    role: "researcher",
     display_name: displayName,
     first_name: firstName,
     last_name: lastName,
+    terms_accepted_at: new Date().toISOString(),
   };
 
   const { error: profileUpsertError } = await supabase
@@ -93,7 +120,7 @@ export const signUpAction = async (formData: FormData) => {
   // with the same email — upgrades that row to member.
   try {
     const cookieStore = await cookies();
-    const guestKey = cookieStore.get("dcg_guest_key")?.value ?? null;
+    const guestKey = cookieStore.get("unenter_guest_key")?.value ?? null;
 
     const { error: customerError } = await supabase
       .from("customers")
@@ -138,7 +165,11 @@ export const signUpAction = async (formData: FormData) => {
   }
 
   try {
-    await sendNotification({ title: `${email} signed up`, role_admin: true });
+    await sendNotification({
+      title: `${email} signed up`,
+      subtitle: "A new member account was created.",
+      role_admin: true,
+    });
   } catch (err) {
     console.error("[Auth] ⚠️ Notification failed:", err);
   }
@@ -147,7 +178,14 @@ export const signUpAction = async (formData: FormData) => {
     authLogger.memberSignUp(userId, email, { firstName, lastName, source: "email_signup" });
     await populateUserCookies(userId, false);
     await new Promise((r) => setTimeout(r, 100));
-    const lastPage = await getAndClearLastPage();
+    // Validated the same way sign-in validates it (safeRedirectPath) — an
+    // unvalidated `lastPage` cookie value going straight into redirect() was
+    // the likely cause of a client-side "unexpected response from the
+    // server" exception seen right after a successful sign-up, 2026-08-06.
+    // Fallback is "/" (home), never a dashboard route — the dashboard must
+    // never be an implicit post-auth destination, only something you
+    // deliberately navigate to. Fixed 2026-08-12.
+    const lastPage = safeRedirectPath(await getAndClearLastPage()) ?? "/";
     // ✅ Append ?refresh=true so the client Provider immediately syncs the session
     const separator = lastPage.includes("?") ? "&" : "?";
     return redirect(`${lastPage}${separator}refresh=true`);
@@ -177,7 +215,9 @@ export const signInAction = async (formData: FormData) => {
   await populateUserCookies(data.user.id, remember);
   await new Promise((r) => setTimeout(r, 100));
 
-  const lastPage = nextPath ?? safeRedirectPath(await getAndClearLastPage()) ?? "/dashboard/me";
+  // Fallback is "/" — see signUpAction above for why this must never be a
+  // dashboard route.
+  const lastPage = nextPath ?? safeRedirectPath(await getAndClearLastPage()) ?? "/";
   // ✅ Append ?refresh=true so the client Provider immediately syncs the session
   const separator = lastPage.includes("?") ? "&" : "?";
   return redirect(`${lastPage}${separator}refresh=true`);

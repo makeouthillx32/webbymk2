@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useTheme, useAuth } from "@/app/provider";
 import SwitchtoDarkMode from "@/components/Layouts/SwitchtoDarkMode";
 import DesktopNav from "@/components/Layouts/shop/DesktopNav";
+import { useSignInHref } from "@/lib/useSignInHref";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -15,6 +16,7 @@ interface HeaderProps {
 export function Header({ onMenuClick }: HeaderProps = {}) {
   const { session, refreshSession } = useAuth();
   const { themeType } = useTheme();
+  const signInHref = useSignInHref();
 
   const handleAccountClick = () => {
     window.location.href = "/profile/me";
@@ -89,7 +91,7 @@ export function Header({ onMenuClick }: HeaderProps = {}) {
           <div className="header-auth">
             {!session ? (
               <Link
-                href="/sign-in"
+                href={signInHref}
                 className="auth-button text-[var(--lt-fg)] hover:text-[var(--lt-fg)] focus:ring-primary"
                 aria-label="Sign in"
               >

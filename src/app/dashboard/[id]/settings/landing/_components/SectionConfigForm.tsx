@@ -493,6 +493,203 @@ export function SectionConfigForm({ type, config, onChange }: SectionConfigFormP
     );
   }
 
+  // RESEARCH PRODUCTS GRID FORM (Labs)
+  if (type === 'research_products_grid') {
+    return (
+      <>
+        <div className="form-field">
+          <label className="form-label">Section Title</label>
+          <input
+            type="text"
+            value={config.title || ''}
+            onChange={(e) => updateField('title', e.target.value)}
+            className="form-input"
+            placeholder="Research Chemicals"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Description (optional)</label>
+          <input
+            type="text"
+            value={config.description || ''}
+            onChange={(e) => updateField('description', e.target.value)}
+            className="form-input"
+            placeholder="Explore our research compound library"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Category slug (optional)</label>
+          <input
+            type="text"
+            value={config.category || ''}
+            onChange={(e) => updateField('category', e.target.value)}
+            className="form-input"
+            placeholder="Leave empty to show all active research chemicals"
+          />
+          <p className="form-hint">
+            A research_categories slug. Leave blank to show all active products regardless of category.
+          </p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Number of Products to Show</label>
+          <input
+            type="number"
+            min="1"
+            max="50"
+            value={config.limit || 8}
+            onChange={(e) => updateField('limit', parseInt(e.target.value) || 8)}
+            className="form-input"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Sort By</label>
+          <select
+            value={config.sortBy || 'newest'}
+            onChange={(e) => updateField('sortBy', e.target.value)}
+            className="form-select"
+          >
+            <option value="newest">Newest First</option>
+            <option value="featured">Featured First</option>
+            <option value="price-asc">Price: Low to High</option>
+            <option value="price-desc">Price: High to Low</option>
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label className="form-checkbox-label">
+            <input
+              type="checkbox"
+              checked={config.featured === true}
+              onChange={(e) => updateField('featured', e.target.checked || null)}
+              className="form-checkbox"
+            />
+            Show only featured products
+          </label>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">"View All" Link (Optional)</label>
+          <input
+            type="text"
+            value={config.viewAllHref || ''}
+            onChange={(e) => updateField('viewAllHref', e.target.value || null)}
+            className="form-input"
+            placeholder="/search"
+          />
+        </div>
+      </>
+    );
+  }
+
+  // FEATURED RESEARCH CAROUSEL FORM
+  if (type === 'featured_research_carousel') {
+    return (
+      <>
+        <div className="form-field">
+          <label className="form-label">Section Title</label>
+          <input
+            type="text"
+            value={config.title || ''}
+            onChange={(e) => updateField('title', e.target.value)}
+            className="form-input"
+            placeholder="Featured Products"
+          />
+          <p className="form-hint">Headline displayed above the pastel card carousel</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Category filter (optional)</label>
+          <input
+            type="text"
+            value={config.category || ''}
+            onChange={(e) => updateField('category', e.target.value)}
+            className="form-input"
+            placeholder="Leave empty to feature compounds across all categories"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Maximum Products to Load</label>
+          <input
+            type="number"
+            min="1"
+            max="20"
+            value={config.limit || 8}
+            onChange={(e) => updateField('limit', parseInt(e.target.value) || 8)}
+            className="form-input"
+          />
+        </div>
+      </>
+    );
+  }
+
+  if (type === 'family_highlight') {
+    return (
+      <>
+        <div className="form-field">
+          <label className="form-label">Target Compound Family Keyword</label>
+          <input
+            type="text"
+            value={config.family || ''}
+            onChange={(e) => updateField('family', e.target.value)}
+            className="form-input"
+            placeholder="e.g. ghk, bpc, cjc, semaglutide, nad"
+          />
+          <p className="form-hint">Matches compounds belonging to this family (e.g. "ghk" for GHK-Cu, "bpc" for BPC-157)</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Section Title</label>
+          <input
+            type="text"
+            value={config.title || ''}
+            onChange={(e) => updateField('title', e.target.value)}
+            className="form-input"
+            placeholder="Featured GHK-Cu Family"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Badge Label</label>
+          <input
+            type="text"
+            value={config.badge || ''}
+            onChange={(e) => updateField('badge', e.target.value)}
+            className="form-input"
+            placeholder="Highlighted Family"
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Description / Subtitle</label>
+          <input
+            type="text"
+            value={config.description || ''}
+            onChange={(e) => updateField('description', e.target.value)}
+            className="form-input"
+            placeholder="Explore all research formulations of this compound family."
+          />
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Limit Products Displayed</label>
+          <input
+            type="number"
+            min="1"
+            max="12"
+            value={config.limit || 4}
+            onChange={(e) => updateField('limit', parseInt(e.target.value) || 4)}
+            className="form-input"
+          />
+        </div>
+      </>
+    );
+  }
+
   // Fallback for unknown types
   return (
     <div className="form-field">

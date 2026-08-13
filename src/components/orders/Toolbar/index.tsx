@@ -5,8 +5,8 @@
 import { Search, Printer, CheckCircle2 } from 'lucide-react';
 import { FulfillmentStatus, PaymentStatus } from '@/lib/orders/types';
 
-// Extend the customer type filter to include 'pos'
-export type CustomerTypeFilter = 'all' | 'member' | 'guest' | 'pos';
+// Extend the customer type filter to include 'pos' and 'research'
+export type CustomerTypeFilter = 'all' | 'member' | 'guest' | 'pos' | 'research';
 
 interface OrderToolbarProps {
   selectedCount: number;
@@ -86,6 +86,7 @@ export function OrderToolbar({
           <option value="member">Members ★</option>
           <option value="guest">Guests</option>
           <option value="pos">In-Person (POS) 🛍</option>
+          <option value="research">Research 🧪</option>
         </select>
 
         {/* Batch actions */}

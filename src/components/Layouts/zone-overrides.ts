@@ -33,4 +33,6 @@ export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   logs:     { layoutType: "minimal", appFooter: "none" },
   logz:     { layoutType: "minimal", appFooter: "none" },
   docs:     { layoutType: "app", appFooter: "none" },
+  labs:     { layoutType: "shop", appFooter: "none" },
+  tank:     { layoutType: "app", appFooter: "none" },
 };

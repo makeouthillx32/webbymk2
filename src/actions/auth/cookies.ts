@@ -2,18 +2,7 @@ import { headers, cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import type { CookieOptions, ProfileCookieRow, ValidRole } from "./types";
 import { VALID_ROLES } from "./types";
-
-const EXCLUDED_LASTPAGE = [
-  "/sign-in",
-  "/sign-up",
-  "/forgot-password",
-  "/reset-password",
-  "/auth/callback",
-  "/auth/callback/oauth",
-  "/auth/logout",
-];
-
-const EXCLUDED_PREFIXES = ["/dashboard", "/settings", "/protected"];
+import { isLastPageExcluded } from "@/lib/protectedRoutes";
 
 export const getCookieOptions = async (remember: boolean): Promise<CookieOptions> => {
   const headerList = await headers();
@@ -36,12 +25,7 @@ export const getAndClearLastPage = async (): Promise<string> => {
   let lastPage = lastPageCookie?.value || "/";
   store.delete("lastPage");
 
-  const pageWithoutHash = lastPage.split("#")[0].split("?")[0];
-  const isExcluded =
-    EXCLUDED_LASTPAGE.includes(pageWithoutHash) ||
-    EXCLUDED_PREFIXES.some((prefix) => pageWithoutHash.startsWith(prefix));
-
-  if (isExcluded) lastPage = "/";
+  if (isLastPageExcluded(lastPage)) lastPage = "/";
 
   return lastPage;
 };

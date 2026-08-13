@@ -27,4 +27,4 @@ export const normalizeRole = (role: unknown): ValidRole => {
   if (typeof role !== "string") return "member";
   if ((VALID_ROLES as readonly string[]).includes(role)) return role as ValidRole;
   return "member";
-};s
+};

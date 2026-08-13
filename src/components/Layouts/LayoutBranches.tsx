@@ -7,6 +7,7 @@ import { I18nProviderClient } from "@/locales/client";
 import { Header as AppHeader } from "@/components/Layouts/app/nav";
 import { Header as DashboardHeader } from "@/components/Layouts/dashboard";
 import { Header as ShopHeader } from "@/components/Layouts/shop/Header";
+import { Header as LabsHeader } from "@/components/Layouts/labs/Header";
 import LandingHeader from "@/components/Layouts/Landing/Header";
 import LandingFooter from "@/components/Layouts/Landing/Footer";
 import BlogHeader from "@/components/Layouts/Blog/Header";
@@ -15,6 +16,7 @@ import { Sidebar } from "@/components/Layouts/dashboard/sidebar";
 import { SidebarProvider } from "@/components/Layouts/dashboard/sidebar/sidebar-context";
 import MobileDrawer from "@/components/Layouts/shop/MobileDrawer";
 import { CartProvider } from "@/components/Layouts/overlays/cart/cart-context";
+import { ResearchCartProvider } from "@/components/Layouts/overlays/research-cart/research-cart-context";
 import RegionBootstrap from "@/components/Auth/RegionBootstrap";
 import {
   AppToaster,
@@ -24,8 +26,17 @@ import {
 } from "@/components/Layouts/LayoutShells";
 import type { ScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 
-const ShopFooter    = lazy(() => import("@/components/Layouts/shop/footer"));
-const LandingFooterLazy = lazy(() => import("@/components/Layouts/Landing/Footer"));
+const ShopFooter = lazy(() => import("@/components/Layouts/shop/footer"));
+const LabsFooter = lazy(() => import("@/components/Layouts/labs/Footer"));
+const LandingFooterLazy = lazy(
+  () => import("@/components/Layouts/Landing/Footer"),
+);
+
+// Build-time constant — each zone is its own image, so this branch compiles
+// to a fixed true/false per zone and the unused header/footer becomes dead
+// code in every other zone's bundle (same pattern as the blog-zone check
+// in ClientLayout.tsx).
+const IS_LABS_ZONE = process.env.NEXT_PUBLIC_ZONE === "labs";
 
 // Minimal Layout
 // No header, no footer, no navigation chrome — just theme + providers + children.
@@ -69,7 +80,10 @@ export function BlogLayout({ children, screenSize }: BlogLayoutProps) {
           (hsl(var(--secondary))) in both themes — see layout-tokens.css. */}
       <div data-layout="landing" className="blog-chrome">
         <BlogHeader />
-        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>
+        <main
+          className="min-h-screen"
+          style={{ backgroundColor: "hsl(var(--background))" }}
+        >
           {children}
         </main>
         <BlogFooter />
@@ -90,7 +104,11 @@ interface LandingLayoutProps {
   locale?: "en" | "de";
 }
 
-export function LandingLayout({ children, screenSize, locale = "en" }: LandingLayoutProps) {
+export function LandingLayout({
+  children,
+  screenSize,
+  locale = "en",
+}: LandingLayoutProps) {
   return (
     <CartProvider>
       <RegionBootstrap />
@@ -98,7 +116,12 @@ export function LandingLayout({ children, screenSize, locale = "en" }: LandingLa
         <div data-layout="landing">
           <LandingHeader />
           {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
-          <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
+          <main
+            className="min-h-screen"
+            style={{ backgroundColor: "hsl(var(--background))" }}
+          >
+            {children}
+          </main>
           <LandingFooter />
         </div>
       </I18nProviderClient>
@@ -117,18 +140,27 @@ interface DashboardLayoutProps {
   screenSize: ScreenSize;
 }
 
-export function DashboardLayout({ children, screenSize }: DashboardLayoutProps) {
+export function DashboardLayout({
+  children,
+  screenSize,
+}: DashboardLayoutProps) {
   return (
     <CartProvider>
       {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
-      <div data-layout="dashboard" className="dark:bg-dark_bg1 bg-gray-1" style={{ backgroundColor: "hsl(var(--background))" }}>
+      <div
+        data-layout="dashboard"
+        className="dark:bg-dark_bg1 bg-gray-1"
+        style={{ backgroundColor: "hsl(var(--background))" }}
+      >
         <div className="flex h-screen overflow-hidden">
           <SidebarProvider>
             <Sidebar />
             <div className="relative flex flex-1 flex-col overflow-y-auto overflow-x-hidden">
-              <DashboardHeader sidebarOpen={false} setSidebarOpen={() => {}} />
+              <DashboardHeader />
               <main>
-                <div className="mx-auto max-w-screen-2xl p-4 md:p-6 2xl:p-10">{children}</div>
+                <div className="mx-auto max-w-screen-2xl p-4 md:p-6 2xl:p-10">
+                  {children}
+                </div>
               </main>
             </div>
           </SidebarProvider>
@@ -152,7 +184,12 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   return (
     <CartProvider>
       {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
-      <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
+      <main
+        className="min-h-screen"
+        style={{ backgroundColor: "hsl(var(--background))" }}
+      >
+        {children}
+      </main>
       <AppAccessibility />
       <AppToaster />
     </CartProvider>
@@ -166,9 +203,9 @@ export function AuthLayout({ children }: AuthLayoutProps) {
 export type AppFooterType = "none" | "shop" | "landing";
 
 interface AppLayoutProps {
-  children:   React.ReactNode;
+  children: React.ReactNode;
   screenSize: ScreenSize;
-  footer:     AppFooterType;
+  footer: AppFooterType;
 }
 
 export function AppLayout({ children, screenSize, footer }: AppLayoutProps) {
@@ -177,7 +214,10 @@ export function AppLayout({ children, screenSize, footer }: AppLayoutProps) {
       <RegionBootstrap />
       <div data-layout="app">
         <AppHeader />
-        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>
+        <main
+          className="min-h-screen"
+          style={{ backgroundColor: "hsl(var(--background))" }}
+        >
           {children}
         </main>
         {footer === "shop" && (
@@ -222,47 +262,61 @@ export function ShopLayout({
 
   return (
     <CartProvider>
-      <RegionBootstrap />
-      <div data-layout={useAppHeader ? "app" : "shop"}>
-        {useAppHeader ? (
-          <AppHeader />
-        ) : (
-          showNav && <ShopHeader onMenuClick={() => setMobileMenuOpen(true)} />
-        )}
+      <ResearchCartProvider>
+        <RegionBootstrap />
+        <div data-layout={useAppHeader ? "app" : "shop"}>
+          {useAppHeader ? (
+            <AppHeader />
+          ) : (
+            showNav &&
+            (IS_LABS_ZONE ? (
+              <LabsHeader onMenuClick={() => setMobileMenuOpen(true)} />
+            ) : (
+              <ShopHeader onMenuClick={() => setMobileMenuOpen(true)} />
+            ))
+          )}
 
-        {mobileMenuOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 lg:hidden"
-              onClick={() => setMobileMenuOpen(false)}
-              aria-hidden="true"
-            />
-            <div
-              className="fixed bottom-0 left-0 top-0 z-50 w-[min(86vw,360px)] overflow-y-auto border-r border-[var(--lt-border)] bg-[var(--lt-bg)] shadow-[var(--lt-shadow)] lg:hidden"
-              data-layout="shop"
-            >
-              <MobileDrawer
-                key={sessionUserId || "guest"}
-                onClose={() => setMobileMenuOpen(false)}
+          {mobileMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 lg:hidden"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-hidden="true"
               />
-            </div>
-          </>
-        )}
+              <div
+                className="fixed bottom-0 left-0 top-0 z-50 w-[min(86vw,360px)] overflow-y-auto border-r border-[var(--lt-border)] bg-[var(--lt-bg)] shadow-[var(--lt-shadow)] lg:hidden"
+                data-layout="shop"
+              >
+                <MobileDrawer
+                  key={sessionUserId || "guest"}
+                  onClose={() => setMobileMenuOpen(false)}
+                />
+              </div>
+            </>
+          )}
 
-        {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
-        <main className="min-h-screen" style={{ backgroundColor: "hsl(var(--background))" }}>{children}</main>
+          {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+          <main
+            className={
+              IS_LABS_ZONE ? "min-h-screen pt-4 sm:pt-5" : "min-h-screen"
+            }
+            style={{ backgroundColor: "hsl(var(--background))" }}
+          >
+            {children}
+          </main>
 
-        {showFooter && (
-          <Suspense fallback={<div className="h-96" />}>
-            <ShopFooter />
-          </Suspense>
-        )}
-      </div>
+          {showFooter && (
+            <Suspense fallback={<div className="h-96" />}>
+              {IS_LABS_ZONE ? <LabsFooter /> : <ShopFooter />}
+            </Suspense>
+          )}
+        </div>
 
-      <AppAccessibility />
-      <AppCookieConsent screenSize={screenSize} />
-      <ConditionalOverlays />
-      <AppToaster />
+        <AppAccessibility />
+        <AppCookieConsent screenSize={screenSize} />
+        <ConditionalOverlays />
+        <AppToaster />
+      </ResearchCartProvider>
     </CartProvider>
   );
 }

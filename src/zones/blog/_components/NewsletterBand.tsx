@@ -1,9 +1,15 @@
 "use client";
 // src/zones/blog/_components/NewsletterBand.tsx
 // "Stay in the Loop" signup band (GitButler-style).
-// TODO: wire handleSubmit to the local Brevo/newsletter endpoint when ready.
+// POSTs to /api/newsletter/subscribe on the CORE domain (absolute URL, not
+// relative) — the blog zone's deployed image doesn't bundle /api routes, so
+// a same-origin request would 404. The route sends CORS headers back for
+// this cross-origin call. Stores the signup and sends a welcome email
+// through our own poste.io SMTP relay (src/lib/mail) — no third-party ESP.
 
 import { useState } from "react";
+
+const NEWSLETTER_ENDPOINT = "https://www.unenter.live/api/newsletter/subscribe";
 
 export interface NewsletterBandProps {
   enabled?: boolean;
@@ -20,14 +26,33 @@ export default function NewsletterBand({
 }: NewsletterBandProps) {
   const [email, setEmail]         = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
   if (!enabled) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
-    // TODO: POST to local Brevo instance — endpoint pending.
-    setSubmitted(true);
+    if (!email.trim() || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(NEWSLETTER_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), source: "blog_band" }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setError(json?.error?.message || "Something went wrong — try again.");
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setError("Something went wrong — try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -58,12 +83,15 @@ export default function NewsletterBand({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Your email address"
-                  className="w-full border-0 border-b-2 border-current bg-transparent pb-3 font-serif text-2xl placeholder-[hsl(var(--accent-foreground))] placeholder-opacity-50 outline-none focus:ring-0 md:text-3xl"
+                  disabled={submitting}
+                  className="w-full border-0 border-b-2 border-current bg-transparent pb-3 font-serif text-2xl placeholder-[hsl(var(--accent-foreground))] placeholder-opacity-50 outline-none focus:ring-0 md:text-3xl disabled:opacity-60"
                 />
+                {error && <span className="mt-2 block text-sm opacity-80">{error}</span>}
               </label>
               <button
                 type="submit"
-                className="group flex shrink-0 flex-col items-center gap-1 pb-1 text-sm font-medium opacity-90 transition hover:opacity-100"
+                disabled={submitting}
+                className="group flex shrink-0 flex-col items-center gap-1 pb-1 text-sm font-medium opacity-90 transition hover:opacity-100 disabled:opacity-50"
                 aria-label="Subscribe"
               >
                 <svg
@@ -74,7 +102,7 @@ export default function NewsletterBand({
                 >
                   <path d="M2 12h34M28 4l8 8-8 8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                Subscribe
+                {submitting ? "Subscribing…" : "Subscribe"}
               </button>
             </form>
           )}

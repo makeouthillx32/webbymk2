@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/utils/supabase/server";
+import { requireAdmin } from "@/lib/require-admin";
 
 type ProfileRow = {
   id: string;
@@ -17,7 +17,13 @@ type ProfileRow = {
 };
 
 export async function GET() {
-  const supabase = await createClient("service");
+  // Was previously unauthenticated — any caller could dump every user's id,
+  // email, role, providers, and last-sign-in via the service-role client.
+  // Fixed 2026-08-10 alongside the invite-system audit.
+  const guard = await requireAdmin();
+  if ("error" in guard) return guard.error;
+
+  const supabase = guard.admin;
   const { data: profiles, error } = await supabase
     .from("profiles")
     .select("id,role,avatar_url,initials,display_name,first_name,last_name,region,email,created_at,last_seen_at,deleted_at")

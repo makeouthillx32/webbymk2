@@ -145,7 +145,7 @@ export default function InvitesPage() {
               <button className="absolute top-3 right-3 text-gray-600 hover:text-gray-800" onClick={() => setShowGenerator(false)}>
                 <X size={24} />
               </button>
-              <InviteGeneratorClient defaultRole="client" onCreate={handleCreate} />
+              <InviteGeneratorClient defaultRole="member" />
             </div>
           </div>
         )}

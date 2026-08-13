@@ -1,15 +1,14 @@
 // app/api/webhooks/stripe/route.ts
-import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { sendNotification } from "@/lib/notifications";
+import { sendOrderConfirmationEmail } from "@/lib/mail/sendOrderConfirmation";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: "2024-11-20.acacia",
-  });
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
   try {
     const body = await request.text();
@@ -35,13 +34,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Create Supabase client (service role for webhook operations)
-    const supabase = await createServerClient();
+    const supabase = createAdminClient();
 
     // Handle different event types
     switch (event.type) {
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        await handlePaymentSucceeded(supabase, paymentIntent);
+        await handlePaymentSucceeded(supabase, stripe, paymentIntent);
         break;
       }
 
@@ -86,6 +85,7 @@ export async function POST(request: NextRequest) {
 // Handle successful payment
 async function handlePaymentSucceeded(
   supabase: any,
+  stripe: Stripe,
   paymentIntent: Stripe.PaymentIntent
 ) {
   const orderId = paymentIntent.metadata.order_id;
@@ -121,7 +121,17 @@ async function handlePaymentSucceeded(
     }
   }
 
-  // Update order — also select promo_code for usage tracking below
+  // Update order — also select promo_code for usage tracking below.
+  // Stripe redelivers webhook events (retries, and occasionally genuine
+  // concurrent duplicate deliveries) — payment_intent.succeeded is not
+  // guaranteed to fire exactly once. The order UPDATE itself is safe to run
+  // twice (it just sets fixed values), but the side effects below
+  // (confirmation email, admin notification) are NOT naturally idempotent —
+  // confirm_discount_reservation/credit_creator_commission already guard
+  // themselves, but nothing stopped sendOrderConfirmationEmail from firing
+  // twice. Fixed 2026-08-10 by only transitioning FROM 'pending': a second
+  // delivery for an already-paid order matches zero rows here, and every
+  // side effect below is skipped.
   const { data: order, error } = await supabase
     .from('orders')
     .update({
@@ -133,24 +143,73 @@ async function handlePaymentSucceeded(
       updated_at: new Date().toISOString(),
     })
     .eq('id', orderId)
-    .select('order_number, total_cents, email, customer_first_name, customer_last_name, promo_code, order_source')
-    .single();
+    .eq('payment_status', 'pending')
+    .select('order_number, total_cents, discount_cents, email, customer_first_name, customer_last_name, promo_code, order_source, discount_reservation_id')
+    .maybeSingle();
 
   if (error) {
     console.error('Failed to update order on payment success:', error);
     return;
   }
 
+  if (!order) {
+    console.log(`Order ${orderId} already processed (duplicate webhook delivery) — skipping side effects`);
+    return;
+  }
+
   console.log(`Order ${orderId} marked as paid + ${newStatus}${isPOS ? ' (POS — auto-fulfilled)' : ''}`);
 
-  // ── Increment promo code usage count (web orders only — POS has no promos) ──
+  // ── Confirm promo code usage (web orders only — POS has no promos) ─────
+  // discount_reservation_id is set when the code had a max_uses cap —
+  // reserve_discount_use already took an atomic hold on it at checkout time
+  // (see create-payment-intent), so this just turns that hold into a
+  // permanent counted use. Codes with no cap never got a reservation
+  // (nothing to race over), so they still fall back to the old direct
+  // increment — see reserve_discount_use / migration
+  // discount_usage_reservations for the full race-condition writeup.
   if (order?.promo_code) {
     try {
-      await supabase.rpc('increment_discount_uses', { p_code: order.promo_code });
-      console.log(`[Promo] ✅ Incremented uses_count for code: ${order.promo_code}`);
+      if (order.discount_reservation_id) {
+        await supabase.rpc('confirm_discount_reservation', { p_reservation_id: order.discount_reservation_id });
+        console.log(`[Promo] ✅ Confirmed reservation for code: ${order.promo_code}`);
+      } else {
+        await supabase.rpc('increment_discount_uses', { p_code: order.promo_code });
+        console.log(`[Promo] ✅ Incremented uses_count for code: ${order.promo_code}`);
+      }
     } catch (promoErr) {
       // Non-fatal — order is paid, don't throw
-      console.error('[Promo] ⚠️ Failed to increment uses_count:', promoErr);
+      console.error('[Promo] ⚠️ Failed to confirm/increment promo usage:', promoErr);
+    }
+
+    // ── Creator affiliate program: credit commission if this code belongs
+    //    to a creator. No-op (returns void, does nothing) for ordinary promo
+    //    codes that aren't linked to a creator. ──
+    try {
+      await supabase.rpc('credit_creator_commission', {
+        p_order_id: orderId,
+        p_promo_code: order.promo_code,
+        p_discount_cents: order.discount_cents,
+        p_order_number: order.order_number != null ? String(order.order_number) : null,
+      });
+      console.log(`[Creator] ✅ Commission credit checked for code: ${order.promo_code}`);
+    } catch (creatorErr) {
+      // Non-fatal — order is paid, don't throw
+      console.error('[Creator] ⚠️ Failed to credit creator commission:', creatorErr);
+    }
+  }
+
+  // ── Customer receipt (skip for POS — those are in-person sales) ────
+  if (!isPOS) {
+    try {
+      const result = await sendOrderConfirmationEmail(orderId);
+      console.log(
+        result.sent
+          ? `[Mail] ✅ Order confirmation sent for ${order?.order_number ?? orderId}`
+          : `[Mail] ⚠️ Order confirmation not sent: ${result.reason}`
+      );
+    } catch (mailErr) {
+      // Non-fatal — order is paid, don't throw
+      console.error('[Mail] ⚠️ Failed to send order confirmation:', mailErr);
     }
   }
 
@@ -209,7 +268,7 @@ async function handlePaymentFailed(
       updated_at: new Date().toISOString(),
     })
     .eq('id', orderId)
-    .select('order_number, email')
+    .select('order_number, email, discount_reservation_id')
     .single();
 
   if (error) {
@@ -218,6 +277,17 @@ async function handlePaymentFailed(
   }
 
   console.log(`Order ${orderId} payment failed: ${lastError?.message}`);
+
+  // Free the held discount slot immediately rather than waiting out the
+  // full reservation TTL — a declined card shouldn't tie up a limited-use
+  // code for 20 minutes.
+  if (order?.discount_reservation_id) {
+    try {
+      await supabase.rpc('release_discount_reservation', { p_reservation_id: order.discount_reservation_id });
+    } catch (releaseErr) {
+      console.error('[Promo] ⚠️ Failed to release discount reservation:', releaseErr);
+    }
+  }
 
   // ── Failed payment notification → admins only ─────────────────
   try {
@@ -331,6 +401,15 @@ async function handleChargeRefunded(
   }
 
   console.log(`Order ${order.id} refunded`);
+
+  // ── Creator affiliate program: claw back any commission earned on this
+  //    order. No-op if this order never earned one. ──
+  try {
+    await supabase.rpc('reverse_creator_commission', { p_order_id: order.id });
+    console.log(`[Creator] ✅ Commission reversal checked for order ${order.id}`);
+  } catch (creatorErr) {
+    console.error('[Creator] ⚠️ Failed to reverse creator commission:', creatorErr);
+  }
 
   // ── Refund notification → admins only ─────────────────────────
   try {

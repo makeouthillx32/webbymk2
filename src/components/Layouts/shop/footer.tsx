@@ -2,12 +2,12 @@
 
 import React, { useMemo } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { FaInstagram, FaTiktok } from "react-icons/fa";
 
 import useLoginSession from "@/lib/useLoginSession";
 import { useTheme } from "@/app/provider";
 import { userRoleCookies } from "@/lib/cookieUtils";
+import { useSignInHref, useSignUpHref } from "@/lib/useSignInHref";
 
 type FooterLink = { name: string; href: string; external?: boolean };
 type FooterSection = { title: string; links: FooterLink[] };
@@ -20,21 +20,20 @@ const socialLinks = [
 export default function Footer() {
   const session = useLoginSession();
   const { themeType } = useTheme();
-  const pathname = usePathname();
-  // Return the user to the page they signed in from, not the dashboard default.
-  const signInHref = `/sign-in?next=${encodeURIComponent(pathname || "/")}`;
+  // /sign-in and /sign-up only live on the core zone — a relative href
+  // 404s here since this footer is shared across zone subdomains (shop,
+  // labs, ...). Found via E2E checkout test, 2026-08-06.
+  const signInHref = useSignInHref();
+  const signUpHref = useSignUpHref();
 
   const userId = session?.user?.id;
   const cookieRole = userRoleCookies.getUserRole(userId) ?? "guest";
 
   const isSignedIn = !!userId;
-  const role =
-    isSignedIn && (cookieRole === "owner" || cookieRole === "admin" || cookieRole === "shopper")
-      ? cookieRole
-      : "guest";
+  const role = isSignedIn ? cookieRole : "guest";
 
-  const isMember = role === "shopper" || role === "admin" || role === "owner";
-  const isOwnerOrAdmin = role === "owner" || role === "admin";
+  const isMember = isSignedIn;
+  const isOwnerOrAdmin = role === "admin";
 
   const sections: FooterSection[] = useMemo(() => {
     // ✅ Always visible baseline
@@ -84,7 +83,7 @@ export default function Footer() {
           title: "Account",
           links: [
             { name: "Sign In", href: signInHref },
-            { name: "Join the Barn", href: "/sign-up" },
+            { name: "Join the Barn", href: signUpHref },
           ],
         },
         ...base,
@@ -149,7 +148,7 @@ export default function Footer() {
             ) : (
               <div className="inline-flex w-fit items-center rounded-full border border-[var(--lt-border)] px-3 py-1 text-xs text-[var(--lt-fg)] opacity-70">
                 New here?{" "}
-                <Link className="ml-1 underline underline-offset-2" href="/sign-up">
+                <Link className="ml-1 underline underline-offset-2" href={signUpHref}>
                   Join the Barn
                 </Link>
               </div>

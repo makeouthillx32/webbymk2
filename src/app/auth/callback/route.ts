@@ -36,10 +36,33 @@ export async function GET(request: Request) {
         .maybeSingle();
 
       if (!existingProfile) {
+        // role: "researcher" — matches signUpAction. This used to insert
+        // role: "anonymous", which isn't a real permission tier and left
+        // Google sign-ups unable to pass any role check (research-checkout
+        // included). Continuing past the Google button on /sign-up is the
+        // OAuth equivalent of checking the ToS box there.
         await supabase.from("profiles").insert({
           id: userId,
-          role: "anonymous",
+          auth_user_id: userId,
+          email: user.email ?? null,
+          role: "researcher",
+          terms_accepted_at: new Date().toISOString(),
         });
+
+        // Mirror signUpAction's customers upsert so OAuth sign-ups get order
+        // history / guest-order claiming too, not just email/password ones.
+        if (user.email) {
+          await supabase.from("customers").upsert(
+            {
+              auth_user_id: userId,
+              email: user.email.toLowerCase().trim(),
+              type: "member",
+              guest_key: null,
+              claimed_at: new Date().toISOString(),
+            },
+            { onConflict: "auth_user_id" }
+          );
+        }
       }
 
       // ✅ Apply invite if present

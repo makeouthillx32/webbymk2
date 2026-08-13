@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import type { LandingProduct } from "./useLandingData";
 import { getPrimaryImageUrl, pickPrimaryImage } from "@/lib/images";
+import { SmartProductImage } from "./SmartProductImage";
 
 function formatMoney(price_cents: number, currency: string) {
   return new Intl.NumberFormat(undefined, {
@@ -13,39 +13,16 @@ function formatMoney(price_cents: number, currency: string) {
 }
 
 export function LandingProductCard({ product }: { product: LandingProduct }) {
-  // Force optimized delivery (webp/avif) via Next optimizer
-  const imageUrl = getPrimaryImageUrl(product.product_images, {
-    optimized: true,
-    width: 900,
-    quality: 82,
-  });
-
+  const imageUrl = getPrimaryImageUrl(product.product_images);
   const primary = pickPrimaryImage(product.product_images);
   const alt = primary?.alt_text || product.title || "Product image";
 
   return (
     <Link
       href={`/products/${product.slug}`}
-      className="group rounded-xl border border-[var(--border)] bg-[var(--background)] overflow-hidden"
+      className="group rounded-[calc(var(--radius)*3)] bg-transparent hover:bg-[hsl(var(--card))/0.4] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 flex flex-col justify-between"
     >
-      <div className="relative aspect-square bg-[var(--sidebar)]">
-        {imageUrl ? (
-          <Image
-            src={imageUrl}
-            alt={alt}
-            fill
-            // since we're serving a single optimized URL, keep sizes for layout
-            sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-xs text-[var(--muted-foreground)] px-3 py-1 rounded-md border border-[var(--border)] bg-[var(--card)]">
-              No image
-            </div>
-          </div>
-        )}
-      </div>
+      <SmartProductImage src={imageUrl} alt={alt} sizes="(max-width: 768px) 50vw, 25vw" />
 
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">

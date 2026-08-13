@@ -3,7 +3,7 @@
 // Changes: add 'source' field and 'is_pos' to AdminOrder
 // ═══════════════════════════════════════════════════════════════════
 
-export type OrderSource = 'web' | 'pos';
+export type OrderSource = 'web' | 'pos' | 'research';
 export type OrderStatus = 'pending' | 'processing' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded';
 export type PaymentStatus = 'unpaid' | 'pending' | 'paid' | 'refunded';
 export type FulfillmentStatus = 'unfulfilled' | 'partial' | 'fulfilled' | 'returned' | 'cancelled';
@@ -54,8 +54,9 @@ export interface AdminOrder {
   label_postage_cents?: number;
   internal_notes?: string;
   // Identity — mutually exclusive
-  source: OrderSource;    // 'web' | 'pos'
+  source: OrderSource;    // 'web' | 'pos' | 'research'
   is_pos: boolean;        // source === 'pos' — in-person admin sale, no shipping needed
+  is_research: boolean;   // source === 'research' — research-checkout, auth-only
   is_member: boolean;     // auth_user_id is set — logged-in web purchase
   is_guest: boolean;      // guest_key set, no auth — anonymous web purchase
   is_legacy: boolean;     // pre-identity system, both null

@@ -7,23 +7,47 @@ import { useSearchParams } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import InputGroup from "../FormElements/InputGroup";
 import { Checkbox } from "../FormElements/checkbox";
+import { CORE_DOMAIN } from "@/lib/multiZone";
 
+const isBlockedAuthPath = (pathOnly: string): boolean =>
+  pathOnly === "/sign-in" ||
+  pathOnly === "/sign-up" ||
+  pathOnly === "/forgot-password" ||
+  pathOnly === "/reset-password" ||
+  pathOnly.startsWith("/auth/");
+
+// Returns "" (not "/dashboard/me") when there's no usable candidate — an
+// empty hidden `next` field lets the server route (/auth/sign-in) fall
+// through to its own getAndClearLastPage() cookie fallback instead of the
+// dashboard. This component used to hardcode /dashboard/me as the default,
+// which — since this hidden field is always submitted — meant the server's
+// lastPage fallback was unreachable in practice. Dashboard must never be an
+// implicit post-auth destination. Fixed 2026-08-12.
 const getSafeRedirectPath = (candidate: string | null): string => {
-  if (!candidate) return "/dashboard/me";
-  if (!candidate.startsWith("/") || candidate.startsWith("//") || candidate.includes("://")) {
-    return "/dashboard/me";
+  if (!candidate) return "";
+
+  // Same-origin relative path.
+  if (candidate.startsWith("/") && !candidate.startsWith("//")) {
+    const pathOnly = candidate.split("#")[0].split("?")[0];
+    return isBlockedAuthPath(pathOnly) ? "" : candidate;
   }
-  const pathOnly = candidate.split("#")[0].split("?")[0];
-  if (
-    pathOnly === "/sign-in" ||
-    pathOnly === "/sign-up" ||
-    pathOnly === "/forgot-password" ||
-    pathOnly === "/reset-password" ||
-    pathOnly.startsWith("/auth/")
-  ) {
-    return "/dashboard/me";
+
+  // Cross-zone absolute URL — sign-in only lives on the core zone, so a
+  // visitor bounced here from labs.unenter.live (or any other zone) needs
+  // `next` to send them back to that zone, not a same-origin path that
+  // would 404 on core. Restricted to *.unenter.live / unenter.live so this
+  // can't become an open redirect. Found via E2E checkout test, 2026-08-06.
+  try {
+    const url = new URL(candidate);
+    const host = url.hostname.toLowerCase();
+    const isOwnDomain = host === CORE_DOMAIN || host.endsWith(`.${CORE_DOMAIN}`);
+    if (!isOwnDomain || (url.protocol !== "https:" && url.protocol !== "http:")) {
+      return "";
+    }
+    return isBlockedAuthPath(url.pathname) ? "" : url.toString();
+  } catch {
+    return "";
   }
-  return candidate;
 };
 
 export default function SigninWithPassword() {

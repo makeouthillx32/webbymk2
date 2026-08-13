@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createBrowserClient } from "@/utils/supabase/client";
 
 import "./_components/discounts.scss";
 
@@ -14,14 +13,15 @@ import { CreateDiscountModal } from "./_components/CreateDiscountModal";
 import { EditDiscountForm } from "./_components/EditDiscountForm";
 import { DeleteConfirmModal } from "./_components/DeleteConfirmModal";
 
-export default function DiscountsPage() {
-  const supabase = useMemo(() => {
-    return createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-  }, []);
+async function readJson(res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
+export default function DiscountsPage() {
   const [rows, setRows] = useState<DiscountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -38,23 +38,17 @@ export default function DiscountsPage() {
     setErr(null);
     setLoading(true);
 
-    // NOTE: max_uses + uses_count only exist if you added them (recommended).
-    // If you did not, remove them from this select list.
-    const { data, error } = await supabase
-      .from("discounts")
-      .select(
-        "id,code,type,percent_off,amount_off_cents,is_active,starts_at,ends_at,max_uses,uses_count"
-      )
-      .order("created_at", { ascending: false });
+    const res = await fetch("/api/discounts", { cache: "no-store" });
+    const json = await readJson(res);
 
-    if (error) {
-      setErr(error.message);
+    if (!res.ok || !json?.ok) {
+      setErr(json?.error?.message ?? "Failed to load discounts");
       setRows([]);
       setLoading(false);
       return;
     }
 
-    setRows((data as DiscountRow[]) ?? []);
+    setRows((json.data as DiscountRow[]) ?? []);
     setLoading(false);
   };
 
@@ -88,24 +82,15 @@ export default function DiscountsPage() {
   }) => {
     setErr(null);
 
-    const payload: any = {
-      code: data.code,
-      type: data.type,
-      percent_off: data.type === "percentage" ? data.percent_off : null,
-      amount_off_cents: data.type === "fixed_amount" ? data.amount_off_cents : null,
-      is_active: data.is_active,
-      starts_at: data.starts_at,
-      ends_at: data.ends_at,
-      updated_at: new Date().toISOString(),
-    };
+    const res = await fetch("/api/discounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const json = await readJson(res);
 
-    // Only include these fields if they exist in your table
-    if (data.max_uses !== undefined) payload.max_uses = data.max_uses;
-
-    const { error } = await supabase.from("discounts").insert(payload);
-
-    if (error) {
-      setErr(error.message);
+    if (!res.ok || !json?.ok) {
+      setErr(json?.error?.message ?? "Failed to create discount");
       return;
     }
 
@@ -131,23 +116,15 @@ export default function DiscountsPage() {
   }) => {
     setErr(null);
 
-    const payload: any = {
-      code: data.code,
-      type: data.type,
-      percent_off: data.type === "percentage" ? data.percent_off : null,
-      amount_off_cents: data.type === "fixed_amount" ? data.amount_off_cents : null,
-      is_active: data.is_active,
-      starts_at: data.starts_at,
-      ends_at: data.ends_at,
-      updated_at: new Date().toISOString(),
-    };
+    const res = await fetch(`/api/discounts/${data.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const json = await readJson(res);
 
-    if (data.max_uses !== undefined) payload.max_uses = data.max_uses;
-
-    const { error } = await supabase.from("discounts").update(payload).eq("id", data.id);
-
-    if (error) {
-      setErr(error.message);
+    if (!res.ok || !json?.ok) {
+      setErr(json?.error?.message ?? "Failed to save discount");
       return;
     }
 
@@ -158,13 +135,15 @@ export default function DiscountsPage() {
   const handleToggleActive = async (row: DiscountRow, active: boolean) => {
     setErr(null);
 
-    const { error } = await supabase
-      .from("discounts")
-      .update({ is_active: active, updated_at: new Date().toISOString() })
-      .eq("id", row.id);
+    const res = await fetch(`/api/discounts/${row.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: active }),
+    });
+    const json = await readJson(res);
 
-    if (error) {
-      setErr(error.message);
+    if (!res.ok || !json?.ok) {
+      setErr(json?.error?.message ?? "Failed to update discount");
       return;
     }
 
@@ -181,10 +160,11 @@ export default function DiscountsPage() {
   const handleConfirmDelete = async (row: DiscountRow) => {
     setErr(null);
 
-    const { error } = await supabase.from("discounts").delete().eq("id", row.id);
+    const res = await fetch(`/api/discounts/${row.id}`, { method: "DELETE" });
+    const json = await readJson(res);
 
-    if (error) {
-      setErr(error.message);
+    if (!res.ok || !json?.ok) {
+      setErr(json?.error?.message ?? "Failed to delete discount");
       return;
     }
 

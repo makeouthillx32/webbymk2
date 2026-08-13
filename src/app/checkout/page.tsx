@@ -29,9 +29,9 @@ export default function CheckoutPage() {
 
   // Restore promo from localStorage on mount (survives refresh)
   useEffect(() => {
-    const savedCode = localStorage.getItem("dcg_promo_code");
-    const savedDiscount = localStorage.getItem("dcg_discount_cents");
-    const savedPromo = localStorage.getItem("dcg_promo_data");
+    const savedCode = localStorage.getItem("unenter_promo_code");
+    const savedDiscount = localStorage.getItem("unenter_discount_cents");
+    const savedPromo = localStorage.getItem("unenter_promo_data");
 
     if (savedCode && savedDiscount && savedPromo) {
       try {
@@ -40,9 +40,9 @@ export default function CheckoutPage() {
         setDiscountCents(parseInt(savedDiscount, 10));
       } catch {
         // Corrupted data — clear it
-        localStorage.removeItem("dcg_promo_code");
-        localStorage.removeItem("dcg_discount_cents");
-        localStorage.removeItem("dcg_promo_data");
+        localStorage.removeItem("unenter_promo_code");
+        localStorage.removeItem("unenter_discount_cents");
+        localStorage.removeItem("unenter_promo_data");
       }
     }
   }, []);
@@ -68,9 +68,9 @@ export default function CheckoutPage() {
         setDiscountCents(data.discount_cents);
         setPromoError("");
         // Persist to localStorage so refresh doesn't wipe it
-        localStorage.setItem("dcg_promo_code", promoCode);
-        localStorage.setItem("dcg_discount_cents", data.discount_cents.toString());
-        localStorage.setItem("dcg_promo_data", JSON.stringify(data.promo_code));
+        localStorage.setItem("unenter_promo_code", promoCode);
+        localStorage.setItem("unenter_discount_cents", data.discount_cents.toString());
+        localStorage.setItem("unenter_promo_data", JSON.stringify(data.promo_code));
       } else {
         setPromoError(data.error);
         setPromoApplied(null);
@@ -88,9 +88,9 @@ export default function CheckoutPage() {
     setPromoApplied(null);
     setDiscountCents(0);
     setPromoError("");
-    localStorage.removeItem("dcg_promo_code");
-    localStorage.removeItem("dcg_discount_cents");
-    localStorage.removeItem("dcg_promo_data");
+    localStorage.removeItem("unenter_promo_code");
+    localStorage.removeItem("unenter_discount_cents");
+    localStorage.removeItem("unenter_promo_data");
   };
 
   const handleContinue = () => {

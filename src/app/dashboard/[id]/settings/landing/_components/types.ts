@@ -6,7 +6,12 @@ export type ShopSectionType =
   | "hero_carousel"
   | "categories_grid"
   | "static_html"
-  | "products_grid";
+  | "products_grid"
+  | "research_products_grid"
+  | "featured_research_carousel"
+  | "family_highlight"
+  | "testimonials"
+  | "instagram_feed";
 
 // Home page hero section types
 export type HomeSectionType =

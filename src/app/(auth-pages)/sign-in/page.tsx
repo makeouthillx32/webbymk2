@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { FormMessage, Message } from "@/components/form-message";
 import SignInWithGoogle from "@/components/ui/SignInWithGoogle";
 import { AuthBreadcrumbs } from "@/components/Auth/AuthBreadcrumbs";
+import { getZoneContext } from "@/lib/zoneContext";
 
 // ✅ SigninWithPassword now does client-side auth — no server action or redirectTo needed
 import SigninWithPassword from "@/components/Auth/SigninWithPassword";
@@ -23,14 +24,21 @@ export default async function SignInPage({
   searchParams: Promise<Message>;
 }) {
   const resolvedSearchParams = await searchParams;
+  const zoneContext = await getZoneContext();
+  const isResearcherContext = zoneContext.zone === "labs";
 
   return (
     <div className="mx-auto w-full max-w-md rounded-[var(--radius)] bg-[hsl(var(--card))] shadow-[var(--shadow-xl)] p-6 md:p-8">
       <AuthBreadcrumbs current="Sign in" />
 
-      <h1 className="text-2xl md:text-3xl font-[var(--font-serif)] font-bold text-center text-[hsl(var(--sidebar-primary))] mb-6 leading-[1.2]">
-        Welcome Back
+      <h1 className="text-2xl md:text-3xl font-[var(--font-serif)] font-bold text-center text-[hsl(var(--sidebar-primary))] mb-2 leading-[1.2]">
+        {isResearcherContext ? "Researcher Sign In" : "Welcome Back"}
       </h1>
+      {isResearcherContext && (
+        <p className="text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] mb-4">
+          Sign in to checkout with research products. Uses the same account as the shop.
+        </p>
+      )}
 
       <div className="w-full flex justify-center">
         <div className="w-full max-w-[520px]">
