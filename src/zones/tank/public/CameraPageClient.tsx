@@ -11,6 +11,7 @@ import {
   Signal,
 } from "lucide-react";
 import type { CameraDirectorySnapshot, DiscoveredCamera } from "../contracts";
+import { PublicCameraPlayer } from "./PublicCameraPlayer";
 
 export default function CameraPageClient({ slug }: { slug: string }) {
   const [camera, setCamera] = useState<DiscoveredCamera | null>(null);
@@ -78,6 +79,7 @@ export default function CameraPageClient({ slug }: { slug: string }) {
     <div className="min-h-[calc(100vh-4rem)]">
       <section className="relative aspect-video max-h-[76vh] overflow-hidden bg-gradient-to-br from-cyan-500/35 via-blue-950/65 to-slate-950">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_32%_30%,rgba(255,255,255,.2),transparent_15%),radial-gradient(circle_at_68%_60%,rgba(45,212,191,.22),transparent_18%)]" />
+        <PublicCameraPlayer camera={camera} />
         {reconnecting ? (
           <div className="absolute inset-0 grid place-items-center bg-black/65 text-white">
             <div className="max-w-md px-6 text-center">
@@ -92,18 +94,19 @@ export default function CameraPageClient({ slug }: { slug: string }) {
               </p>
             </div>
           </div>
-        ) : (
+        ) : camera.playback.status !== "ready" ? (
           <div className="absolute inset-0 grid place-items-center text-white">
             <div className="rounded-2xl border border-white/15 bg-black/25 p-5 text-center backdrop-blur-sm">
               <Signal className="mx-auto h-8 w-8" />
               <p className="mt-2 font-bold">Live player connection point</p>
               <p className="mt-1 text-xs text-white/65">
-                {camera.protocol.toUpperCase()} ·{" "}
-                {camera.bitrateKbps || "detecting"} kbps
+                {camera.playback.status === "unconfigured"
+                  ? "Browser gateway is not configured"
+                  : `${camera.protocol.toUpperCase()} · ${camera.bitrateKbps || "detecting"} kbps`}
               </p>
             </div>
           </div>
-        )}
+        ) : null}
         <div className="absolute left-4 top-4 flex gap-2">
           <span
             className={`rounded-md px-2.5 py-1.5 text-xs font-black uppercase text-white ${reconnecting ? "bg-amber-500" : "bg-red-600"}`}

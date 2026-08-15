@@ -110,7 +110,7 @@ export default function TankHomePage() {
     : activeFeed.online || activeFeed.degraded;
 
   const { messages, sending, error: chatError, postMessage } =
-    useTankRealtimeChat("room-program", []);
+    useTankRealtimeChat("room-program");
 
   const handleSendChat = async (e?: React.FormEvent) => {
     e?.preventDefault();

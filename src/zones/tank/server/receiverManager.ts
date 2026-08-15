@@ -17,9 +17,10 @@ import {
   recordIngestEvent,
   saveCameraLifecycleState,
 } from "./cameraRegistryDb";
+import { getPublicCameraPlayback } from "./mediaGateway";
 
 const managerBaseUrl =
-  process.env.SRT_MANAGER_INTERNAL_URL ?? "http://srt-manager:5050";
+  process.env.SRT_MANAGER_INTERNAL_URL ?? "http://192.168.50.204:5050";
 
 type ManagerCamera = {
   id?: unknown;
@@ -42,6 +43,8 @@ type ManagerTelemetry = {
   bitrateKbps?: unknown;
   rttMs?: unknown;
   metrics?: { bitrateKbps?: unknown; rttMs?: unknown };
+  measured?: { bitrateKbps?: unknown; rttMs?: unknown };
+  health?: { label?: unknown };
 };
 
 function protocol(value: unknown): CameraProtocol {
@@ -50,7 +53,9 @@ function protocol(value: unknown): CameraProtocol {
     value === "rtmp" ||
     value === "ip-camera"
     ? value
-    : "unknown";
+    : value === "rtsp"
+      ? "ip-camera"
+      : "unknown";
 }
 
 function safeSlug(value: string) {
@@ -109,9 +114,16 @@ async function projectCamera(
     };
   }
   const bitrateKbps =
-    Number(telemetry.metrics?.bitrateKbps ?? telemetry.bitrateKbps ?? 0) || 0;
+    Number(
+      telemetry.measured?.bitrateKbps ??
+        telemetry.metrics?.bitrateKbps ??
+        telemetry.bitrateKbps ??
+        0,
+    ) || 0;
   const latencyMs =
-    Number(telemetry.metrics?.rttMs ?? telemetry.rttMs ?? 0) || null;
+    Number(
+      telemetry.measured?.rttMs ?? telemetry.metrics?.rttMs ?? telemetry.rttMs ?? 0,
+    ) || null;
   const online = telemetry.online === true;
 
   const previousMemory = await loadCameraLifecycleMemory(camera.id);
@@ -169,6 +181,8 @@ async function projectCamera(
     reason:
       typeof telemetry.reason === "string"
         ? telemetry.reason
+        : typeof telemetry.health?.label === "string"
+          ? `Camera health ${telemetry.health.label}`
         : online
           ? "Camera stream active"
           : "Camera stream offline",
@@ -186,6 +200,7 @@ async function projectCamera(
     keyFingerprint,
     sceneKey,
     sceneAction: mapEventToSceneAction(lifecycle.ingestEventType),
+    playback: getPublicCameraPlayback(camera.id, online),
   };
 }
 

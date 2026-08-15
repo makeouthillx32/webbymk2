@@ -63,6 +63,14 @@ function devModulesVolume(zone: Zone): string {
   return zone.key === "unenter" ? "dev-core-modules" : `dev-${zone.key}-modules`;
 }
 
+function devAppVolume(zone: Zone): string {
+  return zone.key === "unenter" ? "dev-core-app" : `dev-${zone.key}-app`;
+}
+
+function devNextVolume(zone: Zone): string {
+  return zone.key === "unenter" ? "dev-core-next" : `dev-${zone.key}-next`;
+}
+
 /**
  * Full public domain for the dev container.
  *   Core  (key="unenter")  →  "dev.unenter.live"
@@ -71,7 +79,7 @@ function devModulesVolume(zone: Zone): string {
  * Uses DOMAIN from config/stack.ts (same source as the rest of the stack).
  * Fallback to zone.domain prefix avoids breaking if DOMAIN is not yet set.
  */
-function devDomain(zone: Zone): string {
+export function devDomain(zone: Zone): string {
   const root = DOMAIN || "unenter.live";
   return zone.key === "unenter" ? `dev.${root}` : `dev.${zone.domain}`;
 }
@@ -116,6 +124,40 @@ function mountSource(): string {
   return PROJECT_DIR;
 }
 
+/**
+ * Build the same app overlay used by a zone's production Dockerfile in a
+ * container-only src/app volume. Shared source and src/zones/<key> remain on
+ * the live bind mount, so feature edits still reach Next HMR.
+ */
+function devOverlayCommand(zoneKey: string): string {
+  return `
+set -eu
+find /app/src/app -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+for name in api actions _components providers; do
+  [ -e "/source/src/app/$name" ] || continue
+  cp -a "/source/src/app/$name" "/app/src/app/$name"
+done
+
+for name in provider.tsx globals.css; do
+  [ -e "/source/src/app/$name" ] || continue
+  cp -a "/source/src/app/$name" "/app/src/app/$name"
+done
+
+for entry in /source/zones/${zoneKey}/src/app/* /source/zones/${zoneKey}/src/app/.[!.]* /source/zones/${zoneKey}/src/app/..?*; do
+  [ -e "$entry" ] || continue
+  name="\${entry##*/}"
+  rm -rf "/app/src/app/$name"
+  cp -a "$entry" "/app/src/app/$name"
+done
+
+cd /app
+find .next -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+bun install
+bun dev
+`.trim();
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -133,7 +175,9 @@ export async function startDevContainer(
   onLine: (l: string) => void,
 ): Promise<number> {
   const container = devContainerName(zone);
-  const volume    = devModulesVolume(zone);
+  const volume     = devModulesVolume(zone);
+  const appVolume  = devAppVolume(zone);
+  const nextVolume = devNextVolume(zone);
   const routeKey  = devRouteKey(zone);
   const upstream  = `http://${container}:3000`;
   const envFile   = join(PROJECT_DIR, ".env");
@@ -151,8 +195,11 @@ export async function startDevContainer(
     "--network", "unenter",
     // Source mount — live code available inside the container
     "-v", `${mountSource()}:/app`,
+    "-v", `${mountSource()}:/source:ro`,
     // Isolated node_modules — Linux binaries, not Windows host's copies
     "-v", `${volume}:/app/node_modules`,
+    "-v", `${appVolume}:/app/src/app`,
+    "-v", `${nextVolume}:/app/.next`,
     // Full environment parity with production
     ...(existsSync(envFile) ? ["--env-file", envFile] : []),
     // Zone identity override
@@ -167,7 +214,7 @@ export async function startDevContainer(
     // Image — lightweight official Bun runtime
     "oven/bun:1",
     // Install (updates node_modules volume if deps changed), then start dev server
-    "sh", "-c", "rm -rf .next && bun install && bun dev",
+    "sh", "-c", devOverlayCommand(zone.key),
   ];
 
   return new Promise((resolve) => {

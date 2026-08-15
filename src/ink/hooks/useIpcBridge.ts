@@ -4,7 +4,7 @@ import type { RuntimeInstance } from "../zone/supabase-factory.ts";
 import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
 import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
-import { devContainerName, startDevContainer, stopDevContainer } from "../dev-container.ts";
+import { devContainerName, devDomain, startDevContainer, stopDevContainer } from "../dev-container.ts";
 import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts, recreateCoreService } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
@@ -57,7 +57,7 @@ import {
 import { createZonePipeline } from "../zone-pipeline.ts";
 import { doctorComposeService }    from "../docker.ts";
 import {
-  npmAddZone, npmEnableHost, npmDisableHost,
+  npmAddZone, npmEnableHost, npmDisableHost, npmSecureDevHost,
 } from "../npm/index.ts";
 import { buildInfraServices, checkService, INFRA_SERVICES } from "../infra.ts";
 import { eventBus } from "../../utils/eventBus.js";
@@ -87,7 +87,7 @@ type ZoneFooterPinRow = {
 
 const ZONE_FOOTER_PIN_SELECT = "key,label,domain,footer_pinned";
 const ZONE_FOOTER_PIN_USAGE =
-  "zone <zone-key> status|tag|untag|pinned|logs|build|rebuild|deploy|pull|delete|doctor|dev <start|stop|restart|logs>";
+  "zone <zone-key> status|tag|untag|pinned|logs|build|rebuild|deploy|pull|delete|doctor|dev <start|stop|restart|logs|secure>";
 
 function getSupabaseRestConfig() {
   ensureRuntimeEnv(true);
@@ -3091,7 +3091,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // unaxis zone <name> status
       // unaxis zone <name> tag|untag|pinned
       // unaxis zone <name> logs [--tail <lines>]
-      // unaxis zone <name> dev start|stop|restart
+      // unaxis zone <name> dev start|stop|restart|secure
       // unaxis zone <name> dev logs [--tail <lines>]
       zone: async (args, onLine) => {
         const zoneName = args[0];
@@ -3289,9 +3289,13 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         }
 
         const verb = args[2];
-        if (!verb || !["start", "stop", "restart", "logs"].includes(verb)) {
-          onLine("✗ usage: zone <zone-key> dev <start|stop|restart|logs>");
+        if (!verb || !["start", "stop", "restart", "logs", "secure"].includes(verb)) {
+          onLine("✗ usage: zone <zone-key> dev <start|stop|restart|logs|secure>");
           return 2;
+        }
+
+        if (verb === "secure") {
+          return npmSecureDevHost(devDomain(zone), onLine);
         }
 
         if (verb === "logs") {

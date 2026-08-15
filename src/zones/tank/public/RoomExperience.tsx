@@ -82,7 +82,7 @@ export function RoomExperience({
   };
 
   const { messages, sending, error: chatError, postMessage } =
-    useTankRealtimeChat(room.id, []);
+    useTankRealtimeChat(room.id);
 
   const selected = useMemo(
     () =>

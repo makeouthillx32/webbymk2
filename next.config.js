@@ -75,7 +75,7 @@ const nextConfig = {
   // app via dev.unenter.live (the Docker dev proxy host) instead of localhost.
   allowedDevOrigins: [
     `dev.${CORE_DOMAIN}`,
-    `*.dev.${CORE_DOMAIN}`,
+    `dev.*.${CORE_DOMAIN}`,
   ],
 
   // ── Multi-zone ─────────────────────────────────────────────────────────────

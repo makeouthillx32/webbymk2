@@ -1,6 +1,18 @@
 export type StreamHealth = "live" | "degraded" | "offline";
 export type DeliveryMode = "webrtc" | "hls" | "coming-soon";
 export type CameraProtocol = "srt" | "srtla" | "rtmp" | "ip-camera" | "unknown";
+export type CameraPlaybackStatus = "ready" | "standby" | "unconfigured";
+export type CameraAudioPolicy = "passthrough" | "transcode-required";
+
+export type CameraPlayback = {
+  status: CameraPlaybackStatus;
+  path: string;
+  preferred: DeliveryMode;
+  webrtcPageUrl?: string;
+  whepUrl?: string;
+  hlsUrl?: string;
+  audioPolicy: CameraAudioPolicy;
+};
 export type CameraPresence =
   | "online"
   | "degraded"
@@ -53,6 +65,7 @@ export type DiscoveredCamera = {
   keyFingerprint: string;
   sceneKey: string;
   sceneAction: CameraSceneAction;
+  playback: CameraPlayback;
   audioSourceId?: string;
   audioSourceName?: string;
 };

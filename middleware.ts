@@ -18,6 +18,7 @@ import {
   getZoneConfig,
   getZoneFromPathname,
   isLocalDevelopmentHost,
+  isDevZoneHost,
   normalizeHost,
   resolvePromotionRedirect,
   buildZoneContext,
@@ -90,9 +91,10 @@ export async function middleware(request: NextRequest) {
   // In production, zone comes from the Host header (subdomain routing).
   // In local dev the monolith serves all zones, so fall back to path-based detection.
   // getZoneFromHost returns the subdomain key for dynamic zones not in ZONES.
-  const zoneFromHost: string = isLocal
-    ? getZoneFromPathname(effectivePathname)
-    : getZoneFromHost(normalizedHost);
+  const zoneFromHost: string =
+    isLocal && !isDevZoneHost(normalizedHost)
+      ? getZoneFromPathname(effectivePathname)
+      : getZoneFromHost(normalizedHost);
 
   // ── 2b. Zone Promotion redirect (Core path → promoted zone subdomain) ─────
   // Only fires on the CORE host in production. A promoted Core path like /shop

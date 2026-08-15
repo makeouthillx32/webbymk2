@@ -127,3 +127,84 @@ export async function npmAddDevHost(
     return 1;
   }
 }
+/**
+ * Explicitly secure an already-registered dev host.
+ *
+ * Routine dev starts never request certificates because repeatedly cycling a
+ * container could exhaust Let's Encrypt limits. This operation is deliberately
+ * separate and idempotent: reuse a matching certificate when one exists, or
+ * request one exact certificate for the dev hostname.
+ */
+export async function npmSecureDevHost(
+  domain: string,
+  onLine: OnLine,
+): Promise<number> {
+  if (!(await npmPing())) {
+    onLine(`✗ NPM unreachable — cannot secure ${domain}`);
+    return 1;
+  }
+
+  let token: string;
+  try {
+    token = await npmGetToken();
+  } catch (error) {
+    onLine(`✗ NPM auth failed: ${String(error)}`);
+    return 1;
+  }
+
+  const existing = await npmFindHost(domain, token).catch(() => null);
+  if (!existing) {
+    onLine(`✗ NPM host is not registered for ${domain}`);
+    onLine(`  Start the dev container before requesting its certificate.`);
+    return 1;
+  }
+
+  if (existing.certificate_id && existing.certificate_id !== 0) {
+    onLine(
+      `✓ ${domain} already has SSL (host #${existing.id}, cert #${existing.certificate_id})`,
+    );
+    return 0;
+  }
+
+  onLine(`Checking NPM for an existing certificate covering ${domain}...`);
+  const reusable = await npmFindCertForDomain(domain, token, onLine);
+  if (!reusable && !NPM_HOST.letsencryptEmail) {
+    onLine(`✗ NPM_LE_EMAIL or NPM_EMAIL must be configured to request SSL`);
+    return 1;
+  }
+
+  const certificateId: number | string = reusable?.id ?? "new";
+  onLine(
+    reusable
+      ? `Attaching certificate #${reusable.id} "${reusable.nice_name}"...`
+      : `Requesting one Let's Encrypt certificate for ${domain}...`,
+  );
+
+  try {
+    await npmUpdateHost(
+      existing.id,
+      {
+        ...existing,
+        domain_names: [domain],
+        certificate_id: certificateId,
+        meta: {},
+        ssl_forced: true,
+        http2_support: true,
+        allow_websocket_upgrade: true,
+        hsts_enabled: false,
+        hsts_subdomains: false,
+      },
+      token,
+      true,
+    );
+    onLine(
+      reusable
+        ? `✓ SSL certificate #${reusable.id} attached to host #${existing.id}`
+        : `✓ Let's Encrypt certificate requested for host #${existing.id}`,
+    );
+    return 0;
+  } catch (error) {
+    onLine(`✗ Failed to secure host #${existing.id}: ${String(error)}`);
+    return 1;
+  }
+}

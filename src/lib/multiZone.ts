@@ -253,13 +253,17 @@ export function buildZoneContext(args: {
 }): ZoneRequestContext {
   const host = normalizeHost(args.host);
   const canonicalHost = getCanonicalHost(host);
-  const zone = args.isLocal
+  // Public dev containers have a real zone-bearing hostname
+  // (dev.<zone>.unenter.live). Only bare localhost-style requests need
+  // path-based detection; otherwise every dev zone's root resolves to Core.
+  const usesPathZone = args.isLocal && !isDevZoneHost(host);
+  const zone = usesPathZone
     ? getZoneFromPathname(args.pathname)
     : getZoneFromHost(host);
   const isCoreHost =
     host === CORE_DOMAIN ||
     host === `www.${CORE_DOMAIN}` ||
-    (args.isLocal && getZoneFromPathname(args.pathname) === "unenter") ||
+    (usesPathZone && getZoneFromPathname(args.pathname) === "unenter") ||
     zone === "unenter";
 
   const promo = getPromotionForPath(args.pathname);
@@ -425,6 +429,13 @@ export function crossZoneUrl(zone: ZoneName, pathname: string): string {
 
 // ── Local-dev helpers ─────────────────────────────────────────────────────────
 
+export function isDevZoneHost(host: string): boolean {
+  return (
+    host.startsWith("dev.") &&
+    (host === `dev.${CORE_DOMAIN}` || host.endsWith(`.${CORE_DOMAIN}`))
+  );
+}
+
 export function isLocalDevelopmentHost(host: string): boolean {
   return (
     host === "localhost" ||
@@ -437,8 +448,7 @@ export function isLocalDevelopmentHost(host: string): boolean {
     //   dev.dashboard.unenter.live  (dashboard zone dev container)
     // These get path-based zone detection in middleware (not host-based) so
     // they are never incorrectly redirected to the canonical production host.
-    (host.startsWith("dev.") &&
-      (host === `dev.${CORE_DOMAIN}` || host.endsWith(`.${CORE_DOMAIN}`)))
+    isDevZoneHost(host)
   );
 }
 

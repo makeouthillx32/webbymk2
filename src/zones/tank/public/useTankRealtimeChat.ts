@@ -1,21 +1,27 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
 import type { ChatMessage } from "../contracts";
 import { sendChatMessage } from "../server/actions";
 
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
 export function useTankRealtimeChat(
   roomId: string,
-  initialMessages: ChatMessage[] = [],
+  initialMessages: ChatMessage[] = EMPTY_MESSAGES,
 ) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const previousRoomId = useRef(roomId);
+
   useEffect(() => {
+    if (previousRoomId.current === roomId) return;
+    previousRoomId.current = roomId;
     setMessages(initialMessages);
-  }, [initialMessages]);
+  }, [initialMessages, roomId]);
 
   useEffect(() => {
     if (!roomId) return;

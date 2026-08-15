@@ -32,4 +32,4 @@ export {
 export { npmListCerts, npmFindCertForDomain } from "./certs.ts";
 
 export { npmAddZone, deriveNpmUpstream } from "./zone.ts";
-export { npmAddDevHost } from "./dev.ts";
+export { npmAddDevHost, npmSecureDevHost } from "./dev.ts";

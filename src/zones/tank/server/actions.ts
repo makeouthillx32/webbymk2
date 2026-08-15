@@ -110,6 +110,39 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
   }
 }
 
+export type ClanActionResult = { success: boolean; error?: string };
+
+export async function joinClan(clanId: string): Promise<ClanActionResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "You must be signed in to join a clan." };
+
+  // Table has UNIQUE(user_id), so joining a second clan requires leaving
+  // the first one — do that first so this never silently fails.
+  await supabase.from("tank_clan_members").delete().eq("user_id", user.id);
+
+  const { error } = await supabase
+    .from("tank_clan_members")
+    .insert({ clan_id: clanId, user_id: user.id });
+
+  if (error) return { success: false, error: error.message };
+  return { success: true };
+}
+
+export async function leaveClan(): Promise<ClanActionResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "You must be signed in." };
+
+  const { error } = await supabase
+    .from("tank_clan_members")
+    .delete()
+    .eq("user_id", user.id);
+
+  if (error) return { success: false, error: error.message };
+  return { success: true };
+}
+
 export async function getPlatformLaunchMode(): Promise<boolean> {
   try {
     const supabase = await createClient();

@@ -18,11 +18,11 @@ import type {
 // different, rename it here to match — that's the only place it's defined.
 export const cameras: TankCamera[] = [
   {
-    id: "ip-room-cam",
-    slug: "ip-room-cam",
-    name: "Game Room — Room Cam",
-    location: "Game room, IP camera",
-    description: "Fixed IP camera covering the game room.",
+    id: "cam-1786768240090",
+    slug: "cam0",
+    name: "Cam0",
+    location: "Game room",
+    description: "The first verified live Tank camera.",
     health: "offline",
     bitrateKbps: 0,
     latencyMs: null,
@@ -62,7 +62,7 @@ export const channels: TankChannel[] = [
     followers: 0,
     live: false,
     category: "IRL",
-    cameraIds: ["ip-room-cam", "oc-setup-cam"],
+    cameraIds: ["cam-1786768240090", "oc-setup-cam"],
   },
   {
     id: "channel-game-room",
@@ -74,7 +74,7 @@ export const channels: TankChannel[] = [
     followers: 0,
     live: false,
     category: "IRL",
-    cameraIds: ["ip-room-cam", "oc-setup-cam"],
+    cameraIds: ["cam-1786768240090", "oc-setup-cam"],
   },
 ];
 
@@ -87,8 +87,8 @@ export const rooms: TankRoom[] = [
     description:
       "One continuously directed feed, switching across every connected house camera as it comes online.",
     channelId: "channel-director",
-    cameraIds: ["ip-room-cam", "oc-setup-cam"],
-    featuredCameraId: "ip-room-cam",
+    cameraIds: ["cam-1786768240090", "oc-setup-cam"],
+    featuredCameraId: "cam-1786768240090",
     live: false,
     viewers: 0,
     tags: ["Live", "Multi-camera"],
@@ -101,8 +101,8 @@ export const rooms: TankRoom[] = [
     description:
       "The game room: a fixed IP camera on the room, plus a camera on the OC setup.",
     channelId: "channel-game-room",
-    cameraIds: ["ip-room-cam", "oc-setup-cam"],
-    featuredCameraId: "ip-room-cam",
+    cameraIds: ["cam-1786768240090", "oc-setup-cam"],
+    featuredCameraId: "cam-1786768240090",
     live: false,
     viewers: 0,
     tags: ["Game room", "IRL"],
