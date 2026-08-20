@@ -290,32 +290,132 @@ export function RoomExperience({
             <ChevronDown className="h-4 w-4" />
           </button>
         </div>
-        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="flex-1 space-y-3 overflow-y-auto p-3">
           {messages.length === 0 && (
             <p className="text-xs text-muted-foreground">
               No messages yet — be the first.
             </p>
           )}
-          {messages.map((message) => (
-            <div key={message.id} className="text-sm">
-              <span className="mr-2 text-[11px] text-muted-foreground">
-                {message.time}
-              </span>
-              <strong
-                className={
-                  message.role === "moderator" || message.role === "admin"
-                    ? "text-primary"
-                    : message.role === "member"
-                      ? "text-cyan-500"
-                      : ""
-                }
-              >
-                {message.user}
-              </strong>
-              <span className="text-muted-foreground">: </span>
-              <span className="leading-6">{message.body}</span>
-            </div>
-          ))}
+          {messages.map((message) => {
+            const isSystemMsg = message.messageType === "system" || message.user === "SYSTEM";
+            const isHouseEvent =
+              message.messageType === "house_event" ||
+              message.messageType === "trivia" ||
+              message.messageType === "scavenger" ||
+              message.user === "HOUSE EVENT" ||
+              message.body.includes("[HOUSE EVENT]");
+            const isLevelUp = message.messageType === "level_up" || message.body.includes("[LEVEL UP]");
+
+            if (isSystemMsg) {
+              return (
+                <div key={message.id} className="my-2 rounded-xl border border-cyan-500/40 bg-cyan-950/30 p-2.5 text-xs shadow-md">
+                  <div className="flex items-center gap-1.5 font-mono font-bold text-cyan-400 mb-1">
+                    <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
+                    <span>[SYSTEM CONSOLE]</span>
+                  </div>
+                  <p className="text-slate-200 font-medium leading-relaxed">{message.body}</p>
+                </div>
+              );
+            }
+
+            if (isHouseEvent) {
+              const isTrivia = message.messageType === "trivia" || message.body.includes("TRIVIA");
+              const badgeText = isTrivia ? "📟 [HOUSE TRIVIA]" : "⚡ [HOUSE EVENT]";
+
+              return (
+                <div key={message.id} className="my-2 rounded-xl border border-white/10 bg-[#13161c]/90 p-3 text-xs shadow-sm text-left animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-white/10">
+                    <div className="flex items-center gap-1.5 font-mono font-bold text-slate-300 uppercase tracking-widest text-[10px]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-ping" />
+                      <span>{badgeText}</span>
+                    </div>
+                    {message.time && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {message.time}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-200 font-normal leading-relaxed whitespace-pre-wrap">
+                    {message.body.replace(/^🧠\s*\[HOUSE TRIVIA\]\s*/i, "").replace(/^⚡\s*\[HOUSE EVENT\]\s*/i, "")}
+                  </p>
+                </div>
+              );
+            }
+
+            if (isLevelUp) {
+              return (
+                <div key={message.id} className="my-2 rounded-xl border border-white/10 bg-[#14161a]/90 p-2.5 text-xs shadow-sm text-left animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between gap-2 mb-1 pb-1 border-b border-white/10">
+                    <div className="flex items-center gap-1.5 font-mono font-bold text-amber-300 uppercase tracking-widest text-[10px]">
+                      <span>🎉</span> [LEVEL UP]
+                    </div>
+                    {message.time && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {message.time}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-200 font-medium leading-relaxed">
+                    {message.body.replace(/^🎉\s*\[LEVEL UP\]\s*/i, "")}
+                  </p>
+                </div>
+              );
+            }
+
+            const level = message.level ?? 1;
+            const rank = message.rank || (level >= 30 ? "Legend" : level >= 15 ? "VIP" : level >= 5 ? "Regular" : "Newbie");
+
+            return (
+              <div key={message.id} className="group relative flex gap-2 rounded-xl border border-white/5 bg-black/40 p-2.5 text-xs transition hover:bg-black/60">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Level Badge */}
+                    <span className="rounded bg-red-950/80 px-1 py-0.2 text-[9px] font-black text-red-400 border border-red-500/60">
+                      Lvl {level}
+                    </span>
+
+                    {/* Rank Badge */}
+                    {rank === "Legend" && (
+                      <span className="rounded bg-amber-950/80 px-1.5 py-0.2 text-[9px] font-black uppercase text-amber-300 border border-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.3)]">
+                        👑 Legend
+                      </span>
+                    )}
+                    {rank === "VIP" && (
+                      <span className="rounded bg-purple-950/80 px-1.5 py-0.2 text-[9px] font-black uppercase text-purple-300 border border-purple-500">
+                        ⭐ VIP
+                      </span>
+                    )}
+                    {rank === "Regular" && (
+                      <span className="rounded bg-cyan-950/80 px-1.5 py-0.2 text-[9px] font-black uppercase text-cyan-400 border border-cyan-600">
+                        ⚡ Regular
+                      </span>
+                    )}
+                    {rank === "Newbie" && (
+                      <span className="rounded bg-slate-800/80 px-1.5 py-0.2 text-[9px] font-black uppercase text-slate-300 border border-slate-700">
+                        🌱 Newbie
+                      </span>
+                    )}
+
+                    {/* Staff Roles */}
+                    {message.role === "admin" && (
+                      <span className="rounded bg-amber-500 px-1 py-0.2 text-[9px] font-black uppercase text-black">
+                        ADMIN
+                      </span>
+                    )}
+                    {message.role === "moderator" && (
+                      <span className="rounded bg-emerald-500 px-1 py-0.2 text-[9px] font-black uppercase text-black">
+                        MOD
+                      </span>
+                    )}
+
+                    <strong className="font-bold text-white tracking-wide">{message.user}</strong>
+                    <span className="text-[10px] text-muted-foreground ml-auto">{message.time}</span>
+                  </div>
+                  <p className="mt-1 text-slate-200 leading-relaxed break-words font-medium">{message.body}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
         {chatError && (
           <div className="px-4 py-1.5 text-xs font-semibold text-red-500 bg-red-500/10">

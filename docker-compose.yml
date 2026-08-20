@@ -25,6 +25,10 @@ volumes:
     name: webbymk2_unt-db-data
   unt-storage-data:
     name: webbymk2_unt-storage-data
+  # MediaMTX recording staging area — see the mediamtx service for why this is
+  # a small bounded buffer rather than the archive itself.
+  unt-tank-spool:
+    name: webbymk2_unt-tank-spool
   # unt-ink-modules and unt-tui-modules removed — TUI now runs natively via Bun (tui/run.ps1)
 
 services:
@@ -68,6 +72,15 @@ services:
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction
       KONG_LOG_LEVEL: warn
+      # GoTrue can return large auth response headers when a user's JWT carries
+      # non-trivial metadata. Kong's default one-page Nginx proxy header buffer
+      # rejects those responses with "upstream sent too big header" and turns a
+      # valid password grant into a 502. Keep this comfortably above the JWTs
+      # we issue, and scale the associated Nginx pool/busy limits together so
+      # its startup-time buffer invariants remain valid.
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "64k"
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "8 64k"
+      KONG_NGINX_PROXY_PROXY_BUSY_BUFFERS_SIZE: "128k"
     volumes:
       - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
     depends_on:
@@ -100,6 +113,32 @@ services:
       # Pinning the path makes it read auth.schema_migrations, the real history.
       GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres?search_path=auth
       GOTRUE_SITE_URL: ${SITE_URL:-https://unenter.live}
+      # .env's ADDITIONAL_REDIRECT_URLS was never actually wired to GoTrue —
+      # dead config. GOTRUE_SITE_URL alone (www.unenter.live) is GoTrue's only
+      # allowed OAuth redirect target, so moving sign-in to auth.unenter.live
+      # (2026-08-17) broke Google/Apple/Facebook OAuth with a 400 "redirect_to
+      # not allowed" the moment the callback tried to land on the new zone.
+      # Wildcard covers every current and future path on both hosts.
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-https://www.unenter.live,http://localhost:3000},https://auth.unenter.live/**,https://www.unenter.live/**
+      # External OAuth providers. Redirect URI registered in each provider's
+      # console is the same for all three — Kong's public callback endpoint,
+      # not our app: https://db.unenter.live/auth/v1/callback
+      # GoTrue's config parser fatals (crash-loop) if these are an empty
+      # string rather than a literal "true"/"false" — ${VAR:+true} alone
+      # produces "" when the var is unset, which is invalid. Explicit
+      # per-provider ENABLED flags in .env avoid that trap.
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
+      GOTRUE_EXTERNAL_FACEBOOK_ENABLED: ${FACEBOOK_ENABLED:-false}
+      GOTRUE_EXTERNAL_FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID}
+      GOTRUE_EXTERNAL_FACEBOOK_SECRET: ${FACEBOOK_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_FACEBOOK_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
+      GOTRUE_EXTERNAL_APPLE_ENABLED: ${APPLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_APPLE_CLIENT_ID: ${APPLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_APPLE_SECRET: ${APPLE_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_APPLE_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
@@ -227,7 +266,12 @@ services:
       DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
       STORAGE_BACKEND: file
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      FILE_SIZE_LIMIT: 52428800
+      # Raised from 50 MB so the archive can store real footage: a 10-minute
+      # 1080p segment is ~225 MB. This is only the GLOBAL ceiling — every
+      # bucket carries its own, tighter file_size_limit in storage.buckets
+      # (tank-archives 512 MB, tank-loops 25 MB, image buckets 10 MB or less),
+      # so raising this does not let a 1 GB avatar through.
+      FILE_SIZE_LIMIT: 1073741824
       TENANT_ID: ${STORAGE_TENANT_ID:-stub}
       REGION: ${REGION:-us-east-1}
       S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID}
@@ -378,6 +422,98 @@ services:
   #   STRIPE_*          — shop-only secrets (already in .env, injected via env_file)
   # ──────────────────────────────────────────────────────────────────────────────
 
+  # ── Tank media gateway ────────────────────────────────────────────────────────
+  # Republishes camera sources as browser-playable WHEP (WebRTC) and HLS.
+  # Nothing in the platform produced watchable video before this — the tank zone
+  # code (src/zones/tank/server/mediaGateway.ts) has always expected something
+  # answering at TANK_WHEP_PUBLIC_BASE_URL / TANK_HLS_PUBLIC_BASE_URL, but no
+  # such service was ever deployed. This is that service.
+  #
+  # No camera paths are hand-defined — Tank's server auto-provisions a path
+  # for every online camera via this container's control API (9997, internal
+  # only — deliberately not in the ports list below), pulling each camera's
+  # own SRT "video out" port from the SRT Receiver Manager. No camera
+  # credentials ever pass through this container or any file in this repo.
+  # See mediamtx/mediamtx.yml and src/zones/tank/server/receiverManager.ts.
+  #
+  # This is additive to the core stack — bring it up with the scoped command so
+  # you don't touch anything else already running:
+  #   docker compose up -d mediamtx
+  mediamtx:
+    # -ffmpeg variant: cameras needing audio transcode (e.g. PCM A-law -> Opus)
+    # run their runOnInit ffmpeg command inside this container's own process
+    # namespace (see provisionMediaMtxCamera in mediaGateway.ts) — the base
+    # image has no ffmpeg binary at all, which silently crash-loops that path
+    # every ~5s with no visible error anywhere except this container's own
+    # logs. Confirmed 2026-08-16: Cam0 (transcode-required) never connected
+    # until this switch; Cam1 (embedded audio, no transcode) worked fine on
+    # the base image the whole time, which is why only one of two cameras
+    # was affected.
+    # Built from mediamtx/Dockerfile: the stock image is the -ffmpeg variant
+    # plus curl, because BusyBox wget silently truncates binary request bodies
+    # and the recording hook has to upload MP4 segments. See that file.
+    # NVENC build: Ubuntu 24.04 (glibc) + ffmpeg 6.1 + curl + the MediaMTX
+    # binary. The previous Alpine image could not do hardware encoding for two
+    # independent reasons — musl cannot load the glibc driver libraries the
+    # NVIDIA runtime injects, and its ffmpeg had no nvenc encoders compiled in.
+    # Measured here: libx264 veryfast costs 30.4 CPU seconds per 60s of 720p30
+    # against 3.2s for h264_nvenc. See mediamtx/Dockerfile.nvenc.
+    image: unenter/mediamtx:1.20.0-nvenc
+    build:
+      context: ./mediamtx
+      dockerfile: Dockerfile.nvenc
+    container_name: unt_mediamtx
+    restart: unless-stopped
+    # `video` alongside `gpu` is required: without it the runtime injects CUDA
+    # but NOT libnvidia-encode, and every nvenc rung dies at startup with a
+    # misleading "Cannot load libnvidia-encode.so.1".
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+    ports:
+      - "8889:8889"        # WHEP (HTTP, WebRTC signaling)
+      - "8189:8189/udp"    # WebRTC ICE media
+      # OBS / Streamlabs ingest. Safe to expose ONLY because publishing is now
+      # authorised per-attempt by Tank (authMethod: http in mediamtx.yml) —
+      # the previous `user: any` publish grant would have made this an open
+      # ingest for anyone on the internet.
+      - "1935:1935"        # RTMP publish
+    expose:
+      - "8888"             # HLS (HTTP, internal unenter network)
+    environment:
+      # Consumed by mediamtx/scripts/on-segment-complete.sh, which runs INSIDE
+      # this container (it is the only one in the stack with ffmpeg). Kong is
+      # reachable container-to-container on the shared `unenter` network.
+      SUPABASE_INTERNAL_URL: ${SUPABASE_INTERNAL_URL:-http://kong:8000}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      TANK_ARCHIVE_NOTIFY_URL: ${TANK_ARCHIVE_NOTIFY_URL:-http://unt_tank:3000/api/tank/archive/segment-complete}
+      TANK_ARCHIVE_INGEST_SECRET: ${TANK_ARCHIVE_INGEST_SECRET}
+      TANK_PREROLL_SECONDS: ${TANK_PREROLL_SECONDS:-15}
+      # Where the OBS room lifecycle hooks report signal start/stop.
+      TANK_OBS_SIGNAL_URL: ${TANK_OBS_SIGNAL_URL:-http://unt_tank:3000/api/tank/obs/signal}
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./mediamtx/scripts:/scripts:ro
+      # Local staging spool. Deliberately small and bounded: recordings land
+      # here, get uploaded to Supabase, and are expired by MediaMTX's own
+      # recordDeleteAfter. At 6 cameras x ~3 Mbps this is ~8 GB/hour, so the
+      # 2h retention below caps it around 16 GB — it is a retry buffer, NOT
+      # the archive. The 24h archive lives in Supabase Storage.
+      - unt-tank-spool:/recordings
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "media"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
   app:
     image: ghcr.io/makeouthillx32/unenter:latest
     build:
@@ -418,6 +554,3 @@ services:
       unaxis.domain: "unenter.live"
       unaxis.role: "core"
       unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
-
-
-
