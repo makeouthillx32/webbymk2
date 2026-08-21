@@ -430,6 +430,46 @@ export function getArchiveRungConfig(): ArchiveRungConfig {
   };
 }
 
+/**
+ * Calculates a staggered segment duration for a camera to prevent synchronized
+ * upload bursts. When multiple cameras share an identical duration (e.g. 10m),
+ * all segment boundaries and Supabase uploads trigger at the exact same second,
+ * producing 400%+ CPU and network spikes.
+ *
+ * Assigning a deterministic ±45s offset per camera (e.g. 555s, 570s, 585s, 600s, 615s, 630s, 645s)
+ * ensures segment completion windows drift apart naturally and disperse upload load evenly.
+ */
+export function calculateStaggeredSegmentDuration(
+  cameraId?: string,
+  baseDurationStr: string = "10m",
+): string {
+  let baseSeconds = 600;
+  const match = baseDurationStr.match(/^(\d+)([smh]?)$/i);
+  if (match) {
+    const val = parseInt(match[1], 10);
+    const unit = (match[2] || "s").toLowerCase();
+    if (unit === "m") baseSeconds = val * 60;
+    else if (unit === "h") baseSeconds = val * 3600;
+    else baseSeconds = val;
+  }
+
+  if (!cameraId) {
+    return `${baseSeconds}s`;
+  }
+
+  let hash = 0;
+  for (let i = 0; i < cameraId.length; i++) {
+    hash = (hash << 5) - hash + cameraId.charCodeAt(i);
+    hash |= 0;
+  }
+
+  const offsets = [-45, -30, -15, 0, 15, 30, 45];
+  const offset = offsets[Math.abs(hash) % offsets.length];
+  const staggeredSeconds = Math.max(60, baseSeconds + offset);
+
+  return `${staggeredSeconds}s`;
+}
+
 // Provisions the continuous-archive rung for one camera.
 //
 // Unlike the 720p ladder rung, this runs as its own ffmpeg pulling the already
@@ -457,13 +497,31 @@ async function provisionArchiveRung(
     });
   }
 
-  const encode =
-    `ffmpeg -nostdin -hide_banner -loglevel warning${hwDecodeFlags()} -rtsp_transport tcp` +
-    ` -i rtsp://127.0.0.1:8554/${mainPath}` +
-    ` -map 0:v:0 -map 0:a:0? -vf ${scaleFilter(1080)}` +
-    ` ${encoderTuning().archive(config.bitrate)} -fps_mode passthrough` +
-    ` -c:a aac -b:a 128k` +
-    ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${archivePath}`;
+  const staggeredDuration = calculateStaggeredSegmentDuration(cameraId, config.segmentDuration);
+
+  // Two ways to fill the archive, and the choice is a hardware budget, not a
+  // preference. This GPU allows 12 concurrent NVENC sessions; six low rungs
+  // already hold six of them, so a 1080p archive encode per camera consumes
+  // the remaining six and leaves nothing for anything else — including the
+  // director program mixer, which needs one.
+  //
+  // Copying the existing 720p low rung costs ZERO encoder sessions and almost
+  // no CPU, at the price of archiving at 720p rather than 1080p.
+  const archiveFromLowRung = process.env.TANK_ARCHIVE_SOURCE !== "transcode";
+
+  const encode = archiveFromLowRung
+    ? // Straight remux of a stream that is already H.264 720p with AAC audio.
+      // No decode, no encode, no filter graph — just bytes into a file.
+      `ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp` +
+      ` -i rtsp://127.0.0.1:8554/${cameraHlsLowMediaPath(cameraId)}` +
+      ` -map 0:v:0 -map 0:a:0? -c:v copy -c:a copy` +
+      ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${archivePath}`
+    : `ffmpeg -nostdin -hide_banner -loglevel warning${hwDecodeFlags()} -rtsp_transport tcp` +
+      ` -i rtsp://127.0.0.1:8554/${mainPath}` +
+      ` -map 0:v:0 -map 0:a:0? -vf ${scaleFilter(1080)}` +
+      ` ${encoderTuning().archive(config.bitrate)} -fps_mode passthrough` +
+      ` -c:a aac -b:a 128k` +
+      ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${archivePath}`;
 
   return upsertMediaMtxPath(apiUrl, archivePath, {
     source: "publisher",
@@ -473,7 +531,7 @@ async function provisionArchiveRung(
     record: true,
     recordFormat: "fmp4",
     recordPath: "/recordings/%path/%Y-%m-%d_%H-%M-%S-%f",
-    recordSegmentDuration: config.segmentDuration,
+    recordSegmentDuration: staggeredDuration,
     // MediaMTX expires the local copy on its own. The upload hook has this
     // long to succeed or retry before the bytes are gone locally.
     recordDeleteAfter: config.spoolRetention,
