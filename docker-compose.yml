@@ -253,6 +253,7 @@ services:
       CORE_DOMAIN:        "${CORE_DOMAIN:-unenter.live}"
       AGENT_PORT:         "8888"                       # TOFU — no secret needed, first TUI to connect pairs automatically
       AGENT_STATE_FILE:   "/proxy-config/agent-state.json"  # embedded context — state in proxy-config volume
+      STATUS_PUBLIC_KEY:  "${STATUS_PUBLIC_KEY}"             # gates GET /__status-api/public — set in .env, kept out of git
       # Fallback env vars — used only if proxy-config/routes.json is missing.
       UPSTREAM_UNENTER:   "http://unt_app:3000"
       UPSTREAM_BLOG:      "http://blog:3000"

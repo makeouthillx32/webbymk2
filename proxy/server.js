@@ -32,6 +32,7 @@ const fs        = require("fs");
 const path      = require("path");
 const http      = require("http");
 const httpProxy = require("http-proxy");
+const agent     = require("./agent"); // also starts the embedded UNAXIS agent + status collector
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -233,7 +234,30 @@ function resolveTarget(req) {
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
+// ── Public status API ─────────────────────────────────────────────────────────
+// Read-only, key-gated snapshot for the Vercel-hosted status page. Served
+// straight off this already-public/SSL-terminated port so no new DNS/port
+// needs opening. Data comes from agent.js's local history file — never from
+// db.unenter.live (that database is unenter.live application data only).
+function handlePublicStatusRequest(req, res) {
+  const key = req.headers["x-status-key"] ?? new URL(req.url, "http://x").searchParams.get("key");
+  if (!agent.STATUS_PUBLIC_KEY || key !== agent.STATUS_PUBLIC_KEY) {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  const snapshot = agent.getPublicStatusSnapshot();
+  res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=15" });
+  res.end(JSON.stringify(snapshot));
+}
+
 const server = http.createServer((req, res) => {
+  const pathname0 = (req.url ?? "/").split("?")[0];
+  if (req.method === "GET" && pathname0 === "/__status-api/public") {
+    handlePublicStatusRequest(req, res);
+    return;
+  }
+
   const target = resolveTarget(req);
   // Preserve the original x-forwarded-host set by NPM (the public hostname).
   // Only set it ourselves when it isn't already present — i.e. direct connections
