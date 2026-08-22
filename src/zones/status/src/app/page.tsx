@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { fetchStatusSnapshot, type CurrentService } from "../lib/status";
 import UptimeBars from "../components/UptimeBars";
 
@@ -23,6 +24,11 @@ function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+const REFRESH_COPY = {
+  degraded: "A service is degraded right now. This is usually a transient reconnect — refreshing the page often clears it up.",
+  down:     "A service is down right now. If a page looks broken or won't load, refreshing usually resolves it once the service recovers.",
+} as const;
+
 export default async function StatusPage() {
   const { current, history, incidents } = await fetchStatusSnapshot();
 
@@ -32,13 +38,31 @@ export default async function StatusPage() {
   return (
     <div className="wrap">
       <div className="header">
-        <div className="brand">Unenter Status</div>
+        <Link className="brand" href="/">
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2 L21 7 V17 L12 22 L3 17 V7 Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M12 2 V22 M3 7 L21 17 M21 7 L3 17" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+            </svg>
+          </span>
+          <span className="brand-text">
+            <span className="brand-name">UNAXIS</span>
+            <span className="brand-sub">unenter.live platform status</span>
+          </span>
+        </Link>
       </div>
 
       <div className={`banner ${overall}`}>
         <span className="dot" />
         {BANNER_TEXT[overall]}
       </div>
+
+      {overall !== "operational" && (
+        <Link className={`refresh-callout ${overall}`} href="/">
+          <span>{REFRESH_COPY[overall]}</span>
+          <span className="refresh-cta">Refresh →</span>
+        </Link>
+      )}
 
       {current.length === 0 ? (
         <p className="empty">No status data yet — the collector just started reporting.</p>
@@ -75,7 +99,7 @@ export default async function StatusPage() {
         ))
       )}
 
-      <div className="footer">unenter.live status</div>
+      <div className="footer">UNAXIS · unenter.live status</div>
     </div>
   );
 }
