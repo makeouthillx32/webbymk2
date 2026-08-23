@@ -1,3 +1,6 @@
+// Force a fresh Vercel build against the current STATUS_API_URL env var
+// (status.unenter.live/__status-api/public) rather than relying on the
+// dashboard's Redeploy button, which was repeatedly re-running a stale commit.
 import Link from "next/link";
 import { fetchStatusSnapshot, type CurrentService } from "../lib/status";
 import UptimeBars from "../components/UptimeBars";
