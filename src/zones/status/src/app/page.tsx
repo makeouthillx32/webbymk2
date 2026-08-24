@@ -108,14 +108,19 @@ export default async function StatusPage({ searchParams }: StatusPageProps) {
         ))
       )}
 
-      <div className="section-title">Past Incidents</div>
+      <div className="section-title">Incidents</div>
       {incidents.length === 0 ? (
         <p className="empty">No incidents reported.</p>
       ) : (
         incidents.map((incident) => (
           <div className="incident" key={incident.id}>
             <div className="incident-date">{formatDate(incident.started_at)}</div>
-            <div className="incident-title">{incident.title}</div>
+            <div className="incident-heading">
+              <div className="incident-title">{incident.title}</div>
+              <span className={`incident-state ${incident.status}`}>
+                {incident.status === "resolved" ? "Resolved" : `${incident.status[0]?.toUpperCase()}${incident.status.slice(1)} · Ongoing`}
+              </span>
+            </div>
             {incident.updates.map((update, i) => (
               <div className="incident-update" key={i}>
                 <span className="u-status">{update.status}</span> — {update.body}
