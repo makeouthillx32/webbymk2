@@ -28,17 +28,42 @@ export type StatusSnapshot = {
   generatedAt:  string;
 };
 
+export type StatusSnapshotResult = {
+  snapshot: StatusSnapshot;
+  source: "live" | "unreachable";
+};
+
 const EMPTY_SNAPSHOT: StatusSnapshot = { current: [], history: [], incidents: [], generatedAt: new Date(0).toISOString() };
 
-export async function fetchStatusSnapshot(): Promise<StatusSnapshot> {
+export async function fetchStatusSnapshot(): Promise<StatusSnapshotResult> {
+  if (!STATUS_API_URL || !STATUS_API_KEY) {
+    console.error("status fetch: STATUS_API_URL or STATUS_API_KEY is not configured");
+    return { snapshot: EMPTY_SNAPSHOT, source: "unreachable" };
+  }
+
   try {
+    // Explicit timeout, shorter than Vercel's function execution limit — a
+    // hung fetch to a home-network-hosted backend (over the public internet,
+    // through NPM, through Docker) should fail fast and predictably rather
+    // than risk the whole serverless function timing out at the platform
+    // level. Confirmed live 2026-08-23: the page was silently stuck on
+    // EMPTY_SNAPSHOT for minutes with zero error surfaced anywhere, because
+    // this catch block swallowed the failure without logging it — that's
+    // the actual bug being fixed here, not just the timeout.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(STATUS_API_URL, {
       headers: { "x-status-key": STATUS_API_KEY },
       next: { revalidate: 30 },
-    });
-    if (!res.ok) return EMPTY_SNAPSHOT;
-    return res.json();
-  } catch {
-    return EMPTY_SNAPSHOT;
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+    if (!res.ok) {
+      console.error(`status fetch: non-OK response`, { status: res.status, url: STATUS_API_URL });
+      return { snapshot: EMPTY_SNAPSHOT, source: "unreachable" };
+    }
+    return { snapshot: await res.json(), source: "live" };
+  } catch (err) {
+    console.error(`status fetch: failed`, { error: err instanceof Error ? err.message : String(err), url: STATUS_API_URL });
+    return { snapshot: EMPTY_SNAPSHOT, source: "unreachable" };
   }
 }
