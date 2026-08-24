@@ -5,9 +5,9 @@
     {
       "id": "2026-08-24-power-wsl2-vhdx-mount-failure",
       "title": "POWER environment outage",
-      "status": "identified",
+      "status": "resolved",
       "started_at": "2026-08-24T15:00:00.000Z",
-      "resolved_at": null,
+      "resolved_at": "2026-08-24T20:11:57.000Z",
       "updates": [
         {
           "status": "investigating",
@@ -18,6 +18,11 @@
           "status": "identified",
           "body": "The team identified a host crash followed by Docker Desktop's WSL2 backend failing to mount its virtual disk because access was denied. Recovery work is in progress. This incident is not resolved.",
           "created_at": "2026-08-24T19:13:29.000Z"
+        },
+        {
+          "status": "resolved",
+          "body": "Service was restored after correcting Docker WSL virtual-disk ownership metadata and starting the platform through UNAXIS. Core, auth, Tank, database health, and the independent status endpoint returned HTTP 200. A host doctor now checks the disk path and ownership and prints a scoped recovery procedure without automatically restarting WSL or Docker or modifying the virtual disks.",
+          "created_at": "2026-08-24T20:11:57.000Z"
         }
       ]
     }
