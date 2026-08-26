@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+    <defs>
+      <linearGradient id="woodBark" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#451a03"/>
+        <stop offset="40%" stop-color="#92400e"/>
+        <stop offset="80%" stop-color="#d97706"/>
+        <stop offset="100%" stop-color="#78350f"/>
+      </linearGradient>
+      <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="2" dy="6" stdDeviation="5" flood-opacity="0.6"/>
+      </filter>
+    </defs>
+    <g filter="url(#shadow)" transform="rotate(-35 128 128)">
+      <!-- Main Flared Body -->
+      <polygon points="118,20 138,20 160,225 96,225" fill="url(#woodBark)" stroke="#292524" stroke-width="4"/>
+      <!-- Mouthpiece Wax -->
+      <ellipse cx="128" cy="20" rx="12" ry="6" fill="#fef08a" stroke="#ca8a04" stroke-width="2"/>
+      <!-- Painted Tribal Rings -->
+      <ellipse cx="128" cy="70" rx="16" ry="5" fill="#ef4444"/>
+      <ellipse cx="128" cy="110" rx="20" ry="6" fill="#f59e0b"/>
+      <ellipse cx="128" cy="150" rx="24" ry="7" fill="#38bdf8"/>
+      <ellipse cx="128" cy="190" rx="28" ry="8" fill="#ffffff"/>
+      <!-- Tribal Dot Patterns -->
+      <circle cx="120" cy="90" r="3" fill="#ffffff"/>
+      <circle cx="128" cy="90" r="3" fill="#ffffff"/>
+      <circle cx="136" cy="90" r="3" fill="#ffffff"/>
+      <circle cx="118" cy="130" r="3" fill="#ffffff"/>
+      <circle cx="128" cy="130" r="3" fill="#ffffff"/>
+      <circle cx="138" cy="130" r="3" fill="#ffffff"/>
+    </g>
+  </svg>

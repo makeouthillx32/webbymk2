@@ -62,4 +62,6 @@ export interface DerivedZone {
   upstreamEnvKey:  string;
   devPort:         number;
   dynamicSections: DynamicSection[];
+  /** The environment this zone is deployed to — from Zone.environmentId. */
+  environmentId?:  string | null;
 }

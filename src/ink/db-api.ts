@@ -26,6 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawn } from "child_process";
+import { DOCKER_ENV } from "./utils/dockerEnv.ts";
 import {
   ensureRuntimeEnv,
   firstEnvValue,
@@ -122,6 +123,35 @@ export function instanceStudioMcpPageUrl(instance: { studioUrl: string }): strin
 
 /** Host-mapped Postgres port. Default 5432. */
 export const POSTGRES_PORT = envValue(["POSTGRES_PORT"], "5432");
+
+/**
+ * Synthetic RuntimeInstance descriptor for the core Supabase stack.
+ * Used by snapshot/restore/verify functions so core goes through the same
+ * code paths as runtime instances — no special-casing in infrastructure layer.
+ *
+ * Exported so the CLI IPC bridge can pass it to snapshotInstance() for
+ * `db clone core <new-name>` without importing the Db panel component.
+ */
+export const CORE_INSTANCE_SNAPSHOT_TARGET = (() => {
+  const { PROJECT_DIR } = (() => {
+    try { return require("../../config/stack"); } catch { return { PROJECT_DIR: process.cwd() }; }
+  })();
+  return {
+    id:              "core",
+    name:            "Core Supabase",
+    slug:            "unenter",
+    containerPrefix: "unt_",
+    status:          "active"  as const,
+    healthState:     "unknown" as const,
+    snapshotState:   "none"    as const,
+    createdAt:       "",
+    runtimePath:     PROJECT_DIR as string,
+    dockerPath:      PROJECT_DIR as string,
+    ports:  { kong: 8001, kongSSL: 8443, postgres: 5432, pooler: 0, analytics: 0, studio: 3002 },
+    secrets: { postgresPassword: "", jwtSecret: "", anonKey: "", serviceRoleKey: "", dashboardPassword: "" },
+    studioUrl: `http://localhost:3002`,
+  } as import("./zone/supabase-factory.ts").RuntimeInstance;
+})();
 
 /** Postgres password from env (may be empty if the TUI process doesn't load docker .env). */
 export const POSTGRES_PASSWORD = envValue(["POSTGRES_PASSWORD"]);
@@ -244,7 +274,7 @@ export const ANON_KEY = envValue([
   "ANON_KEY",
 ]);
 
-const COMPOSE_PROJECT = "webbymk2";
+const COMPOSE_PROJECT = "unenter.live";
 
 // ── Supabase service definitions ──────────────────────────────────────────────
 
@@ -295,13 +325,6 @@ export const SUPA_SERVICES: SupaService[] = [
 ];
 
 // ── Docker helpers ────────────────────────────────────────────────────────────
-
-const DOCKER_ENV: Record<string, string> = {
-  ...(process.env as Record<string, string>),
-  ...(process.platform !== "win32"
-    ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
-    : {}),
-};
 
 function dockerRun(args: string[]): Promise<{ out: string; code: number }> {
   return new Promise((resolve) => {
@@ -510,7 +533,8 @@ export async function listStorageBuckets(): Promise<BucketInfo[]> {
 import { promises as fsAsync }             from "fs";
 import { join as pathJoin }               from "path";
 import type { RuntimeInstance, HealthState } from "./zone/supabase-factory.ts";
-import { updateInstanceStatus, removeFromRegistry, loadRegistry, saveRegistry } from "./zone/supabase-factory.ts";
+import { updateInstanceStatus, removeFromRegistry, loadRegistry, saveRegistry, getInstanceProjectName } from "./zone/supabase-factory.ts";
+import { removeDatabaseRoutes } from "./proxy-config.ts";
 
 type OnLine = (line: string) => void;
 
@@ -710,7 +734,7 @@ export async function healCoreStack(
 
   // Step 1 — audit current state
   const { out: psOut } = await dockerRun([
-    "compose", "--project-name", instance.slug,
+    "compose", "--project-name", getInstanceProjectName(instance),
     "ps", "--format", "json",
   ]);
 
@@ -794,7 +818,7 @@ export async function verifyCoreStack(
   log(`🔍 Verifying  ${instance.name}  (${instance.slug})`);
 
   const { out: psOut, code } = await dockerRun([
-    "compose", "--project-name", instance.slug,
+    "compose", "--project-name", getInstanceProjectName(instance),
     "ps", "--format", "json",
   ]);
 
@@ -865,7 +889,7 @@ export async function deleteRuntimeInstance(
   // Step 2 — tear down containers + volumes
   onLine(`  ↓ docker compose down --volumes --remove-orphans`);
   const code = await composeStream(
-    ["down", "--volumes", "--remove-orphans"],
+    ["--project-name", getInstanceProjectName(instance), "down", "--volumes", "--remove-orphans"],
     instance.dockerPath,
     onLine,
     120_000,
@@ -885,6 +909,11 @@ export async function deleteRuntimeInstance(
 
   // Step 4 — deregister
   await removeFromRegistry(instance.id);
+  try {
+    await removeDatabaseRoutes(instance.name.toLowerCase());
+  } catch (e) {
+    onLine(`  ⚠ Could not remove database routes: ${e instanceof Error ? e.message : e}`);
+  }
   onLine(`✓ Instance deleted and removed from registry`);
   return true;
 }
@@ -944,6 +973,85 @@ export async function updateInstancePassword(
     list[idx] = {
       ...list[idx],
       secrets: { ...list[idx].secrets!, postgresPassword: newPassword },
+    };
+    await saveRegistry(list);
+    onLine(`✓ Registry updated`);
+  }
+
+  return true;
+}
+
+// ── updateInstanceDashboardPassword ──────────────────────────────────────────
+
+/**
+ * Change the Studio (Kong basic-auth) dashboard password for a runtime instance.
+ *
+ * Steps:
+ *   1. Patch DASHBOARD_PASSWORD in the instance's .env file
+ *   2. Regenerate kong.yml with the new password baked in (Kong reads from file)
+ *   3. Send `docker kill -s HUP` to the Kong container to hot-reload its config
+ *   4. Update the registry secrets so the TUI shows the new value
+ */
+export async function updateInstanceDashboardPassword(
+  instance:    RuntimeInstance,
+  newPassword: string,
+  onLine:      OnLine,
+): Promise<boolean> {
+  const { join }              = await import("path");
+  const { promises: fsp }     = await import("fs");
+  const { generateKongYml }   = await import("./zone/supabase-factory.ts");
+  const { DOMAIN }            = await import("../config/stack.ts");
+
+  const envPath  = join(instance.dockerPath, ".env");
+  const kongPath = join(instance.dockerPath, "volumes", "api", "kong.yml");
+
+  // 1. Patch .env
+  try {
+    let content = await fsp.readFile(envPath, "utf-8");
+    content = content.replace(/^DASHBOARD_PASSWORD=.*/m, `DASHBOARD_PASSWORD=${newPassword}`);
+    content = content.replace(/^DASHBOARD_USERNAME=.*/m, `DASHBOARD_USERNAME=${instance.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`);
+    await fsp.writeFile(envPath, content, "utf-8");
+    onLine(`✓ .env updated`);
+  } catch (e) {
+    onLine(`✗ Could not write .env: ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+
+  // 2. Regenerate kong.yml with new password
+  try {
+    const newSecrets = { ...instance.secrets, dashboardPassword: newPassword };
+    const kongYml = generateKongYml(newSecrets, instance.name, DOMAIN || "unenter.live");
+    await fsp.writeFile(kongPath, kongYml, "utf-8");
+    onLine(`✓ kong.yml regenerated`);
+  } catch (e) {
+    onLine(`✗ Could not write kong.yml: ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+
+  // 3. Reload Kong config (kong reload = graceful worker restart, picks up new kong.yml)
+  const containerPrefix = instance.containerPrefix ?? `${instance.slug}-`;
+  const kongContainer   = `${containerPrefix}kong`;
+  const { code } = await dockerRun(["exec", kongContainer, "kong", "reload"]);
+  if (code === 0) {
+    onLine(`✓ Kong reloaded — new credentials active immediately`);
+  } else {
+    // Fall back to full container restart if kong reload fails
+    onLine(`⚠ kong reload failed — restarting Kong container…`);
+    const { code: restartCode } = await dockerRun(["restart", kongContainer]);
+    if (restartCode === 0) {
+      onLine(`✓ Kong container restarted — new credentials active`);
+    } else {
+      onLine(`⚠ Kong restart failed (container may be stopped) — restart stack to apply new password`);
+    }
+  }
+
+  // 4. Update registry
+  const list = await loadRegistry();
+  const idx  = list.findIndex((i) => i.id === instance.id);
+  if (idx >= 0) {
+    list[idx] = {
+      ...list[idx],
+      secrets: { ...list[idx].secrets!, dashboardPassword: newPassword },
     };
     await saveRegistry(list);
     onLine(`✓ Registry updated`);

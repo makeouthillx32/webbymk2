@@ -9,7 +9,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import { getDocumentUrl } from "@/lib/documents";
 
 export async function GET(req: NextRequest) {
   try {
@@ -38,7 +37,8 @@ export async function GET(req: NextRequest) {
         type: document.type,
         mime_type: document.mime_type,
         size_bytes: document.size_bytes,
-        url: document.storage_path ? getDocumentUrl(document.storage_path) : null,
+        // Served through the streaming route (documents bucket is private).
+        url: document.storage_path ? `/u/doc/${document.id}` : null,
         storage_path: document.storage_path,
         tags: document.tags,
         created_at: document.created_at,
@@ -69,7 +69,8 @@ export async function GET(req: NextRequest) {
           type: doc.type,
           mime_type: doc.mime_type,
           size_bytes: doc.size_bytes,
-          url: doc.storage_path ? getDocumentUrl(doc.storage_path) : null,
+          // Served through the streaming route (documents bucket is private).
+          url: doc.storage_path ? `/u/doc/${doc.id}` : null,
           storage_path: doc.storage_path,
           tags: doc.tags,
           created_at: doc.created_at,

@@ -12,7 +12,10 @@
 
 import React                         from "react";
 import { Box }                       from "../runtimeInk.js";
+import ScrollBox                     from "./ScrollBox.js";
 import { useTermHeight }             from "../hooks/useTermWidth.ts";
+import { useContext }                from "react";
+import { TerminalSizeContext }       from "./TerminalSizeContext.js";
 
 import type { StackOp }              from "./DetachedStack.tsx";
 import type { Notification }         from "./Notifications.tsx";
@@ -65,10 +68,19 @@ export function AppShell({
   onStackCopy, onStackCopyTail, onStackClose, onStackHide,
 }: AppShellProps) {
   const isPanelView = (PANEL_TABS as readonly string[]).includes(view);
-  const th          = useTermHeight();
+  // Use the same fallback chain as AlternateScreen: liveRows (SIGWINCH) →
+  // TerminalSizeContext (from ink.tsx, always uses || 24 fallback) → 24.
+  // useTermHeight() uses stdout.rows ?? 24 which returns 0 when the mobile
+  // SSH client hasn't yet reported terminal size, collapsing the ScrollBox
+  // viewport to 0 and silently cutting off all content below the fold.
+  const liveRows = useTermHeight();
+  const ctxSize  = useContext(TerminalSizeContext);
+  const th       = liveRows || ctxSize?.rows || 24;
 
+  // Constrain to terminal viewport height since inner content is wrapped in a ScrollBox,
+  // preventing the flex-shrink cascade from compressing descendant rows to height=0.
   return (
-    <Box flexDirection="column" height={th} overflow="hidden">
+    <Box flexDirection="column" overflow="hidden" height={th}>
 
       {/* ── App header ──────────────────────────────────────────────────── */}
       <Header
@@ -91,7 +103,7 @@ export function AppShell({
         />
       )}
 
-      {/* ── Active view — fills remaining height, clips rather than scrolls */}
+      {/* ── Active view — fills remaining height, clips rather than scrolls ── */}
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {children}
       </Box>

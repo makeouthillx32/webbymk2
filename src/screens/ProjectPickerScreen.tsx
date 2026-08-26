@@ -2,7 +2,7 @@
 // src/screens/ProjectPickerScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Project picker — shown once at startup, after the splash animation, before
-// the main welcome screen.
+// the project welcome screen.
 //
 // Flow:
 //   StartupScreen (animation) → ProjectPickerScreen → WelcomeScreen → …

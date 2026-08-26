@@ -1,0 +1,53 @@
+GOAL: Tank camera streams work on every browser, iOS Safari first.
+
+CONTEXT
+Tank (tank.unenter.live) streams 3 IP cameras through a MediaMTX media
+gateway (media.tank.unenter.live), publishing both WHEP (WebRTC) and HLS
+for the same source. src/zones/tank/public/CameraPlayer.tsx is the client
+player. It must work for a public, unauthenticated audience across every
+major browser/OS combination — this is launch-blocking.
+
+WHAT'S SHIPPED SO FAR (all live, none confirmed fixed on real iOS Safari)
+1. Added STUN servers to the WHEP RTCPeerConnection (was previously none —
+   any client behind NAT could never connect at all).
+2. Fixed a real race: the WHEP offer was POSTed before ICE gathering
+   finished, so the SDP sometimes carried zero/incomplete candidates.
+   Added a wait-for-ICE-gathering-complete step before sending the offer.
+3. A second (concurrent) rewrite of CameraPlayer.tsx added a "Smart Engine
+   Selector": Apple/Safari devices now get native HLS (<video src=.m3u8>,
+   AVFoundation hardware decode) instead of WebRTC entirely — no ICE, no
+   UDP, nothing a firewall/NAT can silently eat. Desktop still prefers
+   WHEP with an automatic 3.5s watchdog failover to HLS.
+
+STATUS: user confirms iOS Safari is STILL broken after all of the above.
+No error message, no reproduction on desktop testing (Chromium renders
+real decoded video fine on every build so far) — this is the same "can't
+reproduce off-device" problem as the earlier dancing-text bug. Guessing a
+fourth fix blind is not a good use of another deploy cycle.
+
+BLOCKER: no iOS devtools access. iPhone Safari has no remote inspector
+without a paired Mac; nobody on this project has confirmed access to one
+yet. Every theory so far has been diagnosed from source + Chromium/desktop
+testing only, never from a real trace off the actual failing device.
+
+NEXT STEP (concrete, in progress): a small on-page diagnostic overlay
+(TankCameraDebugHud, mirrors the earlier ?debug=viewport HUD used for the
+dancing-text bug) that logs, directly on screen on the phone:
+ - which engine got selected (native-hls / whep / hls-js) and why
+ - video element events: loadstart, loadedmetadata, canplay, playing,
+   error (with MediaError.code/message), stalled, waiting
+ - for HLS: any Hls.js error events, or the native <video>.error object
+ - for WHEP: RTCPeerConnection connectionState/iceConnectionState
+   transitions, and the WHEP POST's HTTP status
+Ship this, have the user load tank.unenter.live/?debug=camera on the
+actual failing iPhone, and read back what's on screen (or screenshot it) —
+that becomes the real bug report instead of another guess.
+
+DEFINITION OF DONE
+- A real iPhone (Safari, cellular AND wifi) loads a live camera and shows
+  moving video within a few seconds, every time, not intermittently.
+- Desktop Chrome, Firefox, Edge, Android Chrome all confirmed the same way
+  (informal check via the in-app browser tool is sufficient for these —
+  iOS Safari is the one that needs a real device).
+- If iOS Safari still fails after native HLS, the diagnostic HUD's output
+  is what decides the next fix — not another guess.

@@ -37,7 +37,7 @@ import { LoadingState } from "../../components/design-system/index.ts";
 
 export type InfraView = "hosts" | "dns" | "ports";
 
-type InfraMap = Record<number, ServiceResult>;
+type InfraMap = Record<string, ServiceResult>;
 
 interface InfraPanelProps {
   /** Pre-resolved active environment from useEnvManager.  Never null-fetch here. */
@@ -164,7 +164,7 @@ function HostsView({
             {svcs.map((svc) => {
               const idx     = services.indexOf(svc);
               const focused = idx === selected;
-              const r       = results[idx];
+              const r       = results[svc.subdomain];
               return (
                 <Box key={svc.label} paddingX={2} gap={2}>
                   <Text color={focused ? "cyan" : undefined} bold={focused}>

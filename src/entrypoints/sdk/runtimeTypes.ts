@@ -3,11 +3,17 @@ export type {
   RuntimeNotification,
   RuntimeOperation,
   RuntimePanel,
+  RuntimeStackItem,
   RuntimeZone,
+  SDKControlRequest,
+  SDKControlResponse,
+  SDKMessage,
 } from './coreTypes.generated.js'
+
 import type {
   RuntimeNotification,
   RuntimeOperation,
+  RuntimeStackItem,
   RuntimeZone,
 } from './coreTypes.generated.js'
 
@@ -17,5 +23,6 @@ export type RuntimeSnapshot = {
   activeZone?: string
   zones: RuntimeZone[]
   operations: RuntimeOperation[]
+  stackItems: RuntimeStackItem[]
   notifications: RuntimeNotification[]
 }

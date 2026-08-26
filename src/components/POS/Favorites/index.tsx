@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { Star } from "../icons";
 import { ProductTile } from "../ProductTile";
 import type { POSProduct } from "../types";
+import { safeStorage } from "@/lib/safeStorage";
 import "./styles.scss";
 
-const STORAGE_KEY = "dcg_pos_favorites";
+const STORAGE_KEY = "unenter_pos_favorites";
 
 interface FavoritesProps {
   products: POSProduct[];
@@ -18,10 +19,10 @@ interface FavoritesProps {
 export function Favorites({ products, onSelect, onManage }: FavoritesProps) {
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
 
-  // Load from localStorage on mount
+  // Load from safeStorage on mount
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = safeStorage.getItem(STORAGE_KEY);
       if (stored) setFavoriteIds(JSON.parse(stored));
     } catch {
       // ignore
@@ -67,7 +68,7 @@ export function useFavorites() {
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = safeStorage.getItem(STORAGE_KEY);
       if (stored) setIds(JSON.parse(stored));
     } catch {}
   }, []);
@@ -78,7 +79,7 @@ export function useFavorites() {
         ? prev.filter((id) => id !== productId)
         : [...prev, productId];
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        safeStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch {}
       return next;
     });

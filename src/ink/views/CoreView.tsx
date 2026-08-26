@@ -23,13 +23,15 @@ import type { Status } from "../docker.ts";
 import { StatusBadge }   from "../components/StatusBadge.tsx";
 import { KeyHints }      from "../components/KeyHint.tsx";
 import { ActionPanel, buildCoreActions, buildProxyActions, isCoreZone } from "../panels/Action/index.tsx";
+import { useScrollIntoView } from "../components/ScrollBox.js";
 
 import { restartZone, pullAndUp, reloadProxy, rebuildProxy } from "../docker.ts";
-import { buildZone, deployZone }               from "../zone-build.ts";
+import { buildAndDeploy, deployZone }           from "../zone-build.ts";
 import { buildAndPushAgent }                   from "../agent-ops.ts";
 import { PROJECT_DIR }                         from "../../config/zones.ts";
 import { addZoneRoute }                        from "../proxy-config.ts";
 import { npmAddZone }                          from "../npm/index.ts";
+import { loadEnvironments }                    from "../environment-store.ts";
 import { unlinkSync }                          from "fs";
 import { join }                                from "path";
 
@@ -55,6 +57,37 @@ interface CoreViewProps {
   isActive:        boolean;
   /** Called once on mount — used to force-refresh zone definitions from DB */
   onEnter?:        () => void;
+}
+
+// ── CoreViewRow Component ─────────────────────────────────────────────────────
+
+interface CoreViewRowProps {
+  label: string;
+  domain: string;
+  status: Status;
+  active: boolean;
+}
+
+function CoreViewRow({ label, domain, status, active }: CoreViewRowProps) {
+  const ref = React.useRef<any>(null);
+  useScrollIntoView(ref, active);
+
+  return (
+    <Box ref={ref} paddingX={1} gap={2}>
+      <Text color={active ? "cyan" : undefined} bold={active}>
+        {active ? "▶" : " "}
+      </Text>
+      <Box width={18}>
+        <Text color={active ? "cyan" : undefined} bold={active}>
+          {label}
+        </Text>
+      </Box>
+      <Box width={28}>
+        <Text dimColor={!active}>{domain}</Text>
+      </Box>
+      <StatusBadge status={status} />
+    </Box>
+  );
 }
 
 // ── Proxy pseudo-zone (not in DB — constructed locally) ───────────────────────
@@ -142,19 +175,13 @@ export function CoreView({
       case "build":
         runOp(`Build + Deploy  ${zone.label}`, async (o) => {
           if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
-          const code = await buildZone(zone, o);
-          if (code !== 0) return code;
-          o("--- pull + up ---");
-          return pullAndUp(zone, o);
+          return buildAndDeploy(zone, o);
         });
         break;
       case "rebuild":
         runOp(`Rebuild + Deploy  ${zone.label}  (no cache)`, async (o) => {
           if (!zone.dockerfile) { o("No Dockerfile"); return 1; }
-          const code = await buildZone(zone, o, { noCache: true });
-          if (code !== 0) return code;
-          o("--- pull + up ---");
-          return pullAndUp(zone, o);
+          return buildAndDeploy(zone, o, { noCache: true });
         });
         break;
       case "logs":
@@ -210,10 +237,13 @@ export function CoreView({
             o("No deployable zones found");
             return 0;
           }
+          const envs   = await loadEnvironments().catch(() => []);
+          const envById = new Map(envs.map((e) => [e.id, e]));
           let failed = 0;
           for (const z of deployableZones) {
+            const zoneEnv = z.environmentId ? (envById.get(z.environmentId) ?? null) : null;
             o(`\n── ${z.label}  (${z.domain}) ──`);
-            const code = await npmAddZone(z, o);
+            const code = await npmAddZone(z, o, zoneEnv);
             if (code !== 0) failed++;
           }
           o(failed === 0
@@ -308,36 +338,20 @@ export function CoreView({
       <SectionFrame title="Platform Core" tone="suggestion">
         <Box flexDirection="column">
           {/* ── App row ─────────────────────────────────────────────────────── */}
-          <Box paddingX={1} gap={2}>
-            <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
-              {selected === 0 ? "▶" : " "}
-            </Text>
-            <Box width={18}>
-              <Text color={selected === 0 ? "cyan" : undefined} bold={selected === 0}>
-                {coreApp?.label ?? "App"}
-              </Text>
-            </Box>
-            <Box width={28}>
-              <Text dimColor={selected !== 0}>{coreApp?.domain ?? "unenter.live"}</Text>
-            </Box>
-            <StatusBadge status={appStatus} />
-          </Box>
+          <CoreViewRow
+            label={coreApp?.label ?? "App"}
+            domain={coreApp?.domain ?? "unenter.live"}
+            status={appStatus}
+            active={selected === 0}
+          />
 
           {/* ── Proxy row ───────────────────────────────────────────────────── */}
-          <Box paddingX={1} gap={2}>
-            <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
-              {selected === 1 ? "▶" : " "}
-            </Text>
-            <Box width={18}>
-              <Text color={selected === 1 ? "cyan" : undefined} bold={selected === 1}>
-                Proxy
-              </Text>
-            </Box>
-            <Box width={28}>
-              <Text dimColor={selected !== 1}>unt_proxy  ·  :3080</Text>
-            </Box>
-            <StatusBadge status={proxyStatus} />
-          </Box>
+          <CoreViewRow
+            label="Proxy"
+            domain="unt_proxy  ·  :3080"
+            status={proxyStatus}
+            active={selected === 1}
+          />
         </Box>
       </SectionFrame>
 

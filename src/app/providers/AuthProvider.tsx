@@ -22,11 +22,13 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { createBrowserClient } from "@/utils/supabase/client";
 import type { Session, User } from "@supabase/auth-helpers-nextjs";
 import { SessionContextProvider } from "@supabase/auth-helpers-react";
-import { iosSessionHelpers } from "@/lib/cookieUtils";
+import { iosSessionHelpers, getCookie } from "@/lib/cookieUtils";
 import { getBrowserSupabaseUrl } from "@/lib/multiZone";
 import { useRouter } from "next/navigation";
 import { authLogger } from "@/lib/authLogger";
 import { RoleProvider } from "@/lib/roleContext";
+import { isLastPageExcluded } from "@/lib/protectedRoutes";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ── Context type ──────────────────────────────────────────────────────────────
 
@@ -145,26 +147,76 @@ export function AuthProviderWrapper({
   const syncInFlightRef = useRef(false);
   const hasServerSessionRef = useRef(!!propSession);
 
+  // Fallback chain ends at "/" — never a dashboard route. Used to default to
+  // /dashboard/me, and because this always resolves to a truthy value, the
+  // server-side lastPage fallback in /auth/sync/route.ts was unreachable in
+  // practice (the client always sent an explicit `next`). Fixed 2026-08-12.
   const getPostSignInRedirect = () => {
-    if (typeof window === "undefined") return "/dashboard/me";
+    if (typeof window === "undefined") return "/";
 
     const params = new URLSearchParams(window.location.search);
     const next = params.get("next");
-    if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("://")) {
+    if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("://") && !isLastPageExcluded(next)) {
       return next;
     }
 
     const stored = window.sessionStorage.getItem("postSignInRedirect");
-    if (stored?.startsWith("/") && !stored.startsWith("//") && !stored.includes("://")) {
+    if (
+      stored?.startsWith("/") &&
+      !stored.startsWith("//") &&
+      !stored.includes("://") &&
+      !isLastPageExcluded(stored)
+    ) {
       return stored;
     }
 
-    return "/dashboard/me";
+    const lastPage = getCookie("lastPage");
+    if (lastPage && !isLastPageExcluded(lastPage)) {
+      return lastPage;
+    }
+
+    return "/";
   };
+
+  // Root-caused 2026-08-08 (task #58 — "click anywhere bounces to /dashboard/me?refresh=true"):
+  // supabase-js re-emits a SIGNED_IN event (not just TOKEN_REFRESHED) every time
+  // getSession() resolves for an already-authenticated client instance — which
+  // forceRefreshSession() triggers on `visibilitychange`/`pageshow`, i.e. any tab
+  // focus/blur cycle a real user hits constantly (switching tabs, alt-tabbing,
+  // even some devtools/automation focus changes). Each replayed SIGNED_IN used to
+  // unconditionally call syncBrowserSessionToServer(), which does a full
+  // window.location.assign(...?refresh=true) — a full page reload. That reload
+  // remounts this provider, which fires pageshow again, which re-triggers the
+  // exact same replayed SIGNED_IN — an effectively infinite loop that looked like
+  // "any click/interaction bounces the whole dashboard back to /dashboard/me".
+  // Fix: only actually sync+redirect the FIRST time we see a given access_token.
+  // sessionStorage (not a ref) because window.location.assign() destroys the JS
+  // context — a plain ref would reset to null on every one of these reloads and
+  // never actually break the loop.
+  const SYNCED_TOKEN_KEY = "__auth_synced_access_token";
 
   const syncBrowserSessionToServer = async (newSession: Session) => {
     if (syncInFlightRef.current) return;
+
+    try {
+      if (window.sessionStorage.getItem(SYNCED_TOKEN_KEY) === newSession.access_token) {
+        console.log("[AuthProvider] ⏭️ Skipping redundant SIGNED_IN sync — this session was already synced to server cookies");
+        return;
+      }
+    } catch {
+      /* sessionStorage unavailable — fall through and sync anyway */
+    }
+
     syncInFlightRef.current = true;
+
+    // Mark BEFORE the fetch/redirect, not after — window.location.assign() below
+    // ends this JS context, so anything set "after" a successful sync would never
+    // actually run on the reload that follows.
+    try {
+      window.sessionStorage.setItem(SYNCED_TOKEN_KEY, newSession.access_token);
+    } catch {
+      /* best-effort — worst case we just don't dedupe this cycle */
+    }
 
     const redirectTo = getPostSignInRedirect();
     window.sessionStorage.setItem("postSignInRedirect", redirectTo);
@@ -180,7 +232,7 @@ export function AuthProviderWrapper({
           access_token: newSession.access_token,
           refresh_token: newSession.refresh_token,
           next: redirectTo,
-          remember: window.localStorage.getItem("rememberMe") === "true",
+          remember: safeStorage.getItem("rememberMe") === "true",
         }),
       });
 
@@ -191,7 +243,7 @@ export function AuthProviderWrapper({
       }
 
       window.sessionStorage.removeItem("postSignInRedirect");
-      window.location.assign(payload.redirectTo || `${redirectTo}?refresh=true`);
+      window.location.assign(payload.redirectTo || redirectTo);
     } catch (error) {
       console.error("[AuthProvider] Server session sync threw:", error);
     } finally {
@@ -304,6 +356,14 @@ export function AuthProviderWrapper({
 
       if (event === "SIGNED_IN" && newSession) {
         syncBrowserSessionToServer(newSession);
+      }
+
+      if (event === "SIGNED_OUT") {
+        try {
+          window.sessionStorage.removeItem(SYNCED_TOKEN_KEY);
+        } catch {
+          /* best-effort */
+        }
       }
     });
 

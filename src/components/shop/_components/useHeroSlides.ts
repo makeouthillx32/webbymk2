@@ -31,7 +31,7 @@ export interface HeroSlide {
   mobile_height: number | null;
 }
 
-export function useHeroSlides() {
+export function useHeroSlides(page: string = "shop") {
   const [slides, setSlides] = useState<HeroSlide[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +45,7 @@ export function useHeroSlides() {
           .from("hero_slides")
           .select("*")
           .eq("is_active", true)
+          .eq("page", page)
           .order("position", { ascending: true });
 
         if (fetchError) {
@@ -105,7 +106,7 @@ export function useHeroSlides() {
     }
 
     fetchSlides();
-  }, []);
+  }, [page]);
 
   return { slides, loading, error };
 }

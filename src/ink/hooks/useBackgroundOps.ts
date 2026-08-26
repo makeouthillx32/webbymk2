@@ -44,6 +44,7 @@ import { QueryGuard }            from "../../utils/QueryGuard.js";
 import { enqueue }               from "../../utils/messageQueueManager.js";
 import type { QueuePriority, QueuedOp } from "../../utils/messageQueueManager.js";
 import { useOpQueueProcessor }   from "./useQueueProcessor.js";
+import { eventBus }              from "../../utils/eventBus.js";
 
 // Types
 
@@ -89,6 +90,17 @@ export function useBackgroundOps({
   const anyBusy   = bgOps.some((o) => o.busy);
   const overlayOp = bgOps.find((o) => o.id === overlayOpId) ?? null;
 
+  // Safety net: if the op shown in the detail overlay no longer exists (it was
+  // auto-dismissed after success, cleared via `stack clear`, or manually
+  // dismissed), close the overlay. Without this the overlay stays open pointing
+  // at nothing and renders the "starting…" fallback until the user presses
+  // Enter/Esc. Covers every op-removal path, not just finishOp. (2026-07-13)
+  useEffect(() => {
+    if (overlayOpId !== null && !bgOps.some((o) => o.id === overlayOpId)) {
+      setOverlayOpId(null);
+    }
+  }, [overlayOpId, bgOps]);
+
   // Internal: allocate an op slot
   // autoOverlay=true  => starts in full overlay (user watches it immediately)
   // autoOverlay=false => starts directly in the background stack
@@ -101,6 +113,7 @@ export function useBackgroundOps({
 
     setBgOps((prev) => [...prev, { id, title, lines: [], busy: true, isLog }]);
     setStackFocusId(id);
+    eventBus.emit("op_started", { id, title, isLog });
     if (autoOverlay) {
       setOverlayOpId(id);
       setStackOpen(false);
@@ -122,6 +135,28 @@ export function useBackgroundOps({
     return { id, addLine };
   }, []);
 
+  // Mark an op finished. Successful ops auto-dismiss after a short flash so the
+  // stack stays clean ("all others stop on finish"). The dev/log-tail ops
+  // (isLog or dismissable) are the persistent exception — they stay until
+  // manually stopped. Failures also persist so they can be inspected.
+  const AUTO_DISMISS_MS = 6000;
+  const finishOp = useCallback((id: number, code: number) => {
+    setBgOps((prev) => prev.map((o) => (o.id === id ? { ...o, busy: false } : o)));
+    if (code === 0) {
+      setTimeout(() => {
+        setBgOps((prev) => prev.filter((o) => !(o.id === id && !o.isLog && !o.dismissable)));
+        dismissHooks.current.delete(id);
+        // If this op's detail overlay is still open, close it when the op is
+        // auto-dismissed. Otherwise the overlay lingers pointing at a removed
+        // op with zero lines and renders the "starting…" fallback forever until
+        // the user presses Enter/Esc. runOp opens the overlay automatically, so
+        // every successful r/R (restart/rebuild) hit this. (2026-07-13)
+        setOverlayOpId((cur) => (cur === id ? null : cur));
+        setStackFocusId((cur) => (cur === id ? null : cur));
+      }, AUTO_DISMISS_MS);
+    }
+  }, []);
+
   // Streaming operation runner
   const runOp = useCallback(
     (title: string, op: (onLine: (l: string) => void) => Promise<number>) => {
@@ -131,17 +166,56 @@ export function useBackgroundOps({
         .then(
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            finishOp(id, code);
+            eventBus.emit("op_completed", { id, title, code });
             refreshZones();
           },
-          () => {
-            addLine("✗ op failed unexpectedly");
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            addLine(`✗ ${msg}`);
+            finishOp(id, 1);
+            eventBus.emit("op_failed", { id, title });
             refreshZones();
           },
         );
     },
-    [_startOp, refreshZones],
+    [_startOp, refreshZones, finishOp],
+  );
+
+  // Visible foreground runner — for IPC/agent ops that must ALSO stream back to
+  // their caller (the IPC socket) while showing in the human's stack.
+  //   - shows in the STACK pane (autoOverlay=false) so it doesn't hijack the
+  //     screen the way a keystroke build's full overlay does;
+  //   - tees every line to BOTH the stack and the external `sink` (socket);
+  //   - awaits and RETURNS the exit code, so foreground IPC commands keep their
+  //     blocking + exit-code semantics.
+  // This closes the gap where `zone <k> deploy` over IPC streamed only to the
+  // socket and never appeared in the TUI (see [[Brain/unaxis-ops-stack-lifecycle]]).
+  const runOpVisible = useCallback(
+    (title: string, op: OpFn, sink?: (l: string) => void): Promise<number> => {
+      const { id, addLine } = _startOp(title, false, false);
+      const tee = (l: string) => { addLine(l); sink?.(l); };
+      return Promise.resolve()
+        .then(() => op(tee))
+        .then(
+          (code) => {
+            addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
+            finishOp(id, code);
+            eventBus.emit("op_completed", { id, title, code });
+            refreshZones();
+            return code;
+          },
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            tee(`✗ ${msg}`);
+            finishOp(id, 1);
+            eventBus.emit("op_failed", { id, title });
+            refreshZones();
+            return 1;
+          },
+        );
+    },
+    [_startOp, refreshZones, finishOp],
   );
 
   // Queued operation runner
@@ -155,7 +229,10 @@ export function useBackgroundOps({
       if (sameOpRunning) return;
       if (buildBusy) {
         const queued = enqueue({ id: title, label: title, priority, payload: op });
-        if (queued) addNotification(`"${title}" queued`, 'info');
+        if (queued) {
+          addNotification(`"${title}" queued`, 'info');
+          eventBus.emit("op_queued", { title, priority });
+        }
       } else {
         runOp(title, op);
       }
@@ -172,19 +249,22 @@ export function useBackgroundOps({
         Promise.resolve().then(() => opFn(addLine)).then(
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            finishOp(id, code);
+            eventBus.emit("op_completed", { id, title: op.label, code });
             refreshZones();
             resolve();
           },
-          () => {
-            addLine('✗ op failed unexpectedly');
-            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            addLine(`✗ ${msg}`);
+            finishOp(id, 1);
+            eventBus.emit("op_failed", { id, title: op.label });
             resolve();
           },
         );
       });
     },
-    [_startOp, setBgOps, refreshZones],
+    [_startOp, setBgOps, refreshZones, finishOp],
   );
 
   // Drain the queue whenever all build/lifecycle ops have finished.
@@ -241,10 +321,11 @@ export function useBackgroundOps({
         addNotification(`Create "${zone.label}" failed -- check [o] for output`, "error");
       }
       refreshZones();
-    }, () => {
+    }, (err) => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       lineBuffer.splice(0).forEach(rawAddLine);
-      rawAddLine("✗ op failed unexpectedly");
+      const msg = err instanceof Error ? err.message : String(err);
+      rawAddLine(`✗ ${msg}`);
       setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
       addNotification(`Create "${zone.label}" failed -- check [o] for output`, "error");
       refreshZones();
@@ -477,7 +558,7 @@ export function useBackgroundOps({
     stackFocusId,  setStackFocusId,
     anyBusy,
     logProcRef,    logOpIdRef,
-    runOp,         runOpQueued,
+    runOp,         runOpQueued,    runOpVisible,
     runCreateZone,
     openLogs,
     runDevModeOp,

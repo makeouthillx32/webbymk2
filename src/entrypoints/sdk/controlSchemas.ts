@@ -30,7 +30,7 @@ export const SDKControlInputRequestSchema = z.object({
 
 export const SDKControlEvalRequestSchema = z.object({
   subtype: z.literal('eval'),
-  action: z.enum(['ipc', 'environment', 'zone', 'stack']),
+  action: z.enum(['ipc', 'environment', 'zone', 'stack', 'db', 'proxy']),
   target: z.string(),
   payload: z.unknown().optional(),
 })
@@ -47,20 +47,28 @@ export const SDKControlExitRequestSchema = z.object({
   reason: z.string().optional(),
 })
 
+export const SDKControlCliCommandSchema = z.object({
+  subtype: z.literal('command'),
+  id: z.string().optional(),
+  argv: z.array(z.string()),
+  actor: z.string().optional(),
+})
+
 export const SDKControlRequestSchema = z.discriminatedUnion('subtype', [
   SDKControlInitializeRequestSchema,
   SDKControlInputRequestSchema,
   SDKControlEvalRequestSchema,
   SDKControlPrintRequestSchema,
   SDKControlExitRequestSchema,
+  SDKControlCliCommandSchema,
 ])
 
-export const SDKControlResponseSchema = z.discriminatedUnion('type', [
-  ...SDKMessageSchema.options,
-  z.object({
-    type: z.literal('control.ack'),
-    subtype: z.enum(['initialize', 'input', 'eval', 'print', 'exit']),
-    ok: z.boolean(),
-    error: z.string().optional(),
-  }),
-])
+export const SDKControlResponseSchema = z.object({
+  type: z.literal('control.ack'),
+  subtype: z.string(),
+  ok: z.boolean(),
+  code: z.number().default(0),
+  lines: z.array(z.string()).optional(),
+  data: z.unknown().optional(),
+  error: z.string().optional(),
+})

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+    <defs>
+      <linearGradient id="battBody" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#15803d"/>
+        <stop offset="30%" stop-color="#22c55e"/>
+        <stop offset="70%" stop-color="#4ade80"/>
+        <stop offset="100%" stop-color="#14532d"/>
+      </linearGradient>
+      <linearGradient id="battGold" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#b45309"/>
+        <stop offset="40%" stop-color="#fbbf24"/>
+        <stop offset="100%" stop-color="#78350f"/>
+      </linearGradient>
+      <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="3" dy="6" stdDeviation="5" flood-opacity="0.6"/>
+      </filter>
+    </defs>
+    <g filter="url(#shadow)" transform="rotate(-25 128 128)">
+      <!-- Battery Top Nub -->
+      <rect x="110" y="24" width="36" height="16" rx="4" fill="#e5e7eb" stroke="#374151" stroke-width="2"/>
+      <!-- Battery Main Cylinder -->
+      <rect x="80" y="40" width="96" height="180" rx="14" fill="url(#battBody)" stroke="#052e16" stroke-width="4"/>
+      <!-- Top Gold Terminal Band -->
+      <path d="M 80 54 C 80 46, 86 40, 94 40 L 162 40 C 170 40, 176 46, 176 54 L 176 90 L 80 90 Z" fill="url(#battGold)"/>
+      <!-- Lightning Bolt Icon -->
+      <polygon points="132,105 110,135 128,135 124,165 148,130 130,130" fill="#fef08a" stroke="#ca8a04" stroke-width="2"/>
+      <!-- Plus Sign -->
+      <path d="M 128 60 L 128 76 M 120 68 L 136 68" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </svg>

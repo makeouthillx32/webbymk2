@@ -102,6 +102,7 @@ export function AppFrame({
           instant={noSplash}
           onDone={onSplashDone}
           onQuit={onQuit}
+          bgOps={bgOps}
         />
       )}
 

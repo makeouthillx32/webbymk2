@@ -2,20 +2,32 @@ import { headers, cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import type { CookieOptions, ProfileCookieRow, ValidRole } from "./types";
 import { VALID_ROLES } from "./types";
+import { isLastPageExcluded } from "@/lib/protectedRoutes";
+import { CORE_DOMAIN } from "@/lib/multiZone";
 
-const EXCLUDED_LASTPAGE = [
-  "/sign-in",
-  "/sign-up",
-  "/forgot-password",
-  "/reset-password",
-  "/auth/callback",
-  "/auth/callback/oauth",
-  "/auth/logout",
-];
+const SHARED_COOKIE_DOMAIN = process.env.NODE_ENV === "production" ? `.${CORE_DOMAIN}` : undefined;
+const APP_AUTH_COOKIE_NAMES = [
+  "userRole",
+  "userRoleUserId",
+  "userDisplayName",
+  "userPermissions",
+  "rememberMe",
+  "lastPage",
+] as const;
 
-const EXCLUDED_PREFIXES = ["/dashboard", "/settings", "/protected"];
-
-export const getCookieOptions = async (remember: boolean): Promise<CookieOptions> => {
+// "remember" no longer gates duration — it was 30 days vs 24 hours, which
+// meant anyone who didn't tick the box got logged out (or at least lost
+// role/display-name caching) after a single day. The intent is to hold
+// people's sessions as long as possible either way: matches the real
+// Supabase session cookie's own lifetime (sb-unenter-auth-token is already
+// issued with a 400-day Max-Age by @supabase/ssr, independent of this
+// value), so these app-level cookies — a fast cache of role/display name,
+// never the source of truth for authorization (RLS and server-side role
+// checks don't read them) — don't artificially expire sooner and force a
+// stale re-fetch. "remember" is kept as a parameter (unused here) rather
+// than removed, since callers still pass it and it may matter again if a
+// real short-session mode gets added later.
+export const getCookieOptions = async (_remember: boolean): Promise<CookieOptions> => {
   const headerList = await headers();
   const origin = headerList.get("origin") || "";
   const isHttps = origin.startsWith("https://");
@@ -25,7 +37,8 @@ export const getCookieOptions = async (remember: boolean): Promise<CookieOptions
     path: "/",
     secure: isProd || isHttps,
     sameSite: "lax",
-    maxAge: remember ? 30 * 24 * 60 * 60 : 24 * 60 * 60,
+    maxAge: 400 * 24 * 60 * 60,
+    domain: SHARED_COOKIE_DOMAIN,
   };
 };
 
@@ -36,12 +49,7 @@ export const getAndClearLastPage = async (): Promise<string> => {
   let lastPage = lastPageCookie?.value || "/";
   store.delete("lastPage");
 
-  const pageWithoutHash = lastPage.split("#")[0].split("?")[0];
-  const isExcluded =
-    EXCLUDED_LASTPAGE.includes(pageWithoutHash) ||
-    EXCLUDED_PREFIXES.some((prefix) => pageWithoutHash.startsWith(prefix));
-
-  if (isExcluded) lastPage = "/";
+  if (isLastPageExcluded(lastPage)) lastPage = "/";
 
   return lastPage;
 };
@@ -99,10 +107,20 @@ export const populateUserCookies = async (userId: string, remember = false) => {
 
 export const clearAuthCookies = async () => {
   const store = await cookies();
-  store.delete("userRole");
-  store.delete("userRoleUserId");
-  store.delete("userDisplayName");
-  store.delete("userPermissions");
-  store.delete("rememberMe");
-  store.delete("lastPage");
+  for (const name of APP_AUTH_COOKIE_NAMES) {
+    // Clear both the current host's historical cookie and the newer shared
+    // Domain=.unenter.live cookie. A Set-Cookie deletion only matches the
+    // original cookie when Path and Domain match.
+    store.set(name, "", { path: "/", maxAge: 0, expires: new Date(0) });
+    if (SHARED_COOKIE_DOMAIN) {
+      store.set(name, "", {
+        path: "/",
+        domain: SHARED_COOKIE_DOMAIN,
+        secure: true,
+        sameSite: "lax",
+        maxAge: 0,
+        expires: new Date(0),
+      });
+    }
+  }
 };

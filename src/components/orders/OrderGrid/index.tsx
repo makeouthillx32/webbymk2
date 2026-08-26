@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { AdminOrder, FulfillmentStatus } from '@/lib/orders/types';
 import { OrderContextMenu } from '../ContextMenu';
-import { MoreHorizontal, Printer, CheckCircle2, User, Star, ShoppingBag } from 'lucide-react';
+import { MoreHorizontal, Printer, CheckCircle2, User, Star, ShoppingBag, FlaskConical } from 'lucide-react';
 
 interface OrderGridProps {
   orders: AdminOrder[];
@@ -45,10 +45,11 @@ function FulfillmentBadge({ status }: { status: FulfillmentStatus }) {
 }
 
 // ── Customer type badge ────────────────────────────────────────────
-// Three mutually exclusive states:
-//   POS    → in-person admin sale  (purple, ShoppingBag icon)
-//   Member → logged-in web order   (yellow, Star icon)
-//   Guest  → anonymous web order   (gray, User icon)
+// Four mutually exclusive states:
+//   POS      → in-person admin sale     (purple, ShoppingBag icon)
+//   Research → research-checkout order  (teal, FlaskConical icon)
+//   Member   → logged-in web order      (yellow, Star icon)
+//   Guest    → anonymous web order      (gray, User icon)
 function CustomerTypeBadge({ order }: { order: AdminOrder }) {
   if (order.is_pos) {
     return (
@@ -58,6 +59,17 @@ function CustomerTypeBadge({ order }: { order: AdminOrder }) {
       >
         <ShoppingBag className="w-2.5 h-2.5" />
         POS
+      </span>
+    );
+  }
+  if (order.is_research) {
+    return (
+      <span
+        title={`Research checkout (labs.unenter.live) · ${order.points_earned} pts earned`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border bg-teal-50 text-teal-700 border-teal-200"
+      >
+        <FlaskConical className="w-2.5 h-2.5" />
+        Research
       </span>
     );
   }
@@ -140,7 +152,7 @@ function OrderCard({
             {order.payment_status?.toUpperCase()}
           </span>
           {/* Points pill on mobile */}
-          {order.is_member && order.points_earned > 0 && (
+          {(order.is_member || order.is_research) && order.points_earned > 0 && (
             <span className="text-[10px] text-yellow-600 font-semibold">+{order.points_earned} pts</span>
           )}
         </div>

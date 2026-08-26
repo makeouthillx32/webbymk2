@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { CookieConsentManager } from "@/lib/analytics"; // ✅ Import from analytics.ts
+import { safeStorage } from "@/lib/safeStorage";
 
 // Cookie consent categories
 export interface CookiePreferences {
@@ -89,17 +90,27 @@ const CookieManager = {
   // Clear analytics data - delegate to analytics.ts
   clearAnalyticsData(): void {
     if (typeof window !== 'undefined') {
-      // Clear analytics session data
-      localStorage.removeItem('analytics_session_id');
-      localStorage.removeItem('analytics_last_activity');
-      sessionStorage.removeItem('analytics_session_id');
-      
-      // Clear any other analytics-related localStorage items
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('analytics_') || key.startsWith('tracking_')) {
-          localStorage.removeItem(key);
+      try {
+        // Clear analytics session data
+        safeStorage.removeItem('analytics_session_id');
+        safeStorage.removeItem('analytics_last_activity');
+        try {
+          sessionStorage.removeItem('analytics_session_id');
+        } catch {
+          // ignore
         }
-      });
+        
+        // Clear any other analytics-related localStorage items
+        if (window.localStorage) {
+          Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('analytics_') || key.startsWith('tracking_')) {
+              safeStorage.removeItem(key);
+            }
+          });
+        }
+      } catch {
+        // storage access blocked or private mode
+      }
 
       console.log('🧹 Analytics data cleared due to consent change');
     }

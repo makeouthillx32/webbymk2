@@ -10,6 +10,7 @@ import "@/styles/index.css";
 import { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
+import { generateSiteMetadata } from "@/lib/zoneMetadata";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -20,14 +21,12 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default: "Sign In | Unenter",
-    template: "%s | Unenter",
-  },
-  description: "Sign in or create your Unenter account.",
-  robots: { index: false, follow: false },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    ...(await generateSiteMetadata()),
+    robots: { index: false, follow: false },
+  };
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];

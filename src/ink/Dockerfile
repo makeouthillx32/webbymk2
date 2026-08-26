@@ -8,7 +8,7 @@
 # import to the local ./ink directory -- which breaks { Box, Text } imports.
 # ─────────────────────────────────────────────────────────────────────────────
 
-FROM oven/bun:1.2
+FROM oven/bun:1.3.14
 
 # Install Docker CLI
 RUN apt-get update -qq && \

@@ -5,6 +5,7 @@ import React, { createContext, useEffect, useState } from "react";
 import { Theme } from "@/types/theme";
 import { defaultThemeId, themeMap } from "@/themes";
 import { setCookie, getCookie } from "@/lib/cookieUtils";
+import { safeStorage } from "@/lib/safeStorage";
 
 export interface ThemeContextType {
   // Theme settings
@@ -51,12 +52,12 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     if (typeof window !== "undefined") {
       setMounted(true);
       
-      const savedThemeId = getCookie("themeId") || localStorage.getItem("themeId");
+      const savedThemeId = getCookie("themeId") || safeStorage.getItem("themeId");
       if (savedThemeId && themeMap[savedThemeId]) {
         setThemeIdState(savedThemeId);
       }
       
-      const savedThemeType = getCookie("themeType") || localStorage.getItem("themeType");
+      const savedThemeType = getCookie("themeType") || safeStorage.getItem("themeType");
       if (savedThemeType === "light" || savedThemeType === "dark") {
         setThemeType(savedThemeType);
       } else {
@@ -81,8 +82,8 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     html.classList.remove("light", "dark");
     html.classList.add(themeType);
     
-    localStorage.setItem("themeId", themeId);
-    localStorage.setItem("themeType", themeType);
+    safeStorage.setItem("themeId", themeId);
+    safeStorage.setItem("themeType", themeType);
   }, [themeId, themeType, mounted]);
 
   const contextValue: ThemeContextType = {

@@ -140,7 +140,7 @@ export class LogUpdate {
       next.viewport.height < prev.viewport.height ||
       (prev.viewport.width !== 0 && next.viewport.width !== prev.viewport.width)
     ) {
-      return fullResetSequence_CAUSES_FLICKER(next, 'resize', stylePool)
+      return fullResetSequence_CAUSES_FLICKER(next, 'resize', stylePool, undefined, altScreen)
     }
 
     // DECSTBM scroll optimization: when a ScrollBox's scrollTop changed,
@@ -159,7 +159,15 @@ export class LogUpdate {
     // where scrollTop moves. Falling through to the diff loop writes all
     // shifted rows: more bytes, no intermediate state. next.screen from
     // render-node-to-output's blit+shift is correct either way.
-    let scrollPatch: Diff = []
+    // Fullscreen frames are always anchored at home. The Ink renderer writes
+    // a complete viewport and intentionally skips cursor restoration in
+    // alt-screen mode, so the terminal's real cursor is otherwise wherever
+    // the previous write happened to end. Relative patches must start from
+    // the same known position as VirtualScreen or navigation updates land on
+    // stale rows and take several later frames to visually converge.
+    let scrollPatch: Diff = altScreen
+      ? [{ type: 'stdout', content: CURSOR_HOME }]
+      : []
     if (altScreen && next.scrollHint && decstbmSafe) {
       const { top, bottom, delta } = next.scrollHint
       if (
@@ -212,7 +220,7 @@ export class LogUpdate {
       logForDebugging(
         `Full reset (shrink->below): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}`,
       )
-      return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool)
+      return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool, undefined, altScreen)
     }
 
     if (
@@ -240,11 +248,14 @@ export class LogUpdate {
           triggerY: scrollbackChangeY,
           prevLine,
           nextLine,
-        })
+        }, altScreen)
       }
     }
 
-    const screen = new VirtualScreen(prev.cursor, next.viewport.width)
+    const screen = new VirtualScreen(
+      altScreen ? { x: 0, y: 0 } : prev.cursor,
+      next.viewport.width,
+    )
 
     // Treat empty screen as height 1 to avoid spurious adjustments on first render
     const heightDelta =
@@ -381,7 +392,7 @@ export class LogUpdate {
         triggerY: resetTriggerY,
         prevLine: readLine(prev.screen, resetTriggerY),
         nextLine: readLine(next.screen, resetTriggerY),
-      })
+      }, altScreen)
     }
 
     // Reset styles before rendering new rows (they'll set their own styles)
@@ -502,10 +513,16 @@ function fullResetSequence_CAUSES_FLICKER(
   reason: FlickerReason,
   stylePool: StylePool,
   debug?: { triggerY: number; prevLine: string; nextLine: string },
+  altScreen = false,
 ): Diff {
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
   renderFrame(screen, frame, stylePool)
+  if (altScreen) {
+    // In alt-screen mode, do not clear the screen as it causes visible flicker.
+    // Instead, just home the cursor and overwrite the entire viewport.
+    return [{ type: 'stdout', content: CURSOR_HOME }, ...screen.diff]
+  }
   return [{ type: 'clearTerminal', reason, debug }, ...screen.diff]
 }
 

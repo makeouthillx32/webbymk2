@@ -1,24 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { populateUserCookies } from "@/actions/auth/cookies";
 import { createClient } from "@/utils/supabase/server";
+import { isLastPageExcluded } from "@/lib/protectedRoutes";
 
+// Fallback is "/" — never a dashboard route. Was "/dashboard/me" in all three
+// branches here, which (together with the same default in signUpAction/
+// signInAction and /auth/sign-in/route.ts) is why sign-in always landed on
+// the dashboard. Fixed 2026-08-12.
 const safeRedirectPath = (candidate: unknown): string => {
-  if (typeof candidate !== "string") return "/dashboard/me";
+  if (typeof candidate !== "string") return "/";
   if (!candidate.startsWith("/") || candidate.startsWith("//") || candidate.includes("://")) {
-    return "/dashboard/me";
+    return "/";
   }
-
-  const pathOnly = candidate.split("#")[0].split("?")[0];
-  if (
-    pathOnly === "/sign-in" ||
-    pathOnly === "/sign-up" ||
-    pathOnly === "/forgot-password" ||
-    pathOnly === "/reset-password" ||
-    pathOnly.startsWith("/auth/")
-  ) {
-    return "/dashboard/me";
-  }
-
+  if (isLastPageExcluded(candidate)) return "/";
   return candidate;
 };
 
@@ -48,6 +42,5 @@ export async function POST(request: NextRequest) {
 
   await populateUserCookies(data.user.id, remember);
 
-  const separator = redirectTo.includes("?") ? "&" : "?";
-  return NextResponse.json({ redirectTo: `${redirectTo}${separator}refresh=true` });
+  return NextResponse.json({ redirectTo });
 }

@@ -2,6 +2,7 @@
 import { notFound } from 'next/navigation';
 import { Metadata } from 'next';
 import { getPublishedStaticPageBySlug } from '@/lib/landing/static-pages.server';
+import React from 'react';
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
@@ -102,7 +103,6 @@ function renderContent(page: { content: string; content_format: 'html' | 'markdo
                 .static-page-content td,
                 .static-page-content tr {
                   max-width: 100% !important;
-                  width: auto !important;
                   box-sizing: border-box !important;
                 }
                 .static-page-content img {
@@ -138,7 +138,6 @@ function renderContent(page: { content: string; content_format: 'html' | 'markdo
               .static-page-content td,
               .static-page-content tr {
                 max-width: 100% !important;
-                width: auto !important;
                 box-sizing: border-box !important;
               }
               .static-page-content img {
@@ -175,14 +174,10 @@ function renderContent(page: { content: string; content_format: 'html' | 'markdo
     <div className="prose prose-slate max-w-none dark:prose-invert overflow-x-hidden">
       {page.content.split('\n').map((line, i) => {
         if (line.trim().startsWith('#')) {
-          const level = line.match(/^#+/)?.[0].length || 1;
+          const level = Math.min(line.match(/^#+/)?.[0].length || 1, 6);
           const text = line.replace(/^#+\s*/, '');
-          const Tag = `h${level}` as keyof JSX.IntrinsicElements;
-          return (
-            <Tag key={i} className="text-[hsl(var(--foreground))]">
-              {text}
-            </Tag>
-          );
+          const tag = `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+          return React.createElement(tag, { key: i, className: "text-[hsl(var(--foreground))]" }, text);
         }
         return line.trim() ? (
           <p key={i} className="text-[hsl(var(--foreground))]">{line}</p>

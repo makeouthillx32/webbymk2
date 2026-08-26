@@ -1,15 +1,9 @@
 import { spawn } from "child_process";
 import { appendTimeline, appendWatchText, getActiveWatch } from "./watch-session.ts";
+import { DOCKER_ENV } from "./utils/dockerEnv.ts";
 
 const DEFAULT_TAIL = 120;
 const MAX_TAIL = 2000;
-
-const DOCKER_ENV: Record<string, string> = {
-  ...(process.env as Record<string, string>),
-  ...(process.platform !== "win32"
-    ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
-    : {}),
-};
 
 function clampTail(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_TAIL;

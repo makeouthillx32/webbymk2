@@ -65,6 +65,10 @@ export default function CheckoutShippingPage() {
     country: "US",
   });
   const [billingSameAsShipping, setBillingSameAsShipping] = useState(true);
+  // Opt-in, not opt-out — defaults unchecked. Feeds customers.marketing_opt_in
+  // (guests) / profiles.marketing_opt_in (members) via create-payment-intent,
+  // the single consent flag both email and (later) SMS promos read from.
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
 
   // Shipping rates
   const [shippingRates, setShippingRates] = useState<ShippingRate[]>([]);
@@ -302,6 +306,7 @@ export default function CheckoutShippingPage() {
         JSON.stringify(billingSameAsShipping ? currentShippingAddress : billingAddress)
       );
       sessionStorage.setItem("checkout_shipping_rate_id", selectedShippingRate);
+      sessionStorage.setItem("checkout_marketing_opt_in", marketingOptIn ? "true" : "false");
 
       // Save full rate data so payment intent can resolve price without a DB lookup
       const rateData = shippingRates.find((r) => r.id === selectedShippingRate);
@@ -331,7 +336,7 @@ export default function CheckoutShippingPage() {
       <div className="border-b">
         <div className="container mx-auto px-4 py-4">
           <Link href="/" className="text-2xl font-bold">
-            Desert Cowgirl
+            Unenter Solutions
           </Link>
         </div>
       </div>
@@ -382,6 +387,16 @@ export default function CheckoutShippingPage() {
                   required
                   className={isMember ? "bg-muted text-muted-foreground cursor-not-allowed" : ""}
                 />
+              </div>
+              <div className="flex items-start space-x-2 pt-1">
+                <Checkbox
+                  id="marketingOptIn"
+                  checked={marketingOptIn}
+                  onCheckedChange={(checked) => setMarketingOptIn(checked as boolean)}
+                />
+                <Label htmlFor="marketingOptIn" className="cursor-pointer font-normal text-sm leading-snug">
+                  Yes, send me promotional emails about new products, restocks, and offers
+                </Label>
               </div>
             </div>
 

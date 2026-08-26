@@ -1,0 +1,16 @@
+{
+  "name": "@unenter/tank-audio-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "check": "bun x tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.102.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.2"
+  }
+}

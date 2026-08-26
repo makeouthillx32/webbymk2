@@ -22,6 +22,8 @@
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Box, Text, useInput }                        from "../runtimeInk.js";
+import { useScrollIntoView }                          from "./ScrollBox.js";
+import type { DOMElement }                            from "../dom.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -161,26 +163,9 @@ export function SelectMenu({
           <Text dimColor>No matches for "{query}"</Text>
         </Box>
       ) : (
-        filtered.map((opt, i) => {
-          const focused = i === safeIdx;
-          return (
-            <Box key={opt.id} gap={2} paddingX={1}>
-              <Text color={focused ? "cyan" : undefined} bold={focused}>
-                {focused ? "›" : " "}
-              </Text>
-              <Box width={14}>
-                <Text color={focused ? "cyan" : undefined} bold={focused}>
-                  {opt.label}
-                </Text>
-              </Box>
-              {opt.desc && (
-                <Text dimColor={!focused} color={focused ? "gray" : undefined}>
-                  {opt.desc}
-                </Text>
-              )}
-            </Box>
-          );
-        })
+        filtered.map((opt, i) => (
+          <SelectMenuItem key={opt.id} opt={opt} focused={i === safeIdx} />
+        ))
       )}
 
       {/* Hint bar */}
@@ -188,6 +173,34 @@ export function SelectMenu({
         <Text dimColor>[↑↓/jk] navigate  [↵] confirm  [esc/q] back</Text>
       </Box>
 
+    </Box>
+  );
+}
+
+interface SelectMenuItemProps {
+  opt: SelectOption;
+  focused: boolean;
+}
+
+function SelectMenuItem({ opt, focused }: SelectMenuItemProps) {
+  const ref = useRef<DOMElement>(null);
+  useScrollIntoView(ref, focused);
+
+  return (
+    <Box ref={ref} gap={2} paddingX={1}>
+      <Text color={focused ? "cyan" : undefined} bold={focused}>
+        {focused ? "›" : " "}
+      </Text>
+      <Box width={14}>
+        <Text color={focused ? "cyan" : undefined} bold={focused}>
+          {opt.label}
+        </Text>
+      </Box>
+      {opt.desc && (
+        <Text dimColor={!focused} color={focused ? "gray" : undefined}>
+          {opt.desc}
+        </Text>
+      )}
     </Box>
   );
 }

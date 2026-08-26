@@ -9,8 +9,9 @@
 // Navigation model (history stack in useAppRouter):
 //
 //   [StartupScreen] ──onDone──▶ welcome  (project picked inside StartupScreen)
+//                                welcome is the project welcome screen route
 //
-//   welcome ──navigate──▶ zones ──navigate──▶ wizard
+//   welcome ──navigate──▶ core ──navigate──▶ zones ──navigate──▶ wizard
 //          └──navigate──▶ settings
 //
 //   Tab key:  navigateReplace — swaps the current panel in-place
@@ -38,7 +39,6 @@ import { useEnvManager } from "./hooks/useEnvManager.ts";
 import { useBackgroundOps } from "./hooks/useBackgroundOps.ts";
 import { useCopyOnSelect } from "./hooks/useCopyOnSelect.ts";
 import { useOperationChrome } from "./hooks/useOperationChrome.ts";
-import { useDevBuildActions } from "./hooks/useDevBuildActions.ts";
 import { useGlobalAppInput } from "./hooks/useGlobalAppInput.ts";
 import { useIpcBridge } from "./hooks/useIpcBridge.ts";
 
@@ -60,7 +60,7 @@ import type { Zone } from "../config/zones.ts";
 const CORE_DOCKER_INSTANCE: RuntimeInstance = {
   id:              "core",
   name:            "Core Supabase",
-  slug:            "unenter",
+  slug:            "unenter.live",
   containerPrefix: "unt_",    // containers: unt_db, unt_storage, unt_kong, …
   status:          "active",
   createdAt:       "",
@@ -127,7 +127,7 @@ export function App() {
     stackFocusId, setStackFocusId,
     anyBusy,
     logProcRef, logOpIdRef,
-    runOp, runOpQueued, runCreateZone, openLogs,
+    runOp, runOpQueued, runOpVisible, runCreateZone, openLogs,
     runDevModeOp, triggerDismissHook, triggerRestartHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
@@ -194,7 +194,11 @@ export function App() {
     proxyStatus,
     refreshEnvs,
     runOpQueued,
+    runOpVisible,
     coreDockerInstance: CORE_DOCKER_INSTANCE,
+    addNotification,
+    setBgOps,
+    triggerDismissHook,
   });
   useGlobalAppInput({
     view,
@@ -205,10 +209,6 @@ export function App() {
     navigateReplace,
     toggleStackFocus,
     toggleStackManager,
-  });
-  const { handleRelease, handleBuild } = useDevBuildActions({
-    runOpQueued,
-    addNotification,
   });
   // ── Render ────────────────────────────────────────────────────────────────
   // Everything lives inside AlternateScreen so the TUI occupies the terminal's
@@ -290,8 +290,6 @@ export function App() {
         runDevMode={runDevMode}
         forceRefreshZoneList={forceRefreshZoneList}
         checkInfra={checkInfra}
-        handleRelease={handleRelease}
-        handleBuild={handleBuild}
       />
     </AppFrame>
   );

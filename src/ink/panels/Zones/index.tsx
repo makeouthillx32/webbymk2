@@ -11,6 +11,7 @@ import type { Zone } from "../../../config/zones.ts";
 import type { Status } from "../../docker.ts";
 import { StatusBadge } from "../../components/StatusBadge.tsx";
 import { KeyHints }    from "../../components/KeyHint.tsx";
+import { useScrollIntoView } from "../../components/ScrollBox.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,12 +24,41 @@ interface ZonesPanelProps {
   emptyMessage?: string;
 }
 
+// ── ZonesPanelRow Component ───────────────────────────────────────────────────
+
+function ZonesPanelRow({ zone, status, focused }: {
+  zone: Zone;
+  status: Status;
+  focused: boolean;
+}) {
+  const ref = React.useRef<any>(null);
+  useScrollIntoView(ref, focused);
+
+  return (
+    <Box ref={ref} paddingX={1} gap={2}>
+      <Text color={focused ? "cyan" : undefined} bold={focused}>
+        {focused ? "▶" : " "}
+      </Text>
+      <Box width={18}>
+        <Text color={focused ? "cyan" : undefined} bold={focused}>
+          {zone.label}
+        </Text>
+      </Box>
+      <Box width={28}>
+        <Text dimColor={!focused}>{zone.domain}</Text>
+      </Box>
+      <StatusBadge status={status} />
+    </Box>
+  );
+}
+
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
 const HINTS = [
   { k: "↑↓", label: "navigate"        },
   { k: "/",  label: "search"          },
   { k: "↵",  label: "actions"         },
+  { k: "b",  label: "ship (build+deploy)" },
   { k: "l",  label: "logs"            },
   { k: "n",  label: "new zone"        },
   { k: "g",  label: "git push"        },
@@ -54,20 +84,12 @@ export function ZonesPanel({
             const status  = zoneStatuses[zone.key] ?? "missing";
             const focused = i === selected;
             return (
-              <Box key={zone.key} paddingX={1} gap={2}>
-                <Text color={focused ? "cyan" : undefined} bold={focused}>
-                  {focused ? "▶" : " "}
-                </Text>
-                <Box width={18}>
-                  <Text color={focused ? "cyan" : undefined} bold={focused}>
-                    {zone.label}
-                  </Text>
-                </Box>
-                <Box width={28}>
-                  <Text dimColor={!focused}>{zone.domain}</Text>
-                </Box>
-                <StatusBadge status={status} />
-              </Box>
+              <ZonesPanelRow
+                key={zone.key}
+                zone={zone}
+                status={status}
+                focused={focused}
+              />
             );
           })
         : (

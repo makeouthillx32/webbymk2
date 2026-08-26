@@ -53,12 +53,29 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+
+  // ── Build-worker count ───────────────────────────────────────────────────
+  // The build VM has 32 cores + ~31 GB, BUT it concurrently runs ~25 containers
+  // (core Supabase + ~14 zone apps + runtime DB instances). With memory
+  // overcommit OFF, each SSG worker fork() RESERVES the full multi-GB parent
+  // size, so the usable worker count is bounded by *free* RAM, not core count.
+  // On a loaded box, 8 workers reserve more than the free headroom → fork fails
+  // the instant SSG starts → buildkit drops the stream (Unavailable/EOF), the
+  // "Generating static pages (0/N)" hang. 2 is the proven safe value here.
+  //
+  // To actually USE the 32 cores: enable overcommit in the Docker VM
+  // (vm.overcommit_memory=1) so forks are copy-on-write-cheap and decouple from
+  // resident memory — then this can rise to 16-32 regardless of what else runs.
+  // That's the real fix; this cap is the "works today on a packed box" setting.
+  experimental: {
+    cpus: 2,
+  },
   // ── Dev origins ────────────────────────────────────────────────────────────
   // Suppresses the "Cross origin request detected" warning when accessing the
   // app via dev.unenter.live (the Docker dev proxy host) instead of localhost.
   allowedDevOrigins: [
     `dev.${CORE_DOMAIN}`,
-    `*.dev.${CORE_DOMAIN}`,
+    `dev.*.${CORE_DOMAIN}`,
   ],
 
   // ── Multi-zone ─────────────────────────────────────────────────────────────

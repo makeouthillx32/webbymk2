@@ -128,7 +128,7 @@ export function ReprintReceipt({ order }: ReprintReceiptProps) {
         .footer { text-align: center; margin-top: 8pt; font-size: 9pt; color: #555; line-height: 1.8; }
       </style>
     </head><body>
-      <h2>Desert Cowgirl Co.</h2>
+      <h2>Unenter Solutions</h2>
       <div class="sub">${order.order_number}<br>${new Date(order.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</div>
       <hr>
       ${itemRows}

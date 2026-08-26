@@ -20,7 +20,7 @@ Each task follows this exact format:
 
 ```
 ### TASK-001
-- file: Z:\WEBSITES\DCG.CO\components\ExampleComponent.tsx
+- file: Z:\WEBSITES\webbymk2\components\ExampleComponent.tsx
 - type: cleanup | types | hooks | split | constants | api
 - priority: high | medium | low
 - reason: One sentence describing what needs fixing

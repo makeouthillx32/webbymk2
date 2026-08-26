@@ -1,0 +1,6 @@
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.csproj.AssemblyReference.cache
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.GeneratedMSBuildEditorConfig.editorconfig
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.AssemblyInfoInputs.cache
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.AssemblyInfo.cs
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.csproj.CoreCompileInputs.cache
+Z:\WEBSITES\webbymk2\services\tank-audio-worker\windows-player\obj\Release\net9.0\TankAudioPlayer.sourcelink.json

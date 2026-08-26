@@ -50,7 +50,7 @@ export function UploadPhotoForm() {
     }
 
     const timestamp = Date.now();
-    const publicUrl = `https://chsmesvozsjcgrwuimld.supabase.co/storage/v1/object/public/avatars/${filePath}?t=${timestamp}`;
+    const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${filePath}?t=${timestamp}`;
 
     const { error: updateError } = await supabaseClient
       .from("profiles")

@@ -10,6 +10,7 @@ import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ChevronLeft, Lock } from "lucide-react";
+import { safeStorage } from "@/lib/safeStorage";
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
@@ -89,6 +90,7 @@ export default function CheckoutPaymentPage() {
     const shippingRateId = sessionStorage.getItem('checkout_shipping_rate_id');
     const shippingRateData = sessionStorage.getItem('checkout_shipping_rate_data');
     const promoCode = sessionStorage.getItem('promo_code');
+    const marketingOptIn = sessionStorage.getItem('checkout_marketing_opt_in') === 'true';
 
     if (!email || !shippingAddress || !cart?.id) {
       router.push('/checkout');
@@ -102,6 +104,7 @@ export default function CheckoutPaymentPage() {
       shipping_rate_id: shippingRateId,
       shipping_rate_data: shippingRateData ? JSON.parse(shippingRateData) : null,
       promo_code: promoCode,
+      marketing_opt_in: marketingOptIn,
     });
   }, [cart, router]);
 
@@ -116,7 +119,7 @@ export default function CheckoutPaymentPage() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-session-id': localStorage.getItem('dcg_session_id') || '',
+          'x-session-id': safeStorage.getItem('unenter_session_id') || '',
         },
         body: JSON.stringify({
           cart_id: cart?.id,
@@ -174,7 +177,7 @@ export default function CheckoutPaymentPage() {
     <div className="min-h-screen bg-background">
       <div className="border-b">
         <div className="container mx-auto px-4 py-4">
-          <Link href="/" className="text-2xl font-bold">Desert Cowgirl</Link>
+          <Link href="/" className="text-2xl font-bold">Unenter Solutions</Link>
         </div>
       </div>
 

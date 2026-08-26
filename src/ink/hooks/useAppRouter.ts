@@ -22,7 +22,7 @@
 
 import { useState, useCallback } from "react";
 
-export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "env" | "wizard" | "instance-wizard" | "add-environment" | "env-detail";
+export type View = "welcome" | "settings" | "core" | "zones" | "npm" | "db" | "infra" | "env" | "wizard" | "instance-wizard" | "clone-wizard" | "add-environment" | "env-detail";
 
 export const PANEL_TABS = ["core", "zones", "npm", "db", "infra", "env"] as const;
 export type PanelTab    = typeof PANEL_TABS[number];

@@ -40,7 +40,8 @@ function stripTrailingSlashes(s: string) {
 }
 
 function isInternalDockerUrl(s?: string | null) {
-  return !!s && /^https?:\/\/(?:kong|supabase-kong)(?::\d+)?(?:\/|$)/i.test(s);
+  if (!s) return false;
+  return /^https?:\/\/(?:kong|supabase-kong|localhost|127\.0\.0\.1|host\.docker\.internal)(?::\d+)?(?:\/|$)/i.test(s);
 }
 
 function encodeObjectPath(path: string) {
@@ -52,13 +53,18 @@ function encodeObjectPath(path: string) {
     .join("/");
 }
 
+const PUBLIC_SUPABASE_CANDIDATE = [
+  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER,
+  process.env.SUPABASE_PUBLIC_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL,
+].find((url) => url && !isInternalDockerUrl(url));
+
 const SUPABASE_URL =
+  PUBLIC_SUPABASE_CANDIDATE ??
   process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ??
-  (isInternalDockerUrl(process.env.SUPABASE_PUBLIC_URL)
-    ? undefined
-    : process.env.SUPABASE_PUBLIC_URL) ??
+  process.env.SUPABASE_PUBLIC_URL ??
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
-  process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ??
   "";
 
 const S3_BASE = deriveStorageBaseFromS3Endpoint(
@@ -84,6 +90,44 @@ export function supabasePublicUrlFromImage(img?: DbImage | null): string | null 
   const encodedObjectPath = encodeObjectPath(objectPath);
 
   return `${STORAGE_BASE}/storage/v1/object/public/${bucket}/${encodedObjectPath}`;
+}
+
+/**
+ * Build a *transformed* public URL, served by the imgproxy instance already
+ * wired into this Supabase stack (`STORAGE_IMGPROXY_URL` in docker-compose).
+ *
+ * Why this matters: the source objects are print-resolution renders. Measured
+ * 2026-08-17 on `research-images` — 927 objects, 2.66 GB total, averaging
+ * 2.9 MB each, 912 of them over 1 MB. Serving those originals to browsers is
+ * what filled ~840 MB of a phone's Safari storage and, once the per-site
+ * quota is exhausted, breaks `localStorage` writes (Supabase persists the
+ * auth session there) — which locks the user out until they clear site data.
+ *
+ * Same object through the render endpoint:
+ *   original            4,484,796 bytes
+ *   width=600  q75       53,136 bytes   (~84x smaller)
+ *   width=1200 q80      150,488 bytes   (~30x smaller)
+ *
+ * `resize=contain` never upscales, so small sources are left alone.
+ */
+export function supabaseTransformedUrlFromImage(
+  img?: DbImage | null,
+  opts?: { width?: number; quality?: number },
+): string | null {
+  if (!img?.bucket_name || !img?.object_path) return null;
+  if (!STORAGE_BASE) return null;
+
+  const bucket = img.bucket_name.replace(/^\/+|\/+$/g, "");
+  const objectPath = img.object_path.replace(/^\/+/, "");
+  const encodedObjectPath = encodeObjectPath(objectPath);
+
+  const params = new URLSearchParams({
+    width: String(opts?.width ?? 1200),
+    quality: String(opts?.quality ?? 78),
+    resize: "contain",
+  });
+
+  return `${STORAGE_BASE}/storage/v1/render/image/public/${bucket}/${encodedObjectPath}?${params.toString()}`;
 }
 
 /**
@@ -123,8 +167,51 @@ export function pickPrimaryImage(images?: DbImage[] | null): DbImage | null {
  */
 export function getPrimaryImageUrl(images?: DbImage[] | null): string | null {
   const img = pickPrimaryImage(images);
-  const publicUrl = supabasePublicUrlFromImage(img);
-  return publicUrl ?? null;
+  // Transformed by default. These sources average ~2.9 MB (see
+  // supabaseTransformedUrlFromImage) and this is the hot path every product
+  // grid and card renders through, so shipping originals here is what
+  // actually fills users' device storage. Callers needing the untouched
+  // original (downloads, print, OG cards that bypass the transform) should
+  // call supabasePublicUrlFromImage directly.
+  return supabaseTransformedUrlFromImage(img) ?? supabasePublicUrlFromImage(img) ?? null;
+}
+
+/**
+ * Pick the best OpenGraph product photo for a research chemical.
+ * STRICTLY excludes any image tagged as a lab report / COA scan (image_type === "lab_report" / "lab",
+ * or alt_text containing "lab", "coa", "pdf", etc.) so lab test reports are NEVER shown as social preview cards.
+ */
+export function getResearchProductOgImage(product: {
+  images?: DbImage[] | null;
+  variants?: { images?: { image_id: string; image_type?: string | null }[] }[] | null;
+}): string | null {
+  if (!product?.images?.length) return null;
+
+  // Build a set of image IDs that are linked to any variant as a lab_report / lab
+  const labReportImageIds = new Set<string>();
+  if (product.variants) {
+    for (const v of product.variants) {
+      for (const vi of v.images ?? []) {
+        const type = String(vi.image_type ?? "").toLowerCase();
+        if (type === "lab_report" || type === "lab" || type.startsWith("lab") || type === "coa") {
+          labReportImageIds.add(vi.image_id);
+        }
+      }
+    }
+  }
+
+  // Filter product images to keep ONLY real product photos (exclude lab scans)
+  const productPhotosOnly = product.images.filter((img: any) => {
+    if (img.id && labReportImageIds.has(img.id)) return false;
+    const type = String(img.image_type ?? "").toLowerCase();
+    if (type === "lab_report" || type === "lab" || type.startsWith("lab") || type === "coa") return false;
+    const alt = String(img.alt_text ?? "").toLowerCase();
+    if (alt.includes("lab report") || alt.includes("coa") || alt.includes("lab scan") || alt.includes("(pdf)")) return false;
+    return true;
+  });
+
+  const chosen = pickPrimaryImage(productPhotosOnly);
+  return chosen ? supabasePublicUrlFromImage(chosen) : null;
 }
 
 /**
@@ -163,3 +250,8 @@ export function toNextOptimizedImageUrl(
  * Used across the app for consistent bucket reference.
  */
 export const PRODUCT_IMAGE_BUCKET = "product-images";
+
+/**
+ * Constant for the Unenter Labs research chemical images bucket name.
+ */
+export const RESEARCH_IMAGE_BUCKET = "research-images";

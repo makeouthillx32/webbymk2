@@ -128,7 +128,7 @@ export async function POST(
         toState:      addr.state,
         toZip:        addr.zip.replace(/\D/g, '').slice(0, 5),
         fromName:     process.env.USPS_FROM_FIRST_NAME ?? 'Desert',
-        fromCompany:  process.env.USPS_FROM_COMPANY ?? 'Desert Cowgirl Co.',
+        fromCompany:  process.env.USPS_FROM_COMPANY ?? 'Unenter Solutions',
         fromAddress1: process.env.USPS_FROM_STREET ?? '123 Main St',
         fromCity:     process.env.USPS_FROM_CITY   ?? 'Your City',
         fromState:    process.env.USPS_FROM_STATE  ?? 'TX',
@@ -184,7 +184,7 @@ export async function POST(
       fromAddress: {
         firstName:     process.env.USPS_FROM_FIRST_NAME ?? '',
         lastName:      process.env.USPS_FROM_LAST_NAME  ?? '',
-        firm:          process.env.USPS_FROM_COMPANY ?? 'Desert Cowgirl Co.',
+        firm:          process.env.USPS_FROM_COMPANY ?? 'Unenter Solutions',
         streetAddress: process.env.USPS_FROM_STREET ?? '',
         city:          process.env.USPS_FROM_CITY   ?? '',
         state:         process.env.USPS_FROM_STATE  ?? '',

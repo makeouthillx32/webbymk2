@@ -122,17 +122,12 @@ if ($Dev) {
     # Use absolute paths — relative paths trigger a bun file-watcher bug on Windows
     # where tsconfig.json is registered as a watched directory instead of a file,
     # producing "Internal error: directory mismatch" and a resolver crash.
+    $tuiTsConfig = ($TUI_DIR + "/tsconfig.json").Replace('\', '/')
+    $mainEntry   = ($PROJECT_DIR + "/src/main.tsx").Replace('\', '/')
     Push-Location $PROJECT_DIR
-    bun --tsconfig-override "$TUI_DIR\tsconfig.json" --watch "$PROJECT_DIR\src\main.tsx"
+    bun --tsconfig-override "$tuiTsConfig" --watch "$mainEntry"
     Pop-Location
     exit $LASTEXITCODE
-}
-
-# --- Check Node ---------------------------------------------------------------
-
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "  Node.js is not installed.  https://nodejs.org" -ForegroundColor Red
-    Pop-Location; exit 1
 }
 
 # --- Build --------------------------------------------------------------------
@@ -151,9 +146,21 @@ Pop-Location
 # --- Run ----------------------------------------------------------------------
 # Clear the terminal before launching so no shell output bleeds through as
 # "ghost" duplicate frames inside the Ink TUI on Windows Terminal / PowerShell.
+#
+# Run with `bun`, not `node`. control-db.ts (the SQLite-backed zones +
+# environments store) hard-requires `bun:sqlite` -- there is no Node
+# fallback (see its own header comment: "Lazily load bun:sqlite to avoid
+# ESM loading errors under plain Node", i.e. it was only ever deferring the
+# failure, not avoiding it). Running the built dist/cli.js under plain node
+# throws "Cannot find module 'bun:sqlite'" during control-db hydration,
+# which silently leaves the TUI with zero zones and zero environments
+# loaded -- discovered 2026-08-08 when the prod autostart path first got
+# exercised for real after a reboot. Bun is already a hard requirement for
+# this whole subproject (dev mode, the build step above), so there's no
+# portability loss in also using it to run the compiled output.
 
 [Console]::Clear()
 
 Push-Location $PROJECT_DIR
-node .\src\ink\dist\cli.js
+bun .\src\ink\dist\cli.js
 Pop-Location

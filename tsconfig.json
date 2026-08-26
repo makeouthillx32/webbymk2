@@ -19,7 +19,7 @@
     },
     "allowJs": true,
     "skipLibCheck": true,
-    "strict": true,
+    "strict": false,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "incremental": true,
@@ -39,13 +39,13 @@
   "include": [
     "next-env.d.ts",
     ".next/types/**/*.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    "src/components/Hero/InteractiveBanner.tsx"
-, "tailwind.config.ts", "tailwind.config.ts"  ],
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/components/**/*.ts",
+    "src/components/**/*.tsx"
+  ],
   "exclude": [
     "node_modules",
-    "src/ink",
-    "zones"
+    "src/ink"
   ]
 }

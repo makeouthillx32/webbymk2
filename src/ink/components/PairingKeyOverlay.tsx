@@ -8,6 +8,23 @@ import {
   KEY_TTL_H,
 } from "../../utils/pairingKey.js";
 import { setClipboard } from "../termio/osc.js";
+import { spawn }                              from "child_process";
+import { gracefulShutdownSync }               from "../../utils/gracefulShutdown.js";
+
+// Dev mode = bun --watch (process.execPath contains "bun").
+// Production = node running dist/cli.js.  R-restart is only meaningful in prod.
+const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+
+function selfRestart(): void {
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    stdio:    "inherit",
+    detached: true,
+    cwd:      process.cwd(),
+    env:      { ...process.env, UNAXIS_RESTARTED: "1" },
+  });
+  child.unref();
+  gracefulShutdownSync(0);
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +66,8 @@ export function PairingKeyOverlay({ knownProjects, projectDir, onClose }: Props)
       onClose();
     } else if (input === "n" || input === "N") {
       issueKey(true);
+    } else if ((input === "r" || input === "R") && isProductionMode) {
+      selfRestart();
     }
   });
 
@@ -161,7 +180,11 @@ export function PairingKeyOverlay({ knownProjects, projectDir, onClose }: Props)
       </Box>
 
       {/* ── Close hint ── */}
-      <Text dimColor>N  new key    ·    K / q / esc  close</Text>
+      <Text dimColor>
+        {"N  new key"}
+        {isProductionMode ? "    ·    R  restart" : ""}
+        {"    ·    K / q / esc  close"}
+      </Text>
 
     </Box>
   );

@@ -14,9 +14,6 @@ import ProductDetailClient from "./_components/ProductDetailClient";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.unenter.live";
-
 // ─── Static params ────────────────────────────────────────────────────────────
 
 export async function generateStaticParams() {
@@ -24,7 +21,7 @@ export async function generateStaticParams() {
   const supabase = createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => [], setAll: () => {} } }
+    { cookies: { getAll: () => [], setAll: () => {} } },
   );
   const { data: products } = await supabase
     .from("products")
@@ -52,17 +49,19 @@ export async function generateMetadata({
     .single();
 
   if (!product) {
-    return { title: "Product Not Found | Desert Cowgirl Co." };
+    return { title: "Product Not Found | Unenter Solutions" };
   }
 
-  const title = `${product.title} | Desert Cowgirl Co.`;
+  const title = `${product.title} | Unenter Solutions`;
   const ogTitle = product.title;
   const description =
     product.description ??
-    `Shop ${product.title} at Desert Cowgirl — western-inspired boutique fashion.`;
-  const url = `${SITE_URL}/products/${slug}`;
-  const ogImageVersion = encodeURIComponent(product.updated_at ?? product.title);
-  const ogImageUrl = `${SITE_URL}/products/${slug}/opengraph-image?v=${ogImageVersion}`;
+    `Shop ${product.title} at Unenter Solutions — western-inspired boutique fashion.`;
+  const url = `/products/${slug}`;
+  const ogImageVersion = encodeURIComponent(
+    product.updated_at ?? product.title,
+  );
+  const ogImageUrl = `/products/${slug}/opengraph-image?v=${ogImageVersion}`;
 
   return {
     title,
@@ -71,7 +70,7 @@ export async function generateMetadata({
       title: ogTitle,
       description,
       url,
-      siteName: "Desert Cowgirl",
+      siteName: "Unenter Solutions",
       type: "website",
       images: [
         {
@@ -103,7 +102,8 @@ export default async function ProductPage({
 
   const { data: product, error } = await supabase
     .from("products")
-    .select(`
+    .select(
+      `
       id,
       title,
       slug,
@@ -150,7 +150,8 @@ export default async function ProductPage({
           slug
         )
       )
-    `)
+    `,
+    )
     .eq("slug", slug)
     .eq("status", "active")
     .single();
@@ -168,7 +169,7 @@ export default async function ProductPage({
     ...product,
     images: (product.product_images || []).sort(
       (a: any, b: any) =>
-        (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0)
+        (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0),
     ),
     variants: (product.product_variants || [])
       .filter((v: any) => v.is_active !== false)

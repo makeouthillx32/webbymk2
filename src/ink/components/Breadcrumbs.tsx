@@ -27,6 +27,7 @@ const LABELS: Record<View, string> = {
   settings:         "settings",
   wizard:           "new zone",
   "instance-wizard": "new instance",
+  "clone-wizard":    "clone instance",
   core:             "core",
 };
 

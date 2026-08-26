@@ -1,0 +1,178 @@
+# MediaMTX config for the Tank camera gateway.
+#
+# Paths are NOT hand-defined here. Tank's server code (see
+# src/zones/tank/server/receiverManager.ts + mediaGateway.ts) provisions a
+# path for every online camera automatically via this instance's control
+# API, using srt://<srt-manager-lan-host>:<camera's videoOutPort> as the
+# source — no camera credentials ever pass through MediaMTX or this file.
+# That's what makes this scale to the full camera rollout: adding camera #2
+# through #25 in the SRT Receiver Manager is all that's needed; nothing here
+# has to be touched.
+#
+# Path naming matches src/zones/tank/mediaPlayback.ts#cameraMediaPath:
+#   cameras/<safe-camera-id>
+# so a provisioned path is immediately reachable at:
+#   {TANK_WHEP_PUBLIC_BASE_URL}/cameras/<id>/whep
+#   {TANK_HLS_PUBLIC_BASE_URL}/cameras/<id>/index.m3u8
+
+logLevel: info
+
+# ── Authentication ──────────────────────────────────────────────────────────
+# Publishing is authorised by Tank, not by a static list here.
+#
+# The previous config granted `action: publish` to `user: any` with no IP
+# restriction, which meant anyone who could reach this container could publish
+# to ANY path — including overwriting a live house camera. That was survivable
+# only because no ingest port was published to the internet. Exposing RTMP for
+# OBS makes it a public ingest, so it had to go.
+#
+# authMethod: http sends each gated action to Tank, which owns the OBS room
+# table and the stream keys (see src/zones/tank/server/obsRooms.ts). 200 means
+# allow, anything else denies.
+authMethod: http
+authHTTPAddress: http://unt_tank:3000/api/tank/obs/auth
+
+# Reads and playback are deliberately NOT gated. Tank is a public viewing
+# platform: putting an auth round-trip in front of every viewer would add
+# latency, break anonymous viewing, and make playback fail whenever the app is
+# redeploying. Only `publish` needs a decision.
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+  - action: read
+  - action: playback
+
+# ── OBS / Streamlabs ingest ─────────────────────────────────────────────────
+# RTMP is what OBS, Streamlabs and every other consumer encoder speaks without
+# configuration. Publishers land on obs/<slug> and are authorised per-publish
+# by the hook above.
+rtmp: yes
+rtmpAddress: :1935
+
+# Control API — used by Tank's server to add/update paths at runtime. Keep
+# this OFF the docker-compose ports list (it isn't published to the host in
+# docker-compose.yml) — it should only be reachable container-to-container
+# over the shared `unenter` network, at http://unt_mediamtx:9997, never
+# exposed publicly.
+api: yes
+apiAddress: :9997
+
+# Playback server — seek/scrub over the locally recorded segments in
+# /recordings. Only the LOCAL spool is visible here (a couple of hours by
+# design); the 24h archive lives in Supabase Storage and is served to members
+# through signed URLs, and anything older has been drained to mass storage.
+# Not published to the host in docker-compose.yml — internal network only,
+# same as the control API.
+playback: yes
+playbackAddress: :9996
+
+# HLS output (matches the 8888 port exposed in docker-compose.yml)
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+# Standard fMP4 HLS, NOT MediaMTX's default Low-Latency variant.
+#
+# lowLatency emits EXT-X-PART / EXT-X-PRELOAD-HINT and advertises
+# CAN-BLOCK-RELOAD=YES. Apple's player (AVFoundation, which is what every
+# iOS browser uses — Safari AND Brave AND Chrome on iOS are all WebKit)
+# implements LL-HLS strictly and effectively expects HTTP/2 for the
+# blocking playlist reloads; this stack proxies HTTP/1.1, where those
+# blocking requests tie up connections and the player stalls with a black
+# frame and no surfaced error. Desktop never saw it because Chromium-class
+# browsers take the WHEP/WebRTC path instead.
+#
+# fmp4 keeps the same fragmented-MP4 segments (so the proxy's
+# .m3u8|.ts|.mp4|.m4s routing rule still applies) and the same AAC audio,
+# just without the low-latency parts machinery. Costs a few seconds of
+# latency on the HLS path; WHEP remains the sub-second path for clients
+# that can reach it.
+hlsVariant: fmp4
+# Tightened 2026-08-23 off real 24h telemetry: avg HLS latency was measured
+# at 2.9-8s across cameras (WHEP on the same setup measured 140ms same
+# window - the gap is almost entirely this buffer depth, not the network).
+# At 2s x 7 segments the live playlist held up to 14s of buffer; typical
+# players sit ~3 segments behind live for stability, which is exactly where
+# the 4-8s readings landed. Halving segment duration and trimming count
+# lowers that same 3-segment cushion to ~3s without touching hlsVariant -
+# still plain fmp4 segments over HTTP/1.1, NOT LL-HLS parts, so this does
+# not reintroduce the iOS AVFoundation black-frame bug documented above.
+hlsSegmentCount: 4
+hlsSegmentDuration: 1s
+
+# Default 60s meant a refresh (or any brief gap with zero readers) could
+# outlive the muxer, so the next viewer paid a full cold-start remux
+# instead of just reattaching to something already running. This does NOT
+# touch hlsVariant/hlsSegmentDuration above — same fmp4, same segments,
+# just kept alive longer between viewers.
+hlsMuxerCloseAfter: 1h
+# Default (off) only starts remuxing on the first HLS request — exactly
+# the "refresh tanks everything" cold start. Every camera's WHEP viewers
+# already keep the source hot, so this is close to free: the fmp4 muxer
+# runs continuously instead of spinning up per-viewer.
+hlsAlwaysRemux: yes
+
+# Default queue is small enough that a client reading slower than the
+# stream's bitrate for a moment (a slow phone, a background tab) trips
+# MediaMTX's own "reader is too slow" disconnect instead of just
+# buffering through it — which then looks identical to a real network
+# failure from the viewer's side.
+writeQueueSize: 1024
+
+# WHEP/WebRTC output (matches the 8889 HTTP + 8189/udp ports)
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+# IMPORTANT: set this to the real public hostname/IP that browsers will reach
+# this container through once it's proxied (e.g. media.tank.unenter.live), or
+# WebRTC ICE candidates will advertise an internal Docker IP and playback
+# will fail to connect from outside the LAN.
+webrtcAdditionalHosts: [192.168.50.204, media.tank.unenter.live]
+
+# TURN relay (see docker-compose.yml's coturn service + coturn/turnserver.conf).
+# Host candidates above only ever work on the LAN or a permissive network —
+# without a TURN server, anyone behind carrier-grade NAT, strict corporate
+# wifi, or most cellular connections silently never gets WebRTC at all and
+# falls back to HLS with no visible error. Credentials must match
+# turnserver.conf's lt-cred-mech user= line exactly.
+webrtcICEServers2:
+  - url: turn:media.tank.unenter.live:3478
+    username: tankturn
+    password: 0xY2b1kJZciEEQpvsv7dExLWOsL3hVIj
+
+paths:
+  # Archive AV1 converter.
+  #
+  # Not a stream — a long-running maintenance loop that needs to live where
+  # ffmpeg and the GPU are. MediaMTX will start it with the server and restart
+  # it if it ever exits, which is the cheapest reliable supervisor available
+  # here without adding another container to the stack.
+  #
+  # sourceOnDemand is off so it runs whether or not anyone is watching, and the
+  # source is a dummy publisher that never arrives: the path exists purely to
+  # own the process.
+  _archive_transcoder:
+    source: publisher
+    sourceOnDemand: no
+    runOnInit: /scripts/archive-transcode.sh
+    runOnInitRestart: yes
+
+  # OBS / Streamlabs ingest namespace. Rooms are created on publish and torn
+  # down on disconnect, so a room exists for viewers exactly while signal is
+  # arriving — no manual teardown and no ghost tiles after someone closes OBS.
+  #
+  # A regex path scopes the hooks to obs/* only; putting them in pathDefaults
+  # would fire them for every camera path as well.
+  "~^obs/[a-z0-9][a-z0-9-]*$":
+    runOnReady: >-
+      curl -s -o /dev/null --max-time 10 -X POST
+      -H "Content-Type: application/json"
+      -H "x-tank-ingest-secret: $TANK_ARCHIVE_INGEST_SECRET"
+      -d "{\"path\":\"$MTX_PATH\",\"live\":true}"
+      $TANK_OBS_SIGNAL_URL
+    runOnNotReady: >-
+      curl -s -o /dev/null --max-time 10 -X POST
+      -H "Content-Type: application/json"
+      -H "x-tank-ingest-secret: $TANK_ARCHIVE_INGEST_SECRET"
+      -d "{\"path\":\"$MTX_PATH\",\"live\":false}"
+      $TANK_OBS_SIGNAL_URL

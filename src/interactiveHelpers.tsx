@@ -5,17 +5,13 @@ import { setupGracefulShutdown } from './utils/gracefulShutdown.js'
 import { profileCheckpoint } from './utils/startupProfiler.js'
 
 export type RenderAndRun = (element: ReactNode) => void | Promise<void>
-type InkRender = (
-  element: ReactNode,
-  options: { patchConsole: boolean; exitOnCtrlC: boolean },
-) => unknown | Promise<unknown>
 
 export async function renderAndRun(element: ReactNode): Promise<void> {
-  const { render } = await import('ink') as { render: InkRender }
+  const { renderSync } = await import('./ink/root.js')
 
   setupGracefulShutdown()
 
-  await render(element, {
+  renderSync(element, {
     patchConsole: false,
     exitOnCtrlC: false,
   })

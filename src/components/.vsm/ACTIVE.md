@@ -20,7 +20,7 @@ S3 sends failed tasks back to QUEUE.md with status: failed.
 ```
 ### SLOT-1
 - task_id: TASK-001
-- file: Z:\WEBSITES\DCG.CO\components\ExampleComponent.tsx
+- file: Z:\WEBSITES\webbymk2\components\ExampleComponent.tsx
 - type: cleanup
 - assigned_to: s1-worker-1
 - assigned_at: YYYY-MM-DD HH:MM

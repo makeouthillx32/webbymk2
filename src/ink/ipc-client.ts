@@ -1,52 +1,55 @@
 // src/ink/ipc-client.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// CLI-side IPC client.  Connects to the running TUI's IPC server, sends a
-// command, streams back output, and resolves with the process exit code.
+// CLI-side IPC client. Connects directly to the TUI's open IPC server.
+// No auth, no pairing keys — LAN-local open access.
 //
-// Local mode (default):
-//   Connects to 127.0.0.1:50505 — requires the TUI to be running locally.
+// Prod TUI: 0.0.0.0:50505  (unaxis binary)
+// Dev TUI:  0.0.0.0:50507  (bun run tui:dev, hot-reload)
 //
-// Remote mode (active when ~/.unaxis/remote-session.json exists):
-//   Connects to host:50506, sends AUTH <token> first, then the command.
-//   Written by `unaxis connect <key>`.  Removed by `unaxis disconnect`.
+// From the control node itself: connects to 127.0.0.1:PORT
+// From elsewhere on the LAN (sandbox/agent): connects to the control node's
+// LAN IP, read from config.json (STACK_IP_SAFE) — never hardcoded here so
+// this stays correct across machine moves/relocations and isn't committed
+// to the (public) repo as a literal address.
 //
-// Usage (from cli.tsx fast-path):
+// Usage:
 //   import { sendIpcCommand } from "../ink/ipc-client.js";
 //   process.exit(await sendIpcCommand(args));
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as net from "net";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
-import { IPC_PORT, IPC_HOST } from "./ipc-server.ts";
+import { STACK_IP_SAFE } from "../config/stack.js";
 
-// ── Remote session file ───────────────────────────────────────────────────────
+// ── Open LAN ports (no auth) ──────────────────────────────────────────────────
+// Prod TUI binds 0.0.0.0:50505, Dev TUI binds 0.0.0.0:50507.
+// From the control node (local): use 127.0.0.1. From elsewhere on the LAN
+// (sandbox/agent): use the control node's IP from config.json.
+// No remote session file, no pairing keys.
 
-export interface RemoteSession {
-  host:        string
-  port:        number
-  token:       string
-  slug:        string
-  exp:         number    // Unix timestamp (seconds)
-  connectedAt: string    // ISO-8601
-}
+const PROD_PORT  = 50505;
+const DEV_PORT   = 50507;
+const LOCAL_HOST = "127.0.0.1";
+// Control-node LAN IP — sourced from config.json (never a literal address in
+// source, since this repo is public). Empty string if config is absent; in
+// that case we just fall back to treating the connection as local.
+const CONTROL_NODE_IP = STACK_IP_SAFE;
 
-export function remoteSessionPath(): string {
-  return join(homedir(), ".unaxis", "remote-session.json")
-}
-
-export function loadRemoteSession(): RemoteSession | null {
-  const p = remoteSessionPath()
-  if (!existsSync(p)) return null
+// Detect if running on the control node itself or from a remote sandbox
+const IS_LOCAL   = (() => {
+  if (!CONTROL_NODE_IP) return true;
   try {
-    const s = JSON.parse(readFileSync(p, "utf8")) as RemoteSession
-    if (Math.floor(Date.now() / 1000) >= s.exp) return null   // expired
-    return s
-  } catch {
-    return null
-  }
-}
+    const { networkInterfaces } = require("os") as typeof import("os");
+    const ifaces = networkInterfaces();
+    return Object.values(ifaces).flat().some(i => i?.address === CONTROL_NODE_IP);
+  } catch { return false; }
+})();
+
+const CONNECT_HOST = IS_LOCAL ? LOCAL_HOST : CONTROL_NODE_IP;
+
+// Legacy stubs — kept so imports in cli.tsx don't break during transition
+export interface RemoteSession { host: string; port: number; token: string; slug: string; exp: number; connectedAt: string; }
+export function loadRemoteSession(): RemoteSession | null { return null; }
+export function remoteSessionPath(): string { return ""; }
 
 // ── Shared low-level sender ───────────────────────────────────────────────────
 
@@ -93,101 +96,62 @@ function streamCommand(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Send an IPC command to the TUI (local or remote).
- *
- * If a valid remote session exists in ~/.unaxis/remote-session.json, the
- * command is routed to the remote bridge (host:50506) with token auth.
- * Otherwise it connects to the local server (127.0.0.1:50505).
+ * Send an IPC command to a TUI.
+ * target: "auto" | "prod" | "dev"
+ *   prod → CONNECT_HOST:50505
+ *   dev  → CONNECT_HOST:50507
+ *   auto → prod port (50505), falls back to dev (50507) if prod not running
  */
-export function sendIpcCommand(args: string[], opts?: { quiet?: boolean }): Promise<number> {
-  const quiet   = opts?.quiet ?? false;
-  const cmd     = JSON.stringify({ argv: args });
-  const session = loadRemoteSession();
+export async function sendIpcCommand(
+  args:  string[],
+  opts?: { quiet?: boolean; target?: "auto" | "prod" | "dev" },
+): Promise<number> {
+  const quiet  = opts?.quiet  ?? false;
+  const target = opts?.target ?? "auto";
+  const cmd    = JSON.stringify({ argv: args });
 
-  if (session) {
-    return sendRemoteIpcCommand(args, session, quiet);
-  }
-
-  // ── Local path ────────────────────────────────────────────────────────────
-  return new Promise((resolve) => {
-    const socket = net.connect(IPC_PORT, IPC_HOST);
-    socket.on("connect", () => streamCommand(socket, cmd, quiet, resolve));
-    socket.on("error",   (err: NodeJS.ErrnoException) => {
-      if (err.code === "ECONNREFUSED") {
-        if (!quiet) process.stderr.write("✗ UNAXIS is not running — start it first with: unaxis\n");
-      } else {
-        process.stderr.write(`✗ IPC error: ${err.message}\n`);
-      }
-      resolve(1);
+  // silent: used only by "auto" for its first (prod) attempt — a
+  // ECONNREFUSED there isn't a real failure yet, it just means "try dev
+  // next", so it shouldn't print the "not running" line the way a genuine
+  // single-target failure should.
+  const connect = (port: number, label: string, silentRefused = false) =>
+    new Promise<number>((resolve, reject) => {
+      const socket = net.connect(port, CONNECT_HOST);
+      socket.on("connect", () => streamCommand(socket, cmd, quiet, resolve));
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "ECONNREFUSED") {
+          if (silentRefused) {
+            reject(err);
+            return;
+          }
+          if (!quiet) process.stderr.write(`✗ ${label} TUI not running (${CONNECT_HOST}:${port})\n`);
+        } else {
+          process.stderr.write(`✗ IPC error: ${err.message}\n`);
+        }
+        resolve(1);
+      });
     });
-  });
+
+  if (target === "dev")  return connect(DEV_PORT,  "dev");
+  if (target === "prod") return connect(PROD_PORT, "prod");
+
+  // auto: try prod first, silently fall back to dev on ECONNREFUSED — this
+  // was previously documented (see the docstring above) but not actually
+  // implemented; every "auto" call just failed outright whenever only a
+  // dev TUI was running instead of falling back to it.
+  try {
+    return await connect(PROD_PORT, "prod", true);
+  } catch {
+    return connect(DEV_PORT, "dev");
+  }
 }
 
-/**
- * Connect to a remote UNAXIS bridge, authenticate, then send a command.
- * Called automatically by sendIpcCommand when a remote session is active.
- */
+/** Legacy stub — kept for any remaining call sites during transition */
 export function sendRemoteIpcCommand(
   args:    string[],
-  session: RemoteSession,
+  _session: RemoteSession,
   quiet    = false,
 ): Promise<number> {
-  const cmd = JSON.stringify({ argv: args });
-
-  return new Promise((resolve) => {
-    const socket = net.connect(session.port, session.host);
-    let   buf    = "";
-    let   authed = false;
-    let settled  = false;
-
-    const finish = (code: number) => {
-      if (settled) return;
-      settled = true;
-      resolve(code);
-    };
-
-    socket.on("connect", () => {
-      // Send bearer token first — bridge requires AUTH before any command
-      socket.write(`AUTH ${session.token}\n`);
-    });
-
-    socket.on("data", (chunk) => {
-      buf += (chunk as Buffer).toString();
-
-      if (!authed) {
-        const nl = buf.indexOf("\n");
-        if (nl === -1) return;
-        const line = buf.slice(0, nl).trim();
-        buf        = buf.slice(nl + 1);
-
-        if (line === "OK") {
-          authed = true;
-          streamCommand(socket, cmd, quiet, finish);
-        } else {
-          const reason = line.startsWith("ERR") ? line.slice(4) : "rejected";
-          process.stderr.write(`✗ Remote bridge auth failed: ${reason}\n`);
-          if (reason.includes("expired")) {
-            process.stderr.write("  Run: unaxis disconnect  (key has expired)\n");
-          }
-          socket.destroy();
-          finish(1);
-        }
-        return;
-      }
-    });
-
-    socket.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "ECONNREFUSED") {
-        if (!quiet) {
-          process.stderr.write(
-            `✗ Remote UNAXIS not reachable at ${session.host}:${session.port}\n` +
-            "  Check that the remote TUI is running and the pairing key has not expired.\n"
-          );
-        }
-      } else {
-        process.stderr.write(`✗ Remote IPC error: ${err.message}\n`);
-      }
-      finish(1);
-    });
-  });
+  return sendIpcCommand(args, { quiet });
 }
+

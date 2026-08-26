@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Breadcrumb from "@/components/Breadcrumbs/dashboard";
 import { PersonalInfoForm } from "./_components/personal-info";
 import { UploadPhotoForm } from "./_components/upload-photo";
+import { SecuritySettingsForm } from "./_components/security-settings";
 import ManualRoleEditor from "@/components/profile/ManualRoleEditor";
 import AdminUserManager from "@/components/profile/AdminDelete";
 import { createBrowserClient } from "@/utils/supabase/client";
@@ -44,6 +45,10 @@ export default function SettingsPage() {
         <div className="col-span-5 xl:col-span-2">
           <UploadPhotoForm />
         </div>
+      </div>
+
+      <div className="mt-10">
+        <SecuritySettingsForm />
       </div>
 
       {isAdmin && (

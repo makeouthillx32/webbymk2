@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Titillium_Web } from "next/font/google";
+import { Plus_Jakarta_Sans, Source_Serif_4, JetBrains_Mono } from "next/font/google";
+import type { CSSProperties } from "react";
 // globals.css MUST come first — it defines all --background/--foreground/--lt-*
 // CSS variables and imports layout-tokens.css. Without it, every var() call
 // resolves to nothing (transparent) until the JS theme engine hydrates.
@@ -11,8 +12,27 @@ import { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "./provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import ChunkReloader from "@/components/system/ChunkReloader";
+import { ZoneProvider } from "@/components/providers/ZoneProvider";
+import { getZoneContext } from "@/lib/zoneContext";
+import MovedHereToast from "@/components/system/MovedHereToast";
+import { generateSiteMetadata } from "@/lib/zoneMetadata";
 
-const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
+// Load the default theme's fonts and expose them ONLY as --font-* fallbacks.
+// The body must use `font-sans` (→ var(--font-sans)) — NOT a next/font
+// className, which hardcodes the family on <body> and blocks the theme
+// system (ThemeProvider sets each theme's --font-* on <html> and
+// dynamicFontManager loads them; vintage/notebook/etc. never applied while
+// Titillium was forced here).
+const fontSans  = Plus_Jakarta_Sans({ subsets: ["latin"], display: "swap" });
+const fontSerif = Source_Serif_4({ subsets: ["latin"], display: "swap" });
+const fontMono  = JetBrains_Mono({ subsets: ["latin"], display: "swap" });
+
+const fontVars = {
+  "--font-sans":  fontSans.style.fontFamily,
+  "--font-serif": fontSerif.style.fontFamily,
+  "--font-mono":  fontMono.style.fontFamily,
+} as CSSProperties;
 
 /**
  * Server-rendered theme-color for iOS/Safari PWA.
@@ -27,13 +47,9 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default: "Unenter",
-    template: "%s | Unenter",
-  },
-  description: "Explore Unenter's projects, live streams, and community.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return generateSiteMetadata();
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];
@@ -43,21 +59,31 @@ function isValidLocale(v: string | undefined | null): v is Locale {
 }
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  const [cookieStore, headersList] = await Promise.all([cookies(), headers()]);
+  const [cookieStore, headersList, zoneCtx] = await Promise.all([
+    cookies(),
+    headers(),
+    getZoneContext(),
+  ]);
   const rawLocale =
     headersList.get("X-Next-Locale") ??
     cookieStore.get("Next-Locale")?.value;
   const locale: Locale = isValidLocale(rawLocale) ? rawLocale : "en";
 
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={locale} style={fontVars} suppressHydrationWarning>
       <head />
       {/* NO hardcoded bg class here — background-color is set by
           globals.css via hsl(var(--background)) so the iOS status bar
-          always reads the correct theme color, never a hardcoded value. */}
-      <body className={titillium.className} suppressHydrationWarning>
+          always reads the correct theme color, never a hardcoded value.
+          Likewise NO next/font className on body — font-sans resolves
+          var(--font-sans) so the active theme's fonts actually apply. */}
+      <body className="font-sans" suppressHydrationWarning>
+        <ChunkReloader />
         <Providers>
-          <ClientLayout locale={locale}>{children}</ClientLayout>
+          <ZoneProvider value={zoneCtx}>
+            <MovedHereToast />
+            <ClientLayout locale={locale}>{children}</ClientLayout>
+          </ZoneProvider>
         </Providers>
       </body>
     </html>

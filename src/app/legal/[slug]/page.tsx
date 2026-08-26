@@ -23,8 +23,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   return {
-    title: `${page.title} | Desert Cowgirl`,
-    description: page.meta_description || `${page.title} for Desert Cowgirl boutique`,
+    title: `${page.title} | Unenter Solutions`,
+    description: page.meta_description || `${page.title} for Unenter Solutions boutique`,
     keywords: page.meta_keywords || undefined,
     robots: {
       index: true,

@@ -171,6 +171,11 @@ watchRoutes();
 // ── Path-prefix fallback (local dev / no subdomain routing) ───────────────────
 
 const PATH_UPSTREAMS = [
+  { prefix: "/tank",         getTarget: () => zoneUpstreams[`tank.${coreDomain}`]      ?? coreUpstream },
+  { prefix: "/archives",     getTarget: () => zoneUpstreams[`tank.${coreDomain}`]      ?? coreUpstream },
+  { prefix: "/blog",         getTarget: () => zoneUpstreams[`blog.${coreDomain}`]      ?? coreUpstream },
+  { prefix: "/docs",         getTarget: () => zoneUpstreams[`docs.${coreDomain}`]      ?? coreUpstream },
+  { prefix: "/labs",         getTarget: () => zoneUpstreams[`labs.${coreDomain}`]      ?? coreUpstream },
   { prefix: "/dashboard",    getTarget: () => zoneUpstreams[`dashboard.${coreDomain}`] ?? coreUpstream },
   { prefix: "/shop",         getTarget: () => zoneUpstreams[`shop.${coreDomain}`]      ?? coreUpstream },
   { prefix: "/products",     getTarget: () => zoneUpstreams[`shop.${coreDomain}`]      ?? coreUpstream },
@@ -185,9 +190,15 @@ const PATH_UPSTREAMS = [
   { prefix: "/",             getTarget: () => coreUpstream },
 ];
 
-// ── Proxy instance ────────────────────────────────────────────────────────────
+const upstreamAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 500,
+  keepAliveMsecs: 10000,
+  timeout: 30000,
+});
 
 const proxy = httpProxy.createProxyServer({
+  agent:        upstreamAgent,
   changeOrigin: false,  // preserve original Host header so Next.js middleware
                         // can detect the zone from the subdomain
   xfwd:         true,   // forward X-Forwarded-* headers
@@ -196,30 +207,65 @@ const proxy = httpProxy.createProxyServer({
 });
 
 proxy.on("error", (err, req, res) => {
-  console.error(`[proxy] error ${req.method} ${req.url} →`, err.message);
-  // res is http.ServerResponse for HTTP but a net.Socket for WebSocket/HMR
-  // upgrades — guard before calling HTTP-only methods.
-  if (res && typeof res.writeHead === "function" && !res.headersSent) {
+  console.error(`[proxy] error ${req?.url} →`, err.message);
+  if (res && !res.headersSent && typeof res.writeHead === "function") {
     res.writeHead(502, { "Content-Type": "text/plain" });
     res.end("Bad Gateway");
-  } else if (res && typeof res.destroy === "function") {
-    res.destroy();
   }
 });
+
+proxy.on("proxyRes", (proxyRes, req, res) => {
+  const pathname = (req.url ?? "/").split("?")[0];
+  if (pathname.endsWith(".m3u8")) {
+    proxyRes.headers["cache-control"] = "no-cache, no-store, must-revalidate, max-age=0";
+    proxyRes.headers["pragma"] = "no-cache";
+    proxyRes.headers["expires"] = "0";
+    proxyRes.headers["access-control-allow-origin"] = "*";
+    proxyRes.headers["access-control-allow-methods"] = "GET, HEAD, OPTIONS";
+  } else if (/\.(ts|mp4|m4s)$/.test(pathname)) {
+    proxyRes.headers["cache-control"] = "public, max-age=60, immutable";
+    proxyRes.headers["access-control-allow-origin"] = "*";
+    proxyRes.headers["access-control-allow-methods"] = "GET, HEAD, OPTIONS";
+  }
+});
+
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
 function resolveTarget(req) {
   // NPM (Nginx Proxy Manager) sits in front of this proxy and rewrites the
-  // Host header to the upstream address (e.g. "192.168.50.204").  The original
-  // public hostname is preserved in X-Forwarded-Host.  Try that first so
-  // zone routing works through NPM; fall back to Host for direct connections.
+  // Host header to the upstream address (e.g. a LAN IP like "192.168.x.x").
+  // The original public hostname is preserved in X-Forwarded-Host.  Try that
+  // first so zone routing works through NPM; fall back to Host for direct
+  // connections.
   const rawHost  = (req.headers["x-forwarded-host"] ?? req.headers["host"] ?? "")
                      .split(",")[0].trim();
   const host     = rawHost.split(":")[0].toLowerCase();
   const pathname = (req.url ?? "/").split("?")[0];
 
-  // 1. Host-based routing (production) — reads live snapshot
+  // 1. MediaMTX path split (HLS on 8888, WHEP on 8889)
+  //
+  // MediaMTX's Low-Latency HLS muxer emits fragmented-MP4 segments
+  // (`<hash>_video1_init.mp4`, `<hash>_video1_seg12.mp4`, `.m4s` parts) —
+  // NOT the MPEG-TS `.ts` segments classic HLS used. Matching only
+  // .m3u8/.ts sent every actual media segment to the WebRTC server on
+  // 8889, which answered `{"error":"path ... is not configured"}` with a
+  // 500. Playlists loaded and video never did, on every browser — which
+  // is what made HLS look broken/unfixable and is why iOS Safari (which
+  // can only use HLS here) showed a permanently black player.
+  if (host === `media.tank.${coreDomain}` || host === "media.tank.unenter.live") {
+    // Override User-Agent sent upstream to MediaMTX. MediaMTX contains an internal check
+    // that rejects Apple/iOS User-Agents with a 400 Bad Request if cookie sessions are used.
+    // Normalizing the User-Agent upstream forces MediaMTX to use standard query-param sessions (?session=...)
+    // which iOS Safari and cellular networks decode without cookie restrictions.
+    req.headers["user-agent"] = "TankLivePlayer/1.0";
+    if (pathname.includes("-hls") || /\.(m3u8|ts|mp4|m4s)$/.test(pathname)) {
+      return "http://unt_mediamtx:8888";
+    }
+    return "http://unt_mediamtx:8889";
+  }
+
+  // 2. Host-based routing (production) — reads live snapshot
   if (zoneUpstreams[host]) return zoneUpstreams[host];
 
   // 2. Path-based routing (local dev / fallback)
@@ -259,15 +305,20 @@ const server = http.createServer((req, res) => {
   }
 
   const target = resolveTarget(req);
-  // Preserve the original x-forwarded-host set by NPM (the public hostname).
-  // Only set it ourselves when it isn't already present — i.e. direct connections
-  // that bypass NPM.  Overwriting it was the root cause of zone misdetection:
-  // Next.js middleware saw the internal host instead of e.g. dev.blog.unenter.live.
+  const host = req.headers["x-forwarded-host"] ?? req.headers["host"] ?? "";
+  console.log(`[proxy] -> ${req.method} ${req.url} (host: ${host}) -> ${target}`);
+  
   if (!req.headers["x-forwarded-host"]) {
     req.headers["x-forwarded-host"] = req.headers["host"] ?? "";
   }
   req.headers["x-proxy-version"]  = "1";
+  
+  res.on("finish", () => {
+    console.log(`[proxy] <- ${req.method} ${req.url} [${res.statusCode}]`);
+  });
+
   proxy.web(req, res, { target }, (err) => {
+    console.error(`[proxy] web error ${req.url} ->`, err.message);
     if (!res.headersSent) { res.writeHead(502); res.end("Bad Gateway"); }
   });
 });
@@ -281,6 +332,11 @@ server.on("upgrade", (req, socket, head) => {
     }
   });
 });
+
+// Ensure Node's keepAliveTimeout (75s) is higher than Nginx/NPM's default (65s)
+// to prevent "upstream prematurely closed connection" 502 errors under load.
+server.keepAliveTimeout = 75_000;
+server.headersTimeout   = 80_000;
 
 server.listen(PROXY_PORT, PROXY_HOST, () => {
   console.log(`[proxy] listening on ${PROXY_HOST}:${PROXY_PORT}`);

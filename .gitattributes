@@ -1,0 +1,8 @@
+# Force LF line endings for .dockerignore to prevent Docker build context bloat
+.dockerignore text eol=lf
+
+# Shell scripts that run inside Linux containers. A CRLF here makes the shebang
+# `#!/bin/sh\r` and the kernel reports "no such file or directory" for a script
+# that is plainly present — the same class of failure that took out kong.yml.
+*.sh text eol=lf
+mediamtx/mediamtx.yml text eol=lf

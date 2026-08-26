@@ -67,11 +67,12 @@ export async function GET() {
   }
 
   const orders: AdminOrder[] = (data ?? []).map((o: any) => {
-    const source = (o.source ?? 'web') as 'web' | 'pos';
-    const isPOS   = source === 'pos';
-    const isMember = !isPOS && !!o.auth_user_id;
-    const isGuest  = !isPOS && !isMember && !!o.guest_key;
-    const isLegacy = !isPOS && !isMember && !isGuest;
+    const source = (o.source ?? 'web') as 'web' | 'pos' | 'research';
+    const isPOS      = source === 'pos';
+    const isResearch = source === 'research';
+    const isMember = !isPOS && !isResearch && !!o.auth_user_id;
+    const isGuest  = !isPOS && !isResearch && !isMember && !!o.guest_key;
+    const isLegacy = !isPOS && !isResearch && !isMember && !isGuest;
 
     return {
       id: o.id,
@@ -82,6 +83,7 @@ export async function GET() {
       fulfillment_status: resolveFulfillmentStatus(o.fulfillments?.[0], o.status),
       source,
       is_pos: isPOS,
+      is_research: isResearch,
       subtotal_cents: o.subtotal_cents ?? 0,
       shipping_cents: o.shipping_cents ?? 0,
       tax_cents: o.tax_cents ?? 0,
@@ -100,7 +102,10 @@ export async function GET() {
       is_member: isMember,
       is_guest: isGuest,
       is_legacy: isLegacy,
-      points_earned: isMember
+      // Research orders are auth-only (always a signed-in researcher), so they
+      // earned points as "member" purchases before this source split — keep
+      // that behavior rather than silently zeroing it out.
+      points_earned: (isMember || isResearch)
         ? Math.floor((o.subtotal_cents ?? o.total_cents) / 100)
         : 0,
       items: (o.order_items ?? []).map((item: any) => ({

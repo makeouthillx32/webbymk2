@@ -1,30 +1,26 @@
 // app/api/invite/[code]/route.ts
-import { NextResponse } from 'next/server';
-import { cookies, headers } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+// Admin: revoke an invite. Was previously unguarded — any caller could
+// delete any invite by code. Fixed 2026-08-10 alongside the invites/roles
+// RLS lockdown (see migration invite_security_lockdown_and_role_ladder).
+import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/require-admin";
 
-export const runtime = 'edge';
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function DELETE(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  const { code } = await params;
-  const supabase = createRouteHandlerClient({ cookies, headers });
+  const guard = await requireAdmin();
+  if ("error" in guard) return guard.error;
 
-  // Attempt to delete the invite row
-  const { error } = await supabase
-    .from('invites')
-    .delete()
-    .eq('code', code);
+  const { code } = await params;
+
+  const { error } = await guard.admin.from("invites").delete().eq("code", code);
 
   if (error) {
     console.error(`DELETE /api/invite/${code} error:`, error.message);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

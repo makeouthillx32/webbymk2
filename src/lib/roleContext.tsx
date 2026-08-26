@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Role Context — Desert Cowgirl
+ * Role Context — Unenter Solutions
  * 
  * Single source of truth for the current user's role, derived from profiles.role.
  * Synced with Supabase auth changes via the existing supabase-auth-change event.

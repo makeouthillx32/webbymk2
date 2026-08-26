@@ -53,9 +53,9 @@ export async function printStoredLabel(orderId: string): Promise<LabelPrintResul
 // ── ShippingSlip ─────────────────────────────────────────────────
 // HTML packing slip — paper insert tucked in the package.
 // Rendered hidden in the DOM; window.print() triggers @media print CSS
-// which shows only #dcg-print-slip and hides everything else.
+// which shows only #unenter-print-slip and hides everything else.
 
-const STORE_NAME = 'Desert Cowgirl Co.';
+const STORE_NAME = 'Unenter Solutions';
 const STORE_ADDRESS = [
   process.env.NEXT_PUBLIC_STORE_STREET  ?? 'Return Address Line 1',
   [
@@ -96,7 +96,7 @@ export function ShippingSlip({ order, extraWeightOz = 0 }: ShippingSlipProps) {
   const hasAllItemWeights = order.items.every((i) => i.weight_grams != null);
 
   return (
-    <div id="dcg-print-slip" className="bg-white text-black font-sans text-sm print:text-xs">
+    <div id="unenter-print-slip" className="bg-white text-black font-sans text-sm print:text-xs">
       <div className="p-8 max-w-[680px] mx-auto print:p-6 print:max-w-none">
 
         {/* Header */}

@@ -1,5 +1,6 @@
 import indentString from 'indent-string'
 import { applyTextStyles } from './colorize.js'
+import { logForDebugging } from '../utils/debug.js'
 import type { DOMElement } from './dom.js'
 import getMaxWidth from './get-max-width.js'
 import type { Rectangle } from './layout/geometry.js'
@@ -32,6 +33,27 @@ function isXtermJsHost(): boolean {
 // shift layout → narrow damage bounds → O(changed cells) diff instead of
 // O(rows×cols).
 let layoutShifted = false
+
+// DEBUG: layout position tracing. Set DEBUG_RENDER_LAYOUT=1 to capture
+// the first LAYOUT_TRACE_FRAMES frames of box positions to the debug log.
+// Run: DEBUG_RENDER_LAYOUT=1 bun run tui:dev
+const LAYOUT_TRACE = process.env.DEBUG_RENDER_LAYOUT === '1'
+const LAYOUT_TRACE_FRAMES = 8
+let _traceFrame = 0
+let _traceLines: string[] = []
+export function flushLayoutTrace(): void {
+  if (!LAYOUT_TRACE || _traceLines.length === 0) return
+  logForDebugging(`LAYOUT_TRACE frame ${_traceFrame}:\n` + _traceLines.join('\n'))
+  _traceLines = []
+  _traceFrame++
+}
+function traceBox(node: DOMElement, x: number, y: number, w: number, h: number, dirty: boolean, prevScreen: boolean): void {
+  if (!LAYOUT_TRACE || _traceFrame >= LAYOUT_TRACE_FRAMES) return
+  const label = node.attributes['data-label'] as string | undefined
+    ?? node.attributes['key'] as string | undefined
+    ?? node.nodeName
+  _traceLines.push(`  ${label} x=${x} y=${y} w=${w} h=${h} dirty=${dirty} prev=${prevScreen}`)
+}
 
 export function resetLayoutShifted(): void {
   layoutShifted = false
@@ -438,6 +460,7 @@ function renderNodeToOutput(
     let y = offsetY + yogaTop
     const width = yogaNode.getComputedWidth()
     const height = yogaNode.getComputedHeight()
+    traceBox(node, x, y, width, height, node.dirty, prevScreen !== undefined)
 
     // Absolute-positioned overlays (e.g. autocomplete menus with bottom='100%')
     // can compute negative screen y when they extend above the viewport. Without

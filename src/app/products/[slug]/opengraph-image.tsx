@@ -1,9 +1,9 @@
 // app/products/[slug]/opengraph-image.tsx
 
 import { ImageResponse } from "next/og";
-import { createServerClient } from "@/utils/supabase/server";
+import { createClient } from "@supabase/supabase-js";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export const size = {
   width: 1200,
@@ -13,7 +13,10 @@ export const size = {
 export const contentType = "image/png";
 
 const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://efglhzzageijqhfwvsub.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ??
+  process.env.NEXT_PUBLIC_SUPABASE_URL ??
+  "https://efglhzzageijqhfwvsub.supabase.co";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 type RawImage = {
   bucket_name: string | null;
@@ -80,11 +83,14 @@ export default async function Image({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const supabase = await createServerClient();
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 
   const { data: product } = await supabase
     .from("products")
-    .select(`
+    .select(
+      `
       title,
       slug,
       price_cents,
@@ -97,12 +103,13 @@ export default async function Image({
         sort_order,
         position
       )
-    `)
+    `,
+    )
     .eq("slug", slug)
     .eq("status", "active")
     .maybeSingle();
 
-  const title = product?.title ?? "Shop Desert Cowgirl";
+  const title = product?.title ?? "Shop Unenter Solutions";
   const price = product?.price_cents
     ? `$${(product.price_cents / 100).toFixed(2)}`
     : null;
@@ -110,9 +117,13 @@ export default async function Image({
 
   const primaryImg = pickPrimaryImage(product?.product_images ?? []);
 
-  // Use transformed image first for reliability in OG rendering.
-  const imageUrl =
-    buildTransformedOgImageUrl(primaryImg) ?? buildStorageUrl(primaryImg);
+  // Use the plain public-object URL, NOT the /storage/v1/render/image transform
+  // endpoint. Self-hosted Supabase ships without the image-transform service
+  // (imgproxy), so the transform URL never responds — during `next build` the
+  // OG generator's fetch hangs forever and SSG stalls at "Generating static
+  // pages (0/N)". The plain object URL is served by storage-api directly.
+  const imageUrl = buildStorageUrl(primaryImg);
+  void buildTransformedOgImageUrl; // retained for reference; intentionally unused
 
   const sand = "#F5E6C8";
   const rust = "#C0522A";
@@ -120,208 +131,201 @@ export default async function Image({
   const warmWhite = "#FDF8F0";
 
   return new ImageResponse(
-    (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        background: warmWhite,
+        position: "relative",
+        overflow: "hidden",
+        fontFamily: "Georgia, serif",
+      }}
+    >
       <div
         style={{
-          width: "100%",
-          height: "100%",
+          position: "absolute",
+          inset: 0,
+          background: "rgba(192, 82, 42, 0.035)",
           display: "flex",
-          background: warmWhite,
-          position: "relative",
-          overflow: "hidden",
-          fontFamily: "Georgia, serif",
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          padding: "56px 52px",
+          flex: imageUrl ? "0 0 548px" : "1",
+          zIndex: 1,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: `repeating-linear-gradient(
-              -45deg,
-              transparent,
-              transparent 40px,
-              rgba(192, 82, 42, 0.035) 40px,
-              rgba(192, 82, 42, 0.035) 41px
-            )`,
-            display: "flex",
-          }}
-        />
-
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            padding: "56px 52px",
-            flex: imageUrl ? "0 0 548px" : "1",
-            zIndex: 1,
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  background: rust,
-                  borderRadius: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <div
-                  style={{
-                    width: 12,
-                    height: 12,
-                    background: warmWhite,
-                    borderRadius: "50%",
-                    display: "flex",
-                  }}
-                />
-              </div>
-              <span
-                style={{
-                  fontSize: 18,
-                  fontWeight: 700,
-                  color: rust,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Desert Cowgirl
-              </span>
-            </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div
               style={{
-                width: 48,
-                height: 2,
+                width: 32,
+                height: 32,
                 background: rust,
-                marginTop: 14,
-                display: "flex",
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            {badge && (
-              <div style={{ display: "flex" }}>
-                <span
-                  style={{
-                    background: rust,
-                    color: warmWhite,
-                    fontSize: 13,
-                    fontWeight: 700,
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                    padding: "5px 16px",
-                    borderRadius: 4,
-                  }}
-                >
-                  {badge}
-                </span>
-              </div>
-            )}
-            <div
-              style={{
-                fontSize: imageUrl ? 40 : 50,
-                fontWeight: 800,
-                color: darkBrown,
-                lineHeight: 1.15,
-                maxWidth: 430,
-              }}
-            >
-              {title}
-            </div>
-            {price && (
-              <div
-                style={{
-                  fontSize: 30,
-                  fontWeight: 700,
-                  color: rust,
-                }}
-              >
-                {price}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div
-              style={{
+                borderRadius: "50%",
                 display: "flex",
                 alignItems: "center",
-                background: darkBrown,
-                color: warmWhite,
-                fontSize: 15,
-                fontWeight: 600,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                padding: "13px 26px",
-                borderRadius: 8,
-                alignSelf: "flex-start",
+                justifyContent: "center",
               }}
             >
-              Shop Now
+              <div
+                style={{
+                  width: 12,
+                  height: 12,
+                  background: warmWhite,
+                  borderRadius: "50%",
+                  display: "flex",
+                }}
+              />
             </div>
             <span
               style={{
-                fontSize: 12,
-                color: "rgba(44, 24, 16, 0.45)",
-                marginTop: 4,
+                fontSize: 18,
+                fontWeight: 700,
+                color: rust,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
               }}
             >
-              unenter.live/products/{slug}
+              Unenter Solutions
             </span>
           </div>
-        </div>
-
-        {imageUrl && (
           <div
             style={{
-              flex: 1,
+              width: 48,
+              height: 2,
+              background: rust,
+              marginTop: 14,
               display: "flex",
-              position: "relative",
-              overflow: "hidden",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {badge && (
+            <div style={{ display: "flex" }}>
+              <span
+                style={{
+                  background: rust,
+                  color: warmWhite,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  padding: "5px 16px",
+                  borderRadius: 4,
+                }}
+              >
+                {badge}
+              </span>
+            </div>
+          )}
+          <div
+            style={{
+              fontSize: imageUrl ? 40 : 50,
+              fontWeight: 800,
+              color: darkBrown,
+              lineHeight: 1.15,
+              maxWidth: 430,
             }}
           >
+            {title}
+          </div>
+          {price && (
             <div
               style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: 80,
-                height: "100%",
-                background: `linear-gradient(to right, ${warmWhite}, transparent)`,
-                zIndex: 2,
-                display: "flex",
+                fontSize: 30,
+                fontWeight: 700,
+                color: rust,
               }}
-            />
-            <img
-              src={imageUrl}
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                objectPosition: "center top",
-              }}
-            />
-          </div>
-        )}
+            >
+              {price}
+            </div>
+          )}
+        </div>
 
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              background: darkBrown,
+              color: warmWhite,
+              fontSize: 15,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              padding: "13px 26px",
+              borderRadius: 8,
+              alignSelf: "flex-start",
+            }}
+          >
+            Shop Now
+          </div>
+          <span
+            style={{
+              fontSize: 12,
+              color: "rgba(44, 24, 16, 0.45)",
+              marginTop: 4,
+            }}
+          >
+            unenter.live/products/{slug}
+          </span>
+        </div>
+      </div>
+
+      {imageUrl && (
         <div
           style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 6,
-            background: `linear-gradient(to right, ${rust}, ${darkBrown})`,
+            flex: 1,
             display: "flex",
+            position: "relative",
+            overflow: "hidden",
           }}
-        />
-      </div>
-    ),
-    { ...size }
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: 80,
+              height: "100%",
+              background: warmWhite,
+              opacity: 0.18,
+              zIndex: 2,
+              display: "flex",
+            }}
+          />
+          <img
+            src={imageUrl}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              objectPosition: "center top",
+            }}
+          />
+        </div>
+      )}
+
+      <div
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 6,
+          background: rust,
+          display: "flex",
+        }}
+      />
+    </div>,
+    { ...size },
   );
 }

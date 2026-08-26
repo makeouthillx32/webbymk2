@@ -46,6 +46,11 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
+            title: "Hero Carousel",
+            url: "/settings/hero-carousel",
+            icon: Icons.FourCircle,
+          },
+          {
             title: "Pages",
             url: "/settings/static-pages",
             icon: Icons.Table,
@@ -53,6 +58,24 @@ export const NAV_DATA = [
           {
             title: "Home-Page",
             url: "/settings/homepage_content",
+            icon: Icons.FourCircle,
+          },
+        ],
+      },
+
+      // ── Blog ────────────────────────────────
+      {
+        title: "Blog",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Posts",
+            url: "/blog",
+            icon: Icons.Table,
+          },
+          {
+            title: "Chrome",
+            url: "/blog/chrome",
             icon: Icons.FourCircle,
           },
         ],
@@ -106,11 +129,85 @@ export const NAV_DATA = [
         ],
       },
 
+      // ── Labs ────────────────────────────────
+      {
+        title: "Labs",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Research Chemicals",
+            url: "/settings/research-products",
+            icon: Icons.Authentication,
+          },
+          {
+            title: "Creators",
+            url: "/settings/creators",
+            icon: Icons.User,
+          },
+        ],
+      },
+
+      // ── Tank ────────────────────────────────
+      {
+        title: "Tank",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Cameras",
+            url: "/settings/tank/cameras",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Rooms",
+            url: "/settings/tank/rooms",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Audio Sources",
+            url: "/settings/tank/audio-sources",
+            icon: Icons.Table,
+          },
+          {
+            title: "Art",
+            url: "/settings/tank/art",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Emoji",
+            url: "/settings/tank/emoji",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Soundboard",
+            url: "/settings/tank/soundboard",
+            icon: Icons.Table,
+          },
+        ],
+      },
+
+      // ── LIMS & Peptide Testing Engine ───────
+      {
+        title: "LIMS & Peptide Testing Engine",
+        icon: Icons.PieChart,
+        items: [
+          {
+            title: "Overview",
+            url: "/settings/lims",
+            icon: Icons.Table,
+          },
+        ],
+      },
+
       // ── Admin ───────────────────────────────
       {
         title: "Admin",
         icon: Icons.SettingsIcon,
         items: [
+          {
+            title: "Sites & Apps",
+            url: "/settings/sites",
+            icon: Icons.FourCircle,
+          },
           {
             title: "Members",
             url: "/settings/members",
@@ -125,6 +222,11 @@ export const NAV_DATA = [
             title: "Theme Maker",
             url: "/settings/thememaker",
             icon: Icons.SettingsIcon,
+          },
+          {
+            title: "Mail",
+            url: "/settings/mail",
+            icon: Icons.MessageIcon,
           },
         ],
       },

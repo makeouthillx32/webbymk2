@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+    <defs>
+      <radialGradient id="toxicGoo" cx="40%" cy="40%" r="60%">
+        <stop offset="0%" stop-color="#a3e635"/>
+        <stop offset="50%" stop-color="#4d7c0f"/>
+        <stop offset="100%" stop-color="#14532d"/>
+      </radialGradient>
+      <filter id="gooGlow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="6" result="blur"/>
+        <feMerge>
+          <feMergeNode in="blur"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+    <g transform="translate(48, 28)">
+      <!-- Glass Flask Neck & Body -->
+      <path d="M 64 20 L 96 20 L 96 65 L 155 170 C 165 190, 145 205, 125 205 L 35 205 C 15 205, -5 190, 5 170 L 64 65 Z" fill="rgba(255,255,255,0.2)" stroke="#e2e8f0" stroke-width="5"/>
+      <!-- Toxic Liquid Fill -->
+      <path d="M 22 155 L 138 155 L 148 175 C 155 190, 140 200, 125 200 L 35 200 C 20 200, 5 190, 12 175 Z" fill="url(#toxicGoo)" filter="url(#gooGlow)"/>
+      <!-- Bubbles -->
+      <circle cx="50" cy="175" r="8" fill="#d9f99d"/>
+      <circle cx="105" cy="180" r="10" fill="#d9f99d"/>
+      <circle cx="75" cy="140" r="6" fill="#bef264"/>
+      <circle cx="85" cy="95" r="7" fill="#bef264"/>
+      <circle cx="70" cy="40" r="5" fill="#bef264"/>
+      <!-- Glass Highlights -->
+      <path d="M 28 175 C 20 160, 60 75, 68 65" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+    </g>
+  </svg>

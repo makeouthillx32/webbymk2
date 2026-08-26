@@ -57,11 +57,15 @@ export default async function SignUpPage({
         Create an Account
       </h1>
       <p className="text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] mb-6">
-        Join Desert Cowgirl and start shopping faster.
+        Join Unenter Solutions and start shopping faster.
       </p>
 
       {/* ✅ Google button now uses w-full internally, so it will center correctly */}
       <SignInWithGoogle />
+      <p className="mt-2 text-center text-[11px] text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-relaxed">
+        By continuing with Google you agree to our{" "}
+        <Link href="/terms" className="underline hover:text-[hsl(var(--sidebar-primary))]">Terms</Link>.
+      </p>
 
       <div className="flex items-center my-6">
         <div className="flex-grow border-t border-[hsl(var(--border))]" />
@@ -167,6 +171,35 @@ export default async function SignUpPage({
           </div>
         </div>
 
+        {/* Required for every account, but no longer grants "researcher" —
+            that's a separate, deliberate opt-in at /research-access now
+            (requestResearcherAccessAction). No checkbox, no account, same
+            as before; it just doesn't unlock research-compound checkout
+            by itself anymore. */}
+        <div className="flex items-start gap-2.5 pt-1">
+          <input
+            id="accept_terms"
+            name="accept_terms"
+            type="checkbox"
+            required
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-[hsl(var(--border))] text-[hsl(var(--sidebar-primary))] focus:ring-[hsl(var(--sidebar-ring))]"
+          />
+          <Label
+            htmlFor="accept_terms"
+            className="text-xs font-normal leading-relaxed text-[hsl(var(--muted-foreground))] font-[var(--font-sans)]"
+          >
+            I agree to the{" "}
+            <Link href="/terms" className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200">
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200">
+              Privacy Policy
+            </Link>
+            .
+          </Label>
+        </div>
+
         <SubmitButton
           pendingText="Creating..."
           className="w-full bg-[hsl(var(--sidebar-primary))] hover:bg-[hsl(var(--sidebar-primary))]/90 text-[hsl(var(--sidebar-primary-foreground))] py-2.5 rounded-[var(--radius)] font-[var(--font-sans)] font-medium transition-colors duration-200 shadow-[var(--shadow-sm)]"
@@ -183,24 +216,6 @@ export default async function SignUpPage({
         >
           Sign in
         </Link>
-      </p>
-
-      <p className="mt-4 text-center text-xs text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-[1.5]">
-        By signing up, you agree to our{" "}
-        <Link
-          href="/terms"
-          className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200"
-        >
-          Terms
-        </Link>{" "}
-        and{" "}
-        <Link
-          href="/privacy"
-          className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200"
-        >
-          Privacy Policy
-        </Link>
-        .
       </p>
     </div>
   );

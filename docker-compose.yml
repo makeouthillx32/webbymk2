@@ -1,3 +1,19 @@
+# Compose PROJECT NAME — must be a plain token ([a-z0-9_-]); dots are illegal,
+# so this can't be "unenter.live". The dotted identity lives in the labels
+# (unaxis.project / unaxis.domain = "unenter.live") where dots are legal.
+# Volumes below are pinned to their original webbymk2_ names so this project
+# rename does NOT orphan the production DB data.
+#
+# Set to "unenterlive" to MATCH the actually-running production stack (its
+# containers carry com.docker.compose.project=unenterlive since first bring-up).
+# A prior edit set this to "unenter" as an intended rename, but core deploy was
+# broken (compose service-resolution bug) so the rename never reached the
+# running stack — the mismatch then blocked every core deploy with a container
+# name conflict. With one project managing one domain, the token is just a
+# label; matching reality is the least-surprise state. Revisit only if the
+# platform ever grows to multiple projects. (2026-07-11)
+name: unenterlive
+
 networks:
   unenter:
     driver: bridge
@@ -5,8 +21,12 @@ networks:
                     # zone compose files reference this as: networks.unenter: external: true
 
 volumes:
-  unt-db-data:
   unt-storage-data:
+    name: webbymk2_unt-storage-data
+  unt-db-data:
+    name: webbymk2_unt-db-data
+  # MediaMTX recording staging area — see the mediamtx service for why this is
+  # a small bounded buffer rather than the archive itself.
   # unt-ink-modules and unt-tui-modules removed — TUI now runs natively via Bun (tui/run.ps1)
 
 services:
@@ -31,6 +51,13 @@ services:
       retries: 10
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "data"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   kong:
     image: kong:2.8.1
@@ -43,6 +70,15 @@ services:
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction
       KONG_LOG_LEVEL: warn
+      # GoTrue can return large auth response headers when a user's JWT carries
+      # non-trivial metadata. Kong's default one-page Nginx proxy header buffer
+      # rejects those responses with "upstream sent too big header" and turns a
+      # valid password grant into a 502. Keep this comfortably above the JWTs
+      # we issue, and scale the associated Nginx pool/busy limits together so
+      # its startup-time buffer invariants remain valid.
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "64k"
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "8 64k"
+      KONG_NGINX_PROXY_PROXY_BUSY_BUFFERS_SIZE: "128k"
     volumes:
       - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
     depends_on:
@@ -50,6 +86,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   auth:
     image: supabase/gotrue:v2.151.0
@@ -60,8 +103,40 @@ services:
       GOTRUE_API_PORT: 9999
       API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://unenter.live}
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      # search_path=auth is REQUIRED. GoTrue's migrator reads an unqualified
+      # `schema_migrations`; supabase_admin's search_path puts public first, so
+      # it was reading a stale public.schema_migrations (stopped at 2022-11) and
+      # replaying migration 20221208132122 forever — which fails with
+      # "operator does not exist: uuid = text" against the modern auth schema.
+      # Pinning the path makes it read auth.schema_migrations, the real history.
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres?search_path=auth
       GOTRUE_SITE_URL: ${SITE_URL:-https://unenter.live}
+      # .env's ADDITIONAL_REDIRECT_URLS was never actually wired to GoTrue —
+      # dead config. GOTRUE_SITE_URL alone (www.unenter.live) is GoTrue's only
+      # allowed OAuth redirect target, so moving sign-in to auth.unenter.live
+      # (2026-08-17) broke Google/Apple/Facebook OAuth with a 400 "redirect_to
+      # not allowed" the moment the callback tried to land on the new zone.
+      # Wildcard covers every current and future path on both hosts.
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-https://www.unenter.live,http://localhost:3000},https://auth.unenter.live/**,https://www.unenter.live/**
+      # External OAuth providers. Redirect URI registered in each provider's
+      # console is the same for all three — Kong's public callback endpoint,
+      # not our app: https://db.unenter.live/auth/v1/callback
+      # GoTrue's config parser fatals (crash-loop) if these are an empty
+      # string rather than a literal "true"/"false" — ${VAR:+true} alone
+      # produces "" when the var is unset, which is invalid. Explicit
+      # per-provider ENABLED flags in .env avoid that trap.
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
+      GOTRUE_EXTERNAL_FACEBOOK_ENABLED: ${FACEBOOK_ENABLED:-false}
+      GOTRUE_EXTERNAL_FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID}
+      GOTRUE_EXTERNAL_FACEBOOK_SECRET: ${FACEBOOK_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_FACEBOOK_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
+      GOTRUE_EXTERNAL_APPLE_ENABLED: ${APPLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_APPLE_CLIENT_ID: ${APPLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_APPLE_SECRET: ${APPLE_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_APPLE_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
@@ -83,6 +158,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   rest:
     image: postgrest/postgrest:v12.2.0
@@ -100,6 +182,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   realtime:
     image: supabase/realtime:v2.25.50
@@ -131,6 +220,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   imgproxy:
     image: darthsim/imgproxy:v3.8.0
@@ -146,6 +242,13 @@ services:
       - unt-storage-data:/var/lib/storage:ro
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   storage:
     image: ghcr.io/supabase/storage-api:v1.37.8
@@ -161,7 +264,12 @@ services:
       DATABASE_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@db:5432/postgres
       STORAGE_BACKEND: file
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      FILE_SIZE_LIMIT: 52428800
+      # Raised from 50 MB so the archive can store real footage: a 10-minute
+      # 1080p segment is ~225 MB. This is only the GLOBAL ceiling — every
+      # bucket carries its own, tighter file_size_limit in storage.buckets
+      # (tank-archives 512 MB, tank-loops 25 MB, image buckets 10 MB or less),
+      # so raising this does not let a 1 GB avatar through.
+      FILE_SIZE_LIMIT: 1073741824
       TENANT_ID: ${STORAGE_TENANT_ID:-stub}
       REGION: ${REGION:-us-east-1}
       S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID}
@@ -177,6 +285,13 @@ services:
         condition: service_started
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   meta:
     image: supabase/postgres-meta:v0.84.2
@@ -194,6 +309,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   studio:
     image: supabase/studio:latest
@@ -221,6 +343,13 @@ services:
         condition: service_started
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   # ── Reverse proxy ─────────────────────────────────────────────────────────────
   # Routes requests to the correct zone by Host header (subdomain).
@@ -239,6 +368,10 @@ services:
       dockerfile: Dockerfile
     container_name: unt_proxy
     restart: unless-stopped
+    # Local-dev override: the GHCR/prod image CMD is plain `node server.js`
+    # (no watcher). Here server.js + agent.js are bind-mounted, so run with
+    # --watch to keep the zero-rebuild hot-reload workflow alive.
+    command: ["node", "--watch", "server.js"]
     ports:
       - "3080:3080"
       - "127.0.0.1:3081:3081"
@@ -266,6 +399,13 @@ services:
         condition: service_healthy
     networks:
       - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "proxy"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
 
   # ── Zone services ─────────────────────────────────────────────────────────────
@@ -280,6 +420,163 @@ services:
   #   NEXT_PUBLIC_ZONE  — zone identity, differs per service
   #   STRIPE_*          — shop-only secrets (already in .env, injected via env_file)
   # ──────────────────────────────────────────────────────────────────────────────
+
+  # ── Tank media gateway ────────────────────────────────────────────────────────
+  # Republishes camera sources as browser-playable WHEP (WebRTC) and HLS.
+  # Nothing in the platform produced watchable video before this — the tank zone
+  # code (src/zones/tank/server/mediaGateway.ts) has always expected something
+  # answering at TANK_WHEP_PUBLIC_BASE_URL / TANK_HLS_PUBLIC_BASE_URL, but no
+  # such service was ever deployed. This is that service.
+  #
+  # No camera paths are hand-defined — Tank's server auto-provisions a path
+  # for every online camera via this container's control API (9997, internal
+  # only — deliberately not in the ports list below), pulling each camera's
+  # own SRT "video out" port from the SRT Receiver Manager. No camera
+  # credentials ever pass through this container or any file in this repo.
+  # See mediamtx/mediamtx.yml and src/zones/tank/server/receiverManager.ts.
+  #
+  # This is additive to the core stack — bring it up with the scoped command so
+  # you don't touch anything else already running:
+  #   docker compose up -d mediamtx
+  mediamtx:
+    # -ffmpeg variant: cameras needing audio transcode (e.g. PCM A-law -> Opus)
+    # run their runOnInit ffmpeg command inside this container's own process
+    # namespace (see provisionMediaMtxCamera in mediaGateway.ts) — the base
+    # image has no ffmpeg binary at all, which silently crash-loops that path
+    # every ~5s with no visible error anywhere except this container's own
+    # logs. Confirmed 2026-08-16: Cam0 (transcode-required) never connected
+    # until this switch; Cam1 (embedded audio, no transcode) worked fine on
+    # the base image the whole time, which is why only one of two cameras
+    # was affected.
+    # Built from mediamtx/Dockerfile: the stock image is the -ffmpeg variant
+    # plus curl, because BusyBox wget silently truncates binary request bodies
+    # and the recording hook has to upload MP4 segments. See that file.
+    # NVENC build: Ubuntu 24.04 (glibc) + ffmpeg 6.1 + curl + the MediaMTX
+    # binary. The previous Alpine image could not do hardware encoding for two
+    # independent reasons — musl cannot load the glibc driver libraries the
+    # NVIDIA runtime injects, and its ffmpeg had no nvenc encoders compiled in.
+    # Measured here: libx264 veryfast costs 30.4 CPU seconds per 60s of 720p30
+    # against 3.2s for h264_nvenc. See mediamtx/Dockerfile.nvenc.
+    image: unenter/mediamtx:1.20.0-nvenc
+    build:
+      context: ./mediamtx
+      dockerfile: Dockerfile.nvenc
+    container_name: unt_mediamtx
+    restart: unless-stopped
+    # `video` alongside `gpu` is required: without it the runtime injects CUDA
+    # but NOT libnvidia-encode, and every nvenc rung dies at startup with a
+    # misleading "Cannot load libnvidia-encode.so.1".
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+    ports:
+      - "8889:8889"        # WHEP (HTTP, WebRTC signaling)
+      - "8189:8189/udp"    # WebRTC ICE media
+      # OBS / Streamlabs ingest. Safe to expose ONLY because publishing is now
+      # authorised per-attempt by Tank (authMethod: http in mediamtx.yml) —
+      # the previous `user: any` publish grant would have made this an open
+      # ingest for anyone on the internet.
+      - "1935:1935"        # RTMP publish
+    expose:
+      - "8888"             # HLS (HTTP, internal unenter network)
+    environment:
+      # Consumed by mediamtx/scripts/on-segment-complete.sh, which runs INSIDE
+      # this container (it is the only one in the stack with ffmpeg). Kong is
+      # reachable container-to-container on the shared `unenter` network.
+      SUPABASE_INTERNAL_URL: ${SUPABASE_INTERNAL_URL:-http://kong:8000}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      TANK_ARCHIVE_NOTIFY_URL: ${TANK_ARCHIVE_NOTIFY_URL:-http://unt_tank:3000/api/tank/archive/segment-complete}
+      TANK_ARCHIVE_INGEST_SECRET: ${TANK_ARCHIVE_INGEST_SECRET}
+      # Consumed by mediamtx/scripts/archive-transcode.sh — the AV1 converter
+      # runs here because this is the only container with ffmpeg and the GPU.
+      TANK_ARCHIVE_LOCAL_ROOT: ${TANK_ARCHIVE_LOCAL_ROOT:-/archive}
+      TANK_ARCHIVE_TRANSCODE_URL: ${TANK_ARCHIVE_TRANSCODE_URL:-http://unt_tank:3000/api/tank/archive/transcode}
+      TANK_ARCHIVE_TRANSCODE_BATCH: ${TANK_ARCHIVE_TRANSCODE_BATCH:-3}
+      TANK_ARCHIVE_TRANSCODE_INTERVAL: ${TANK_ARCHIVE_TRANSCODE_INTERVAL:-900}
+      # The viewer facade is intentionally a full two-minute recent clip.
+      # Keep this deterministic: a long-running UNAXIS process can retain an
+      # older inherited value and override .env during a scoped recreate.
+      TANK_PREROLL_SECONDS: 120
+      # Per-path recent-clip worker. Fixed cameras are stability-gated against
+      # the receiver manager's safe telemetry endpoint; OBS uses MediaMTX path
+      # readiness. At most two GPU encodes run together after a stack restart.
+      TANK_RECEIVER_MANAGER_URL: ${SRT_MANAGER_INTERNAL_URL:-http://host.docker.internal:5050}
+      TANK_CLIP_REFRESH_SECONDS: ${TANK_CLIP_REFRESH_SECONDS:-600}
+      TANK_CLIP_RETRY_SECONDS: ${TANK_CLIP_RETRY_SECONDS:-60}
+      TANK_CLIP_MAX_CONCURRENT: ${TANK_CLIP_MAX_CONCURRENT:-2}
+      TANK_CLIP_MIN_BITRATE_KBPS: ${TANK_CLIP_MIN_BITRATE_KBPS:-500}
+      # Where the OBS room lifecycle hooks report signal start/stop.
+      TANK_OBS_SIGNAL_URL: ${TANK_OBS_SIGNAL_URL:-http://unt_tank:3000/api/tank/obs/signal}
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./mediamtx/scripts:/scripts:ro
+      # Local staging spool. Deliberately small and bounded: recordings land
+      # here, get uploaded to Supabase, and are expired by MediaMTX's own
+      # recordDeleteAfter. At 6 cameras x ~3 Mbps this is ~8 GB/hour, so the
+      # 2h retention below caps it around 16 GB — it is a retry buffer, NOT
+      # the archive. The 24h archive lives in Supabase Storage.
+      # PROTOCOL: nothing Tank-related lives on C:.
+      #
+      # This spool is pure churn — a segment is written, uploaded, and deleted
+      # two hours later. Docker's virtual disk grows on every write and never
+      # shrinks on delete, so running this inside the VHDX grew that file all
+      # night and took C: to 5.5% free, which killed the core Supabase stack.
+      # A host bind mount writes to the real filesystem, where deletes actually
+      # return the space.
+      # PROTOCOL: nothing Tank-related on C:. This spool is pure churn — write
+      # a segment, upload it, delete it two hours later. Inside Docker's virtual
+      # disk that churn grows the VHDX forever (it grows on write, never shrinks
+      # on delete), which is what took C: to 5% and killed the core stack.
+      - U:/tank-spool:/recordings
+      # The archive itself, on the same disk as the spool so a finished segment
+      # is MOVED into place rather than uploaded. Nothing about the archive
+      # touches C: — that is what filled the disk and took the stack down.
+      - U:/tank-archive:/archive
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "media"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
+  # ── TURN/STUN relay for WebRTC (WHEP) ────────────────────────────────────
+  # See coturn/turnserver.conf for why this exists: MediaMTX's WHEP output
+  # only advertises host ICE candidates, so anyone not on the LAN or a
+  # permissive network silently falls back to slower HLS today. This gives
+  # WHEP a real relay path for that traffic instead.
+  #
+  # Additive to the core stack, same as mediamtx — bring it up scoped:
+  #   docker compose up -d coturn
+  #
+  # REQUIRES A ROUTER-LEVEL PORT FORWARD nothing in this repo can do:
+  # UDP+TCP 3478 and UDP 49160-49180 forwarded to this host's LAN IP. Ask
+  # for the exact router steps rather than assuming they're done.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    container_name: unt_coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49180:49160-49180/udp"
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "media"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   app:
     image: ghcr.io/makeouthillx32/unenter:latest
@@ -314,6 +611,10 @@ services:
         condition: service_started
     networks:
       - unenter
-
-
-
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"

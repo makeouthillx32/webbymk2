@@ -1,19 +1,19 @@
 // app/u/doc/[id]/route.ts
 /**
  * Document Access by ID
- * 
- * Short, clean URLs for accessing documents by UUID.
- * 
+ *
+ * Short, clean URLs for accessing web-public documents by UUID.
+ *
  * Usage:
  * <img src="/u/doc/51c8979e-9797-45e0-a871-bcd52d59d0f4" />
- * <a href="/u/doc/abc-123-def">Download</a>
- * 
- * Returns 301 redirect to Supabase Storage.
+ *
+ * Streams bytes via a service-role client (see lib/serveDocumentFile), gated to
+ * the public/ folder. Documents outside public/ are private and return 403 —
+ * authenticated private-document access is intentionally not handled here.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/utils/supabase/server";
-import { getDocumentUrl } from "@/lib/documents";
+import { serviceClient, streamPublicDocument } from "@/lib/serveDocumentFile";
 
 export async function GET(
   req: NextRequest,
@@ -21,45 +21,26 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    
-    const supabase = await createClient();
-    
-    // Get document by ID
+
+    const supabase = serviceClient();
+
     const { data: document, error } = await supabase
-      .from('documents')
-      .select('storage_path, mime_type, name')
-      .eq('id', id)
-      .eq('type', 'file')
-      .is('deleted_at', null)
+      .from("documents")
+      .select("storage_path, mime_type")
+      .eq("id", id)
+      .eq("type", "file")
+      .is("deleted_at", null)
       .single();
-    
+
     if (error || !document || !document.storage_path) {
-      return NextResponse.json(
-        { 
-          error: 'Document not found',
-          id 
-        }, 
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Document not found", id }, { status: 404 });
     }
-    
-    // Get the Supabase public URL
-    const fileUrl = getDocumentUrl(document.storage_path);
-    
-    // Return 301 redirect
-    return NextResponse.redirect(fileUrl, {
-      status: 301,
-      headers: {
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        'Content-Type': document.mime_type || 'application/octet-stream',
-      }
-    });
+
+    // streamPublicDocument enforces the public/ gate (403 for private docs).
+    return streamPublicDocument(document.storage_path, document.mime_type);
   } catch (error) {
-    console.error('Document ID route error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    );
+    console.error("Document ID route error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 

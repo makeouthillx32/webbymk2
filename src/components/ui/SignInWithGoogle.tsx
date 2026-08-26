@@ -2,6 +2,8 @@
 
 import { createBrowserClient } from "@/utils/supabase/client";
 import type { Provider } from "@supabase/supabase-js";
+import { buildOAuthCallbackUrl, safePostAuthRedirect } from "@/lib/authRedirect";
+import { CORE_DOMAIN } from "@/lib/multiZone";
 
 type OAuthButton = {
   provider: Provider; // "google" | "apple" | "facebook" etc.
@@ -10,8 +12,19 @@ type OAuthButton = {
 };
 
 function buildRedirectTo() {
-  const invite = new URLSearchParams(window.location.search).get("invite");
-  return `${location.origin}/auth/callback/oauth${invite ? `?invite=${invite}` : ""}`;
+  const params = new URLSearchParams(window.location.search);
+  const invite = params.get("invite");
+  const requested = safePostAuthRedirect(params.get("next"));
+  const relativeBase = location.hostname === `auth.${CORE_DOMAIN}`
+    ? `https://www.${CORE_DOMAIN}`
+    : location.origin;
+  const next = requested?.startsWith("/")
+    ? new URL(requested, relativeBase).toString()
+    : requested ?? `${relativeBase}/`;
+  if (typeof document !== "undefined" && next) {
+    document.cookie = `unenter_oauth_return=${encodeURIComponent(next)}; path=/; domain=.${CORE_DOMAIN}; max-age=600; SameSite=Lax; Secure`;
+  }
+  return buildOAuthCallbackUrl({ currentOrigin: location.origin, next, invite });
 }
 
 export default function SignInWithProviders() {

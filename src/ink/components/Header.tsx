@@ -12,6 +12,8 @@ import { Box, Text }                  from "../runtimeInk.js";
 import type { StackOp }               from "./DetachedStack.tsx";
 import type { EnvironmentType }       from "../environment-store.ts";
 import { environmentTypeColor }       from "../environment-store.ts";
+import { useTermWidth }               from "../hooks/useTermWidth.ts";
+
 
 declare const UNAXIS_VERSION: string | undefined;
 const VERSION = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION : "0.0.5";
@@ -87,6 +89,9 @@ export function Header({ ops, stackOpen, stackFocused, activeEnvName, activeEnvT
   // [o] hint reflects the real toggle state so the user knows what pressing it does.
   const oHint = buildOHint(stackFocused, stackOpen, ops.length);
 
+  const tw = useTermWidth();
+  const showFullName = tw >= 95;
+
   return (
     <Box justifyContent="space-between" marginBottom={0}>
 
@@ -95,8 +100,12 @@ export function Header({ ops, stackOpen, stackFocused, activeEnvName, activeEnvT
         <Text bold color="cyan">UNAXIS</Text>
         <Text dimColor color="cyan">v{VERSION}</Text>
         {isDev && <Text bold color="magenta">dev</Text>}
-        <Text dimColor>·</Text>
-        <Text dimColor>{FULL_NAME}</Text>
+        {showFullName && (
+          <>
+            <Text dimColor>·</Text>
+            <Text dimColor>{FULL_NAME}</Text>
+          </>
+        )}
         {showEnv && (
           <>
             <Text dimColor>·</Text>

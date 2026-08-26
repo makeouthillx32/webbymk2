@@ -20,6 +20,7 @@ export function statusColor(s: Status): string {
     case "unhealthy": return "red";
     case "stopped":   return "gray";
     case "missing":   return "gray";
+    case "vercel":    return "cyan";
   }
 }
 
@@ -30,7 +31,16 @@ export function statusIcon(s: Status): string {
     case "unhealthy": return "⚠";
     case "stopped":   return "○";
     case "missing":   return "○";
+    case "vercel":    return "▲";
   }
+}
+
+const STATUS_LABEL: Partial<Record<Status, string>> = {
+  vercel: "live (vercel)",
+};
+
+export function statusLabel(s: Status): string {
+  return STATUS_LABEL[s] ?? s;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -45,10 +55,11 @@ export function StatusBadge({ status, iconOnly = false }: StatusBadgeProps) {
   const color = statusColor(status);
   const icon  = statusIcon(status);
   const dim   = (status === "missing" || status === "stopped");
+  const label = statusLabel(status);
 
   return (
     <Text color={color} dimColor={dim}>
-      {iconOnly ? icon : `${icon}  ${status}`}
+      {iconOnly ? icon : `${icon}  ${label}`}
     </Text>
   );
 }

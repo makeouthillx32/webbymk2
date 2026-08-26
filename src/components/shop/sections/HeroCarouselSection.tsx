@@ -4,7 +4,7 @@ import { HeroCarousel } from "@/components/shop/_components/Herocarousel";
 import { useHeroSlides } from "@/components/shop/_components/useHeroSlides";
 
 export default function HeroCarouselSection({ section }: SectionComponentProps) {
-  const { slides, loading } = useHeroSlides();
+  const { slides, loading } = useHeroSlides(section.page ?? "shop");
   
   if (loading || slides.length === 0) {
     return null;

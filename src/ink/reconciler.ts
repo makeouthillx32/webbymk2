@@ -1,4 +1,4 @@
-﻿import createReconciler from 'react-reconciler';
+import createReconciler from 'react-reconciler';
 import { DefaultEventPriority, LegacyRoot } from 'react-reconciler/constants.js';
 import {
   appendChildNode,
@@ -80,7 +80,7 @@ function applyProp(node: DOMElement, key: string, value: unknown): void {
     return;
   }
   if (key === 'textStyles') {
-    node.textStyles = value as TextStyles;
+    setTextStyles(node, value as TextStyles);
     return;
   }
   setAttribute(node, key, value as DOMNodeAttribute);
@@ -152,16 +152,12 @@ const reconciler = createReconciler<
   commitUpdate(node, _type, oldProps, newProps) {
     const props = diff(oldProps, newProps);
     if (props) {
+      // Route every changed prop through applyProp so event handlers (onFocus,
+      // onClick, onKeyDown, etc.) land in node._eventHandlers, not attributes.
+      // The old code called setAttribute directly, which silently discarded
+      // event handler updates — handlers set on initial mount would never update.
       for (const [key, value] of Object.entries(props)) {
-        if (key === 'style') {
-          setStyle(node, value as Styles);
-          continue;
-        }
-        if (key === 'textStyles') {
-          setTextStyles(node, value as TextStyles);
-          continue;
-        }
-        setAttribute(node, key, value as DOMNodeAttribute);
+        applyProp(node, key, value);
       }
     }
     const style = diff(oldProps['style'] as Styles, newProps['style'] as Styles);
@@ -203,5 +199,5 @@ export default reconciler;
 
 // Scroll-bypass timing hook — called by ScrollBox before scheduleRenderFrom
 // so the reconciler can track commit-start timing for frame-gap diagnostics.
-// No-op in this build; present to satisfy the import in components/ScrollBox.tsx.
+// No-op in this build; present to satisfy the import.
 export function markCommitStart(): void {}

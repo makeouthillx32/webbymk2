@@ -48,7 +48,7 @@ const STALE_THRESHOLD_MS = 2 * CACHE_TTL_MS;  // 2 minutes — 2× TTL
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type InfraMap = Record<number, ServiceResult>;
+type InfraMap = Record<string, ServiceResult>;
 
 // Source of the service list used for the last check run — surfaced to the
 // UI so InfraPanel can show "Env: prod [local-docker]" vs "fallback config".
@@ -182,7 +182,10 @@ export function useEnvManager({
 
     setInfraResults((prev) => {
       const next = { ...prev };
-      for (const i of targets) next[i] = { status: "checking", ms: null, code: null };
+      for (const i of targets) {
+        const svc = services[i];
+        if (svc) next[svc.subdomain] = { status: "checking", ms: null, code: null };
+      }
       return next;
     });
 
@@ -191,7 +194,7 @@ export function useEnvManager({
         const svc = services[i];
         if (!svc) return;
         const r = await checkService(svc);
-        setInfraResults((prev) => ({ ...prev, [i]: r }));
+        setInfraResults((prev) => ({ ...prev, [svc.subdomain]: r }));
       })
     ).finally(() => {
       infraBusyRef.current = false;

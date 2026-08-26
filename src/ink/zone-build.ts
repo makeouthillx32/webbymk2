@@ -28,7 +28,8 @@ import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
-import { composeRun, pullAndUp }             from "./docker.ts";
+import { dbRecordLedger } from "./control-db.ts";
+import { composeRun, pullAndUp, reloadProxy } from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
 import { getCredential }                     from "../utils/secureStorage/index.js";
 import { log }                               from "./logger.ts";
@@ -280,10 +281,14 @@ async function createBuildDockerConfig(): Promise<BuildDockerConfig> {
 
 // ── Docker spawn helper ───────────────────────────────────────────────────────
 
+/** Sentinel exit code returned when spawnDocker kills a process for going idle. */
+export const DOCKER_IDLE_TIMEOUT_CODE = -777;
+
 async function spawnDocker(
-  args:     string[],
-  onLine:   (l: string) => void,
-  extraEnv: Record<string, string> = {},
+  args:          string[],
+  onLine:        (l: string) => void,
+  extraEnv:      Record<string, string> = {},
+  idleTimeoutMs?: number,
 ): Promise<number> {
   const env = {
     ...(process.env as Record<string, string>),
@@ -300,27 +305,67 @@ async function spawnDocker(
   });
 
   let code = 1;
+  let timedOut = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
   const exited = new Promise<void>((resolve, reject) => {
     proc.on("close", (c) => { code = c ?? 1; resolve(); });
     proc.on("error", reject);
   });
 
+  // Idle-timeout watchdog, not a total wall-clock cap: builds legitimately
+  // range from ~1 to 10+ minutes depending on cache state, but should never
+  // go fully SILENT for minutes at a time. Confirmed live 2026-08-23 (Tank
+  // zone, twice): buildx hung indefinitely (once 44s, once 62min) right
+  // after the Tailwind compile warning with zero further output — no OOM,
+  // no disk I/O bottleneck (measured 791MB/s), buildx builder registry
+  // clean. The timer resets on every line of output; only true silence
+  // kills the process.
+  const armIdleTimer = () => {
+    if (!idleTimeoutMs) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      onLine(`✗ no build output for ${Math.round(idleTimeoutMs / 1000)}s — assuming the builder is wedged, killing it`);
+      proc.kill("SIGKILL");
+    }, idleTimeoutMs);
+  };
+  const onOutput = (l: string) => { armIdleTimer(); onLine(l); };
+  armIdleTimer();
+
   // Legacy builder (DOCKER_BUILDKIT=0) writes step headers to stdout and
   // layer progress to stderr.  Drain both so nothing is lost.
   await Promise.all([
-    drainStream(proc.stdout, onLine),
-    drainStream(proc.stderr, onLine),
+    drainStream(proc.stdout, onOutput),
+    drainStream(proc.stderr, onOutput),
     exited,
   ]);
-  return code;
+  if (idleTimer) clearTimeout(idleTimer);
+  return timedOut ? DOCKER_IDLE_TIMEOUT_CODE : code;
+}
+
+/** Force-remove the unaxis-net buildx builder + its stale buildkitd container. Same as `unaxis builder-reset`. */
+async function resetBuildxBuilder(onLine: (l: string) => void): Promise<void> {
+  onLine(`--- auto-recovery: resetting wedged buildx builder "unaxis-net" ---`);
+  await spawnDocker(["buildx", "rm", "--force", "unaxis-net"], onLine);
+  await spawnDocker(["rm", "-f", "buildx_buildkit_unaxis-net0"], onLine);
+  onLine(`✓ builder reset — next build recreates it clean`);
 }
 
 // ── Versioned image tag helpers ───────────────────────────────────────────────
 //
-// Every successful push produces three tags:
-//   :latest          — always the most recent build (mutable)
-//   :YYYY-MM-DD-HHmm — date+time snapshot (immutable, good for rollback)
-//   :v{semver}       — UNAXIS version at build time (immutable)
+// Every successful push produces these tags:
+//   :latest            — always the most recent build (mutable pointer)
+//   :YYYY-MM-DD-HHmm   — date+time snapshot (immutable, rollback target)
+//   :g<sha>[-dirty]    — SOURCE identity (git commit; -dirty = built from an
+//                        uncommitted working tree, so it matches NO commit)
+//
+// The UNAXIS build-tool version is deliberately NOT a tag — it lives as an OCI
+// image LABEL (live.unenter.unaxis-version), decoupled from app/zone content.
+// Tagging images `v{UNAXIS_VERSION}` was misleading: it looked like an app
+// semver, was identical across unrelated images, and moved on CLI releases
+// while staying put when zone code changed. The image DIGEST remains the
+// source of truth for current-vs-behind; the git tag makes it human-readable.
 //
 // The base image path is derived from zone.image by stripping the tag.
 // e.g.  ghcr.io/makeouthillx32/unenter-rappers:latest
@@ -342,23 +387,39 @@ function deploymentDateTag(): string {
   );
 }
 
-function unaxisVersionTag(): string {
-  const definedVersion =
-    typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION.trim() : "";
-  if (definedVersion && definedVersion !== "dev") {
-    return `v${definedVersion}`;
-  }
-
+/** The UNAXIS build-tool version (bare, no "v"). Stored as an image LABEL — it
+ *  identifies which CLI built the image, NOT the app/zone content version. */
+function resolveUnaxisVersion(): string {
+  const defined = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION.trim() : "";
+  if (defined && defined !== "dev") return defined;
   try {
     const pkgUrl = new URL("./package.json", import.meta.url);
     const pkg = JSON.parse(readFileSync(pkgUrl, "utf-8")) as { version?: string };
-    if (typeof pkg.version === "string" && pkg.version) {
-      if (pkg.version !== "dev") {
-        return `v${pkg.version}`;
-      }
-    }
+    if (typeof pkg.version === "string" && pkg.version && pkg.version !== "dev") return pkg.version;
   } catch {}
-  return "";
+  return "dev";
+}
+
+interface GitProvenance { shortSha: string; fullSha: string; dirty: boolean; }
+
+/** Source provenance of the build context — best-effort; degrades to "nogit". */
+function gitProvenance(): GitProvenance {
+  const run = (args: string[]): string => {
+    try {
+      const r = spawnSync("git", args, { cwd: PROJECT_DIR, encoding: "utf-8" });
+      return r.status === 0 ? (r.stdout ?? "").trim() : "";
+    } catch { return ""; }
+  };
+  const fullSha  = run(["rev-parse", "HEAD"]);
+  const shortSha = run(["rev-parse", "--short=8", "HEAD"]) || (fullSha ? fullSha.slice(0, 8) : "nogit");
+  // Non-empty porcelain = uncommitted changes → the image matches no commit.
+  const dirty = run(["status", "--porcelain"]).length > 0;
+  return { shortSha: shortSha || "nogit", fullSha, dirty };
+}
+
+/** Content/source identity tag: `g<sha>[-dirty]` — the meaningful "version". */
+function gitContentTag(prov: GitProvenance): string {
+  return `g${prov.shortSha}${prov.dirty ? "-dirty" : ""}`;
 }
 
 async function tagAndPush(
@@ -383,6 +444,42 @@ async function tagAndPush(
 
 // ── Single zone build + push ──────────────────────────────────────────────────
 
+// Every zone build shares this one repo-root context, and .dockerignore's
+// zones exclusion plus its wildcard re-include line pulls in every zone's
+// source on every single zone's build. Tank's Dockerfile only ever COPYs
+// its own zone folder, but the context sent to the builder carries all
+// 13+ zones' source regardless. Confirmed live 2026-08-24: a Tank build
+// spent 305s just transferring a 149MB context before any actual build
+// step ran. The ignore file can't reference which zone is being built (it
+// is static, evaluated before build-args exist), so this narrows the
+// wildcard to just this zone for the duration of the build and restores
+// the original afterward, so the file goes back to its checked-in,
+// all-zones form and a hand edit mid-session doesn't leave a confusing
+// diff.
+const DOCKERIGNORE_PATH = join(PROJECT_DIR, ".dockerignore");
+const ZONE_REINCLUDE_PATTERN = new RegExp("^!zones/\\*/src(/\\*\\*)?$", "gm");
+
+function scopeDockerignoreToZone(zoneKey: string): () => void {
+  const original = readFileSync(DOCKERIGNORE_PATH, "utf8");
+  const scoped = original.replace(ZONE_REINCLUDE_PATTERN, (match) =>
+    match.replace("*", zoneKey),
+  );
+  if (scoped === original) {
+    // Pattern didn't match (file edited since this was written) — build
+    // with whatever's there rather than silently no-op scoping.
+    return () => {};
+  }
+  writeFileSync(DOCKERIGNORE_PATH, scoped);
+  return () => {
+    try {
+      writeFileSync(DOCKERIGNORE_PATH, original);
+    } catch {
+      // Restoring a text file we just read moments ago failing is not a
+      // realistic case worth crashing the build result over.
+    }
+  };
+}
+
 /**
  * Build the Docker image for a zone and push it to GHCR.
  * Resolves GHCR credentials in the parent process to avoid Windows
@@ -395,6 +492,7 @@ export async function buildZone(
 ): Promise<number> {
   const dockerfile = zone.dockerfile ?? "Dockerfile";
   const dockerCfg  = await createBuildDockerConfig();
+  const restoreDockerignore = scopeDockerignoreToZone(zone.key);
   const t0         = Date.now();
 
   log.info("build", "started", {
@@ -410,19 +508,68 @@ export async function buildZone(
 
   try {
     const buildArgs = loadBuildArgs(zone);
+    const dockerEnvBuild = { DOCKER_CONFIG: dockerCfg.tmpDir };
+
+    // Provenance for tags + OCI labels. The git content tag identifies the
+    // SOURCE; the UNAXIS version becomes a label (build tool, not app version).
+    // buildId is unique per build (ms) AND carries provenance — it doubles as
+    // the SOURCE_REF cache-bust so the source layer always recompiles fresh.
+    const prov       = gitProvenance();
+    const unaxisVer  = resolveUnaxisVersion();
+    const createdIso = new Date().toISOString();
+    const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
+    if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
+
+    // The default BuildKit builder can't attach RUN steps to a custom Docker
+    // network, so Next.js SSG (`bun run build`) can't reach the internal
+    // Supabase host (kong:8000) and hangs at "Generating static pages (0/92)"
+    // until the daemon drops. Fix: use a docker-container buildx builder bound
+    // to the `unenter` network so build-time DB access works. Created once and
+    // reused. `--load` exports the result into the local image store so the
+    // subsequent `docker push` can find it.
+    const BUILDX_BUILDER = "unaxis-net";
+    const inspectCode = await spawnDocker(["buildx", "inspect", BUILDX_BUILDER], () => {}, dockerEnvBuild);
+    if (inspectCode !== 0) {
+      logBuild(`--- creating buildx builder "${BUILDX_BUILDER}" on network unenter ---`);
+      const createCode = await spawnDocker(
+        ["buildx", "create", "--name", BUILDX_BUILDER, "--driver", "docker-container", "--driver-opt", "network=unenter", "--bootstrap"],
+        logBuild, dockerEnvBuild,
+      );
+      if (createCode !== 0) { logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`); return createCode; }
+    }
+
     const buildCmd  = [
-      "build",
-      // --cache-from omitted: BuildKit resolves it inside buildkitd which
-      // ignores DOCKER_CONFIG on the host, causing credential failures for
-      // private GHCR repos. BuildKit's local layer cache handles re-builds.
+      "buildx", "build",
+      "--builder", BUILDX_BUILDER,
+      // The builder (buildkitd) is attached to the `unenter` network via the
+      // driver-opt below. `--network=host` makes RUN steps share buildkitd's
+      // network namespace — i.e. the `unenter` network — so SSG can resolve
+      // kong:8000. (BuildKit only accepts default/none/host here, not a name.)
+      "--network", "host",
+      // Load the built image into the local docker store for the push step.
+      "--load",
       "--progress=plain",
       "--build-arg", "BUILDKIT_INLINE_CACHE=1",
-      // --no-cache: bypass ALL BuildKit layer caching.  Necessary when the
-      // Dockerfile overlays files (like our zones/{key}/src/app/ → src/app/
-      // swap) whose inputs sometimes hash-collide with prior builds of the
-      // same zone, causing BuildKit to reuse a stale `next build` layer that
-      // contains the PREVIOUS zone's code.  Symptom: test2 serves test1's
-      // content after delete+rescaffold.  Use [R] Rebuild in the TUI.
+      // Per-build cache-bust for the source/build layer. The Dockerfiles declare
+      // `ARG SOURCE_REF` right before `bun run build` and echo it, so a unique
+      // value here forces that RUN to re-execute against the freshly COPYed
+      // source every build — killing the stale-layer class of bugs WITHOUT the
+      // cost of a full `--no-cache` (the deps stage stays cached). Zones whose
+      // Dockerfiles don't declare the ARG yet just emit a harmless warning.
+      "--build-arg", `SOURCE_REF=${buildId}`,
+      // OCI labels — provenance lives in metadata, queryable via `docker
+      // inspect`, never confused with the image tag. This is where the UNAXIS
+      // build-tool version belongs (decoupled from app/zone content).
+      "--label", `org.opencontainers.image.revision=${prov.fullSha}`,
+      "--label", `org.opencontainers.image.created=${createdIso}`,
+      "--label", `live.unenter.unaxis-version=${unaxisVer}`,
+      "--label", `live.unenter.zone=${zone.key}`,
+      "--label", `live.unenter.source-dirty=${prov.dirty}`,
+      "--label", `live.unenter.build-id=${buildId}`,
+      // --no-cache: bypass ALL layer caching.  Necessary when the Dockerfile
+      // overlays files (zones/{key}/src/app/ → src/app/) whose inputs sometimes
+      // hash-collide with prior builds of the same zone, reusing a stale
+      // `next build` layer with the PREVIOUS zone's code.
       ...(opts.noCache ? ["--no-cache"] : []),
       "-f", dockerfile,
       ...buildArgs,
@@ -431,14 +578,18 @@ export async function buildZone(
     ];
 
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
-    logBuild(`docker build ${opts.noCache ? "--no-cache " : ""}... -t ${zone.image} .`);
+    logBuild(`docker buildx build (builder=${BUILDX_BUILDER}, network=unenter) -t ${zone.image} .`);
 
-    // BuildKit (default) — matches build-and-push.ps1 + docker compose.
     // DOCKER_CONFIG points to our temp dir with embedded GHCR credentials
     // for the push step; the build itself only uses public base images.
-    const buildCode = await spawnDocker(buildCmd, logBuild, {
-      DOCKER_CONFIG: dockerCfg.tmpDir,
-    });
+    // 3-minute idle watchdog: kills + auto-resets the builder if the build
+    // goes fully silent (confirmed real failure mode, see spawnDocker).
+    let buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, 180_000);
+    if (buildCode === DOCKER_IDLE_TIMEOUT_CODE) {
+      await resetBuildxBuilder(logBuild);
+      logBuild(`--- retrying build once against the fresh builder ---`);
+      buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, 180_000);
+    }
     if (buildCode !== 0) {
       log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
       logBuild(`FAILED: build exited ${buildCode}`);
@@ -465,17 +616,68 @@ export async function buildZone(
     // always possible.  Failures here are logged but don't fail the build.
     logPush(`--- versioned tags ---`);
     const dateTag    = deploymentDateTag();
-    const versionTag = unaxisVersionTag();
-    await tagAndPush(zone.image, dateTag, logPush, dockerEnv);
-    if (versionTag) await tagAndPush(zone.image, versionTag, logPush, dockerEnv);
-    log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, versionTag: versionTag ?? null });
-    logPush(`OK: versioned tags pushed`);
+    const contentTag = gitContentTag(prov);   // g<sha>[-dirty] — source identity
+    await tagAndPush(zone.image, dateTag,    logPush, dockerEnv);
+    await tagAndPush(zone.image, contentTag, logPush, dockerEnv);
+    log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, contentTag, unaxisVersion: unaxisVer, dirty: prov.dirty });
+    logPush(`OK: versioned tags pushed — ${contentTag}${prov.dirty ? " (DIRTY working tree — matches no commit)" : ""}`);
 
     return 0;
 
   } finally {
     dockerCfg.cleanup();
+    restoreDockerignore();
   }
+}
+
+// ── Build + deploy ("ship") ────────────────────────────────────────────────────
+
+/**
+ * Build + push, then deploy (pull + up) — the full "ship" for a zone. This is
+ * what the TUI `b`/`R` actions, the CLI `zone <k> build`, and `--bg` builds all
+ * run, so "what shipping means" lives in exactly one place. Returns the first
+ * non-zero exit (build failure short-circuits the deploy).
+ */
+export async function buildAndDeploy(
+  zone:   Zone,
+  onLine: (l: string) => void,
+  opts:   { noCache?: boolean } = {},
+): Promise<number> {
+  // Vercel-hosted zones never touch Docker — "build" is a git push instead.
+  // This check lives HERE (not just in the IPC dispatcher) because the TUI's
+  // own [b]/[R] keybindings call buildAndDeploy directly, bypassing that
+  // dispatcher entirely — this is the one shared function both paths run
+  // through, so it's the only place the check can't be missed.
+  if (zone.hosting === "vercel") {
+    return gitCommitAndPushZone(zone, onLine);
+  }
+  const code = await buildZone(zone, onLine, opts);
+  if (code !== 0) return code;
+  onLine("--- pull + up ---");
+  // skipProxyReload: this is a build/rebuild of an EXISTING zone — its
+  // UPSTREAM_<KEY> env var was already set on the proxy at creation time
+  // and doesn't change on a routine rebuild, so recreating unt_proxy here
+  // buys nothing and costs the whole site a brief connectivity blip on
+  // every single build. Zone CREATION (createZonePipeline) still does its
+  // own explicit proxy reload once real route/env changes land, which is
+  // the only time this container actually needs to be recreated.
+  const deployCode = await pullAndUp(zone, onLine, undefined, { skipProxyReload: true });
+  if (deployCode === 0) recordZoneLedger(zone, "build+deploy");
+  return deployCode;
+}
+
+/** Best-effort deploy-ledger entry: correlates this zone's source identity
+ *  (git sha + dirty) with its image. Never throws — ledger is observability. */
+function recordZoneLedger(zone: Zone, action: string): void {
+  try {
+    dbRecordLedger({
+      zoneKey:       zone.key,
+      action,
+      sourceRef:     gitContentTag(gitProvenance()),
+      image:         zone.image,
+      environmentId: (zone as any).environmentId ?? null,
+    });
+  } catch { /* observability only — never fail a ship on the ledger */ }
 }
 
 // ── Deploy a single zone ──────────────────────────────────────────────────────
@@ -483,16 +685,22 @@ export async function buildZone(
 /**
  * Pull the latest image from GHCR and restart the zone's container.
  * Equivalent to: docker compose pull <service> && docker compose up -d <service>
+ *
+ * pullAndUp now chains a proxy reload at the end so host-based routing is
+ * always in sync with the current compose file.  Batch callers (deployAll)
+ * pass { skipProxyReload: true } and reload the proxy once at the end of
+ * the batch to avoid recreating the proxy container N times.
  */
 export async function deployZone(
-  zone:   Zone,
-  onLine: (l: string) => void,
+  zone:    Zone,
+  onLine:  (l: string) => void,
+  options?: { skipProxyReload?: boolean },
 ): Promise<number> {
   const t0 = Date.now();
   log.info("deploy", "started", { zone: zone.key, image: zone.image });
   const logDeploy = (l: string) => { onLine(l); log.docker(zone.key, "deploy", l); };
   logDeploy(`--- deploy: ${zone.label} ---`);
-  const code = await pullAndUp(zone, logDeploy);
+  const code = await pullAndUp(zone, logDeploy, undefined, options);
   if (code !== 0) {
     log.error("deploy", "failed", { zone: zone.key, exit: code, ms: Date.now() - t0 });
   } else {
@@ -549,12 +757,22 @@ export async function deployAll(
 ): Promise<number> {
   onLine(`=== Deploy all (${zones.length} zone${zones.length !== 1 ? "s" : ""}) ===`);
 
+  // Skip per-zone proxy reloads — we'll do a single reload at the end so the
+  // proxy isn't torn down and recreated N times during a bulk deploy.
   for (const zone of zones) {
-    const code = await deployZone(zone, onLine);
+    const code = await deployZone(zone, onLine, { skipProxyReload: true });
     if (code !== 0) {
       onLine(`✗ Deploy failed for ${zone.label} (exit ${code}) — continuing`);
     }
     onLine("");
+  }
+
+  // Single proxy reload for the whole batch — picks up any env / upstream
+  // changes and guarantees routing is in sync with the current compose file.
+  onLine(`--- reload proxy (batch) ---`);
+  const proxyCode = await reloadProxy(onLine);
+  if (proxyCode !== 0) {
+    onLine(`⚠ proxy reload failed (exit ${proxyCode}) — retry with [R] on the zones panel.`);
   }
 
   onLine(`=== All zones restarted ===`);
@@ -591,4 +809,104 @@ export async function gitPush(onLine: (l: string) => void): Promise<number> {
 
   await exited;
   return code;
+}
+
+// ── Git commit + push (Vercel-hosted zones) ─────────────────────────────────
+
+/**
+ * For zones with hosting: 'vercel' — the "build" step is a git commit+push
+ * of the zone's own source paths instead of a Docker build. An external
+ * Vercel project (linked to this same repo, Root Directory scoped to the
+ * zone) watches `main` and builds/deploys on its own; no image, no container.
+ *
+ * Scoped `git add` (never -A) so this only ever touches the zone's own
+ * paths, regardless of whatever else is dirty elsewhere in the tree.
+ */
+export async function gitCommitAndPushZone(
+  zone:   Zone,
+  onLine: (l: string) => void,
+): Promise<number> {
+  const paths = [`zones/${zone.key}`, `src/zones/${zone.key}`];
+  const branchResult = spawnSync("git", ["branch", "--show-current"], { cwd: PROJECT_DIR });
+  const branch = branchResult.status === 0
+    ? branchResult.stdout?.toString().trim() || "unknown"
+    : "unknown";
+
+  onLine(`--- Vercel git lane: ${branch} ---`);
+  if (branch !== "main") {
+    onLine(`⚠ ${zone.label} production tracks main; this push can create a preview but does not publish production.`);
+  }
+
+  onLine(`--- git add (${paths.join(", ")}) ---`);
+  const add = spawnSync("git", ["add", ...paths], { cwd: PROJECT_DIR });
+  if (add.status !== 0) {
+    onLine(`✗ git add failed: ${add.stderr?.toString().trim()}`);
+    return add.status ?? 1;
+  }
+
+  const staged = spawnSync("git", ["diff", "--cached", "--quiet"], { cwd: PROJECT_DIR });
+  if (staged.status === 0) {
+    onLine("(nothing staged under this zone's paths — skipping commit)");
+  } else {
+    onLine("--- git commit ---");
+    const commit = spawnSync(
+      "git",
+      ["commit", "-m", `chore(${zone.key}): sync zone source for Vercel build`],
+      { cwd: PROJECT_DIR },
+    );
+    for (const line of commit.stdout?.toString().split("\n") ?? []) if (line) onLine(line);
+    if (commit.status !== 0) {
+      onLine(`✗ git commit failed: ${commit.stderr?.toString().trim()}`);
+      return commit.status ?? 1;
+    }
+  }
+
+  const pushCode = await gitPush(onLine);
+  if (pushCode === 0) {
+    recordZoneLedger(zone, "git-push");
+    onLine(branch === "main"
+      ? `✓ pushed ${zone.label} on main; Vercel production build should start`
+      : `✓ pushed ${zone.label} on ${branch}; production is unchanged until merge-to-main or an explicit Vercel promote`);
+  }
+  return pushCode;
+}
+
+/** Promote a completed Vercel preview deployment to the project's production
+ * aliases. Kept behind the UNAXIS command surface so Vercel-hosted zones have
+ * the same visible, auditable lifecycle boundary as Docker-hosted zones. */
+export async function promoteVercelZone(
+  zone: Zone,
+  deploymentUrl: string,
+  onLine: (line: string) => void,
+): Promise<number> {
+  let parsed: URL;
+  try {
+    parsed = new URL(deploymentUrl);
+  } catch {
+    onLine("✗ deployment must be a valid https://*.vercel.app URL");
+    return 2;
+  }
+
+  if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".vercel.app")) {
+    onLine("✗ deployment must be a valid https://*.vercel.app URL");
+    return 2;
+  }
+
+  onLine(`--- vercel promote (${zone.key}) ---`);
+  const executable = process.platform === "win32" ? "vercel.cmd" : "vercel";
+  const proc = spawn(executable, ["promote", parsed.toString(), "--yes", "--no-color"], {
+    cwd: PROJECT_DIR,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  drainStream(proc.stdout!, onLine);
+  drainStream(proc.stderr!, onLine);
+
+  return new Promise<number>((resolve) => {
+    proc.on("error", (error) => {
+      onLine(`✗ vercel promote failed to start: ${error.message}`);
+      resolve(1);
+    });
+    proc.on("close", (code) => resolve(code ?? 1));
+  });
 }

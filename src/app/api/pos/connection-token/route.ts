@@ -11,10 +11,11 @@ import Stripe from "stripe";
 export const dynamic = "force-dynamic";
 
 export async function POST() {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: "2024-11-20.acacia",
-  });
   try {
+    // Same class of bug found and fixed across the checkout routes via E2E
+    // test, 2026-08-06: constructing Stripe outside try/catch means a
+    // missing STRIPE_SECRET_KEY throws uncaught instead of returning JSON.
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
     const token = await stripe.terminal.connectionTokens.create();
     return NextResponse.json({ secret: token.secret });
   } catch (err: any) {

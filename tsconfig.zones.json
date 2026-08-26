@@ -1,0 +1,6 @@
+{
+  "//": "Zone sources are NOT covered by tsconfig.json (its `include` is src/app + src/components only), so a zone file is typechecked only where a route transitively imports it. That gap has shipped render-time ReferenceErrors to production repeatedly — `Video is not defined`, `calculateLevelFromXp`, `isMsgAdmin`. This config exists purely so `bun run guard:zones` can catch that one class of error before a build.",
+  "extends": "./tsconfig.json",
+  "include": ["next-env.d.ts", "src/zones/**/*.ts", "src/zones/**/*.tsx"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx"]
+}

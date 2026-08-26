@@ -23,10 +23,12 @@
 
 import { getStatus, pullAndUp, ensureZoneNetwork, reloadProxy } from "./docker.ts";
 import { buildZone }                         from "./zone-build.ts";
-import { npmAddZone }                        from "./npm/index.ts";
+import { npmAddZone, deriveNpmUpstream }     from "./npm/index.ts";
 import { scaffoldZone, deleteZone }          from "./zone-scaffold.ts";
 import type { DerivedZone }                  from "./zone-scaffold.ts";
-import { addZoneRoute, getRoutes }           from "./proxy-config.ts";
+import { addZoneRoute, getRoutes, deriveZoneUpstream } from "./proxy-config.ts";
+import { loadEnvironments }                  from "./environment-store.ts";
+import type { UnaxisEnvironment }            from "./environment-store.ts";
 
 // ── Wait for container health ─────────────────────────────────────────────────
 
@@ -123,7 +125,10 @@ export async function createZonePipeline(
     await rollbackZone(zone, onLine);
     return 1;
   }
-  const deployCode = await pullAndUp(zone, onLine, dockerUrl);
+  // Skip the proxy reload that pullAndUp normally chains — this pipeline
+  // does its own proxy reload at step 6, AFTER NPM registration writes the
+  // route into routes.json, so the proxy picks up zone + route in one go.
+  const deployCode = await pullAndUp(zone, onLine, dockerUrl, { skipProxyReload: true });
   if (deployCode !== 0) {
     onLine(`✗ Deploy failed (exit ${deployCode})`);
     await rollbackZone(zone, onLine);
@@ -142,7 +147,11 @@ export async function createZonePipeline(
 
   // 5 — NPM proxy host + Let's Encrypt cert
   step("NPM cert");
-  await npmAddZone(zone, onLine);
+  const envs = await loadEnvironments().catch(() => [] as UnaxisEnvironment[]);
+  const zoneEnv = zone.environmentId
+    ? (envs.find((e) => e.id === zone.environmentId) ?? null)
+    : null;
+  await npmAddZone(zone, onLine, zoneEnv);
 
   // 6 — Restart proxy so the new route is live immediately.
   //     routes.json hot-reload via fs.watch is unreliable on Windows/Docker
@@ -167,8 +176,12 @@ export async function repairZonePipeline(
   const step = (name: string) => onLine(`\n── ${name} ──`);
 
   step("sync proxy route");
+  const repairEnvs = await loadEnvironments().catch(() => [] as UnaxisEnvironment[]);
+  const repairEnv  = zone.environmentId
+    ? (repairEnvs.find((e) => e.id === zone.environmentId) ?? null)
+    : null;
   try {
-    const upstream = `http://${zone.service}:3000`;
+    const upstream = deriveZoneUpstream(zone, repairEnv);
     const before   = getRoutes();
     const already  = before.zones[zone.key] === upstream;
     if (!already) {
@@ -180,11 +193,10 @@ export async function repairZonePipeline(
     }
   } catch (err) {
     onLine(`✗ Failed to sync proxy route: ${err}`);
-    onLine(`  Manual fix: add "${zone.key}": "http://${zone.service}:3000" to proxy-config/routes.json`);
   }
 
   step("verify NPM");
-  await npmAddZone(zone, onLine);
+  await npmAddZone(zone, onLine, repairEnv);
 
   return 0;
 }

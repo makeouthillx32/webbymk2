@@ -21,7 +21,7 @@ The swarm will pivot on its next cycle automatically.
 
 ```
 FOCUS: documentation
-TARGET: Z:\WEBSITES\DCG.CO\ai\
+TARGET: Z:\WEBSITES\webbymk2\ai\
 PRIORITY: high
 GOAL: Improve all AI documentation files. Update DECISIONS.md with observed 
       patterns. Add missing JSDoc comments to lib/ and hooks/ files. Write 

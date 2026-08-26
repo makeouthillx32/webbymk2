@@ -1,0 +1,5 @@
+PubChem Database License & Citation Guidelines Notice
+Timestamp: 2026-08-03T22:31:15Z
+User notified to check PubChem terms at:
+- https://pubchem.ncbi.nlm.nih.gov/docs/citation-guidelines
+- https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest

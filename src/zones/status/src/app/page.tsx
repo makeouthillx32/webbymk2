@@ -1,9 +1,7 @@
-// Force a fresh Vercel build against the current STATUS_API_URL env var
-// (status.unenter.live/__status-api/public) rather than relying on the
-// dashboard's Redeploy button, which was repeatedly re-running a stale commit.
 import Link from "next/link";
 import { fetchStatusSnapshot, type CurrentService } from "../lib/status";
 import UptimeBars from "../components/UptimeBars";
+import RedirectNotice from "../components/RedirectNotice";
 
 export const revalidate = 30;
 
@@ -32,10 +30,21 @@ const REFRESH_COPY = {
   down:     "A service is down right now. If a page looks broken or won't load, refreshing usually resolves it once the service recovers.",
 } as const;
 
-export default async function StatusPage() {
-  const { current, history, incidents } = await fetchStatusSnapshot();
+type StatusPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
 
-  const overall = current.length === 0 ? "operational" : overallStatus(current);
+export default async function StatusPage({ searchParams }: StatusPageProps) {
+  const params = await searchParams;
+  const fromParam = Array.isArray(params?.from) ? params?.from[0] : params?.from;
+  const { snapshot, source } = await fetchStatusSnapshot();
+  const { current, history, incidents } = snapshot;
+
+  const overall = source === "unreachable"
+    ? "down"
+    : current.length === 0
+      ? "degraded"
+      : overallStatus(current);
   const historyByGroup = new Map(history.map((h) => [h.id, h]));
 
   return (
@@ -55,10 +64,21 @@ export default async function StatusPage() {
         </Link>
       </div>
 
+      <RedirectNotice from={fromParam} />
+
       <div className={`banner ${overall}`}>
         <span className="dot" />
         {BANNER_TEXT[overall]}
       </div>
+
+      {source === "unreachable" && (
+        <div className="telemetry-warning" role="alert">
+          <strong>UNAXIS topology feed is unreachable.</strong>
+          <span>
+            This independent status endpoint is online, but it cannot currently reach the environment and node telemetry feed. Zone, router, CDN, and endpoint state may be incomplete until a UNAXIS node reconnects.
+          </span>
+        </div>
+      )}
 
       {overall !== "operational" && (
         <Link className={`refresh-callout ${overall}`} href="/">
@@ -68,7 +88,11 @@ export default async function StatusPage() {
       )}
 
       {current.length === 0 ? (
-        <p className="empty">No status data yet — the collector just started reporting.</p>
+        <p className="empty">
+          {source === "unreachable"
+            ? "No live topology data is available. This is an outage signal, not an all-clear."
+            : "No status data yet — the collector just started reporting."}
+        </p>
       ) : (
         current.map((service) => (
           <div className="service" key={service.id}>
@@ -84,14 +108,19 @@ export default async function StatusPage() {
         ))
       )}
 
-      <div className="section-title">Past Incidents</div>
+      <div className="section-title">Incidents</div>
       {incidents.length === 0 ? (
         <p className="empty">No incidents reported.</p>
       ) : (
         incidents.map((incident) => (
           <div className="incident" key={incident.id}>
             <div className="incident-date">{formatDate(incident.started_at)}</div>
-            <div className="incident-title">{incident.title}</div>
+            <div className="incident-heading">
+              <div className="incident-title">{incident.title}</div>
+              <span className={`incident-state ${incident.status}`}>
+                {incident.status === "resolved" ? "Resolved" : `${incident.status[0]?.toUpperCase()}${incident.status.slice(1)} · Ongoing`}
+              </span>
+            </div>
             {incident.updates.map((update, i) => (
               <div className="incident-update" key={i}>
                 <span className="u-status">{update.status}</span> — {update.body}

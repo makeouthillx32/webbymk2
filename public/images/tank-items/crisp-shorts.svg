@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+    <defs>
+      <linearGradient id="clothGray" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#94a3b8"/>
+        <stop offset="50%" stop-color="#64748b"/>
+        <stop offset="100%" stop-color="#334155"/>
+      </linearGradient>
+      <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="6" stdDeviation="5" flood-opacity="0.5"/>
+      </filter>
+    </defs>
+    <g filter="url(#shadow)" transform="translate(28, 36)">
+      <!-- Shorts Shape -->
+      <path d="M 20 20 L 180 20 L 195 135 L 125 145 L 100 85 L 75 145 L 5 135 Z" fill="url(#clothGray)" stroke="#1e293b" stroke-width="4"/>
+      <!-- Elastic Waistband -->
+      <path d="M 20 20 L 180 20 L 182 42 L 18 42 Z" fill="#475569" stroke="#1e293b" stroke-width="3"/>
+      <!-- Drawstring -->
+      <circle cx="95" cy="31" r="3" fill="#ffffff"/>
+      <circle cx="105" cy="31" r="3" fill="#ffffff"/>
+      <path d="M 95 31 C 90 50, 85 65, 88 75 M 105 31 C 110 50, 115 65, 112 75" stroke="#f8fafc" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- Hem Creases -->
+      <line x1="20" y1="125" x2="65" y2="132" stroke="#cbd5e1" stroke-width="2" opacity="0.6"/>
+      <line x1="135" y1="132" x2="180" y2="125" stroke="#cbd5e1" stroke-width="2" opacity="0.6"/>
+    </g>
+  </svg>

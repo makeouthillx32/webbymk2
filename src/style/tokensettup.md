@@ -69,7 +69,7 @@ Makes nav subtle and layered, very clean.
 
 # 🐎 OPTION 3 — Earthy Western Tone (Desert Feel)
 
-Leans into Desert Cowgirl aesthetic.
+Leans into Unenter Solutions aesthetic.
 
 ```css
 :root {
@@ -127,7 +127,7 @@ Creates stronger hierarchy between nav and page.
 
 ---
 
-# 🎯 My Recommendation For You (DCG context)
+# 🎯 My Recommendation For You (UNENTER context)
 
 Since you’re building:
 

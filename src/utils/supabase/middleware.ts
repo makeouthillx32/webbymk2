@@ -23,8 +23,8 @@ export async function middleware(req: NextRequest) {
   }
 
   // ── Guest key ───────────────────────────────────────────────
-  if (!req.cookies.get("dcg_guest_key")) {
-    res.cookies.set("dcg_guest_key", crypto.randomUUID(), {
+  if (!req.cookies.get("unenter_guest_key")) {
+    res.cookies.set("unenter_guest_key", crypto.randomUUID(), {
       path: "/",
       maxAge: 60 * 60 * 24 * 365,
       httpOnly: true,
@@ -43,8 +43,8 @@ export async function middleware(req: NextRequest) {
     {
       cookies: {
         getAll: () => req.cookies.getAll(),
-        setAll: (cookies) => {
-          cookies.forEach(({ name, value, options }) => {
+        setAll: (cookiesToSet: { name: string; value: string; options?: any }[]) => {
+          cookiesToSet.forEach(({ name, value, options }) => {
             req.cookies.set(name, value);
             res.cookies.set(name, value, options);
           });

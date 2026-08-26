@@ -10,6 +10,7 @@ import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { safeStorage } from "@/lib/safeStorage";
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -27,11 +28,11 @@ export default function CheckoutPage() {
     }
   }, [itemCount, router]);
 
-  // Restore promo from localStorage on mount (survives refresh)
+  // Restore promo from safeStorage on mount (survives refresh)
   useEffect(() => {
-    const savedCode = localStorage.getItem("dcg_promo_code");
-    const savedDiscount = localStorage.getItem("dcg_discount_cents");
-    const savedPromo = localStorage.getItem("dcg_promo_data");
+    const savedCode = safeStorage.getItem("unenter_promo_code");
+    const savedDiscount = safeStorage.getItem("unenter_discount_cents");
+    const savedPromo = safeStorage.getItem("unenter_promo_data");
 
     if (savedCode && savedDiscount && savedPromo) {
       try {
@@ -40,9 +41,9 @@ export default function CheckoutPage() {
         setDiscountCents(parseInt(savedDiscount, 10));
       } catch {
         // Corrupted data — clear it
-        localStorage.removeItem("dcg_promo_code");
-        localStorage.removeItem("dcg_discount_cents");
-        localStorage.removeItem("dcg_promo_data");
+        safeStorage.removeItem("unenter_promo_code");
+        safeStorage.removeItem("unenter_discount_cents");
+        safeStorage.removeItem("unenter_promo_data");
       }
     }
   }, []);
@@ -67,10 +68,10 @@ export default function CheckoutPage() {
         setPromoApplied(data.promo_code);
         setDiscountCents(data.discount_cents);
         setPromoError("");
-        // Persist to localStorage so refresh doesn't wipe it
-        localStorage.setItem("dcg_promo_code", promoCode);
-        localStorage.setItem("dcg_discount_cents", data.discount_cents.toString());
-        localStorage.setItem("dcg_promo_data", JSON.stringify(data.promo_code));
+        // Persist to safeStorage so refresh doesn't wipe it
+        safeStorage.setItem("unenter_promo_code", promoCode);
+        safeStorage.setItem("unenter_discount_cents", data.discount_cents.toString());
+        safeStorage.setItem("unenter_promo_data", JSON.stringify(data.promo_code));
       } else {
         setPromoError(data.error);
         setPromoApplied(null);
@@ -88,9 +89,9 @@ export default function CheckoutPage() {
     setPromoApplied(null);
     setDiscountCents(0);
     setPromoError("");
-    localStorage.removeItem("dcg_promo_code");
-    localStorage.removeItem("dcg_discount_cents");
-    localStorage.removeItem("dcg_promo_data");
+    safeStorage.removeItem("unenter_promo_code");
+    safeStorage.removeItem("unenter_discount_cents");
+    safeStorage.removeItem("unenter_promo_data");
   };
 
   const handleContinue = () => {

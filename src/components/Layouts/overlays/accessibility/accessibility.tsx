@@ -20,6 +20,10 @@ const AccessibilityOverlay = () => {
   const [isOpen, setIsOpen] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
   const { themeType, toggleTheme, themeId, setThemeId, availableThemes, getTheme } = useTheme();
+
+  if (process.env.NEXT_PUBLIC_ZONE === "tank") {
+    return null;
+  }
   
   // Generate theme presets from available themes
   const [themePresets, setThemePresets] = useState<ThemePreset[]>([]);

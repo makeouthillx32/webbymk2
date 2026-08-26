@@ -281,7 +281,7 @@ No guessing, no hardcoded URLs.
 **Path**
 
 ```
-Z:\WEBSITES\DCG.CO\lib\images.ts
+Z:\WEBSITES\webbymk2\lib\images.ts
 ```
 
 ```ts

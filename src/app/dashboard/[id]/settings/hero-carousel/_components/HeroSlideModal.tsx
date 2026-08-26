@@ -12,6 +12,9 @@ type HeroSlide = {
   bucket_name: string;
   object_path: string;
   alt_text: string | null;
+  width?: number | null;
+  height?: number | null;
+  target_device?: 'all' | 'desktop' | 'mobile';
 
   // ✅ Mobile image (new)
   mobile_bucket_name?: string; // default 'hero-images'
@@ -36,17 +39,26 @@ type HeroSlide = {
 
 type Props = {
   mode: 'create' | 'edit';
+  page?: string;
   slide?: HeroSlide;
   onClose: () => void;
   onSuccess: () => void;
 };
 
-const DESKTOP_RECOMMENDED_WIDTH = 2880;
-const DESKTOP_RECOMMENDED_HEIGHT = 1050;
+// Recommended sizes are hints, not requirements — they vary by zone, so
+// they're keyed by `page`. Falls back to the shop defaults if a zone
+// doesn't have its own entry yet.
+const DESKTOP_RECOMMENDED_BY_PAGE: Record<string, { w: number; h: number }> = {
+  shop: { w: 1920, h: 500 },
+  labs: { w: 2880, h: 1050 },
+};
+const DESKTOP_RECOMMENDED_FALLBACK = { w: 2880, h: 1050 };
 
-// ✅ from your Canva / LoveBonito mobile style
-const MOBILE_RECOMMENDED_WIDTH = 1125;
-const MOBILE_RECOMMENDED_HEIGHT = 1470;
+const MOBILE_RECOMMENDED_BY_PAGE: Record<string, { w: number; h: number }> = {
+  shop: { w: 1125, h: 1470 },
+  labs: { w: 1125, h: 1470 },
+};
+const MOBILE_RECOMMENDED_FALLBACK = { w: 1125, h: 1470 };
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BUCKET = 'hero-images';
@@ -56,7 +68,7 @@ function safeExt(name: string) {
   return ext && ext.length <= 5 ? ext : 'jpg';
 }
 
-export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
+export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess }: Props) {
   const supabase = createClient();
 
   const [formData, setFormData] = useState({
@@ -91,6 +103,13 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
 
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Soft, non-blocking size hints — separate from `error` so a dimension
+  // mismatch never looks like (or gets clobbered by) a real save failure.
+  const [sizeNote, setSizeNote] = useState<string | null>(null);
+  const [mobileSizeNote, setMobileSizeNote] = useState<string | null>(null);
+
+  const desktopRecommended = DESKTOP_RECOMMENDED_BY_PAGE[page] ?? DESKTOP_RECOMMENDED_FALLBACK;
+  const mobileRecommended = MOBILE_RECOMMENDED_BY_PAGE[page] ?? MOBILE_RECOMMENDED_FALLBACK;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mobileFileInputRef = useRef<HTMLInputElement>(null);
@@ -120,18 +139,32 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
     return null;
   }
 
-  function readDimsAndPreview(file: File, setDims: any, setPreview: any, recommended: { w: number; h: number }) {
+  function readDimsAndPreview(
+    file: File,
+    setDims: any,
+    setPreview: any,
+    recommended: { w: number; h: number },
+    setNote: (note: string | null) => void
+  ) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
         setDims({ width: img.width, height: img.height });
-        if (img.width !== recommended.w || img.height !== recommended.h) {
-          setError(
-            `⚠️ Recommended size is ${recommended.w}×${recommended.h}px. Your image is ${img.width}×${img.height}px.`
+
+        // Purely informational — a mismatch never blocks the upload or
+        // gets treated as an error. Only note it when the aspect ratio is
+        // meaningfully off (>15%), not on exact pixel mismatches.
+        const uploadedRatio = img.width / img.height;
+        const recommendedRatio = recommended.w / recommended.h;
+        const ratioDiff = Math.abs(uploadedRatio - recommendedRatio) / recommendedRatio;
+
+        if (ratioDiff > 0.15) {
+          setNote(
+            `Uploaded ${img.width}×${img.height}px — recommended ${recommended.w}×${recommended.h}px for this zone. It'll still work, just may crop differently.`
           );
         } else {
-          setError(null);
+          setNote(null);
         }
       };
       setPreview(ev.target?.result as string);
@@ -149,10 +182,7 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
 
     setError(null);
     setImageFile(file); // Fixed placeholder
-    readDimsAndPreview(file, setImageDimensions, setImagePreview, {
-      w: DESKTOP_RECOMMENDED_WIDTH,
-      h: DESKTOP_RECOMMENDED_HEIGHT,
-    });
+    readDimsAndPreview(file, setImageDimensions, setImagePreview, desktopRecommended, setSizeNote);
   }
 
   function handleMobileImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -169,7 +199,8 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
       file,
       setMobileImageDimensions,
       setMobileImagePreview,
-      { w: MOBILE_RECOMMENDED_WIDTH, h: MOBILE_RECOMMENDED_HEIGHT }
+      mobileRecommended,
+      setMobileSizeNote
     );
   }
 
@@ -276,6 +307,7 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
         const { data: maxData } = await supabase
           .from('hero_slides')
           .select('position')
+          .eq('page', page)
           .order('position', { ascending: false })
           .limit(1);
 
@@ -283,7 +315,7 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
 
         const { error: insertError } = await supabase
           .from('hero_slides')
-          .insert({ ...payload, position: nextPosition });
+          .insert({ ...payload, page, position: nextPosition });
 
         if (insertError) throw insertError;
       } else {
@@ -327,24 +359,10 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
 
         {/* Body */}
         <form id="__hero_slide_form__" onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Error Alert */}
+          {/* Error Alert — only real save/upload failures land here now */}
           {error && (
-            <div
-              className={`rounded-lg border p-4 ${
-                error.startsWith('⚠️')
-                  ? 'border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10'
-                  : 'border-[hsl(var(--destructive))] bg-[hsl(var(--destructive))]/10'
-              }`}
-            >
-              <p
-                className={`text-sm ${
-                  error.startsWith('⚠️')
-                    ? 'text-yellow-800 dark:text-yellow-200'
-                    : 'text-[hsl(var(--destructive))]'
-                }`}
-              >
-                {error}
-              </p>
+            <div className="rounded-lg border border-[hsl(var(--destructive))] bg-[hsl(var(--destructive))]/10 p-4">
+              <p className="text-sm text-[hsl(var(--destructive))]">{error}</p>
             </div>
           )}
 
@@ -354,8 +372,11 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
               Desktop Hero Image *
             </label>
             <p className="text-xs text-[hsl(var(--muted-foreground))]">
-              Recommended: {DESKTOP_RECOMMENDED_WIDTH}×{DESKTOP_RECOMMENDED_HEIGHT}px • Max 10MB
+              Recommended: {desktopRecommended.w}×{desktopRecommended.h}px • Max 10MB
             </p>
+            {sizeNote && (
+              <p className="text-xs text-[hsl(var(--muted-foreground))]/80 italic">{sizeNote}</p>
+            )}
 
             <input
               ref={fileInputRef}
@@ -404,8 +425,11 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
                   Mobile Hero Image (Recommended)
                 </label>
                 <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
-                  Recommended: {MOBILE_RECOMMENDED_WIDTH}×{MOBILE_RECOMMENDED_HEIGHT}px • Used on mobile to match the reference layout
+                  Recommended: {mobileRecommended.w}×{mobileRecommended.h}px • Used on mobile to match the reference layout
                 </p>
+                {mobileSizeNote && (
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]/80 italic mt-1">{mobileSizeNote}</p>
+                )}
               </div>
 
               {mode === 'edit' && (slide?.mobile_object_path || mobileImageFile) ? (
@@ -551,7 +575,7 @@ export function HeroSlideModal({ mode, slide, onClose, onSuccess }: Props) {
                 className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/20"
                 value={formData.pill_text}
                 onChange={(e) => setFormData({ ...formData, pill_text: e.target.value })}
-                placeholder="Desert Cowgirl • Western-inspired"
+                placeholder="Unenter Solutions • Western-inspired"
               />
             </div>
 

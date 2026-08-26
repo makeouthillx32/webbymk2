@@ -48,14 +48,14 @@ import {
 }                           from "./snapshot.ts";
 import {
   createRuntimeInstance,
-  initializeSupabaseCore,
   removeFromRegistry,
   spawnRun,
   envWithFile,
-  CORE_DIR,
+  INSTANCE_TEMPLATE,
   type RuntimeInstance,
+  getInstanceProjectName,
 }                           from "./supabase-factory.ts";
-import { DOMAIN, STACK_HOST } from "../../config/stack.ts";
+import { DOMAIN, STACK_HOST, PROJECT_DIR } from "../../config/stack.ts";
 import { loadRegistry, updateInstanceStatus } from "./supabase-factory.ts";
 import { existsSync }          from "fs";
 import type { OnLine }         from "./types.ts";
@@ -141,16 +141,18 @@ export async function assertDockerRunning(): Promise<void> {
 }
 
 /**
- * Assert supabase-core/docker is present (required for new instance scaffolding).
- * Returns immediately if present; throws with a clear install instruction if not.
+ * Assert the vendored DB init SQL files are present in the instance template.
+ * These are committed to the repo — if missing, the codebase is incomplete.
  */
 export function assertCoreDockerPresent(): void {
-  const coreDocker = join(CORE_DIR, "docker");
-  if (!existsSync(coreDocker)) {
+  const templateDbDir = join(INSTANCE_TEMPLATE, "volumes", "db");
+  const requiredFiles = ["_supabase.sql", "roles.sql", "jwt.sql", "realtime.sql", "webhooks.sql", "logs.sql"];
+  const missing = requiredFiles.filter((f) => !existsSync(join(templateDbDir, f)));
+  if (missing.length > 0) {
     throw new Error(
-      `supabase-core/docker not found at ${coreDocker}\n` +
-      `  Run:  unaxis unenter db template-capture\n` +
-      `  This will clone supabase/supabase and set up the template (one-time, ~2 min).`
+      `Instance template is missing DB init SQL files: ${missing.join(", ")}\n` +
+      `  Expected at: ${templateDbDir}\n` +
+      `  These files are committed to the repo — check your working tree.`
     );
   }
 }
@@ -508,7 +510,7 @@ export interface BlankDatabaseResult {
  * Spin up a brand-new, completely empty Supabase database instance.
  *
  * This is the FAST PATH — no snapshot, no clone, no template archive.
- * It scaffolds a fresh instance directly from supabase-core/docker,
+ * It scaffolds a fresh instance from the vendored template in
  * starts it, registers it publicly, and writes fully-wired MCP config
  * with real secrets available immediately.
  *
@@ -518,7 +520,7 @@ export interface BlankDatabaseResult {
  *   ~3min — Studio + all migrations fully up
  *
  * Steps:
- *   1. Ensure supabase-core/docker is present (clone if needed)
+ *   1. Scaffold instance from vendored SQL template (no GitHub clone)
  *   2. createRuntimeInstance() — scaffold with unique ports + fresh secrets
  *   3. docker compose up -d
  *   4. Wait for Postgres (pg_isready polling)
@@ -546,14 +548,7 @@ export async function createBlankDatabase(
   onLine(`🆕 Creating blank database: ${slug}`);
   onLine(`   Will be live at:  db.${slug}.${domain}  /  studio.${slug}.${domain}`);
 
-  // ── [1] Ensure supabase-core is present ───────────────────────────────────
-  if (!existsSync(join(CORE_DIR, "docker"))) {
-    onLine("  supabase-core not found — cloning supabase/supabase (one-time setup)...");
-    const { success, error } = await initializeSupabaseCore(onLine);
-    if (!success) throw new Error(`initializeSupabaseCore failed: ${error}`);
-  }
-
-  // ── [2] Scaffold instance ────────────────────────────────────────────────
+  // ── [1] Scaffold instance ────────────────────────────────────────────────
   onLine("\n[1/5] Scaffolding instance...");
   const instance = await createRuntimeInstance(label, onLine);
   onLine(`  ✓ slug:  ${instance.slug}`);
@@ -567,7 +562,7 @@ export async function createBlankDatabase(
     onLine("\n[2/5] Starting Supabase stack...");
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
       { cwd: instance.dockerPath, timeout: 120_000,
         env: envWithFile(`${instance.dockerPath}/.env`) },
     );
@@ -577,7 +572,9 @@ export async function createBlankDatabase(
 
     // ── [4] Wait for Postgres ────────────────────────────────────────────
     onLine("\n[3/5] Waiting for Postgres...");
-    const dbCont = `${instance.slug}-db`;
+    const dbCont = instance.containerPrefix
+      ? `${instance.containerPrefix}db`
+      : `${instance.slug}-db`;
     let pgReady = false;
     for (let i = 0; i < 30; i++) {   // up to 60s
       await new Promise((r) => setTimeout(r, 2000));
@@ -641,7 +638,7 @@ export async function createBlankDatabase(
     onLine(`  Public Studio:  ${publicStudioUrl}  ${registerNpm && npmErrors.length === 0 ? "(SSL ✓)" : "(NPM pending)"}`);
     onLine(`  Public API:     ${publicApiUrl}  ${registerNpm && npmErrors.length === 0 ? "(SSL ✓)" : "(NPM pending)"}`);
     onLine(`  MCP config:     ${instance.dockerPath}/mcp-config.json`);
-    onLine(`  Studio user:    supabase  /  password: ${instance.secrets.dashboardPassword}`);
+    onLine(`  Studio user:    ${instance.name}  /  password: ${instance.secrets.dashboardPassword}`);
 
     return {
       instance,
@@ -658,6 +655,132 @@ export async function createBlankDatabase(
     if (!didStart) {
       await removeFromRegistry(instance.id).catch(() => {});
     }
+    throw err;
+  }
+}
+
+// ── provisionCodevDatabase ─────────────────────────────────────────────────────
+
+export interface CodevDatabaseResult {
+  instance:  RuntimeInstance;
+  studioUrl: string;
+  apiUrl:    string;
+  migrationsApplied: number;
+  migrationErrors:   string[];
+}
+
+/**
+ * Spin up a completely local, isolated Supabase instance for an external
+ * contributor's own machine — no NPM, no DNS, no public domain, nothing
+ * shared with the real POWER/L0V3 stack. Deliberately does NOT go through
+ * createBlankDatabase(): that function unconditionally reads STACK_HOST.ip
+ * and DOMAIN at its very top (database-manager.ts, "const stackIp =
+ * STACK_HOST.ip"), both of which throw/are empty on a fresh clone with no
+ * %APPDATA%\unaxis\unenter\config.json — and since stack.ts resolves that
+ * config ONCE at module load time, writing a config file mid-process can't
+ * fix it retroactively. createRuntimeInstance() itself needs neither value
+ * (pure ports/secrets/docker-compose, no domain concept at all), so this
+ * reuses that primitive directly and simply never calls the domain-coupled
+ * addDatabaseRoutes/npmAddDatabaseHosts/writeMcpConfig steps — which this
+ * local-only use case has no reason to want anyway.
+ *
+ * After the stack is up, applies every supabase/migrations/*.sql file (in
+ * filename order, same as they'd apply anywhere else) plus one new seed file
+ * (supabase/seed-codev.sql) that inserts the 7 sample Tank rooms from
+ * src/zones/tank/fixtures.ts as real tank_rooms rows — a fresh instance
+ * otherwise has zero app data, so Tank would render with the fixture
+ * fallback's client-side placeholders instead of anything DB-backed.
+ * Applied via `docker cp` + `docker exec psql -f`, not a host-installed
+ * psql client — nothing this needs beyond Docker itself.
+ */
+export async function provisionCodevDatabase(
+  slug:   string,
+  onLine: OnLine,
+): Promise<CodevDatabaseResult> {
+  await validateDatabaseSlug(slug);
+  await assertDockerRunning();
+
+  onLine(`🆕 Creating local codev database: ${slug}`);
+  onLine(`   Local only — no NPM, no DNS, nothing shared with the real stack.`);
+
+  onLine("\n[1/4] Scaffolding instance...");
+  const instance = await createRuntimeInstance(slug, onLine);
+  onLine(`  ✓ slug:  ${instance.slug}`);
+  onLine(`  ✓ ports: Kong:${instance.ports.kong}  Studio:${instance.ports.studio}  PG:${instance.ports.postgres}`);
+
+  try {
+    onLine("\n[2/4] Starting Supabase stack...");
+    const { code: upCode, out: upOut } = await spawnRun(
+      "docker",
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
+      { cwd: instance.dockerPath, timeout: 120_000,
+        env: envWithFile(`${instance.dockerPath}/.env`) },
+    );
+    if (upCode !== 0) throw new Error(`docker compose up failed:\n${upOut}`);
+    onLine("  ✓ containers started");
+
+    onLine("\n[3/4] Waiting for Postgres...");
+    const dbCont = instance.containerPrefix ? `${instance.containerPrefix}db` : `${instance.slug}-db`;
+    let pgReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const { out } = await _dockerExec(["exec", dbCont, "pg_isready", "-U", "postgres"]);
+      if (out.includes("accepting connections")) { pgReady = true; break; }
+      if ((i + 1) % 5 === 0) onLine(`  … waiting (${(i + 1) * 2}s)`);
+    }
+    if (!pgReady) throw new Error("Postgres did not become ready within 60s");
+    onLine("  ✓ Postgres ready");
+
+    onLine("\n[4/4] Applying app migrations + sample data...");
+    const migrationErrors: string[] = [];
+    let migrationsApplied = 0;
+
+    const migrationsDir = join(PROJECT_DIR, "supabase", "migrations");
+    const seedFile       = join(PROJECT_DIR, "supabase", "seed-codev.sql");
+    const files: string[] = [];
+    try {
+      const entries = await fs.readdir(migrationsDir);
+      files.push(...entries.filter((f) => f.endsWith(".sql")).sort().map((f) => join(migrationsDir, f)));
+    } catch (e) {
+      migrationErrors.push(`Could not read migrations directory: ${String(e)}`);
+    }
+    if (existsSync(seedFile)) files.push(seedFile);
+
+    for (const file of files) {
+      const remotePath = `/tmp/${Date.now()}-${file.split(/[\\/]/).pop()}`;
+      const cpResult = await _dockerExec(["cp", file, `${dbCont}:${remotePath}`]);
+      if (cpResult.code !== 0) {
+        migrationErrors.push(`${file}: docker cp failed — ${cpResult.out.slice(0, 200)}`);
+        continue;
+      }
+      const runResult = await _dockerExec([
+        "exec", dbCont, "psql", "-U", "postgres", "-d", "postgres",
+        "-v", "ON_ERROR_STOP=1", "-f", remotePath,
+      ]);
+      if (runResult.code !== 0) {
+        migrationErrors.push(`${file.split(/[\\/]/).pop()}: ${runResult.out.slice(0, 300)}`);
+      } else {
+        migrationsApplied += 1;
+      }
+    }
+    onLine(`  ✓ ${migrationsApplied}/${files.length} SQL files applied`);
+    if (migrationErrors.length > 0) {
+      onLine(`  ⚠ ${migrationErrors.length} file(s) had errors — see migrationErrors in the result`);
+    }
+
+    const apiUrl    = `http://127.0.0.1:${instance.ports.kong}`;
+    const studioUrl = `http://127.0.0.1:${instance.ports.studio}`;
+
+    onLine(`\n✓ Local codev database ready: ${slug}`);
+    onLine(`  Studio:            ${studioUrl}`);
+    onLine(`  API (Kong):        ${apiUrl}`);
+    onLine(`  anon key:          ${instance.secrets.anonKey}`);
+    onLine(`  service role key:  ${instance.secrets.serviceRoleKey}`);
+    onLine(`  Studio password:   ${instance.secrets.dashboardPassword}`);
+
+    return { instance, studioUrl, apiUrl, migrationsApplied, migrationErrors };
+  } catch (err) {
+    await removeFromRegistry(instance.id).catch(() => {});
     throw err;
   }
 }
@@ -734,7 +857,7 @@ export async function cloneFromSnapshot(
     onLine(`\n[2/5] Starting lean stack...`);
     const { code: upCode, out: upOut } = await spawnRun(
       "docker",
-      ["compose", "--project-name", instance.slug, "up", "-d", "--remove-orphans"],
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
       { cwd: instance.dockerPath, timeout: 120_000,
         env: envWithFile(`${instance.dockerPath}/.env`) },
     );
@@ -809,7 +932,7 @@ export async function cloneFromSnapshot(
     onLine(`  Local API:      http://127.0.0.1:${instance.ports.kong}`);
     onLine(`  Public API:     ${publicApiUrl}`);
     onLine(`  Public Studio:  ${publicStudioUrl}`);
-    onLine(`  Studio user:    supabase  /  ${instance.secrets.dashboardPassword}`);
+    onLine(`  Studio user:    ${instance.name}  /  ${instance.secrets.dashboardPassword}`);
     onLine(`  MCP config:     ${instance.dockerPath}/mcp-config.json`);
 
     return { instance, dnsSlug, publicApiUrl, publicStudioUrl, mcpConfig, npmErrors };
@@ -867,12 +990,12 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
     return result;
   }
 
-  onLine("[pre-flight] supabase-core/docker...");
+  onLine("[pre-flight] instance template SQL files...");
   try {
     assertCoreDockerPresent();
-    pass("supabase-core/docker present");
+    pass("DB init SQL files present");
   } catch (e) {
-    fail("supabase-core/docker missing", e);
+    fail("DB init SQL files missing", e);
     result.ok = false;
     return result;
   }
@@ -901,7 +1024,9 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
 
     // ── Test 2: Postgres connectivity ────────────────────────────────────
     onLine("\n[2/6] Postgres connectivity...");
-    const dbCont = `${instance.slug}-db`;
+    const dbCont = instance.containerPrefix
+      ? `${instance.containerPrefix}db`
+      : `${instance.slug}-db`;
     const { out: pgOut } = await _dockerExec(["exec", dbCont, "pg_isready", "-U", "postgres"]);
     if (pgOut.includes("accepting connections")) {
       pass("Postgres accepting connections");
@@ -970,7 +1095,7 @@ export async function smokeTestDatabase(onLine: OnLine): Promise<SmokeTestResult
       try {
         await spawnRun(
           "docker",
-          ["compose", "--project-name", instance.slug, "down", "--remove-orphans", "-v"],
+          ["compose", "--project-name", getInstanceProjectName(instance), "down", "--remove-orphans", "-v"],
           { cwd: instance.dockerPath, timeout: 60_000 },
         );
         await removeFromRegistry(instance.id);

@@ -103,10 +103,11 @@ export function OrdersManager({ initialOrders }: OrdersManagerProps) {
     return orders.filter((o) => {
       if (fulfillmentFilter !== 'all' && o.fulfillment_status !== fulfillmentFilter) return false;
       if (paymentFilter !== 'all' && o.payment_status !== paymentFilter) return false;
-      // Customer type filter — now three buckets
-      if (customerTypeFilter === 'pos'    && !o.is_pos)    return false;
-      if (customerTypeFilter === 'member' && (!o.is_member || o.is_pos)) return false;
-      if (customerTypeFilter === 'guest'  && (!o.is_guest  || o.is_pos)) return false;
+      // Customer type filter — now four buckets
+      if (customerTypeFilter === 'pos'      && !o.is_pos)      return false;
+      if (customerTypeFilter === 'research' && !o.is_research) return false;
+      if (customerTypeFilter === 'member'   && (!o.is_member || o.is_pos)) return false;
+      if (customerTypeFilter === 'guest'    && (!o.is_guest  || o.is_pos)) return false;
       if (searchQuery.trim()) {
         const q    = searchQuery.toLowerCase();
         const name = [o.customer_first_name, o.customer_last_name].join(' ').toLowerCase();

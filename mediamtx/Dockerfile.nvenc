@@ -1,0 +1,42 @@
+# MediaMTX on a glibc base, with hardware video encoding.
+#
+# Why not the stock image: it is Alpine/musl, and its ffmpeg carries no NVENC
+# encoders at all. Both facts block GPU encoding independently — the NVIDIA
+# container runtime injects glibc driver libraries that musl cannot load, and
+# even with the libraries present the binary has no nvenc support compiled in.
+#
+# The cost of that was measured, not assumed: software x264 burns 30.4 CPU
+# seconds per 60s of 720p30, against 3.2s for h264_nvenc and 3.0s for av1_nvenc
+# on this host's RTX 4080 SUPER — roughly a tenth of the CPU. With 18 transcode
+# rungs running, that is the difference between saturating the box and idling.
+#
+# Ubuntu 24.04 is chosen for one specific reason: its stock ffmpeg is 6.1, the
+# first Ubuntu release whose package includes av1_nvenc. 22.04 ships ffmpeg 4.4,
+# which has h264_nvenc but no AV1 — so the older LTS would silently cost the
+# compression win. Verified in-image rather than assumed.
+#
+# MediaMTX itself is a single static Go binary, so it is simply copied across.
+
+FROM bluenviron/mediamtx:1.20.0-ffmpeg AS upstream
+
+FROM ubuntu:24.04
+
+# ffmpeg for the transcode rungs; curl because the recording hook uploads MP4
+# segments and BusyBox wget silently truncated binary bodies (see the notes in
+# the previous Dockerfile — a 100,000-byte file arrived as 116 bytes and
+# Supabase returned 200 on the empty object).
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ffmpeg curl ca-certificates python3-minimal python3-zmq \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=upstream /mediamtx /mediamtx
+
+# Let the NVIDIA container runtime expose video encode/decode, not just compute.
+# Without `video` in the capability list the driver injects CUDA but NOT
+# libnvidia-encode, and every nvenc encoder fails at runtime with a misleading
+# "Cannot load libnvidia-encode.so.1".
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
+ENTRYPOINT ["/mediamtx"]

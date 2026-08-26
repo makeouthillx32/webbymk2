@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import { generateSiteMetadata } from "@/lib/zoneMetadata";
 import "./globals.css";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
@@ -18,13 +19,9 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default: "Rappers | Unenter",
-    template: "%s | Rappers – Unenter",
-  },
-  description: "Welcome to the Rappers zone.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return generateSiteMetadata();
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];

@@ -24,6 +24,23 @@ services:
         config:
           hide_credentials: false
 
+  # Realtime REST — server-side broadcast. MUST be listed before the websocket
+  # route below: without it, /realtime/v1/api/broadcast is rewritten onto
+  # realtime's /socket/ prefix and 404s, so every server-initiated broadcast
+  # silently fails (chat delivery, email-verification success, director cuts).
+  # supabase-js falls back to this REST endpoint whenever .send() is called on
+  # a channel that was never subscribed, which is exactly how Tank's server
+  # code broadcasts. Verified 2026-08-19: correct path returns 202.
+  - name: realtime-v1-rest
+    url: http://realtime:4000/api
+    routes:
+      - name: realtime-v1-rest-all
+        strip_path: true
+        paths:
+          - /realtime/v1/api
+    plugins:
+      - name: cors
+
   - name: realtime-v1
     url: http://realtime:4000/socket/
     routes:

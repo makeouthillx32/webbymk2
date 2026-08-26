@@ -8,6 +8,7 @@ import Link from "next/link";
 import type { NavNode as UnifiedNavNode } from "@/lib/navigation";
 import { useAuth } from "@/app/provider";
 import { useSessionContext } from "@supabase/auth-helpers-react"; // ✅ USE THIS INSTEAD
+import { useSignInHref } from "@/lib/useSignInHref";
 import "./_components/Mobile.scss";
 
 // Simplified nav node for mobile rendering
@@ -51,6 +52,7 @@ function transformNavTree(nodes: UnifiedNavNode[]): NavNode[] {
 export default function MobileDrawer({ onClose }: MobileDrawerProps) {
   const { session, refreshSession } = useAuth();
   const { supabaseClient } = useSessionContext(); // ✅ Get the SAME client that SessionContextProvider uses
+  const signInHref = useSignInHref();
   const menuRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
@@ -256,7 +258,7 @@ export default function MobileDrawer({ onClose }: MobileDrawerProps) {
 
         <div className="mobile-auth-section">
           {!session ? (
-            <Link href="/sign-in" onClick={handleClose} className="auth-button">
+            <Link href={signInHref} onClick={handleClose} className="auth-button">
               Sign In
             </Link>
           ) : (

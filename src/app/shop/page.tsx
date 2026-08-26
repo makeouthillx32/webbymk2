@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import HomePage from "@/components/shop/Landing";
 
 export const metadata: Metadata = {
-  title: "Home | Desert Cowgirl",
+  title: "Home | Unenter Solutions",
   description:
     "Western-inspired pants and shirts with a warm, modern rustic aesthetic. Thoughtfully designed staples made for everyday wear.",
 
@@ -12,23 +12,23 @@ export const metadata: Metadata = {
   ),
 
   openGraph: {
-    title: "Desert Cowgirl | Western-Inspired Pants & Shirts",
+    title: "Unenter Solutions | Western-Inspired Pants & Shirts",
     description:
       "Shop western-inspired pants and shirts with a warm, modern rustic look—quality staples made for everyday wear.",
     type: "website",
     url: "https://www.unenter.live/",
-    siteName: "Desert Cowgirl",
+    siteName: "Unenter Solutions",
     images: [
       {
         url: "/opengraph-image.png",
-        alt: "Desert Cowgirl storefront preview",
+        alt: "Unenter Solutions storefront preview",
       },
     ],
   },
 
   twitter: {
     card: "summary_large_image",
-    title: "Desert Cowgirl | Western-Inspired Pants & Shirts",
+    title: "Unenter Solutions | Western-Inspired Pants & Shirts",
     description:
       "Western-inspired pants and shirts with a warm, modern rustic aesthetic.",
     images: ["/twitter-image.png"],

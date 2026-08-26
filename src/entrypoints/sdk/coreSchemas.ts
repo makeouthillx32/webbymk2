@@ -1,12 +1,16 @@
 import { z } from 'zod'
 
 export const RuntimeZoneSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: z.string().optional(),
-  status: z.enum(['unknown', 'running', 'stopped', 'starting', 'error']),
-  cwd: z.string().optional(),
-  url: z.string().optional(),
+  key: z.string(),
+  label: z.string(),
+  domain: z.string(),
+  service: z.string(),
+  container: z.string(),
+  image: z.string(),
+  status: z.enum(['unknown', 'running', 'stopped', 'starting', 'error']).default('unknown'),
+  dockerfile: z.string().optional(),
+  upstreamEnvKey: z.string().optional(),
+  environmentId: z.string().nullable().optional(),
 })
 
 export const RuntimePanelSchema = z.object({
@@ -32,6 +36,14 @@ export const RuntimeOperationSchema = z.object({
   dismissable: z.boolean().optional(),
 })
 
+export const RuntimeStackItemSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  status: z.enum(['pending', 'running', 'done', 'failed']),
+  detail: z.string().optional(),
+  timestamp: z.string().optional(),
+})
+
 export const RuntimeNotificationSchema = z.object({
   key: z.string(),
   text: z.string(),
@@ -47,6 +59,7 @@ export const SDKMessageSchema = z.discriminatedUnion('type', [
     activeZone: z.string().optional(),
     zones: z.array(RuntimeZoneSchema).default([]),
     operations: z.array(RuntimeOperationSchema).default([]),
+    stackItems: z.array(RuntimeStackItemSchema).default([]),
     notifications: z.array(RuntimeNotificationSchema).default([]),
   }),
   z.object({

@@ -93,11 +93,13 @@ const Header = () => {
         "header left-0 top-0 z-40 flex w-full items-center",
         sticky
           ? "fixed z-[9999] shadow-sticky backdrop-blur-sm transition dark:shadow-sticky-dark bg-[var(--lt-bg)]"
-          : "absolute bg-transparent"
+          : navbarOpen
+            ? "absolute bg-[var(--lt-bg)]"
+            : "absolute bg-transparent"
       )}
     >
       <div className="container">
-        <div className="relative -mx-4 flex items-center justify-between">
+        <div className="-mx-4 flex items-center justify-between">
           <div className="w-60 max-w-full px-4 xl:mr-12">
             <Link
               href={navbarOpen ? "#" : "/"}
@@ -126,7 +128,7 @@ const Header = () => {
                 onClick={() => setNavbarOpen(!navbarOpen)}
                 id="navbarToggler"
                 aria-label="Mobile Menu"
-                className="absolute right-4 top-1/2 z-50 block translate-y-[-50%] rounded-lg px-3 py-[6px] ring-primary focus:ring-2 lg:hidden"
+                className="absolute right-8 top-1/2 z-50 block translate-y-[-50%] rounded-lg px-3 py-[6px] ring-primary focus:ring-2 lg:hidden"
               >
                 <span className={`relative my-1.5 block h-0.5 w-[30px] bg-[hsl(var(--foreground))] transition-all duration-300 ${navbarOpen ? " top-[7px] rotate-45" : ""}`} />
                 <span className={`relative my-1.5 block h-0.5 w-[30px] bg-[hsl(var(--foreground))] transition-all duration-300 ${navbarOpen ? "opacity-0" : ""}`} />
@@ -136,10 +138,10 @@ const Header = () => {
                 ref={navbarRef}
                 id="navbarCollapse"
                 className={cn(
-                  "navbar absolute right-0 rounded border-[.5px] border-[hsl(var(--border))] px-6 py-4 duration-300",
-                  "bg-[var(--lt-bg)]",
-                  "lg:visible lg:static lg:w-auto lg:border-none lg:!bg-transparent lg:p-0 lg:opacity-100",
-                  navbarOpen && isSmallScreen ? "visibility top-[70%] w-full opacity-100" : "invisible top-[120%] opacity-0",
+                  "navbar absolute left-0 right-0 px-8 py-4 duration-300",
+                  "bg-[var(--lt-bg)] shadow-lg",
+                  "lg:visible lg:static lg:w-auto lg:!bg-transparent lg:p-0 lg:opacity-100 lg:shadow-none",
+                  navbarOpen && isSmallScreen ? "visible top-full opacity-100" : "invisible top-[110%] opacity-0",
                   isSmallScreen ? "max-h-[calc(100vh-120px)] overflow-y-auto" : "overflow-visible",
                 )}
               >

@@ -1,4 +1,3 @@
-import { coerce } from 'semver'
 import type { Writable } from 'stream'
 import { env } from '../utils/env.js'
 import { coerce, gte } from 'semver'

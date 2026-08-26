@@ -28,7 +28,7 @@ A guest is **not** a `profiles` row. Guests are tracked in the `customers` table
 |---|---|
 | `customers.type` | `'guest'` |
 | `customers.auth_user_id` | `NULL` |
-| `customers.guest_key` | UUID — matches the `dcg_guest_key` cookie |
+| `customers.guest_key` | UUID — matches the `unenter_guest_key` cookie |
 | `customers.email` | Snapshot from checkout form |
 | `customers.claimed_at` | `NULL` until they sign up |
 
@@ -38,12 +38,12 @@ Orders are linked to a guest customer via:
 - `orders.profile_id` → `NULL` (no auth account)
 - `orders.auth_user_id` → `NULL`
 
-### `dcg_guest_key` cookie
+### `unenter_guest_key` cookie
 
 Set by `middleware.ts` on the very first request, before any auth logic runs. Lives for 1 year.
 
 ```
-Name:     dcg_guest_key
+Name:     unenter_guest_key
 Value:    UUID (e.g. ca9dfd57-a440-404e-9804-4b451ade14e1)
 HttpOnly: true
 SameSite: lax
@@ -58,9 +58,9 @@ This cookie is the stable identity for the browser session. The same guest can:
 
 ### Checkout flow (guest path)
 
-1. Guest visits → `middleware.ts` sets `dcg_guest_key` cookie
+1. Guest visits → `middleware.ts` sets `unenter_guest_key` cookie
 2. Guest completes checkout → `POST /api/checkout/create-payment-intent`
-3. API reads `dcg_guest_key` from `request.cookies`
+3. API reads `unenter_guest_key` from `request.cookies`
 4. Calls `upsert_guest_customer(guest_key, email, ...)` — finds or creates `customers` row
 5. Order is inserted with `customer_id` + `guest_key` linked
 6. Stripe PI metadata also carries `guest_key` + `customer_id` for support/reconciliation
@@ -168,7 +168,7 @@ For each fail, paste:
 * Middleware/route group is unintentionally protecting routes that should be public
 * Header/mobile drawer is rendering auth-only links and then causing a navigation into protected pages without redirect UX
 * Cart/checkout endpoints are requiring auth instead of using guest cart id
-* `dcg_guest_key` cookie not being set (check middleware is running on the route)
+* `unenter_guest_key` cookie not being set (check middleware is running on the route)
 * `upsert_guest_customer` failing silently — check Vercel logs for `[checkout]` errors
 
 ---

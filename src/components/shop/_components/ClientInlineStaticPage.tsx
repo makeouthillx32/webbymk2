@@ -99,14 +99,32 @@ export function ClientInlineStaticPage({
   return (
     <section className={containerWidth === "full" ? "w-full" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pb-16"}>
       {page.content_format === 'html' ? (
-        <div 
-          className="static-page-content"
-          style={{
-            fontFamily: 'var(--font-family-base)',
-            color: 'var(--foreground)',
-          }}
-          dangerouslySetInnerHTML={{ __html: page.content }} 
-        />
+        <>
+          <style dangerouslySetInnerHTML={{ __html: `
+            .static-page-content .grid { display: grid; }
+            .static-page-content .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .static-page-content .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .static-page-content .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+            .static-page-content .gap-4 { gap: 1rem; }
+            .static-page-content .gap-6 { gap: 1.5rem; }
+            .static-page-content .gap-8 { gap: 2rem; }
+            @media (min-width: 768px) {
+              .static-page-content .md\\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+              .static-page-content .md\\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+            }
+            @media (min-width: 1024px) {
+              .static-page-content .lg\\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+            }
+          `}} />
+          <div
+            className="static-page-content font-sans"
+            style={{
+              fontFamily: 'var(--font-sans)',
+              color: 'hsl(var(--foreground))',
+            }}
+            dangerouslySetInnerHTML={{ __html: page.content }}
+          />
+        </>
       ) : (
         <div className="prose prose-slate max-w-none">
           {page.content}

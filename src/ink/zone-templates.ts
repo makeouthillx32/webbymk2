@@ -36,6 +36,8 @@ import { join } from "path";
 import { existsSync, readFileSync } from "fs";
 import { PROJECT_DIR } from "../config/stack.js";
 import type { DerivedZone, DynamicSection } from "./zone/types.ts";
+import type { Zone } from "../config/zones.ts";
+
 
 function genDsSection(z: DerivedZone): string {
   if (z.dynamicSections.length === 0) return "";
@@ -86,20 +88,43 @@ export function genDockerfile(z: DerivedZone): string {
       ? "api actions _components providers pages"
       : "api actions _components providers";
 
-  return `# zones/${z.key}/Dockerfile
+  return `# syntax=docker/dockerfile:1.7
+# zones/${z.key}/Dockerfile
 # ─────────────────────────────────────────────────────────────────────────────
-# Build context: project root
-# Zone: ${z.label}  (${z.domain})
+# ${z.label} zone  ·  ${z.domain}
+#
+# Build context: project root.  This image packages your zone as a standalone
+# Next.js app that still inherits the shared Unenter brand.  The build plays
+# out in three short stages — deps install, build (with overlay), final
+# runner — and the overlay step is how a zone gets its own pages while still
+# speaking the same theme, providers, and globals as core.
+#
+# HOW THE OVERLAY WORKS
+# ─────────────────────
+#   1. Start with the whole repo's  src/  tree.
+#   2. Stash the pieces every zone needs to share with core:
+#        • essential routes (api, actions, providers, layout-specific dirs)
+#        • provider.tsx  — Providers context (auth/session/theme/roles)
+#        • globals.css   — @imports layout-tokens.css so --gp-* / --lt-*
+#                          theme tokens resolve for AppHeader / ShopFooter
+#   3. Empty  src/app/  and lay the stashed core files back down.
+#   4. Overlay  zones/${z.key}/src/app/  on top — your zone's layout.tsx and
+#      route pages win.
+#   5. Restore core's globals.css so theme tokens are guaranteed to resolve
+#      inside the shared header + footer.
+#
+# Edit this file freely if your zone needs extra build-time files (custom
+# next.config, additional public assets, env vars) — it's your zone.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS deps
+FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 COPY package.json bun.lock* ./
-RUN bun install
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS builder
+FROM oven/bun:1.3.14 AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -109,14 +134,14 @@ COPY middleware.ts ./
 COPY src/ ./src/
 COPY public/ ./public/
 
-# Swap src/app/: keep core logic + provider.tsx + globals.css, overlay ${z.key} zone pages.
-# The directory list is LAYOUT-AWARE — landing zones use [slug] for blog posts,
-# so copying [categorySlug] from shop routes would cause Next.js to crash:
-#   "You cannot use different slug names for the same dynamic path"
-# shop    → api actions _components providers [categorySlug] products collections checkout pages
-# landing → api actions _components providers pages   (no shop dynamic segments)
-# app     → api actions _components providers         (pure web app, no e-commerce routes)
-# minimal → api actions _components providers         (bare canvas)
+# Stash the core pieces every branded zone needs, then lay them back down on
+# top of the zone overlay.  The directory list is LAYOUT-AWARE so each layout
+# type only inherits the core routes it can actually use without route-shape
+# conflicts (Next.js rejects multiple slug names for the same dynamic path):
+#   shop    → api actions _components providers [categorySlug] products collections checkout pages
+#   landing → api actions _components providers pages           (no shop dynamic segments)
+#   app     → api actions _components providers                 (pure web app, no e-commerce routes)
+#   minimal → api actions _components providers                 (bare canvas)
 RUN mkdir -p /tmp/core-app && \\
     for dir in ${coreDirs}; do \\
       if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \\
@@ -127,15 +152,17 @@ RUN mkdir -p /tmp/core-app && \\
     mkdir -p src/app && \\
     cp -r /tmp/core-app/* src/app/
 
-# Zone overlay: copy everything from zones/${z.key}/src/app/ so any future
-# loading.tsx / not-found.tsx / etc. gets picked up automatically.
+# Zone overlay — anything you add under  zones/${z.key}/src/app/  (pages,
+# layouts, loading.tsx, error boundaries, route groups) gets picked up
+# automatically.  This is how your zone ships its own pages on top of the
+# shared shell.
 COPY zones/${z.key}/src/app/ ./src/app/
 
-# CRITICAL: restore core's globals.css on top of any zone copy.  The zone's
-# globals.css (if it exists) is self-contained and DOES NOT @import
-# layout-tokens.css, so it breaks AppHeader / ShopFooter theming.  Core's
-# globals.css is the only one that imports layout-tokens, so it must win.
-# This was the root cause of a white-header-and-footer bug on first scaffold.
+# Always use core's globals.css so shared theme tokens resolve inside the
+# branded header + footer.  Core's globals.css @imports layout-tokens.css,
+# which is what sets up the --gp-* / --lt-* variables AppHeader / ShopFooter
+# rely on.  If a zone later wants to customize global CSS, extend core's
+# file via @import rather than replacing it.
 RUN cp /tmp/core-app/globals.css src/app/globals.css 2>/dev/null || true
 
 ENV NEXT_PUBLIC_ZONE=${z.key}
@@ -157,10 +184,10 @@ ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
 ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 
-RUN bun run build
+RUN --mount=type=cache,target=/app/.next/cache,id=nextcache-${z.key} bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
-FROM oven/bun:1.2-slim AS runner
+FROM oven/bun:1.3.14-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -200,13 +227,17 @@ export function genPackageJson(z: DerivedZone): string {
 
 export function genPageTsx(z: DerivedZone): string {
   return `// zones/${z.key}/src/app/page.tsx
-// ─── AUTO-GENERATED — do not edit ────────────────────────────────────────────
-// Zone content lives in  src/zones/${z.key}/Page.tsx  (core).
-// That file is included in the build via src/ COPY in the Dockerfile and
-// resolves as  @/zones/${z.key}/Page  inside the zone's Next.js app.
+// ─────────────────────────────────────────────────────────────────────────────
+// ${z.label} zone · ${z.domain} · entry wrapper
 //
-// To change what this zone displays, edit:
-//   src/zones/${z.key}/Page.tsx
+// This is a thin re-export so Next.js App Router can pick up the route — the
+// real page content lives in the core tree so it can freely import the shared
+// Unenter components, theme tokens, and utilities:
+//
+//   → src/zones/${z.key}/Page.tsx     ← start building here
+//
+// You can leave this wrapper untouched for most projects.  Editing or
+// re-generating it is fine — it's your zone.
 // ─────────────────────────────────────────────────────────────────────────────
 export { default, metadata } from "@/zones/${z.key}/Page";
 `;
@@ -266,7 +297,24 @@ export function genCorePageModule(z: DerivedZone): string {
 
 export function genLayoutTsx(z: DerivedZone): string {
   return `// zones/${z.key}/src/app/layout.tsx
-// Root layout for the ${z.key} zone (${z.domain}).
+// ─────────────────────────────────────────────────────────────────────────────
+// ${z.label} zone  ·  ${z.domain}
+//
+// Root layout for your new Unenter zone.  This file is your app shell — it
+// wires everything a branded Unenter app needs so your pages render correctly
+// from the first deploy:
+//
+//   • <Providers>     — theme system, auth/session, role context, fonts
+//   • <ClientLayout>  — the ${z.layoutType} header + footer selected in the wizard,
+//                       resolved at runtime via routeClassifier.ts
+//   • globals.css     — design tokens (--gp-* / --lt-*) shared with core
+//   • locale handling — reads the locale cookie / header set by middleware
+//
+// You can keep this file as-is; anything you build under  src/zones/${z.key}/
+// (or import from elsewhere) renders automatically inside the branded shell.
+// Tweak metadata, viewport, or the font here when you want to diverge from
+// the defaults — this is your zone's top-level entry point.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import type { Metadata, Viewport } from "next";
 import { Titillium_Web } from "next/font/google";
@@ -274,6 +322,7 @@ import type { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import { generateSiteMetadata } from "@/lib/zoneMetadata";
 import "./globals.css";
 
 const titillium = Titillium_Web({ subsets: ["latin"], weight: ["400", "700"] });
@@ -285,13 +334,9 @@ export const viewport: Viewport = {
   ],
 };
 
-export const metadata: Metadata = {
-  title: {
-    default: "${z.label} | Unenter",
-    template: "%s | ${z.label} – Unenter",
-  },
-  description: "Welcome to the ${z.label} zone.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return generateSiteMetadata();
+}
 
 const VALID_LOCALES = ["en", "de"] as const;
 type Locale = (typeof VALID_LOCALES)[number];
@@ -334,7 +379,9 @@ export function genZoneConfig(z: DerivedZone): string {
     .join(",\n");
 
   return `// zones/${z.key}/src/app/zone.config.ts
-// AUTO-GENERATED — do not edit.
+// Generated by UNAXIS — sourced from the zone wizard.  Re-running the wizard
+// will regenerate this file, so prefer the wizard for changes; quick local
+// tweaks are fine, just expect them to be overwritten next time.
 
 const zoneConfig = {
   key: ${JSON.stringify(z.key)},
@@ -356,15 +403,27 @@ export function genDsWrappers(z: DerivedZone, ds: DynamicSection): Record<string
   const coreBase = ds.hasCore ? `@/app/${ds.routePath}/page` : `@/zones/${z.key}/${ds.routePath}/Page`;
 
   files["page.tsx"] = `// zones/${z.key}/src/app/${ds.routePath}/page.tsx
-// ─── AUTO-GENERATED — do not edit ────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Route entry wrapper for  ${ds.routePath}  in the ${z.label} zone.
+//
+// This file just re-exports the real implementation so Next.js picks up the
+// route segment — the branded shell (providers, theme, header + footer) is
+// wired automatically via  zones/${z.key}/src/app/layout.tsx .
+//
+// Edit the page content in:
+//   src/zones/${z.key}/${ds.routePath}/Page.tsx
+// ─────────────────────────────────────────────────────────────────────────────
 export { default, generateMetadata, generateStaticParams } from "${coreBase}";
 `;
 
   if (ds.hasCore) {
-    files["loading.tsx"]   = `export { default } from "@/app/${ds.routePath}/loading";`;
+    // Thin re-exports of the core route's built-in states — replace any of
+    // these files with a zone-specific implementation when you want to
+    // customize that state for this zone only.
+    files["loading.tsx"]   = `// Loading state for ${ds.routePath} — re-export of core; replace to customize.\nexport { default } from "@/app/${ds.routePath}/loading";\n`;
     // error.tsx MUST be a Client Component — Next.js enforces this at build time.
-    files["error.tsx"]     = `"use client";\nexport { default } from "@/app/${ds.routePath}/error";`;
-    files["not-found.tsx"] = `export { default } from "@/app/${ds.routePath}/not-found";`;
+    files["error.tsx"]     = `// Error boundary for ${ds.routePath} — re-export of core; replace to customize.\n"use client";\nexport { default } from "@/app/${ds.routePath}/error";\n`;
+    files["not-found.tsx"] = `// Not-found state for ${ds.routePath} — re-export of core; replace to customize.\nexport { default } from "@/app/${ds.routePath}/not-found";\n`;
   }
 
   return files;
@@ -469,6 +528,47 @@ export default async function ${componentName}({ params }: PageProps) {
 // from docker.ts to locate them at runtime.  The root docker-compose.yml is
 // NOT modified — no regex injection, no YAML mutation.
 
+/**
+ * Extra bind mounts for a zone, from `UNAXIS_ZONE_<KEY>_VOLUMES`.
+ *
+ * Zone containers get no mounts by default, which is right for a stateless
+ * Next.js app — but a zone that has to reach real storage (Tank's archive
+ * drain writing to a dedicated disk) has no way to say so. Formatting a drive
+ * on the host does nothing: a container cannot see what it was not given.
+ *
+ * Env-driven rather than a schema field because the value is host-specific.
+ * The same zone on another node has a different disk, or none, and a path
+ * baked into the control DB would be wrong everywhere except where it was set.
+ *
+ * Format is Compose's own, comma-separated:
+ *   UNAXIS_ZONE_TANK_VOLUMES=U:/tank-archive:/archive,D:/scratch:/scratch:ro
+ */
+export function zoneVolumeMounts(key: string): string[] {
+  const envKey = `UNAXIS_ZONE_${key.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_VOLUMES`;
+  const raw = process.env[envKey];
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    // A mount needs at least host:container. Anything else is a typo that
+    // would make Compose refuse the whole file, taking the zone down for a
+    // mistake in an optional setting.
+    .filter((v) => v.split(":").length >= 2);
+}
+
+/**
+ * The `volumes:` block for a zone service, or "" when it has none.
+ *
+ * Shared by both compose generators so a zone cannot end up with a mount in
+ * one artifact and not the other.
+ */
+export function zoneVolumesBlock(key: string): string {
+  const mounts = zoneVolumeMounts(key);
+  if (mounts.length === 0) return "";
+  return "\n    volumes:\n" + mounts.map((v) => `      - "${v}"`).join("\n");
+}
+
 export function genZoneCompose(z: DerivedZone): string {
   const upstream    = `http://${z.service}:3000`;
   // env_file must be an absolute path because this compose file lives in the
@@ -476,8 +576,17 @@ export function genZoneCompose(z: DerivedZone): string {
   // A relative "../../.env" would resolve to %APPDATA%\unenter\.env — wrong.
   // Forward slashes work on Windows with Docker Desktop (Compose V2).
   const envFilePath = join(PROJECT_DIR, ".env").replace(/\\/g, "/");
+  const mounts = zoneVolumeMounts(z.key);
+  // Emitted only when configured: an empty `volumes:` key is invalid to
+  // Compose and would break every zone that does not need one.
+  const volumesBlock =
+    mounts.length === 0
+      ? ""
+      : "\n    volumes:\n" + mounts.map((v) => `      - "${v}"`).join("\n");
   return `# ${z.key}/docker-compose.yml  (UNAXIS managed artifact)
-# Auto-generated by UNAXIS — do not edit manually.
+# Generated by UNAXIS — re-runs of the zone wizard will overwrite this file,
+# so prefer the wizard or  unaxis zone ${z.key} ...  for routine changes.
+# Quick local tweaks are fine; just expect them to be regenerated next time.
 # Runtime wrapper: starts the ${z.key} zone container on the shared unenter network.
 #
 # This file lives in the UNAXIS artifact store, NOT in the source repo.
@@ -492,6 +601,8 @@ export function genZoneCompose(z: DerivedZone): string {
 #   docker compose -f <artifact-path> pull
 #   docker compose -f <artifact-path> up -d
 #   docker compose -f <artifact-path> down
+
+name: unenter-zone-${z.key}
 
 services:
   ${z.service}:
@@ -520,6 +631,13 @@ services:
       unenter.zone.port: "3000"
       unenter.proxy.enabled: "true"
       unenter.proxy.upstream: "${upstream}"
+      unaxis.managed: "true"
+      unaxis.version: "\${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter"
+      unaxis.domain: "${z.domain}"
+      unaxis.role: "zone"
+      unaxis.zone: "${z.key}"
+      unaxis.source-ref: "\${UNAXIS_SOURCE_REF:-unknown}"
     healthcheck:
       test: ["CMD-SHELL", "node -e \\"require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\\""]
       interval: 30s
@@ -527,7 +645,7 @@ services:
       retries: 3
       start_period: 120s
     networks:
-      - unenter
+      - unenter${volumesBlock}
 
 networks:
   unenter:
@@ -573,5 +691,70 @@ NEXT_PUBLIC_APP_TITLE
 NEXT_PUBLIC_COMPANY_NAME
 NEXT_PUBLIC_OWNER_USERNAME
 NEXT_PUBLIC_OWNER_EMAIL
+`;
+}
+
+export function genZonesCompose(zones: Zone[]): string {
+  const envFilePath = join(PROJECT_DIR, ".env").replace(/\\/g, "/");
+  const deployable = zones.filter((z) => z.key !== "unenter");
+  const services = deployable.map((z) => {
+    const upstream = `http://${z.service}:3000`;
+    const layout = (z as any).layoutType || "landing";
+    return `  ${z.service}:
+    image: ${z.image}
+    build:
+      context: ../..
+      dockerfile: zones/${z.key}/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL:
+        NEXT_PUBLIC_SUPABASE_URL_BROWSER:
+        NEXT_PUBLIC_SUPABASE_ANON_KEY:
+        NEXT_PUBLIC_APP_TITLE:
+        NEXT_PUBLIC_COMPANY_NAME:
+        NEXT_PUBLIC_OWNER_USERNAME:
+        NEXT_PUBLIC_OWNER_EMAIL:
+    container_name: ${z.container}
+    restart: unless-stopped
+    env_file: ${envFilePath}
+    environment:
+      NEXT_PUBLIC_ZONE: "${z.key}"
+    labels:
+      unenter.zone.key: "${z.key}"
+      unenter.zone.label: "${z.label ?? z.key}"
+      unenter.zone.domain: "${z.domain}"
+      unenter.zone.layout: "${layout}"
+      unenter.zone.port: "3000"
+      unenter.proxy.enabled: "true"
+      unenter.proxy.upstream: "${upstream}"
+      unaxis.managed: "true"
+      unaxis.version: "\${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter"
+      unaxis.domain: "${z.domain}"
+      unaxis.role: "zone"
+      unaxis.zone: "${z.key}"
+      unaxis.source-ref: "\${UNAXIS_SOURCE_REF:-unknown}"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \\"require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - unenter${zoneVolumesBlock(z.key)}`;
+  }).join("\n\n");
+
+  return `# Branded Zones Stack  (UNAXIS managed artifact)
+# Generated by UNAXIS — re-runs of the zone wizard will regenerate this file.
+#
+# Project: unenter-zones
+
+name: unenter-zones
+
+services:
+${services}
+
+networks:
+  unenter:
+    external: true
 `;
 }

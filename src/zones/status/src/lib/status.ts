@@ -5,6 +5,8 @@
 // container/proxy/SRT-manager health is UNAXIS control-plane data and lives
 // in its own local store instead. See vault/Docker for the full writeup.
 
+import incidentLedger from "../data/incidents.json";
+
 const STATUS_API_URL = process.env.STATUS_API_URL!;      // e.g. https://unenter.live/__status-api/public
 const STATUS_API_KEY = process.env.STATUS_API_KEY!;      // matches STATUS_PUBLIC_KEY on the agent
 
@@ -28,9 +30,35 @@ export type StatusSnapshot = {
   generatedAt:  string;
 };
 
+export type StatusSnapshotResult = {
+  snapshot: StatusSnapshot;
+  source: "live" | "unreachable";
+};
+
 const EMPTY_SNAPSHOT: StatusSnapshot = { current: [], history: [], incidents: [], generatedAt: new Date(0).toISOString() };
 
-export async function fetchStatusSnapshot(): Promise<StatusSnapshot> {
+const INDEPENDENT_INCIDENTS = incidentLedger.incidents as Incident[];
+
+function withIndependentIncidents(snapshot: StatusSnapshot): StatusSnapshot {
+  const byId = new Map(snapshot.incidents.map((incident) => [incident.id, incident]));
+
+  // The repository ledger wins on matching IDs. It is the status page's
+  // independent, append-only incident record and remains available when the
+  // POWER-hosted collector and db.unenter.live are both unreachable.
+  for (const incident of INDEPENDENT_INCIDENTS) byId.set(incident.id, incident);
+
+  return {
+    ...snapshot,
+    incidents: [...byId.values()].sort((a, b) => b.started_at.localeCompare(a.started_at)),
+  };
+}
+
+export async function fetchStatusSnapshot(): Promise<StatusSnapshotResult> {
+  if (!STATUS_API_URL || !STATUS_API_KEY) {
+    console.error("status fetch: STATUS_API_URL or STATUS_API_KEY is not configured");
+    return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
+  }
+
   try {
     // Explicit timeout, shorter than Vercel's function execution limit — a
     // hung fetch to a home-network-hosted backend (over the public internet,
@@ -49,11 +77,11 @@ export async function fetchStatusSnapshot(): Promise<StatusSnapshot> {
     }).finally(() => clearTimeout(timeout));
     if (!res.ok) {
       console.error(`status fetch: non-OK response`, { status: res.status, url: STATUS_API_URL });
-      return EMPTY_SNAPSHOT;
+      return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
     }
-    return res.json();
+    return { snapshot: withIndependentIncidents(await res.json()), source: "live" };
   } catch (err) {
     console.error(`status fetch: failed`, { error: err instanceof Error ? err.message : String(err), url: STATUS_API_URL });
-    return EMPTY_SNAPSHOT;
+    return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
   }
 }

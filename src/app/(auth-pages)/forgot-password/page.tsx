@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Reset Password",
-  description: "Reset your Desert Cowgirl account password.",
+  description: "Reset your Unenter Solutions account password.",
 };
 
 export default async function ForgotPasswordPage(props: {

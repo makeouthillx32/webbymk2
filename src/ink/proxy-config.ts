@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { PROJECT_DIR } from "../config/zones.ts";
 import type { Zone } from "../config/zones.ts";
+import type { UnaxisEnvironment } from "./environment-store.ts";
 
 export const PROXY_ADMIN_URL = process.env.PROXY_ADMIN_URL ?? "http://127.0.0.1:3081";
 
@@ -198,64 +199,113 @@ export function getDatabaseRoutes(): Record<string, DatabaseRouteEntry> {
   return read().databases ?? {};
 }
 
+// ── Upstream derivation ───────────────────────────────────────────────────────
+
+/**
+ * Derive the proxy upstream URL for a zone given its assigned environment.
+ *
+ * Strategy:
+ *   local-docker  — zone runs on the same Docker bridge as unt_proxy; use
+ *                   container-name DNS (no port exposure required, most reliable).
+ *   remote-docker — zone runs on a different host; container-name DNS doesn't
+ *                   resolve across the bridge boundary, so use the environment's
+ *                   host IP extracted from agentUrl.
+ *   null/unknown  — fall back to container-name DNS (safest default).
+ */
+export function deriveZoneUpstream(zone: Zone, env: UnaxisEnvironment | null): string {
+  if (!env || env.type === "local-docker") {
+    return `http://${zone.container}:3000`;
+  }
+
+  // Remote environment: extract host IP from agentUrl or proxyHost.
+  let host = env.proxyHost || "";
+  if (!host && env.agentUrl) {
+    try { host = new URL(env.agentUrl).hostname; } catch { /* ignore */ }
+  }
+
+  return host ? `http://${host}:3000` : `http://${zone.container}:3000`;
+}
+
 // ── Startup reconciliation ────────────────────────────────────────────────────
 
 /**
- * Rebuild routes.json from Supabase zone data + live Docker state.
+ * Rebuild routes.json from SQLite zone data + live Docker state on each environment.
  *
- * Supabase is the source of truth for zone definitions. This function:
- *   - Adds a route for every production zone whose container is running.
- *   - Keeps dev routes only while their dev container is still running.
- *   - Removes everything else (stale routes, manual edits, crashed containers).
+ * The control-plane SQLite DB is the source of truth for zone definitions.
+ * This function:
+ *   - Resolves each zone's upstream via its environment_id (env-aware IPs).
+ *   - Adds a route for every production zone whose container is running on
+ *     its assigned environment's agent.
+ *   - Keeps dev routes only while their dev container is running on POWER.
+ *   - Removes everything else (stale routes, crashed containers).
  *
- * Called on TUI boot. No-op if Supabase returned an empty zone list so we
- * never wipe a working routes.json when the DB is temporarily unreachable.
+ * No-op if the zone list is empty — never wipes a working routes.json.
+ *
+ * @param zones                   All enabled zones (with environmentId populated).
+ * @param environments            All registered environments.
+ * @param getLocalContainerStatus Callback for POWER-local container status.
+ * @param onLine                  Progress lines for TUI display.
  */
 export async function reconcileProxyRoutes(
-  zones:              Zone[],
-  getContainerStatus: (name: string) => Promise<string>,
-  onLine?:            (l: string) => void,
+  zones:                   Zone[],
+  environments:            UnaxisEnvironment[],
+  getLocalContainerStatus: (name: string) => Promise<string>,
+  onLine?:                 (l: string) => void,
 ): Promise<void> {
   if (zones.length === 0) return;
 
   const current = read();
   const next: Record<string, string> = {};
+  const envById = new Map<string, UnaxisEnvironment>(environments.map((e) => [e.id, e]));
 
-  // Production zone routes — derived from Supabase zone definitions
+  // Cache remote container lists — one agent call per environment.
+  const remoteCache = new Map<string, Map<string, string>>();
+
+  async function getRemoteContainerStatus(env: UnaxisEnvironment, name: string): Promise<string> {
+    if (!remoteCache.has(env.id)) {
+      const { fetchContainers } = await import("./agent-client.js");
+      const list = await fetchContainers(env).catch(() => null);
+      const byName = new Map<string, string>();
+      for (const c of list ?? []) {
+        for (const n of c.Names) {
+          byName.set(n.replace(/^\//, ""), c.State);
+        }
+      }
+      remoteCache.set(env.id, byName);
+    }
+    return remoteCache.get(env.id)!.get(name) ?? "missing";
+  }
+
+  // Production zone routes
   for (const zone of zones) {
-    const upstream = `http://${zone.container}:3000`;
-    const status = await getContainerStatus(zone.container);
+    const env     = zone.environmentId ? (envById.get(zone.environmentId) ?? null) : null;
+    const isLocal = !env || env.type === "local-docker";
+
+    const status = isLocal
+      ? await getLocalContainerStatus(zone.container)
+      : await getRemoteContainerStatus(env!, zone.container);
+
     if (status === "running" || status === "starting") {
-      next[zone.key] = upstream;
+      next[zone.key] = deriveZoneUpstream(zone, env);
     }
-    // Container not running → omit route; no stale entry, no 502
   }
 
-  // Dev routes — keep only while the dev container is actually running
-  // "dev"       → dev-core   (core zone in dev mode)
-  // "dev.blog"  → dev-blog   (blog zone in dev mode)
-  for (const [key, upstream] of Object.entries(current.zones)) {
+  // Dev routes — always local (dev containers run on POWER only).
+  for (const [key] of Object.entries(current.zones)) {
     if (!key.startsWith("dev")) continue;
-    const suffix    = key === "dev" ? "core" : key.slice(4); // strip "dev."
+    const suffix    = key === "dev" ? "core" : key.slice(4);
     const container = `dev-${suffix}`;
-    const status    = await getContainerStatus(container);
+    const status    = await getLocalContainerStatus(container);
     if (status === "running" || status === "starting") {
-      next[key] = upstream;
+      next[key] = `http://${container}:3000`;
     }
-    // Gone container → key not added → route disappears automatically
   }
 
-  const updated: ProxyRoutes = {
-    coreDomain:   current.coreDomain,
-    coreUpstream: current.coreUpstream,
-    zones:        next,
-  };
-
-  write(updated);
+  write({ ...current, zones: next });
   await signalProxyReload();
 
   const kept    = Object.keys(next);
   const removed = Object.keys(current.zones).filter((k) => !(k in next));
   if (removed.length) onLine?.(`  removed stale routes: ${removed.join(", ")}`);
-  onLine?.(`✓ proxy synced from Supabase — ${kept.length} active route${kept.length !== 1 ? "s" : ""}: ${kept.join(", ") || "none"}`);
+  onLine?.(`✓ proxy synced — ${kept.length} active route${kept.length !== 1 ? "s" : ""}: ${kept.join(", ") || "none"}`);
 }

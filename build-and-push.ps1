@@ -3,12 +3,15 @@
 # Run from: Z:\WEBSITES\webbymk2\
 # Usage: .\build-and-push.ps1
 
-$IMAGE      = "ghcr.io/makeouthillx32/unenter"
-$BLOG_IMAGE = "ghcr.io/makeouthillx32/unenter-blog"
-$SHOP_IMAGE = "ghcr.io/makeouthillx32/unenter-shop"
-$AUTH_IMAGE = "ghcr.io/makeouthillx32/unenter-auth"
-$TAG        = "latest"
-$ENV_FILE   = ".env"
+$IMAGE         = "ghcr.io/makeouthillx32/unenter"
+$BLOG_IMAGE    = "ghcr.io/makeouthillx32/unenter-blog"
+$SHOP_IMAGE    = "ghcr.io/makeouthillx32/unenter-shop"
+$AUTH_IMAGE    = "ghcr.io/makeouthillx32/unenter-auth"
+$AGENT_IMAGE   = "ghcr.io/makeouthillx32/unaxis-agent"
+$UPDATER_IMAGE = "ghcr.io/makeouthillx32/unaxis-updater"
+$TAG           = "latest"
+$AGENT_TAG     = "v0"   # agents pull :v0 — bump manually when breaking changes land
+$ENV_FILE      = ".env"
 
 # Enable BuildKit
 $env:DOCKER_BUILDKIT = "1"
@@ -88,6 +91,42 @@ $authBuildCmd = @(
 if ($LASTEXITCODE -ne 0) { Write-Host "Auth zone build failed" -ForegroundColor Red; exit 1 }
 Write-Host "[4/4] Auth zone build complete" -ForegroundColor Green
 
+# ── Build agent ───────────────────────────────────────────────────────────────
+Write-Host "[5/6] Building unaxis-agent (proxy/agent.js → GHCR)..." -ForegroundColor Cyan
+
+$agentBuildCmd = @(
+    "build",
+    "--progress=plain",
+    "--cache-from", "${AGENT_IMAGE}:${AGENT_TAG}",
+    "--build-arg", "BUILDKIT_INLINE_CACHE=1",
+    "-f", "packages/agent-node/Dockerfile",
+    "-t", "${AGENT_IMAGE}:${AGENT_TAG}",
+    "-t", "${AGENT_IMAGE}:latest",
+    "."
+)
+
+& docker @agentBuildCmd
+if ($LASTEXITCODE -ne 0) { Write-Host "Agent build failed" -ForegroundColor Red; exit 1 }
+Write-Host "[5/6] Agent build complete" -ForegroundColor Green
+
+# ── Build updater ──────────────────────────────────────────────────────────────
+Write-Host "[6/6] Building unaxis-updater (packages/agent-updater)..." -ForegroundColor Cyan
+
+$updaterBuildCmd = @(
+    "build",
+    "--progress=plain",
+    "--cache-from", "${UPDATER_IMAGE}:${AGENT_TAG}",
+    "--build-arg", "BUILDKIT_INLINE_CACHE=1",
+    "-f", "packages/agent-updater/Dockerfile",
+    "-t", "${UPDATER_IMAGE}:${AGENT_TAG}",
+    "-t", "${UPDATER_IMAGE}:latest",
+    "packages/agent-updater"
+)
+
+& docker @updaterBuildCmd
+if ($LASTEXITCODE -ne 0) { Write-Host "Updater build failed" -ForegroundColor Red; exit 1 }
+Write-Host "[6/6] Updater build complete" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Host " PUSH PHASE" -ForegroundColor White
@@ -114,6 +153,18 @@ docker push "${AUTH_IMAGE}:${TAG}"
 if ($LASTEXITCODE -ne 0) { Write-Host "Auth push failed -- run: docker login ghcr.io -u makeouthillx32" -ForegroundColor Red; exit 1 }
 Write-Host "[4/4] Auth zone pushed" -ForegroundColor Green
 
+Write-Host "[5/6] Pushing agent to GHCR..." -ForegroundColor Cyan
+docker push "${AGENT_IMAGE}:${AGENT_TAG}"
+docker push "${AGENT_IMAGE}:latest"
+if ($LASTEXITCODE -ne 0) { Write-Host "Agent push failed" -ForegroundColor Red; exit 1 }
+Write-Host "[5/6] Agent pushed (:${AGENT_TAG} + :latest)" -ForegroundColor Green
+
+Write-Host "[6/6] Pushing updater to GHCR..." -ForegroundColor Cyan
+docker push "${UPDATER_IMAGE}:${AGENT_TAG}"
+docker push "${UPDATER_IMAGE}:latest"
+if ($LASTEXITCODE -ne 0) { Write-Host "Updater push failed" -ForegroundColor Red; exit 1 }
+Write-Host "[6/6] Updater pushed (:${AGENT_TAG} + :latest)" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Host " DEPLOY PHASE" -ForegroundColor White
@@ -134,4 +185,9 @@ Write-Host "   unenter.live" -ForegroundColor White
 Write-Host "   blog.unenter.live" -ForegroundColor White
 Write-Host "   shop.unenter.live" -ForegroundColor White
 Write-Host "   auth.unenter.live" -ForegroundColor White
+Write-Host "" -ForegroundColor White
+Write-Host "   unaxis-agent  :${AGENT_TAG} + :latest" -ForegroundColor DarkGray
+Write-Host "   unaxis-updater :${AGENT_TAG} + :latest" -ForegroundColor DarkGray
+Write-Host "" -ForegroundColor White
+Write-Host "   Next: run 'env update <node>' in the TUI to push to remote agents" -ForegroundColor Yellow
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray

@@ -33,6 +33,20 @@ export interface Zone {
   dockerfile?: string;
   /** Which UPSTREAM_* env var in the proxy service points at this zone */
   upstreamEnvKey: string;
+  /**
+   * The environment this zone is deployed to.
+   * Null/undefined = unassigned (defaults to is_default_target at deploy time).
+   * Used by proxy-config to derive the correct upstream host for cross-machine routing.
+   */
+  environmentId?: string | null;
+  /**
+   * 'docker' (default): normal UNAXIS lifecycle — build/rebuild run
+   * buildZone + pullAndUp against Docker/GHCR.
+   * 'vercel': build/rebuild instead git add+commit+push the zone's source
+   * to main and skip Docker entirely — an external Vercel project (watching
+   * the same repo) builds and serves it.
+   */
+  hosting?: "docker" | "vercel";
 }
 
 /** Proxy service identifiers */

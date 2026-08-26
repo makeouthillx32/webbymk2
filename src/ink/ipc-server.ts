@@ -1,35 +1,42 @@
 // src/ink/ipc-server.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Local IPC server — lets CLI agents send commands to the running TUI.
+// Open LAN IPC server — no auth, no pairing keys.
 //
-// Two servers:
+// Two servers (one per TUI mode so both can run simultaneously):
 //
-//   50505  127.0.0.1 only  — local IPC (existing, unchanged)
-//          Protocol: send one JSON { argv } command line, receive streamed output
+//   50505  0.0.0.0  — prod TUI  (unaxis binary)
+//   50507  0.0.0.0  — dev TUI   (bun run tui:dev, hot-reload)
 //
-//   50506  0.0.0.0         — remote IPC bridge (new)
-//          Protocol: client sends AUTH <token>\n first; if token matches the
-//          stored remote_bridge_token credential, the connection is promoted and
-//          subsequent commands are handled identically to 50505.
-//          The bridge only runs if a valid pairing key has been generated.
+// Protocol: send one JSON { argv } command line, receive streamed output.
+// No AUTH handshake. Any agent on the LAN can connect directly.
 //
-// Remote bridge security:
-//   • Token is 32 random bytes (hex) — collision probability negligible
-//   • Token expires after KEY_TTL_H hours (same as pairing key)
-//   • Expired-token connections are refused before any data is processed
-//   • The bridge only forwards known IPC commands; it is NOT a shell
+// Rationale: this stack runs on a private LAN, not exposed
+// to the internet. Removing the pairing key ceremony gives agents (Claude
+// Cowork, Antigravity, Codex) seamless access without session management.
+// The pairing key / remote bridge (50506) is removed — legacy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as net from "net";
 
-export const IPC_PORT        = 50505;
-export const IPC_HOST        = "127.0.0.1";
-export const REMOTE_IPC_PORT = 50506;
+// Dev mode: process is bun (hot-reload). Prod mode: compiled node binary.
+const IS_DEV_TUI = process.execPath.toLowerCase().includes("bun");
+
+export const IPC_PORT        = IS_DEV_TUI ? 50507 : 50505;
+export const IPC_HOST        = "0.0.0.0";
+export const REMOTE_IPC_PORT = 50506;   // kept for legacy compat — no longer started
 export const REMOTE_IPC_HOST = "0.0.0.0";
+
+// Mutable: the port actually bound (may differ from IPC_PORT — see
+// bindWithFallback below). Compiled unaxis CLI clients still hardcode
+// IPC_PORT (ipc-client.ts's own DEV_PORT/PROD_PORT), so this doesn't help
+// them discover a fallback — it's for in-process/log visibility and any
+// same-process caller that reads it after "listening" fires.
+export let ACTUAL_IPC_PORT = IPC_PORT;
 
 export type IpcHandler = (
   args:   string[],
   onLine: (line: string) => void,
+  onClose: (cb: () => void) => void,
 ) => Promise<number>;
 
 export type IpcHandlers = Record<string, IpcHandler>;
@@ -73,33 +80,133 @@ export function startIpcServer(handlers: IpcHandlers): net.Server {
         if (!socket.destroyed) socket.write(line + "\n");
       };
 
+      // ── Exit code conventions (machine-readable sentinel) ───────────────────
+      // Every response ends with:  __UNAXIS_EXIT__:<code>:<label>
+      //
+      //   0  ok       — clean success
+      //   1  error    — hard failure, something broke
+      //   2  usage    — bad args / wrong invocation (caller's fault)
+      //   3  queued   — --bg used; op is running in TUI stack, not done yet
+      //   4  review   — completed but warnings present; worth inspecting output
+      //   5  unknown  — uncaught exception; unclear state, needs human check
+      //
+      // Clients parse the LAST line of output for this sentinel and treat
+      // everything before it as human-readable text.
+      const EXIT_LABELS: Record<number, string> = {
+        0: "ok", 1: "error", 2: "usage", 3: "queued", 4: "review", 5: "unknown",
+      };
+      const sendExit = (code: number) => {
+        const label = EXIT_LABELS[code] ?? "unknown";
+        if (!socket.destroyed) socket.write(`__UNAXIS_EXIT__:${code}:${label}\n`);
+        socket.end();
+      };
+
+      let closeCb: (() => void) | null = null;
+      const setOnClose = (cb: () => void) => { closeCb = cb; };
+
+      socket.on("close", () => {
+        if (closeCb) closeCb();
+      });
+
+      // ── snap --series / --arm-startup: frame-sequence recorder ────────────
+      // Intercepted at the server so the single-frame `snap` handler in
+      // useIpcBridge.ts stays untouched. Logic lives in hooks/snapSeries.ts.
+      if (cmd === "snap" && (args.includes("--series") || args.includes("--arm-startup"))) {
+        import("./hooks/snapSeries.js")
+          .then((m) =>
+            args.includes("--series")
+              ? m.recordFrameSeries(m.parseSeriesOpts(args, "series"), onLine)
+              : m.armStartupRecording(args, onLine),
+          )
+          .then((code) => sendExit(code))
+          .catch((err) => {
+            onLine(`✗ unexpected: ${String(err)}`);
+            sendExit(5);
+          });
+        return;
+      }
+
       const handler = handlers[cmd];
       if (!handler) {
         onLine(`✗ unknown command: "${cmd}"`);
         onLine(`  available: ${Object.keys(handlers).sort().join(", ")}`);
-        socket.end();
+        sendExit(2);
         return;
       }
 
-      handler(args, onLine)
-        .then((code) => {
-          if (code !== 0) onLine(`✗ exited with code ${code}`);
-          socket.end();
-        })
+      handler(args, onLine, setOnClose)
+        .then((code) => { sendExit(code); })
         .catch((err) => {
-          onLine(`✗ error: ${String(err)}`);
-          socket.end();
+          onLine(`✗ unexpected: ${String(err)}`);
+          sendExit(5);
         });
     });
 
     socket.on("error", () => { /* client disconnected early — ignore */ });
   });
 
-  server.on("error", () => {
-    // Port busy (another TUI instance) — silent no-op.
+  // Windows gotcha: Hyper-V/WSL "excluded port ranges" shift when Docker
+  // Desktop restarts and can swallow the fixed IPC_PORT with EACCES — this
+  // is a transient OS-level reservation, not a real conflict (nothing else
+  // is actually listening there). Root cause: netsh interface ipv4 show
+  // excludedportrange protocol=tcp. Rather than fail outright (every
+  // `unaxis` CLI call would get silent "connection refused"), walk forward
+  // a bounded number of ports until one actually binds, so this TUI instance
+  // stays reachable even when its default port is currently excluded.
+  // Note: the compiled `unaxis` CLI (ipc-client.ts) still only ever tries
+  // the fixed default port — a fallback bind here doesn't make an already-
+  // installed CLI discover it. Log the real port loudly so a human (or an
+  // agent reading these logs) can connect directly instead of guessing.
+  // Windows' Hyper-V exclusion ranges observed on this host span nearly
+  // 2000 contiguous ports in places (e.g. 49363-51356) — a small +1..+20
+  // fallback would never escape one. 500 sequential bind attempts is still
+  // sub-second; cheap insurance against a wide exclusion zone.
+  const MAX_PORT_ATTEMPTS = 500;
+  let attempt = 0;
+
+  function tryListen(port: number) {
+    ACTUAL_IPC_PORT = port;
+    server.listen(port, IPC_HOST);
+  }
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if ((err.code === "EACCES" || err.code === "EADDRINUSE") && attempt < MAX_PORT_ATTEMPTS) {
+      attempt += 1;
+      const nextPort = IPC_PORT + attempt;
+      process.stderr.write(
+        `[ipc-server] ${IPC_HOST}:${ACTUAL_IPC_PORT} unavailable (${err.code}) — trying ${IPC_HOST}:${nextPort}...\n`,
+      );
+      setImmediate(() => tryListen(nextPort));
+      return;
+    }
+    // NEVER silent — an unbound IPC port means every `unaxis` CLI call gets
+    // "connection refused" with zero clues.
+    process.stderr.write(
+      `[ipc-server] FAILED to bind ${IPC_HOST}:${ACTUAL_IPC_PORT} after ${attempt} fallback attempt(s) — ${err.code ?? ""} ${err.message}\n` +
+      (err.code === "EACCES"
+        ? `[ipc-server] Hyper-V excluded port range (Docker restart shifts it) — diagnose: netsh interface ipv4 show excludedportrange protocol=tcp\n` +
+          `[ipc-server] durable fix needs an admin: net stop winnat && net start winnat, then restart this TUI.\n`
+        : err.code === "EADDRINUSE"
+          ? `[ipc-server] port held by another process (zombie TUI?)\n`
+          : ""),
+    );
   });
 
-  server.listen(IPC_PORT, IPC_HOST);
+  server.on("listening", () => {
+    const note = ACTUAL_IPC_PORT === IPC_PORT ? "" : ` (fallback — default ${IPC_HOST}:${IPC_PORT} was unavailable; compiled unaxis CLI clients won't find this port automatically)`;
+    process.stderr.write(`[ipc-server] listening on ${IPC_HOST}:${ACTUAL_IPC_PORT}${note}\n`);
+  });
+
+  tryListen(IPC_PORT);
+
+  // ── Startup splash recorder — armed via `unaxis snap --arm-startup` ───────
+  // startIpcServer runs once at TUI boot, so this is the boot hook: if a
+  // marker file is present, record this boot's startup splash as a frame
+  // series. Fire-and-forget; never blocks or breaks boot.
+  import("./hooks/snapSeries.js")
+    .then((m) => m.maybeRecordStartupFromMarker())
+    .catch(() => { /* recorder unavailable — ignore */ });
+
   return server;
 }
 
@@ -190,7 +297,7 @@ export function startRemoteIpcBridge(
       authed = true;
       remote.write("OK\n");
 
-      const local = net.connect(IPC_PORT, IPC_HOST);
+      const local = net.connect(ACTUAL_IPC_PORT, IPC_HOST);
 
       local.on("connect", () => {
         // Flush anything the client pipelined immediately after AUTH

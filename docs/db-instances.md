@@ -295,7 +295,7 @@ If delete failed partway through, hosts may remain in NPM. Run the cleanup Power
 # Or use the TUI: [n] on the instance → reregister NPM → then delete again
 ```
 
-Or delete manually via NPM UI at `http://192.168.50.75:81`.
+Or delete manually via the NPM UI (see your environment's `agentUrl`/`proxyHost` for the address — typically `http://<edge-node-ip>:81`).
 
 ### Restore fails: pg_restore errors
 `pg_restore` warnings about existing objects are normal (the `--clean --if-exists` flags handle drops). An exit code of 1 with only warnings is acceptable. An exit code of 2 indicates genuine errors — check the `pg:` prefixed lines in the TUI output.
@@ -309,6 +309,98 @@ Then verify `volumes/api/kong.yml` has the correct `hosts:` entry under the dash
 
 ### Instance shows in TUI but containers aren't running
 ```
-unaxis db instance {slug} verify
+unaxis unenter db instance {slug} verify
 ```
 This will run `verifyRuntimeInstance()` and sync the health/status fields from actual Docker state.
+
+---
+
+## CLI Reference
+
+All DB instance operations are available via `unaxis unenter db` — same functions as the TUI, streamed live via IPC.
+
+### Instances
+
+```bash
+unaxis unenter db instances                          # list all runtime instances
+unaxis unenter db instance list                      # same
+
+unaxis unenter db instance <name> status             # container health summary
+unaxis unenter db instance <name> logs [--tail 50]   # stream db/kong/studio logs
+unaxis unenter db instance <name> start              # start all containers
+unaxis unenter db instance <name> stop               # stop all containers
+unaxis unenter db instance <name> restart            # stop + start
+unaxis unenter db instance <name> verify             # deep health check, sync registry state
+unaxis unenter db instance <name> npm               # re-register NPM proxy hosts (idempotent)
+```
+
+### Create
+
+```bash
+# New blank instance (lean template, NPM + MCP wired automatically)
+unaxis unenter db blank <slug> [--name "Human Label"] [--no-npm]
+
+# Clone an existing instance or core into a new independent instance
+unaxis unenter db clone <source-name> <new-name> [--no-npm]
+unaxis unenter db clone core "Production Backup"     # clone the core database
+unaxis unenter db clone yapp "Yapp Staging"          # clone a runtime instance
+```
+
+`db clone` automatically snapshots the source first, then provisions a fresh lean instance and restores the data into it. The clone gets its own ports, secrets, NPM hosts, and MCP config.
+
+### Snapshots
+
+```bash
+unaxis unenter db instance <name> snapshot           # capture full bundle (db + storage + metadata)
+unaxis unenter db instance <name> snapshots          # list all captured bundles for this instance
+
+unaxis unenter db snapshot                           # snapshot core DB
+unaxis unenter db snapshot --slug <name>             # snapshot a specific instance
+unaxis unenter db snapshots                          # list all snapshots (core + all instances)
+unaxis unenter db snapshots --slug <name>            # list snapshots for one instance
+```
+
+### Restore
+
+```bash
+# Restore an instance from a bundle (destructive — stops stack, replaces data, restarts)
+unaxis unenter db instance <name> restore --bundle <path-to-bundle-dir>
+
+# Restore core
+unaxis unenter db restore --bundle <path>
+```
+
+Get bundle paths from `db instance <name> snapshots` — each line shows the path.
+
+### Delete
+
+```bash
+# Full delete: NPM hosts removed, volumes destroyed, files removed, registry deregistered
+unaxis unenter db instance <name> delete --confirm
+
+# Soft remove: stops containers, deregisters, keeps volumes on disk
+unaxis unenter db instance <name> remove --confirm
+```
+
+Always snapshot before deleting:
+```bash
+unaxis unenter db instance myapp snapshot && unaxis unenter db instance myapp delete --confirm
+```
+
+### Core DB
+
+```bash
+unaxis unenter db backup                             # quick pg_dump of core (DB only)
+unaxis unenter db snapshot                           # full core snapshot (DB + storage + metadata)
+unaxis unenter db snapshots                          # list core snapshots
+unaxis unenter db restore --bundle <path>            # restore core from bundle
+unaxis unenter db clone core "My Clone" [--no-npm]  # clone core into new independent instance
+```
+
+### Other
+
+```bash
+unaxis unenter db templates                          # list available fresh seed templates
+unaxis unenter db template-capture [--force]         # capture a fresh vanilla Supabase template
+unaxis unenter db smoke-test                         # end-to-end test: blank → verify → snapshot → teardown
+```

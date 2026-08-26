@@ -1,4 +1,8 @@
-# Dependencies
+# NOTE: keep this file LF-only. CRLF endings make every pattern (e.g.
+# "node_modules\r") match nothing, so the whole repo — node_modules, .next,
+# .git — ends up in the build context (~1.7GB) and starves the build.
+
+# Dependencies (the image runs its own `bun install`)
 node_modules
 .pnp
 .pnp.js
@@ -9,7 +13,7 @@ out
 build
 dist
 
-# Lockfiles (Bun generates these inside container)
+# Lockfiles (Bun regenerates inside the container)
 yarn.lock
 package-lock.json
 npm-debug.log*
@@ -19,11 +23,10 @@ npm-debug.log*
 .env.local
 .env.*.local
 
-# Dev tooling
+# VCS + dev tooling
 .git
 .gitignore
 .eslintcache
-.prettierrc*
 *.md
 !README.md
 
@@ -31,6 +34,77 @@ npm-debug.log*
 supabase/.branches
 supabase/.temp
 
+# Zone overlays — the core app build doesn't need them, BUT zone builds share
+# this repo-root context and COPY zones/<key>/src/app/ (see zones/*/Dockerfile).
+# Exclude the bulk, re-include exactly what zone builds copy.
+zones/
+!zones/auth/src
+!zones/auth/src/**
+!zones/tank/src
+!zones/tank/src/**
+
+# Platform packages — agent + updater have their own build contexts
+packages/
+
+# Swarm / orchestration configs — host-side only
+swarm-orchestration/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Non-app artifacts — not imported by the Next.js app
+backups
+.snapshots
+snapshots
+*.dump
+vault
+.obsidian
+.obsidian-agent
+.vault-operator
+.agents
+.letta
+.gemini
+.tmp
+__pycache__
+.turbo
+.vercel
+
+# ── Non-app repo cruft — host-only tooling, vendored clones, dumps, scratch ──
+# The core image only needs src/, public/, zones/ overlays, i18n/, and config
+# files. Everything below is host-side and just bloats the build context (the
+# vendored Supabase monorepo clone alone is hundreds of MB) and slows every
+# build. The TUI references supabase-core/ etc. by path on the HOST, not from
+# inside the container, so excluding them here is safe for the app build.
+supabase-core
+supabase-instances
+github.com
+proxy
+proxy-config
+scratch
+sandbox
+state
+docs
+
+# Archives, host logs, PowerShell scripts, scratch files (*.dump already above)
+*.bak
+*.zip
+*.ps
+*.ps1
+*.log
+errors.txt
+snapshopts.txt
+
+# Editor / skill / scratch artifacts
+*.skill
+*.canvas
+*.base
+Untitled.*
+
+# Secrets — never bake into an image
+claude_desktop_config.json
+!src/zones/docs/content/*.md
+
+# Agent image needs the unified agent module (packages/agent-node/Dockerfile
+# COPYs it from repo-root context) — re-include despite the proxy/ exclusion.
+!proxy/agent.js

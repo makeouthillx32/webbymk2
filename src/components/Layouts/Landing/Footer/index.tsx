@@ -3,17 +3,41 @@
 import Image from "next/image";
 import Link from "next/link";
 import useServicesData from "@/data/useServiceData";
-import { cn } from "@/utils/cn";
+import { usePublicZoneLinks } from "@/data/usePublicZoneLinks";
 import { useTheme } from "next-themes";
+
+const CORE_LINKS = [
+  { label: "Home", href: "/" },
+  { label: "About", href: "/about" },
+  { label: "Services", href: "/services" },
+  { label: "Contact", href: "/contact" },
+];
+
+const RETIRED_FOOTER_SERVICES = new Set([
+  "Mold Repair",
+  "Overhaul",
+  "Renovation",
+]);
+
+const REPAIR_AND_HOSTING_LINKS = [
+  { label: "Local PC Repair", href: "/contact?service=local-pc-repair" },
+  { label: "Game Server Hosting", href: "/contact?service=game-server-hosting" },
+  { label: "Web Hosting", href: "/contact?service=web-hosting" },
+];
+
+const footerHeadingClass = "mb-6 text-xl font-bold text-[hsl(var(--foreground))]";
+const footerLinkClass =
+  "text-base text-[hsl(var(--muted-foreground))] hover:text-primary transition-colors";
 
 const Footer = () => {
   const { data: servicesData } = useServicesData();
+  const { data: zoneLinks, loading: zonesLoading } = usePublicZoneLinks();
   const { theme } = useTheme();
 
   return (
     <footer className="relative z-10 bg-[var(--lt-bg)] pt-16 md:pt-20 lg:pt-24">
       <div className="container mx-auto px-4">
-        <div className={cn("", "flex flex-wrap", "xl:grid xl:grid-cols-[auto_auto_auto]")}>
+        <div className="flex flex-wrap">
           <div className="mb-10 w-full">
             <div className="mb-10 max-w-[360px]">
               <Link href="/" className="mb-6 inline-block">
@@ -30,49 +54,96 @@ const Footer = () => {
             </div>
           </div>
 
-          <div className="grid w-full">
+          <div className="grid w-full gap-10 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)]">
             <div className="mb-10 lg:mb-0">
-              <h3 className="mb-6 text-xl font-bold text-[hsl(var(--foreground))]">Services</h3>
+              <h3 className={footerHeadingClass}>Services</h3>
               <div className="flex flex-wrap lg:flex-nowrap">
-                {servicesData?.map((service) => (
-                  <div key={service.title} className="mb-2 w-full sm:w-1/2">
-                    <h4 className="mb-2 text-base font-semibold text-[hsl(var(--muted-foreground))]">
-                      {service.title}
-                    </h4>
-                    <ul className="flex flex-col gap-3">
-                      {service.subServices.map((subService) => (
-                        <li key={subService.title} className="mx-2">
-                          <Link
-                            href={`/services${subService.path}`}
-                            className="text-base text-[hsl(var(--muted-foreground))] hover:text-primary transition-colors"
-                          >
-                            {subService.title}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                {servicesData?.map((service) => {
+                  const replacesRetiredServices = service.subServices.some((subService) =>
+                    RETIRED_FOOTER_SERVICES.has(subService.title)
+                  );
+                  const footerLinks = service.subServices
+                    .filter((subService) => !RETIRED_FOOTER_SERVICES.has(subService.title))
+                    .map((subService) => ({
+                      label: subService.title,
+                      href: `/services${subService.path}`,
+                    }));
+
+                  if (replacesRetiredServices) {
+                    footerLinks.push(...REPAIR_AND_HOSTING_LINKS);
+                  }
+
+                  return (
+                    <div key={service.title} className="mb-2 w-full sm:w-1/2">
+                      <h4 className="mb-2 text-base font-semibold text-[hsl(var(--muted-foreground))]">
+                        {service.title}
+                      </h4>
+                      <ul className="flex flex-col gap-3">
+                        {footerLinks.map((link) => (
+                          <li key={link.href} className="mx-2">
+                            <Link href={link.href} className={footerLinkClass}>
+                              {link.label}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </div>
 
-          <div className="w-full">
             <div className="mb-10 lg:mb-0">
-              <h3 className="mb-6 text-xl font-bold text-[hsl(var(--foreground))]">Support &amp; Help</h3>
+              <h3 className={footerHeadingClass}>Main app</h3>
+              <ul className="space-y-4">
+                {CORE_LINKS.map((link) => (
+                  <li key={link.href}>
+                    <Link href={link.href} className={footerLinkClass}>
+                      {link.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mb-10 lg:mb-0">
+              <h3 className={footerHeadingClass}>Other places</h3>
+              {zonesLoading && zoneLinks.length === 0 ? (
+                <ul className="space-y-4" aria-hidden="true">
+                  {[0, 1, 2].map((item) => (
+                    <li key={item}>
+                      <span className="block h-5 w-24 animate-pulse rounded bg-[hsl(var(--muted-foreground)/0.16)]" />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className="space-y-4">
+                  {zoneLinks.map((link) => (
+                    <li key={link.key}>
+                      <a href={link.href} className={footerLinkClass}>
+                        {link.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="mb-10 lg:mb-0">
+              <h3 className={footerHeadingClass}>Support &amp; Help</h3>
               <ul className="space-y-4">
                 <li>
-                  <Link href="/contact" className="text-base text-[hsl(var(--muted-foreground))] hover:text-primary transition-colors">
+                  <Link href="/contact" className={footerLinkClass}>
                     Contact
                   </Link>
                 </li>
                 <li>
-                  <Link href="/about" className="text-base text-[hsl(var(--muted-foreground))] hover:text-primary transition-colors">
+                  <Link href="/about" className={footerLinkClass}>
                     About
                   </Link>
                 </li>
                 <li>
-                  <Link href="/privacy" className="text-base text-[hsl(var(--muted-foreground))] hover:text-primary transition-colors">
+                  <Link href="/privacy" className={footerLinkClass}>
                     Privacy
                   </Link>
                 </li>

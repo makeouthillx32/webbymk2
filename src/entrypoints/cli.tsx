@@ -11,12 +11,44 @@ export {}
 declare const UNAXIS_VERSION: string
 
 import { ensureRuntimeEnv }                         from '../utils/runtimeEnv.js'
+import { STACK_IP_SAFE }                             from '../config/stack.js'
 import { getSetting, setSetting, getCredential, setCredential,
          getAllSettings, getAllCredentials,
          getCredentialsPath, getSettingsPath }       from '../utils/secureStorage/index.js'
 import type { CredentialKey }                        from '../utils/secureStorage/index.js'
-import { existsSync }                               from 'fs'
-import { join, resolve }                            from 'path'
+import { existsSync, readFileSync }                 from 'fs'
+import { join, resolve, dirname, isAbsolute }       from 'path'
+import * as net                                     from 'net'
+import { spawnSync }                                from 'child_process'
+
+// ── Bun self-relaunch guard ───────────────────────────────────────────────────
+// UNAXIS must run under Bun: control-db.ts (the SQLite-backed zones +
+// environments store) hard-requires `bun:sqlite`, with no Node fallback.
+// Every launch path can still end up invoking this bundled file with plain
+// `node`: npm's Windows shims (unaxis.cmd / unaxis.ps1) hardcode a call to
+// node.exe and ignore the shebang line build.ts injects, and nothing stops
+// a script (or a person) from running `node dist/cli.js` directly. Rather
+// than chase down and fix every entry point one at a time -- global install,
+// this repo's own scripts, whatever gets written next -- self-relaunch under
+// bun transparently right here, before any other module gets a chance to
+// reach control-db.ts.
+//
+// Discovered 2026-08-08: the prod autostart path silently left the TUI with
+// zero zones and zero environments loaded, because control-db hydration
+// threw "Cannot find module 'bun:sqlite'" under node and nothing caught it.
+if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
+  const result = spawnSync('bun', [process.argv[1] as string, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+  })
+  if (result.error) {
+    process.stderr.write(
+      '\nUNAXIS requires Bun to run (bun:sqlite backs the local zones/environments store).\n' +
+      'Install it from https://bun.sh, then re-run.\n\n'
+    )
+    process.exit(1)
+  }
+  process.exit(result.status ?? 1)
+}
 
 const args = process.argv.slice(2)
 
@@ -53,8 +85,14 @@ function isProjectRoot(path: string): boolean {
 
 // ── Fast-path flags ───────────────────────────────────────────────────────────
 
-if (args.includes('--version') || args.includes('-v')) {
+if (args.includes('--version') || args.includes('-version') || args.includes('-v')) {
   process.stdout.write(UNAXIS_VERSION + '\n')
+  process.exit(0)
+}
+
+if (args.includes('--schema')) {
+  const { UNAXIS_CLI_SCHEMA } = await import('../ink/cli-schema.js')
+  process.stdout.write(JSON.stringify(UNAXIS_CLI_SCHEMA, null, 2) + '\n')
   process.exit(0)
 }
 
@@ -65,7 +103,7 @@ if (args.includes('--help') || args.includes('-h')) {
     '\n' +
     '  Usage:\n' +
     '    unaxis                                       launch the TUI\n' +
-    '    unaxis --version                             print version\n' +
+    '    unaxis -version | --version | -v             print version\n' +
     '    unaxis --help                                show this message\n' +
     '\n' +
     '  Project commands  (requires TUI to be running):\n' +
@@ -87,14 +125,26 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> watch note <text>              add watch note\n' +
     '    unaxis <slug> watch snapshot                 record snapshot\n' +
     '    unaxis <slug> watch end                      end watch session\n' +
-    '    unaxis <slug> db backup --reason <text>      DB backup\n' +
-    '    unaxis <slug> db instance list               list runtime instances\n' +
-    '    unaxis <slug> db instance <name> status      instance container health\n' +
-    '    unaxis <slug> db instance <name> logs        instance logs (db, kong, studio)\n' +
-    '    unaxis <slug> db instance <name> restart     restart instance\n' +
-    '    unaxis <slug> db instance <name> stop        stop instance\n' +
-    '    unaxis <slug> db instance <name> start       start instance\n' +
-    '    unaxis <slug> db instance <name> remove      stop, prune, deregister (--confirm)\n' +
+    '    unaxis <slug> db backup                       quick pg_dump (core DB only)\n' +
+    '    unaxis <slug> db snapshot                     full snapshot (DB + storage + metadata)\n' +
+    '    unaxis <slug> db snapshots                    list core snapshots\n' +
+    '    unaxis <slug> db restore --bundle <path>      restore core from snapshot bundle\n' +
+    '    unaxis <slug> db blank <name>                 create new blank instance\n' +
+    '    unaxis <slug> db clone <source> <name>        snapshot source → new independent instance\n' +
+    '    unaxis <slug> db clone core <name>            clone the core database\n' +
+    '    unaxis <slug> db instances                    list all runtime instances\n' +
+    '    unaxis <slug> db instance <name> status       instance container health\n' +
+    '    unaxis <slug> db instance <name> logs         instance logs (db, kong, studio)\n' +
+    '    unaxis <slug> db instance <name> start        start all containers\n' +
+    '    unaxis <slug> db instance <name> stop         stop all containers\n' +
+    '    unaxis <slug> db instance <name> restart      stop + start\n' +
+    '    unaxis <slug> db instance <name> snapshot     capture full bundle\n' +
+    '    unaxis <slug> db instance <name> snapshots    list captured bundles\n' +
+    '    unaxis <slug> db instance <name> restore      rollback from bundle (--bundle <path>)\n' +
+    '    unaxis <slug> db instance <name> verify       deep health check, sync Docker state\n' +
+    '    unaxis <slug> db instance <name> delete       full teardown, volumes gone (--confirm)\n' +
+    '    unaxis <slug> db instance <name> remove       soft remove, volumes kept  (--confirm)\n' +
+    '    unaxis <slug> db instance <name> npm          re-register NPM proxy hosts\n' +
     '    unaxis <slug> npm list [--search <domain>]   list all NPM proxy hosts\n' +
     '    unaxis <slug> npm search <domain>            search proxy hosts by domain substring\n' +
     '    unaxis <slug> preflight edit --zone <zone>   pre-edit validation\n' +
@@ -103,16 +153,22 @@ if (args.includes('--help') || args.includes('-h')) {
     '    unaxis <slug> env containers [<name>]        list containers (unt_* only; --all for everything)\n' +
     '    unaxis <slug> env stacks [<name>]            list Docker Compose stacks (grouped by project)\n' +
     '    unaxis <slug> env logs <env> <container>     container logs from any environment\n' +
+    '    unaxis <slug> env security [<name>]          inspect container security posture\n' +
+    '    unaxis <slug> env audit-image <img_name>     audit image layers for secrets\n' +
+    '    unaxis <slug> env events [<name>]            stream recent docker events\n' +
     '    unaxis <slug> env update <name>              update agent\n' +
     '\n' +
     '  UNAXIS global commands:\n' +
     '    unaxis project list                          list known project roots\n' +
     '    unaxis project add [<path>]                  register a project\n' +
     '    unaxis project remove <slug>                 remove from registry\n' +
+    '    unaxis snap-view [manifest|dir]              view recorded frame series (timeline + film strip)\n' +
     '    unaxis connect <uaxc_key>                    connect to remote TUI\n' +
     '                                                   (generate key: press K in picker)\n' +
     '    unaxis disconnect                            remove remote session\n' +
     '    unaxis version                               print installed version\n' +
+    '    unaxis update                                update global CLI installation\n' +
+    '    unaxis events --watch                        stream TUI event bus\n' +
     '\n' +
     '  Config:\n' +
     '    unaxis config set default_project <path>     set default project root\n' +
@@ -139,8 +195,284 @@ if (args.includes('--help') || args.includes('-h')) {
 
 // ── unaxis version — installed package version (no TUI required) ─────────────
 if (args[0] === 'version') {
-  process.stdout.write(`UNAXIS  ${UNAXIS_VERSION}\n`)
+  if (!args.includes('--compare')) {
+    process.stdout.write(`UNAXIS  ${UNAXIS_VERSION}\n`)
+    process.exit(0)
+  }
+
+  // ── unaxis version --compare ──────────────────────────────────────────────
+  // Queries prod TUI (50505) and dev TUI (50507) simultaneously. No auth.
+  // Control-node LAN IP comes from config.json (STACK_IP_SAFE) — never a
+  // literal address in source, since this repo is public on GitHub.
+  const CONTROL_NODE_IP = STACK_IP_SAFE
+  const IS_LAN_LOCAL = (() => {
+    if (!CONTROL_NODE_IP) return true
+    try {
+      const os = require('os') as typeof import('os')
+      return Object.values(os.networkInterfaces()).flat().some(i => i?.address === CONTROL_NODE_IP)
+    } catch { return false }
+  })()
+  const HOST = IS_LAN_LOCAL ? '127.0.0.1' : CONTROL_NODE_IP
+
+  const queryTui = (port: number, label: string): Promise<string> =>
+    new Promise((res) => {
+      const sock = net.connect(port, HOST)
+      let data = ''
+      sock.on('connect', () => sock.write(JSON.stringify({ argv: ['version'] }) + '\n'))
+      sock.on('data',  (d: Buffer) => { data += d.toString() })
+      sock.on('end',   () => res(data))
+      sock.on('error', () => res(`✗ ${label} TUI not running`))
+      setTimeout(() => { sock.destroy(); res(data || `✗ ${label} TUI not running`) }, 5000)
+    })
+
+  // Query both ports in parallel
+  const [local50505, remote50507] = await Promise.all([queryTui(50505, 'prod'), queryTui(50507, 'dev')])
+
+  // Extract version strings
+  const ver50505 = (local50505.match(/UNAXIS\s+(\S+)/)  ?? [])[1] ?? null
+  const ver50507 = (remote50507.match(/UNAXIS\s+(\S+)/) ?? [])[1] ?? null
+
+  // Auto-detect which is dev vs prod from version string
+  // "dev" = dev TUI (bun hot-reload, UNAXIS_VERSION not baked)
+  // semver = prod TUI (compiled binary with baked version)
+  const isSemver = (v: string | null) => v !== null && /^\d+\.\d+\.\d+/.test(v)
+
+  // Build labeled results regardless of which port each is on
+  const rows: Array<{ label: string; ver: string; port: string }> = []
+
+  if (ver50505 !== null) {
+    rows.push({ label: isSemver(ver50505) ? 'prod' : 'dev ', ver: ver50505, port: '50505' })
+  } else {
+    rows.push({ label: 'n/a ', ver: local50505.startsWith('✗') ? local50505 : '(no response)', port: '50505' })
+  }
+  if (ver50507 !== null) {
+    rows.push({ label: isSemver(ver50507) ? 'prod' : 'dev ', ver: ver50507, port: '50507' })
+  } else {
+    rows.push({ label: 'n/a ', ver: remote50507.startsWith('✗') ? remote50507 : '(no response)', port: '50507' })
+  }
+
+  const prodVer = rows.find(r => r.label.trim() === 'prod')?.ver ?? null
+  const devVer  = rows.find(r => r.label.trim() === 'dev')?.ver  ?? null
+  const behind  = prodVer && devVer && prodVer !== devVer
+
+  process.stdout.write('\n')
+  for (const r of rows) process.stdout.write(`  ${r.label}  UNAXIS  ${r.ver}  (port ${r.port})\n`)
+  process.stdout.write('\n')
+  if (behind)          process.stdout.write(`  [≠] prod ${prodVer} · dev is on hot-reload — no update needed\n`)
+  else if (!prodVer)   process.stdout.write(`  [!] prod TUI not detected\n`)
+  else if (!devVer)    process.stdout.write(`  [!] dev TUI not detected\n`)
+  else                 process.stdout.write(`  [=] both TUIs reporting same version\n`)
+  process.stdout.write('\n')
   process.exit(0)
+}
+
+// ── unaxis snapshot-view <panel> [--save] [--label <name>] [--json] ──────────
+// Renders an Ink panel component directly to a text frame.
+// Works standalone — no TUI launch, no IPC, no keystrokes. ~25ms.
+// Panels: npm, infra, infra-dns, infra-ports, zones, db, env
+//
+// Examples:
+//   unaxis snapshot-view db
+//   unaxis snapshot-view npm --json
+//   unaxis snapshot-view infra-dns --save --label "before-fix"
+// ── unaxis snapshot-view (global screens only — no project slug needed) ───────
+// Project panels (db, npm, zones, etc.) require a slug: unaxis unenter snapshot-view db
+// Global screens (startup, welcome) have no project context and run standalone.
+if (args[0] === 'snapshot-view') {
+  const target   = args[1] ?? 'startup'
+  const save     = args.includes('--save')
+  const asJson   = args.includes('--json')
+  const labelIdx = args.indexOf('--label')
+  const label    = labelIdx >= 0 ? (args[labelIdx + 1] ?? target) : target
+
+  const rowsIdx  = args.indexOf('--rows')
+  const rowsVal  = rowsIdx >= 0 ? parseInt(args[rowsIdx + 1] ?? '40', 10) : 40
+  const colsIdx  = args.indexOf('--cols')
+  const colsVal  = colsIdx >= 0 ? parseInt(args[colsIdx + 1] ?? '120', 10) : 120
+
+  const GLOBAL_SCREENS = new Set(['startup', 'welcome', 'settings'])
+
+  if (!GLOBAL_SCREENS.has(target)) {
+    process.stderr.write(`  ✗ "${target}" is a project panel — use: unaxis <slug> snapshot-view ${target}\n`)
+    process.stderr.write(`  Global screens (no slug needed): startup, welcome, settings\n`)
+    process.exit(2)
+  }
+
+  const { renderPanelFrame } = await import('../agent-view/renderPanelFrame.js')
+  const React = (await import('../ink/reactRuntime.js')).default
+  const noop  = () => {}
+
+  let element: React.ReactElement | null = null
+  let componentName = ''
+
+  if (target === 'startup') {
+    const { StartupScreen } = await import('../ink/components/StartupScreen.js')
+    componentName = 'StartupScreen'
+    element = React.createElement(StartupScreen, { onDone: noop, onQuit: noop, instant: true })
+
+  } else if (target === 'welcome') {
+    const { WelcomeScreen } = await import('../screens/WelcomeScreen.js')
+    componentName = 'WelcomeScreen'
+    element = React.createElement(WelcomeScreen, {
+      zones: [], zoneStatuses: {}, proxyStatus: 'running',
+      isActive: true, onManage: noop, onSettings: noop,
+      onQuit: noop,
+    })
+
+  } else if (target === 'settings') {
+    const { SettingsScreen } = await import('../screens/SettingsScreen.js')
+    componentName = 'SettingsScreen'
+    element = React.createElement(SettingsScreen, {
+      zones: [], onTokenEditStart: noop, onTokenEditEnd: noop,
+    })
+
+  } else {
+    process.stderr.write(`  ✗ unknown target: ${target}\n`)
+    process.stderr.write(`  panels:  npm, infra, infra-dns, infra-ports, zones, db, env\n`)
+    process.stderr.write(`  screens: startup, welcome, settings\n`)
+    process.exit(2)
+  }
+
+  const result = await renderPanelFrame(label, element!, componentName, { columns: colsVal, rows: rowsVal })
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+  } else {
+    process.stdout.write(`\n── snapshot-view: ${target} (${componentName}) ${'─'.repeat(Math.max(0, 48 - target.length))}\n`)
+    process.stdout.write(result.text + '\n')
+    process.stdout.write('─'.repeat(70) + '\n')
+    process.stdout.write(`  ${result.metadata.renderMs}ms · ${result.lines.length} lines · ${result.metadata.width}×${result.metadata.height}\n`)
+  }
+
+  if (save) {
+    const { writeSnapshot } = await import('../agent-view/writeSnapshot.js')
+    const snap = await writeSnapshot(result)
+    process.stdout.write(`  saved → ${snap.dir}\n`)
+  }
+
+  process.exit(0)
+}
+
+// ── unaxis snap-view [manifest-or-dir] [options] ──────────────────────────────
+// Frame-series viewer — prints manifest stats, the sample timeline, and the
+// unique frames as an inline film strip. Reads the output of
+// `snap --series` / `snap --arm-startup` recordings.
+// Standalone fast-path: pure fs/path, no TUI launch, no IPC, no Ink import.
+// Defaults to logs/startup-series-latest.json (the boot-recording pointer).
+//
+// Examples:
+//   unaxis snap-view --summary
+//   unaxis snap-view --max-frames 2
+//   unaxis snap-view .snapshots/2026-06-11T14-33-46-startup-series
+if (args[0] === 'snap-view') {
+  const sub = args.slice(1)
+  const has = (flag: string) => sub.includes(flag)
+  const valueAfter = (flag: string): string | null => {
+    const i = sub.indexOf(flag)
+    return i >= 0 ? (sub[i + 1] ?? null) : null
+  }
+
+  if (has('--help')) {
+    process.stdout.write([
+      '  Usage: unaxis snap-view [manifest-or-dir] [options]',
+      '',
+      '  Defaults to logs/startup-series-latest.json.',
+      '',
+      '  Options:',
+      '    --summary          Only print manifest stats and frame timeline.',
+      '    --strip            Print unique frames inline as a compact film strip. Default.',
+      '    --all-samples      Include repeat samples as timing rows. Default.',
+      '    --unique-only      Omit repeat samples from the timeline.',
+      '    --max-frames N     Limit inline unique frames. Default: all unique frames.',
+      '    --help             Show this help.',
+      '',
+    ].join('\n') + '\n')
+    process.exit(0)
+  }
+
+  const flagsWithValues = new Set(['--max-frames'])
+  let positional: string | null = null
+  for (let i = 0; i < sub.length; i += 1) {
+    const a = sub[i]!
+    if (flagsWithValues.has(a)) { i += 1; continue }
+    if (!a.startsWith('-')) { positional = a; break }
+  }
+  const targetPath = resolve(process.cwd(), positional ?? 'logs/startup-series-latest.json')
+
+  type SeriesFrame = { index: number; file: string | null; t?: number; repeatOf?: number }
+
+  const timelineRow = (frame: SeriesFrame): string => {
+    const index = String(frame.index).padStart(4, '0')
+    const t = String(frame.t ?? 0).padStart(5, ' ')
+    if (frame.file) return `${index}  ${t}ms  ${frame.file}`
+    if (frame.repeatOf) return `${index}  ${t}ms  repeatOf frame-${String(frame.repeatOf).padStart(4, '0')}`
+    return `${index}  ${t}ms  no frame captured`
+  }
+
+  try {
+    if (!existsSync(targetPath)) throw new Error(`Frame-series path not found: ${targetPath}`)
+    const manifestPath = targetPath.endsWith('.json') ? targetPath : join(targetPath, 'manifest.json')
+    if (!existsSync(manifestPath)) throw new Error(`Manifest not found: ${manifestPath}`)
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    // Prefer the manifest's recorded dir only if it still exists — a manifest
+    // copy (e.g. logs/startup-series-latest.json after .snapshots cleanup) or
+    // a moved series folder falls back to the manifest's own directory.
+    let baseDir = manifest.dir && isAbsolute(manifest.dir) && existsSync(manifest.dir) ? manifest.dir : dirname(manifestPath)
+
+    const frames: SeriesFrame[] = Array.isArray(manifest.frames) ? manifest.frames : []
+    const uniqueFrames = frames.filter((f) => f.file)
+
+    // Cross-platform fallback: a manifest pointer may record `dir` using
+    // another OS's path syntax (e.g. a Windows path read inside a Linux
+    // sandbox), making isAbsolute/existsSync fail. If the first unique frame
+    // is not found in baseDir, look for the series folder by name under
+    // .snapshots/ next to the manifest's parent directory.
+    const firstFile = uniqueFrames[0]?.file
+    if (firstFile && !existsSync(isAbsolute(firstFile) ? firstFile : join(baseDir, firstFile)) && typeof manifest.dir === 'string') {
+      const seriesName = manifest.dir.split(/[\\/]/).filter(Boolean).pop()
+      if (seriesName) {
+        const candidate = join(dirname(manifestPath), '..', '.snapshots', seriesName)
+        if (existsSync(join(candidate, firstFile))) baseDir = candidate
+      }
+    }
+    const includeRepeats = has('--all-samples') || !has('--unique-only')
+    const summaryOnly = has('--summary')
+    const strip = has('--strip') || !summaryOnly
+    const maxFramesRaw = valueAfter('--max-frames')
+    const maxFrames = maxFramesRaw ? Math.max(0, Number.parseInt(maxFramesRaw, 10)) : uniqueFrames.length
+
+    console.log(`Frame series: ${manifest.label ?? '(unlabeled)'}`)
+    console.log(`Manifest: ${manifestPath}`)
+    console.log(`Directory: ${baseDir}`)
+    console.log(`Mode: ${manifest.mode ?? 'unknown'} | sampled: ${manifest.sampled ?? frames.length} | unique: ${manifest.written ?? uniqueFrames.length} | every: ${manifest.everyMs ?? '?'}ms | duration: ${manifest.durationMs ?? '?'}ms | size: ${manifest.width ?? '?'}x${manifest.height ?? '?'}`)
+    console.log('')
+    console.log('Timeline:')
+    for (const frame of frames) {
+      if (!includeRepeats && !frame.file) continue
+      console.log(`  ${timelineRow(frame)}`)
+    }
+
+    if (strip) {
+      console.log('')
+      console.log(`Film strip: ${Math.min(maxFrames, uniqueFrames.length)} of ${uniqueFrames.length} unique frames`)
+      for (const frame of uniqueFrames.slice(0, maxFrames)) {
+        const file = frame.file!
+        const framePath = isAbsolute(file) ? file : join(baseDir, file)
+        console.log('')
+        console.log(`--- frame-${String(frame.index).padStart(4, '0')} @ ${frame.t ?? 0}ms (${file}) ---`)
+        console.log(readFileSync(framePath, 'utf8').replace(/\s+$/g, ''))
+      }
+      if (maxFrames < uniqueFrames.length) {
+        console.log('')
+        console.log(`... ${uniqueFrames.length - maxFrames} unique frame(s) omitted by --max-frames ${maxFrames}`)
+      }
+    }
+    process.exit(0)
+  } catch (err) {
+    process.stderr.write(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`)
+    process.stderr.write(`  Usage: unaxis snap-view [manifest-or-dir] [--summary] [--unique-only] [--max-frames N]\n`)
+    process.exit(1)
+  }
 }
 
 // ── project subcommand ────────────────────────────────────────────────────────
@@ -275,6 +607,31 @@ if (args[0] === 'disconnect') {
   process.exit(0)
 }
 
+// ── events subcommand ─────────────────────────────────────────────────────────
+
+if (args[0] === 'events') {
+  const { sendIpcCommand } = await import('../ink/ipc-client.js')
+  process.exit(await sendIpcCommand(args))
+}
+
+// ── update subcommand ─────────────────────────────────────────────────────────
+
+if (args[0] === 'update') {
+  const { spawnSync } = await import('child_process')
+  process.stdout.write('  Updating global UNAXIS CLI via npm...\n')
+  const result = spawnSync('npm', ['install', '-g', '@untsystems/unaxis@latest'], {
+    stdio: 'inherit',
+    shell: true,
+  })
+  if (result.status === 0) {
+    process.stdout.write('  ✓ Global UNAXIS CLI updated successfully!\n')
+  } else {
+    process.stderr.write('  ✗ Global UNAXIS CLI update failed.\n')
+    process.exit(result.status ?? 1)
+  }
+  process.exit(0)
+}
+
 // ── <slug> <command…> — project-scoped IPC routing ───────────────────────────
 // All TUI commands are namespaced under the project slug:
 //   unaxis unenter status
@@ -285,7 +642,8 @@ if (args[0] === 'disconnect') {
 // session is active (unaxis connect <key>), commands route through the bridge.
 
 const GLOBAL_SUBCOMMANDS = new Set([
-  'project', 'connect', 'disconnect', 'config', 'credentials', 'creds', 'version',
+  'project', 'connect', 'disconnect', 'events', 'config', 'credentials', 'creds', 'version',
+  'snapshot-view', 'snap-view', 'update',
 ])
 
 if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMANDS.has(args[0])) {
@@ -302,7 +660,7 @@ if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMAN
   const localProject = projects.find((p) => p.slug === potentialSlug)
 
   const isRemoteSlug = session !== null && session.slug === potentialSlug
-  const isKnownSlug  = localProject !== null || isRemoteSlug
+  const isKnownSlug  = !!localProject || isRemoteSlug
 
   if (isKnownSlug) {
     const subArgs = args.slice(1)
@@ -321,7 +679,12 @@ if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMAN
       process.exit(0)
     }
     const { sendIpcCommand } = await import('../ink/ipc-client.js')
-    process.exit(await sendIpcCommand(subArgs))
+    // --dev  → force dev TUI (remote session port 50506)
+    // --prod → force prod TUI (local port 50505)
+    const target = subArgs.includes('--dev')  ? 'dev'
+                 : subArgs.includes('--prod') ? 'prod'
+                 : 'auto'
+    process.exit(await sendIpcCommand(subArgs, { target }))
   }
 
   // Not a known slug and not a global command — give a clear error
@@ -472,8 +835,20 @@ if (args[0] === 'credentials' || args[0] === 'creds') {
   }
 
   console.error(`  Unknown credentials subcommand: ${sub}`)
-  console.error('  Try: unaxis credentials set|get|list')
-  process.exit(1)
+}
+
+// ── push subcommand (independent repo push) ──────────────────────────────────
+if (args[0] === 'push') {
+  const { execSync } = await import('child_process')
+  console.log('  Pushing UNAXIS to dedicated remote (github.com/makeouthillx32/unaxis)...')
+  try {
+    execSync('git subtree push --prefix=src/ink unaxis main', { stdio: 'inherit' })
+    console.log('✓ UNAXIS pushed successfully!')
+    process.exit(0)
+  } catch (err: any) {
+    console.error('✗ Push failed:', err?.message || err)
+    process.exit(1)
+  }
 }
 
 // ── Early .env load before any bundled TUI modules can initialize ─────────────

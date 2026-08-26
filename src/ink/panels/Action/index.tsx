@@ -10,8 +10,11 @@ import React              from "react";
 import { Box, Text }      from "../../runtimeInk.js";
 import type { Zone }      from "../../../config/zones.ts";
 import type { Status }    from "../../docker.ts";
-import { statusColor }    from "../../components/StatusBadge.tsx";
+import { statusColor, statusLabel } from "../../components/StatusBadge.tsx";
 import { KeyHints }       from "../../components/KeyHint.tsx";
+import { useScrollIntoView } from "../../components/ScrollBox.js";
+import { dbGetLedger }    from "../../control-db.ts";
+
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,11 +40,12 @@ export function buildActions(zone: Zone): Action[] {
     { id: "deploy",   label: "Deploy",             desc: "docker compose pull + up",                        key: "d", disabled: false           },
     { id: "pull",     label: "Pull + up",          desc: "docker compose pull + up (no build)",             key: "p", disabled: false           },
     { id: "restart",  label: "Restart",            desc: "docker compose restart",                          key: "r", disabled: false           },
-    { id: "build",    label: "Build + push",       desc: "docker build + push to GHCR",                    key: "b", disabled: !zone.dockerfile },
-    { id: "rebuild",  label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)",         key: "R", disabled: !zone.dockerfile },
+    { id: "build",    label: "Build + deploy",     desc: "build + push + pull + up  (ship)",                    key: "b", disabled: !zone.dockerfile },
+    { id: "rebuild",  label: "Rebuild + deploy",   desc: "no-cache build + push + pull + up  (clean)",         key: "R", disabled: !zone.dockerfile },
     { id: "logs",     label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
     { id: "dev",      label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
     { id: "npm",      label: "Register NPM",       desc: "create proxy host + Let's Encrypt cert",         key: "n", disabled: false           },
+    { id: "publish",  label: "Public toggle",      desc: "show / hide in the public Sites & Apps catalog",  key: "P", disabled: false           },
     { id: "sections", label: "Manage sections",    desc: "add / remove dynamic route sections",            key: "s", disabled: false           },
     { id: "doctor",   label: "Fix routing",        desc: "sync proxy route + verify NPM forward target",   key: "f", disabled: false           },
     { id: "delete",   label: "Delete zone",        desc: "remove all files, configs & docker service",     key: "D", disabled: false           },
@@ -57,8 +61,8 @@ export function buildCoreActions(zone: Zone): Action[] {
     { id: "deploy",  label: "Deploy",             desc: "docker compose pull + up",                        key: "d", disabled: false           },
     { id: "pull",    label: "Pull + up",          desc: "docker compose pull + up (no build)",             key: "p", disabled: false           },
     { id: "restart", label: "Restart",            desc: "docker compose restart",                          key: "r", disabled: false           },
-    { id: "build",   label: "Build + push",       desc: "docker build + push to GHCR",                    key: "b", disabled: !zone.dockerfile },
-    { id: "rebuild", label: "Rebuild (no cache)", desc: "docker build --no-cache + push (clean)",         key: "R", disabled: !zone.dockerfile },
+    { id: "build",   label: "Build + deploy",     desc: "build + push + pull + up  (ship)",                    key: "b", disabled: !zone.dockerfile },
+    { id: "rebuild", label: "Rebuild + deploy",   desc: "no-cache build + push + pull + up  (clean)",         key: "R", disabled: !zone.dockerfile },
     { id: "logs",    label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
     { id: "dev",     label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
   ];
@@ -105,6 +109,38 @@ const HINTS = [
   { k: "esc", label: "back"     },
 ];
 
+// ── ActionPanelRow Component ───────────────────────────────────────────────────
+
+interface ActionPanelRowProps {
+  action: Action;
+  focused: boolean;
+}
+
+function ActionPanelRow({ action, focused }: ActionPanelRowProps) {
+  const ref = React.useRef<any>(null);
+  useScrollIntoView(ref, focused);
+
+  return (
+    <Box ref={ref} paddingX={1} gap={2}>
+      <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
+        {focused ? "▶" : " "}
+      </Text>
+      <Box width={3}>
+        <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
+          [{action.key}]
+        </Text>
+      </Box>
+      <Box width={16}>
+        <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
+          {action.label}
+        </Text>
+      </Box>
+      <Text dimColor={!focused || action.disabled}>{action.desc}</Text>
+      {action.disabled && <Text dimColor>  (no Dockerfile)</Text>}
+    </Box>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
@@ -123,30 +159,34 @@ export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
         <Text dimColor>·</Text>
         <Text dimColor>{zone.domain}</Text>
         <Text dimColor>·</Text>
-        <Text color={statusColor(status)}>{status}</Text>
+        <Text color={statusColor(status)}>{statusLabel(status)}</Text>
       </Box>
+
+      {/* Vercel-hosted zones have no container to show uptime for — show
+          when UNAXIS last pushed source instead, since that's the thing
+          that actually determines what's live. */}
+      {zone.hosting === "vercel" && (() => {
+        const last = dbGetLedger({ zoneKey: zone.key, limit: 1 })[0];
+        return (
+          <Box paddingX={1} marginBottom={1}>
+            <Text dimColor>
+              {last?.createdAt
+                ? `last push: ${last.createdAt}  (${last.sourceRef || "unknown ref"})`
+                : "last push: never — press [b] to push this zone's source"}
+            </Text>
+          </Box>
+        );
+      })()}
 
       {/* ── Action rows ─────────────────────────────────────────────────── */}
       {actions.map((action, i) => {
         const focused = i === selected && !action.disabled;
         return (
-          <Box key={action.id} paddingX={1} gap={2}>
-            <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
-              {focused ? "▶" : " "}
-            </Text>
-            <Box width={3}>
-              <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
-                [{action.key}]
-              </Text>
-            </Box>
-            <Box width={16}>
-              <Text color={focused ? "cyan" : undefined} bold={focused} dimColor={action.disabled}>
-                {action.label}
-              </Text>
-            </Box>
-            <Text dimColor={!focused || action.disabled}>{action.desc}</Text>
-            {action.disabled && <Text dimColor>  (no Dockerfile)</Text>}
-          </Box>
+          <ActionPanelRow
+            key={action.id}
+            action={action}
+            focused={focused}
+          />
         );
       })}
 

@@ -23,7 +23,7 @@ import { rm }                          from "fs/promises";
 
 import { PROJECT_DIR }                 from "../../config/stack.ts";
 import { pathExists }                  from "../../utils/zoneScaffolding.ts";
-import { removeZoneDockerArtifacts }   from "../docker.ts";
+import { removeZoneDockerArtifacts, syncSharedZonesCompose }   from "../docker.ts";
 import { deleteZoneFromDb }            from "./registry.ts";
 import { removeFromRouteClassifier }   from "./route-classifier.ts";
 import { removeZoneRoute }             from "../proxy-config.ts";
@@ -74,6 +74,9 @@ export async function deleteZone(
 
   // 4. Remove from Supabase zones table
   await deleteZoneFromDb(key, onLine);
+
+  // 4.5 Synchronize unified zones compose file
+  await syncSharedZonesCompose(onLine);
 
   // 5. Remove override from routeClassifier.ts
   await removeFromRouteClassifier(key, onLine);

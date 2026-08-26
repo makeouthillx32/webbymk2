@@ -137,3 +137,15 @@
   --lt-shadow:     var(--gp-shadow);
   --lt-status-bar: var(--gp-bg);
 }
+
+/* BLOG — pin the iOS status-bar / browser chrome to the PAGE BACKGROUND.
+   The generic landing rule ties --lt-status-bar to --gp-bg (→ --accent in dark),
+   which drifts from the actual page body (--background) and shows a seam.
+   Matching the browser chrome to --background is the simplest, deterministic
+   fix — the top browser bar becomes the same color as the page it frames.
+   Compound selectors (0,2,0)/(0,2,1) outrank the .dark [data-layout="landing"]
+   override (0,1,1) so this wins in both themes. */
+[data-layout="landing"].blog-chrome,
+.dark [data-layout="landing"].blog-chrome {
+  --lt-status-bar: hsl(var(--background));
+}

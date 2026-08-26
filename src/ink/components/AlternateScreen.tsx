@@ -70,13 +70,17 @@ export function AlternateScreen({
     };
   }, [writeRaw, mouseTracking]);
 
+  // Constrain to terminal viewport height. Yoga now receives the terminal
+  // height at the root (via calculateLayout), so setting height={rows}
+  // here gives the flex-shrink algorithm a real budget to work with.
+  // overflow="hidden" clips any content that still exceeds the viewport
+  // after flex-shrink runs.
   return (
     <Box
       flexDirection="column"
-      height={rows}
       width="100%"
+      height={rows}
       overflow="hidden"
-      flexShrink={0}
     >
       {children}
     </Box>

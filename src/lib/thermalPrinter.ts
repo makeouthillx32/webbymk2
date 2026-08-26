@@ -174,7 +174,7 @@ export function buildReceiptBytes(data: ReceiptData, width = 32): Uint8Array {
    // ── Header ──────────────────────────────────────────────────
    .center()
    .bold(true).doubleHeight(true)
-   .text("Desert Cowgirl Co.").lf()
+   .text("Unenter Solutions").lf()
    .doubleHeight(false).bold(false)
    .lf()
    .text(fmtDate(date)).lf()

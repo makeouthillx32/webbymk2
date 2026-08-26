@@ -9,7 +9,7 @@
 // Payload shape:
 //   {
 //     v:     1,                      // format version
-//     host:  "192.168.50.204",       // target machine's LAN IP
+//     host:  "192.168.x.x",       // target machine's LAN IP
 //     port:  50506,                  // remote-IPC bridge port (separate from 50505)
 //     token: "<64-char hex>",        // 32 random bytes — bearer token
 //     slug:  "webbymk2",             // project slug (informational)
@@ -82,7 +82,7 @@ function fromBase64url(s: string): string {
 /**
  * Generate a new pairing key for the given host and project slug.
  *
- * @param host  LAN IP or hostname of this machine (e.g. "192.168.50.204")
+ * @param host  LAN IP or hostname of this machine (e.g. "192.168.x.x")
  * @param slug  Project slug (e.g. "webbymk2") — informational only
  */
 export function generatePairingKey(host: string, slug: string): GeneratedKey {
@@ -136,7 +136,7 @@ export function parsePairingKey(raw: string): PairingKeyPayload | null {
  * Return a human-readable summary for display in the TUI or CLI.
  *
  * Example:
- *   host  192.168.50.204:50506
+ *   host  192.168.x.x:50506
  *   slug  webbymk2
  *   exp   2026-05-23 14:30 (23h 59m)
  */

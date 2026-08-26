@@ -56,8 +56,26 @@ logs/
 errors.txt
 lastbuildlogs.ps
 
-# agents
+# agents & OpenClaw workspace files
 .agents/
+AGENTS.md
+SOUL.md
+USER.md
+TOOLS.md
+HEARTBEAT.md
+IDENTITY.md
+DREAMS.md
+BOOTSTRAP.md
+MEMORY.md
+memory/
+openclaw/
+.openclaw/
+openclaw-workspace-state.json
+openclaw*.json
+.vault-operator/
+vault-operator*
+
+
 
 # AI tool local configs
 .gemini/
@@ -78,6 +96,10 @@ backups/
 *.bak
 snapshopts.txt
 RUNTIME_PRIMITIVES_PREP_REPORT.md
+
+# snapshots
+.snapshots/
+snapshots/
 
 # -- Supabase runtime data -----------------------------------------------------
 # supabase-core/ is cloned from github.com/supabase/supabase on first run via
@@ -101,3 +123,13 @@ skills-lock.json
 
 # local infrastructure config (IPs, sensitive data -- never commit)
 config.json
+
+# Obsidian vault
+vault/
+.obsidian
+.obsidianignore
+# Temporary directories
+.tmp/
+supabase/claude_desktop_config.json
+claude_desktop_config.json
+proxy-config/status-history.json

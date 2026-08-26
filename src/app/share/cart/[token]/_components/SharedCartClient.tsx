@@ -14,6 +14,7 @@ import {
   MessageSquareQuote,
 } from "lucide-react";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,10 +69,10 @@ function getOptionSummary(options: Record<string, any> | null): string {
 
 function getSessionId(): string {
   if (typeof window === "undefined") return `anon_${Date.now()}`;
-  let id = localStorage.getItem("dcg_session_id");
+  let id = safeStorage.getItem("unenter_session_id");
   if (!id) {
     id = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("dcg_session_id", id);
+    safeStorage.setItem("unenter_session_id", id);
   }
   return id;
 }
@@ -394,14 +395,14 @@ export default function SharedCartClient({
             href="/collections/all"
             className="inline-flex items-center gap-2 text-sm font-semibold text-[hsl(var(--primary))] hover:underline"
           >
-            Browse the full Desert Cowgirl shop
+            Browse the full Unenter Solutions shop
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
 
         {/* Brand footer */}
         <p className="mt-10 text-center text-xs text-[hsl(var(--muted-foreground))]">
-          ✦ Desert Cowgirl Co. · Western-inspired boutique fashion ✦
+          ✦ Unenter Solutions · Western-inspired boutique fashion ✦
         </p>
       </div>
     </div>

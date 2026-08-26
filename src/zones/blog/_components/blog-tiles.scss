@@ -1,0 +1,181 @@
+// src/zones/blog/_components/blog-tiles.scss
+// GitButler-style bento tiling for the blog index (blog.unenter.live).
+// The tiling/layout lives here in SCSS; card typography stays Tailwind in Cards.tsx.
+//
+// Structure it produces (desktop):
+//   ┌────────────────────┬──────────────┐
+//   │        hero cover  │  hero text   │   .bt-hero
+//   ├────────────┬───────┴──────────────┤
+//   │            │  compact row card    │
+//   │  lead tile ├──────────────────────┤   .bt-bento
+//   │  (tall)    │  promo band          │
+//   ├──────┬─────┴─┬────────────────────┤
+//   │ tile │ tile  │ tile               │   .bt-trio
+//   └──────┴───────┴────────────────────┘
+
+// ── Vertical rhythm between tiling sections ─────────────────────────────────
+.bt-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 3.5rem;
+
+  @media (min-width: 768px) {
+    gap: 5rem;
+  }
+}
+
+// ── Hero: cover left, text right (GitButler front page) ─────────────────────
+.bt-hero {
+  display: grid;
+  gap: 1.75rem;
+  align-items: center;
+
+  @media (min-width: 1024px) {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 3.5rem;
+  }
+}
+
+// Aspect-ratio driven covers — tiles line up regardless of viewport width.
+// Covers are normalized to 1200×630 (1.9:1, OG ratio) on upload, so every
+// tile matches that ratio exactly: full-bleed display, ZERO cropping.
+.bt-cover-hero,
+.bt-cover-lead,
+.bt-cover-trio {
+  aspect-ratio: 1200 / 630;
+}
+
+// Small thumbnails (RowCard) — same native ratio, fixed width.
+.bt-cover-sm {
+  aspect-ratio: 1200 / 630;
+}
+
+// ── Bento: lead tile spans two rows; compact card + promo stack beside it ───
+.bt-bento {
+  display: grid;
+  gap: 2.5rem;
+
+  @media (min-width: 900px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "lead side"
+      "lead promo";
+    gap: 2rem;
+  }
+}
+
+// grid-area names only exist inside the ≥900px template above. Assigning them
+// unconditionally made every child resolve to the same implicit line on
+// mobile — all three tiles stacked into ONE cell, painting over each other.
+@media (min-width: 900px) {
+  .bt-bento-lead {
+    grid-area: lead;
+  }
+
+  .bt-bento-side {
+    grid-area: side;
+  }
+
+  .bt-bento-promo {
+    grid-area: promo;
+    align-self: stretch;
+  }
+}
+
+.bt-bento-promo {
+  display: flex;
+
+  > * {
+    flex: 1;
+  }
+}
+
+// ── Trio: three square tiles ────────────────────────────────────────────────
+.bt-trio {
+  display: grid;
+  gap: 2.5rem;
+
+  @media (min-width: 768px) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2rem;
+  }
+}
+
+// ── Real cover treatment: blurred canvas + contained artwork ────────────────
+// Uploaded covers come in every aspect ratio; hard object-cover crops into the
+// bento tiles butchered them. Instead the image itself — blown up, blurred,
+// saturated — becomes the tile canvas, and the full image floats on top
+// uncropped. Any upload fills any tile and looks deliberate.
+.bt-cover-bg {
+  object-fit: cover;
+  transform: scale(1.2);
+  filter: blur(26px) saturate(1.25);
+  opacity: 0.9;
+}
+
+.bt-cover-fg {
+  object-fit: contain;
+  padding: 5%;
+}
+
+// Hairline inner frame so pale covers don't melt into the page background.
+.bt-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(20 15 10 / 0.08);
+  pointer-events: none;
+}
+
+.dark .bt-frame::after {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+
+// ── Cover placeholder "skeleton" art (posts without a cover image) ──────────
+// GitButler-ish pastel tiles with a faint grid overlay, deterministic per slug
+// (Cards.tsx hashes the slug into bt-ph--0 … bt-ph--4).
+.bt-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.28) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.28) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+
+  span {
+    position: relative;
+    font-size: 3.25rem;
+    color: rgb(35 30 25 / 0.35);
+    transition: transform 0.5s;
+  }
+}
+
+.group:hover .bt-ph span {
+  transform: scale(1.08) rotate(-6deg);
+}
+
+// Small thumbnails (RowCard) — shrink the glyph and tighten the grid.
+.bt-cover-sm .bt-ph span {
+  font-size: 1.6rem;
+}
+
+.bt-cover-sm .bt-ph::before {
+  background-size: 22px 22px;
+}
+
+.bt-ph--0 { background: linear-gradient(135deg, #bfe8dd, #f4ead9 55%, #f0b3a0); }
+.bt-ph--1 { background: linear-gradient(135deg, #f6d9a7, #f4e8d8 50%, #a7c8f0); }
+.bt-ph--2 { background: linear-gradient(135deg, #d9c8f2, #f0e5f7 55%, #f2b8c6); }
+.bt-ph--3 { background: linear-gradient(135deg, #aee0f2, #eaf4ee 50%, #c9ecb4); }
+.bt-ph--4 { background: linear-gradient(135deg, #f4c1b8, #f7ecd9 55%, #b9dff0); }

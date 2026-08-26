@@ -1,10 +1,23 @@
-import { useTheme } from "next-themes";
+import type { MouseEvent } from "react";
+import { useTheme as useNextTheme } from "next-themes";
+import { useTheme as useApplicationTheme } from "@/app/provider";
 
 const ThemeToggler = () => {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useNextTheme();
+  const { themeType, toggleTheme } = useApplicationTheme();
+
+  const handleToggle = async (event: MouseEvent<HTMLButtonElement>) => {
+    const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
+
+    setTheme(nextTheme);
+    if (themeType !== nextTheme) {
+      await toggleTheme(event.currentTarget);
+    }
+  };
+
   return (
     <button aria-label='theme toggler'
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={handleToggle}
       className="flex items-center justify-center rounded-full cursor-pointer h-9 w-9 md:h-10 md:w-10 bg-[hsl(var(--muted))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--accent))] transition-colors"
     >
       <svg
