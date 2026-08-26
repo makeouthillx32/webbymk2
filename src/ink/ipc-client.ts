@@ -102,7 +102,7 @@ function streamCommand(
  *   dev  → CONNECT_HOST:50507
  *   auto → prod port (50505), falls back to dev (50507) if prod not running
  */
-export function sendIpcCommand(
+export async function sendIpcCommand(
   args:  string[],
   opts?: { quiet?: boolean; target?: "auto" | "prod" | "dev" },
 ): Promise<number> {
@@ -110,12 +110,20 @@ export function sendIpcCommand(
   const target = opts?.target ?? "auto";
   const cmd    = JSON.stringify({ argv: args });
 
-  const connect = (port: number, label: string) =>
-    new Promise<number>((resolve) => {
+  // silent: used only by "auto" for its first (prod) attempt — a
+  // ECONNREFUSED there isn't a real failure yet, it just means "try dev
+  // next", so it shouldn't print the "not running" line the way a genuine
+  // single-target failure should.
+  const connect = (port: number, label: string, silentRefused = false) =>
+    new Promise<number>((resolve, reject) => {
       const socket = net.connect(port, CONNECT_HOST);
       socket.on("connect", () => streamCommand(socket, cmd, quiet, resolve));
       socket.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "ECONNREFUSED") {
+          if (silentRefused) {
+            reject(err);
+            return;
+          }
           if (!quiet) process.stderr.write(`✗ ${label} TUI not running (${CONNECT_HOST}:${port})\n`);
         } else {
           process.stderr.write(`✗ IPC error: ${err.message}\n`);
@@ -127,8 +135,15 @@ export function sendIpcCommand(
   if (target === "dev")  return connect(DEV_PORT,  "dev");
   if (target === "prod") return connect(PROD_PORT, "prod");
 
-  // auto: try prod first, fallback to dev
-  return connect(PROD_PORT, "prod");
+  // auto: try prod first, silently fall back to dev on ECONNREFUSED — this
+  // was previously documented (see the docstring above) but not actually
+  // implemented; every "auto" call just failed outright whenever only a
+  // dev TUI was running instead of falling back to it.
+  try {
+    return await connect(PROD_PORT, "prod", true);
+  } catch {
+    return connect(DEV_PORT, "dev");
+  }
 }
 
 /** Legacy stub — kept for any remaining call sites during transition */

@@ -9,30 +9,43 @@ export function PublicCameraPlayer({
   camera: DiscoveredCamera;
   title?: string;
 }) {
-  if (camera.playback.status !== "ready") return null;
+  if (!camera.playbackUrl || camera.playbackProtocol === "none") return null;
 
-  if (camera.playback.webrtcPageUrl) {
-    const playerUrl = new URL(camera.playback.webrtcPageUrl);
-    playerUrl.searchParams.set("autoplay", "true");
-    playerUrl.searchParams.set("muted", "true");
-    playerUrl.searchParams.set("controls", "true");
+  if (camera.playbackProtocol === "whep") {
+    try {
+      const playerUrl = new URL(camera.playbackUrl);
+      playerUrl.searchParams.set("autoplay", "true");
+      playerUrl.searchParams.set("muted", "true");
+      playerUrl.searchParams.set("controls", "true");
 
-    return (
-      <iframe
-        title={title ?? `${camera.name} live stream`}
-        src={playerUrl.toString()}
-        className="absolute inset-0 h-full w-full border-0 bg-black"
-        allow="autoplay; fullscreen; picture-in-picture"
-        allowFullScreen
-      />
-    );
+      return (
+        <iframe
+          title={title ?? `${camera.name} live stream`}
+          src={playerUrl.toString()}
+          className="absolute inset-0 h-full w-full border-0 bg-black"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      );
+    } catch {
+      // Fall through to plain iframe if playbackUrl is relative or custom scheme
+      return (
+        <iframe
+          title={title ?? `${camera.name} live stream`}
+          src={camera.playbackUrl}
+          className="absolute inset-0 h-full w-full border-0 bg-black"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      );
+    }
   }
 
-  if (camera.playback.hlsUrl) {
+  if (camera.playbackProtocol === "hls") {
     return (
       <video
         className="absolute inset-0 h-full w-full bg-black object-contain"
-        src={camera.playback.hlsUrl}
+        src={camera.playbackUrl}
         autoPlay
         muted
         controls

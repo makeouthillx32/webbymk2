@@ -10,6 +10,7 @@ import { authLogger } from "@/lib/authLogger";
 import type { ProfileUpsertRow } from "./types";
 import { getAndClearLastPage, populateUserCookies, clearAuthCookies } from "./cookies";
 import { CORE_DOMAIN } from "@/lib/multiZone";
+import { RESEARCHER_ROLES } from "@/lib/research/requireResearcherRole";
 
 const isBlockedAuthPath = (pathOnly: string): boolean =>
   pathOnly === "/sign-in" ||
@@ -91,13 +92,17 @@ export const signUpAction = async (formData: FormData) => {
   // ── Profile upsert ────────────────────────────────────────────
   // auth_user_id and email are required for role checks, order linkage,
   // admin UI, and the customers identity system.
-  // role: "researcher" — accepting ToS at sign-up is what grants research-
-  // checkout eligibility; see src/lib/research/requireResearcherRole.ts.
+  // role: "member" — the baseline tier for every new account regardless of
+  // entry point. Was "researcher" (ToS acceptance alone granted research-
+  // compound checkout eligibility), which over-permissioned anyone signing
+  // up anywhere on the platform, Tank included. Researcher access is now a
+  // deliberate opt-in upgrade: requestResearcherAccessAction below, gated
+  // by src/lib/research/requireResearcherRole.ts.
   const payload: ProfileUpsertRow = {
     id: userId,
     auth_user_id: userId, // ← same as id for email/password signups
     email: email.toLowerCase().trim(),
-    role: "researcher",
+    role: "member",
     display_name: displayName,
     first_name: firstName,
     last_name: lastName,
@@ -186,9 +191,7 @@ export const signUpAction = async (formData: FormData) => {
     // never be an implicit post-auth destination, only something you
     // deliberately navigate to. Fixed 2026-08-12.
     const lastPage = safeRedirectPath(await getAndClearLastPage()) ?? "/";
-    // ✅ Append ?refresh=true so the client Provider immediately syncs the session
-    const separator = lastPage.includes("?") ? "&" : "?";
-    return redirect(`${lastPage}${separator}refresh=true`);
+    return redirect(lastPage);
   }
 
   return encodedRedirect("success", "/sign-in", "Account created. Please check your email to verify, then sign in.");
@@ -210,17 +213,27 @@ export const signInAction = async (formData: FormData) => {
   if (!data.user?.id) return encodedRedirect("error", "/sign-in", "Authentication failed");
   if (!data.session) return encodedRedirect("error", "/sign-in", "Session creation failed");
 
+  // Fallback is "/" — see signUpAction above for why this must never be a
+  // dashboard route.
+  const lastPage = nextPath ?? safeRedirectPath(await getAndClearLastPage()) ?? "/";
+
+  // A verified TOTP factor means password alone (aal1) isn't enough yet —
+  // detour through /mfa-challenge before granting the app cookies (userRole
+  // etc.) that populateUserCookies below would otherwise set. Mirrors the
+  // same gate in app/auth/sign-in/route.ts.
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    return redirect(
+      `/mfa-challenge?next=${encodeURIComponent(lastPage)}&remember=${remember}`,
+    );
+  }
+
   authLogger.memberSignIn(data.user.id, data.user.email || "", remember);
 
   await populateUserCookies(data.user.id, remember);
   await new Promise((r) => setTimeout(r, 100));
 
-  // Fallback is "/" — see signUpAction above for why this must never be a
-  // dashboard route.
-  const lastPage = nextPath ?? safeRedirectPath(await getAndClearLastPage()) ?? "/";
-  // ✅ Append ?refresh=true so the client Provider immediately syncs the session
-  const separator = lastPage.includes("?") ? "&" : "?";
-  return redirect(`${lastPage}${separator}refresh=true`);
+  return redirect(lastPage);
 };
 
 /**
@@ -280,4 +293,68 @@ export const signOutAction = async () => {
   await supabase.auth.signOut();
   await clearAuthCookies();
   return redirect("/");
+};
+
+// Deliberate opt-in upgrade to research-compound checkout eligibility — see
+// /research-access. Never downgrades an existing elevated role (the
+// .eq("role", "member") guard mirrors the same belt-and-suspenders pattern
+// used in auth/callback/oauth/page.tsx), and never silently no-ops: a
+// missing profile or a role outside ["member"] surfaces as an error instead
+// of a false "success" redirect, since a caller with no matching row would
+// otherwise get charged through checkout as if it worked.
+export const requestResearcherAccessAction = async (formData: FormData) => {
+  const accepted = formData.get("accept_research_terms")?.toString() === "on";
+  if (!accepted) {
+    return encodedRedirect(
+      "error",
+      "/research-access",
+      "You must accept the research-use terms to continue."
+    );
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return encodedRedirect("error", "/sign-in?next=/research-access", "Sign in first.");
+  }
+
+  const { data: updated, error } = await supabase
+    .from("profiles")
+    .update({
+      role: "researcher",
+      research_terms_accepted_at: new Date().toISOString(),
+    })
+    .eq("id", user.id)
+    .eq("role", "member")
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    return encodedRedirect("error", "/research-access", "Could not upgrade your account. Try again.");
+  }
+
+  if (!updated) {
+    // Either already researcher/admin (fine, treat as success) or some
+    // other role entirely (guest, etc.) — check which before claiming success.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profile && RESEARCHER_ROLES.includes(profile.role as (typeof RESEARCHER_ROLES)[number])) {
+      return redirect("/products?upgraded=true");
+    }
+
+    return encodedRedirect(
+      "error",
+      "/research-access",
+      "Your account isn't eligible to upgrade directly — contact support."
+    );
+  }
+
+  return redirect("/products?upgraded=true");
 };

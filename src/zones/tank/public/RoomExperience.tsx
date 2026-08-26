@@ -27,6 +27,7 @@ import type {
 } from "../contracts";
 import { CameraDirectoryClient } from "./CameraDirectoryClient";
 import { useTankRealtimeChat } from "./useTankRealtimeChat";
+import { TankChatBody } from "./TankChatEmoji";
 
 export function RoomExperience({
   room,
@@ -313,7 +314,9 @@ export function RoomExperience({
                     <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
                     <span>[SYSTEM CONSOLE]</span>
                   </div>
-                  <p className="text-slate-200 font-medium leading-relaxed">{message.body}</p>
+                  <div className="text-slate-200 font-medium leading-relaxed">
+                    <TankChatBody text={message.body} />
+                  </div>
                 </div>
               );
             }
@@ -335,9 +338,9 @@ export function RoomExperience({
                       </span>
                     )}
                   </div>
-                  <p className="text-slate-200 font-normal leading-relaxed whitespace-pre-wrap">
-                    {message.body.replace(/^🧠\s*\[HOUSE TRIVIA\]\s*/i, "").replace(/^⚡\s*\[HOUSE EVENT\]\s*/i, "")}
-                  </p>
+                  <div className="text-slate-200 font-normal leading-relaxed whitespace-pre-wrap">
+                    <TankChatBody text={message.body.replace(/^🧠\s*\[HOUSE TRIVIA\]\s*/i, "").replace(/^⚡\s*\[HOUSE EVENT\]\s*/i, "")} />
+                  </div>
                 </div>
               );
             }
@@ -355,9 +358,9 @@ export function RoomExperience({
                       </span>
                     )}
                   </div>
-                  <p className="text-slate-200 font-medium leading-relaxed">
-                    {message.body.replace(/^🎉\s*\[LEVEL UP\]\s*/i, "")}
-                  </p>
+                  <div className="text-slate-200 font-medium leading-relaxed">
+                    <TankChatBody text={message.body.replace(/^🎉\s*\[LEVEL UP\]\s*/i, "")} />
+                  </div>
                 </div>
               );
             }
@@ -411,7 +414,9 @@ export function RoomExperience({
                     <strong className="font-bold text-white tracking-wide">{message.user}</strong>
                     <span className="text-[10px] text-muted-foreground ml-auto">{message.time}</span>
                   </div>
-                  <p className="mt-1 text-slate-200 leading-relaxed break-words font-medium">{message.body}</p>
+                  <div className="mt-1 text-slate-200 leading-relaxed break-words font-medium">
+                    <TankChatBody text={message.body} />
+                  </div>
                 </div>
               </div>
             );

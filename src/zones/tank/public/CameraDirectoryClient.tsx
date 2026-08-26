@@ -123,7 +123,7 @@ export function CameraDirectoryClient({
                   {camera.name}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Camera key · {camera.id}
+                  {camera.roomScope} · {camera.audioStatus}
                 </p>
               </div>
               <ArrowRight className="h-4 w-4 text-muted-foreground transition group-hover:translate-x-1 group-hover:text-primary" />
@@ -131,6 +131,16 @@ export function CameraDirectoryClient({
             <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">
               {camera.reason}
             </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {camera.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
             <div className="mt-4 flex gap-4 border-t border-border pt-3 text-xs font-semibold text-muted-foreground">
               <span>
                 {camera.bitrateKbps

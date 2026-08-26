@@ -1,0 +1,1 @@
+export { TouchDesignerBridge } from "./TouchDesignerBridge";

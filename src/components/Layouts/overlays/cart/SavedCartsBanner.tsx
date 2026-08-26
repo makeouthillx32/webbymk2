@@ -10,6 +10,7 @@
 
 import { useState, useCallback } from "react";
 import { RotateCcw, ChevronDown, ChevronUp, X, Clock } from "lucide-react";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,10 +33,10 @@ function fmt(cents: number) {
 
 function getSessionId() {
   if (typeof window === "undefined") return "";
-  let id = localStorage.getItem("unenter_session_id");
+  let id = safeStorage.getItem("unenter_session_id");
   if (!id) {
     id = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("unenter_session_id", id);
+    safeStorage.setItem("unenter_session_id", id);
   }
   return id;
 }

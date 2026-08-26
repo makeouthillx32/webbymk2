@@ -16,11 +16,8 @@
 // migration lands and a loader replaces this file, ACTIVE_THEME below is
 // the source of truth.
 //
-// Asset origin: scraped from the real fishtank.live (web.archive.org
-// snapshot, Dec 2023) — Z:\WEBSITES\webbymk2\.tmp\tank_image_dump. Their
-// logo.png is deliberately NOT included/served here; everything else
-// (button/panel/texture art + the four font files) is generic UI chrome,
-// not a trademark.
+// Asset origin: all assets are served directly from Supabase Storage
+// (bucket `site-assets` and `tank-assets`). No local temp folders used.
 
 const SUPABASE_ASSET_BASE =
   "https://db.unenter.live/storage/v1/object/public/site-assets";
@@ -68,7 +65,7 @@ function assetUrl(theme: string, kind: "images" | "fonts", file: string): string
   return `${SUPABASE_ASSET_BASE}/tank-theme/${theme}/${kind}/${file}`;
 }
 
-export const FISHTANK_ARCADE_THEME: TankTheme = {
+export const TANK_ARCADE_THEME: TankTheme = {
   id: "fishtank-arcade",
   label: "Arcade Console",
   fonts: {
@@ -123,5 +120,57 @@ export const FISHTANK_ARCADE_THEME: TankTheme = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tank Background Themes & Status Bar Color Registry
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TankBackgroundTheme = {
+  id: string;
+  label: string;
+  themeId: string; // connects to unenter.live theme system id (e.g. 'tank-green')
+  backgroundUrl: string;
+  statusBarHex: string;
+  palette: {
+    base: string; // #637F6D (141.43 12.39% 44.31%)
+    highlight: string; // #789687 (150.00 12.50% 52.94%)
+    midtone: string; // #718F7F (148.00 11.81% 50.20%)
+    border: string; // #708E7F (150.00 11.81% 49.80%)
+  };
+};
+
+export const TANK_BACKGROUND_THEMES: TankBackgroundTheme[] = [
+  {
+    id: "tank-arcade-green",
+    label: "Arcade Green",
+    themeId: "tank-green",
+    backgroundUrl: "https://db.unenter.live/storage/v1/object/public/site-assets/tank-theme/fishtank-arcade/images/green-bg.png",
+    statusBarHex: "#637F6D",
+    palette: {
+      base: "#637F6D",
+      highlight: "#789687",
+      midtone: "#718F7F",
+      border: "#708E7F",
+    },
+  },
+  {
+    id: "tank-arcade-blue",
+    label: "Arcade Blue (Base)",
+    themeId: "tank-blue",
+    backgroundUrl: "https://db.unenter.live/storage/v1/object/public/tank-assets/patterns/asfalt-light.png",
+    statusBarHex: "#557194",
+    palette: {
+      base: "#557194",
+      highlight: "#6c8db5",
+      midtone: "#466080",
+      border: "#3b516c",
+    },
+  },
+];
+
+export function getTankBackgroundTheme(id?: string): TankBackgroundTheme {
+  const found = TANK_BACKGROUND_THEMES.find((t) => t.id === id);
+  return found || TANK_BACKGROUND_THEMES[0];
+}
+
 // Swap this to re-skin the whole zone once a second theme pack exists.
-export const ACTIVE_THEME: TankTheme = FISHTANK_ARCADE_THEME;
+export const ACTIVE_THEME: TankTheme = TANK_ARCADE_THEME;

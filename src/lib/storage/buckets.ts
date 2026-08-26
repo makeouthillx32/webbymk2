@@ -15,6 +15,13 @@ export const STORAGE_BUCKETS = {
   punchcards: "punchcards",
   shippingLabels: "shipping-labels",
   siteAssets: "site-assets",
+  tankAssets: "tank-assets",
+  tankAvatars: "tank-avatars",
+  tankArt: "tank-art",
+  tankEmoji: "tank-emoji",
+  tankEmojis: "tank-emojis",
+  tankItems: "tank-items",
+  tankSoundboard: "tank-soundboard",
 } as const;
 
 export type StorageBucket = (typeof STORAGE_BUCKETS)[keyof typeof STORAGE_BUCKETS];
@@ -30,6 +37,13 @@ export const PUBLIC_BUCKETS: StorageBucket[] = [
   STORAGE_BUCKETS.productImages,
   STORAGE_BUCKETS.punchcards,
   STORAGE_BUCKETS.siteAssets,
+  STORAGE_BUCKETS.tankAssets,
+  STORAGE_BUCKETS.tankAvatars,
+  STORAGE_BUCKETS.tankArt,
+  STORAGE_BUCKETS.tankEmoji,
+  STORAGE_BUCKETS.tankEmojis,
+  STORAGE_BUCKETS.tankItems,
+  STORAGE_BUCKETS.tankSoundboard,
 ];
 
 export const BLOG_IMAGE_BUCKET = STORAGE_BUCKETS.blogImages;

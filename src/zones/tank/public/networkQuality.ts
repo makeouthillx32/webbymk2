@@ -59,6 +59,11 @@ const SLOW: NetworkProfile = {
   maxConcurrentStreams: 1,
 };
 
+/** Same on the server and first browser render; live connection data applies after hydration. */
+export function getHydrationSafeNetworkProfile(): NetworkProfile {
+  return { ...SLOW, tier: "unknown", constrained: false, maxConcurrentStreams: 4, preload: "metadata" };
+}
+
 function readConnection(): any | null {
   if (typeof navigator === "undefined") return null;
   return (
@@ -78,7 +83,7 @@ export function detectNetworkProfile(): NetworkProfile {
   // buffer. Treat unknown as unknown and use the patient numbers, but keep the
   // tier honest so the UI never claims to know.
   if (!conn) {
-    return { ...SLOW, tier: "unknown", constrained: false, maxConcurrentStreams: 4, preload: "metadata" };
+    return getHydrationSafeNetworkProfile();
   }
 
   const saveData = Boolean(conn.saveData);

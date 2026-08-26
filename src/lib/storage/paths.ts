@@ -33,20 +33,27 @@ export function randomObjectId(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-/** Strip characters Supabase Storage dislikes in a single path segment. */
-export function safeSegment(value: string): string {
-  return String(value ?? "")
+/** Strip characters Supabase Storage dislikes in a single path segment, rejecting "undefined" and "null". */
+export function safeSegment(value: string | null | undefined): string {
+  const str = String(value ?? "");
+  if (!str || str === "undefined" || str === "null") return "";
+  return str
     .replace(/[^\w.-]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
 }
 
-/** Join path segments with single slashes and no leading/trailing slash. */
+/** Join path segments with single slashes, stripping out leading/trailing slashes and accidental "undefined" / "null" segments. */
 export function joinPath(...segments: (string | null | undefined)[]): string {
   return segments
-    .filter((segment): segment is string => Boolean(segment))
-    .map((segment) => segment.replace(/^\/+|\/+$/g, ""))
-    .filter(Boolean)
+    .filter((segment): segment is string => Boolean(segment) && segment !== "undefined" && segment !== "null")
+    .map((segment) =>
+      segment
+        .replace(/^\/+|\/+$/g, "")
+        .replace(/^(?:undefined|null)\/+/g, "")
+        .replace(/\/+(?:undefined|null)(?=\/|$)/g, "")
+    )
+    .filter((segment) => Boolean(segment) && segment !== "undefined" && segment !== "null")
     .join("/");
 }
 

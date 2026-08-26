@@ -9,6 +9,7 @@ export type CookieOptions = {
   secure: boolean;
   sameSite: "lax";
   maxAge: number;
+  domain?: string;
 };
 
 export type ProfileCookieRow = {

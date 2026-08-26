@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Zone } from "../config/zones.ts";
-import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone } from "./control-db.ts";
+import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone, dbEnableZone, dbSetZoneHosting } from "./control-db.ts";
 
 // In-memory cache (still useful to avoid repeated SQLite reads on tight loops)
 
@@ -88,5 +88,17 @@ export function removeZone(key: string, soft = true): void {
   } else {
     dbDeleteZone(key);
   }
+  invalidateZoneCache();
+}
+
+/** Re-enable a previously soft-disabled zone and bust the cache. */
+export function restoreZone(key: string): void {
+  dbEnableZone(key);
+  invalidateZoneCache();
+}
+
+/** Set a zone's hosting mode ('docker' | 'vercel') and bust the cache. */
+export function setZoneHosting(key: string, hosting: "docker" | "vercel"): void {
+  dbSetZoneHosting(key, hosting);
   invalidateZoneCache();
 }

@@ -94,13 +94,13 @@ export default function CameraPageClient({ slug }: { slug: string }) {
               </p>
             </div>
           </div>
-        ) : camera.playback.status !== "ready" ? (
+        ) : !camera.playbackUrl || camera.playbackProtocol === "none" ? (
           <div className="absolute inset-0 grid place-items-center text-white">
             <div className="rounded-2xl border border-white/15 bg-black/25 p-5 text-center backdrop-blur-sm">
               <Signal className="mx-auto h-8 w-8" />
               <p className="mt-2 font-bold">Live player connection point</p>
               <p className="mt-1 text-xs text-white/65">
-                {camera.playback.status === "unconfigured"
+                {!camera.playbackUrl
                   ? "Browser gateway is not configured"
                   : `${camera.protocol.toUpperCase()} · ${camera.bitrateKbps || "detecting"} kbps`}
               </p>
@@ -138,6 +138,14 @@ export default function CameraPageClient({ slug }: { slug: string }) {
             <p className="mt-2 text-sm text-muted-foreground">
               Stable camera key: {camera.id} · {camera.reason}
             </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Room: {camera.roomScope} · Audio: {camera.audioStatus}
+            </p>
+            {camera.audioWarning && (
+              <p className="mt-2 text-xs font-semibold text-amber-600">
+                {camera.audioWarning}
+              </p>
+            )}
           </div>
           <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm">
             <span className="block text-xs font-bold uppercase text-muted-foreground">

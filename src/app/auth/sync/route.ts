@@ -42,6 +42,5 @@ export async function POST(request: NextRequest) {
 
   await populateUserCookies(data.user.id, remember);
 
-  const separator = redirectTo.includes("?") ? "&" : "?";
-  return NextResponse.json({ redirectTo: `${redirectTo}${separator}refresh=true` });
+  return NextResponse.json({ redirectTo });
 }

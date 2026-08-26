@@ -22,8 +22,11 @@ describe("Tank media gateway public contract", () => {
         "https://media.tank.unenter.live/webrtc/cameras/cam-1786768240090/",
       whepUrl:
         "https://media.tank.unenter.live/webrtc/cameras/cam-1786768240090/whep",
+      // The AAC sibling path, not the main Opus one — Apple's HLS player
+      // cannot decode Opus, so WHEP and HLS deliberately point at different
+      // MediaMTX paths. See cameraHlsMediaPath in mediaPlayback.ts.
       hlsUrl:
-        "https://media.tank.unenter.live/hls/cameras/cam-1786768240090/index.m3u8",
+        "https://media.tank.unenter.live/hls/cameras/cam-1786768240090-hls/index.m3u8",
       audioPolicy: "transcode-required",
     });
   });

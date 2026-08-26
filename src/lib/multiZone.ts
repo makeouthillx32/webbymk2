@@ -7,6 +7,7 @@
 //  Zone         Host                        Port   Owns
 //  ──────────   ──────────────────────────  ─────  ───────────────────────────
 //  unenter      www.unenter.live            3000   /, /about, /services, etc.
+//  auth         auth.unenter.live           3000   /sign-in, /sign-up, /auth, /forgot-password, /reset-password
 //  dashboard    dashboard.unenter.live      3001   /dashboard/**
 //  shop         shop.unenter.live           3002   /shop, /products, /checkout
 //  app          app.unenter.live            3003   /profile, /settings, /client
@@ -27,6 +28,7 @@ export const SITE_HOST_HEADER = "x-unenter-host" as const;
 
 export type ZoneName =
   | "unenter"
+  | "auth"
   | "blog"
   | "dashboard"
   | "shop"
@@ -71,12 +73,21 @@ export const ZONES: Record<ZoneName, ZoneConfig> = {
       "/de",
       "/share",
       "/error",
-      // auth flows live on core domain
+    ],
+    requiresAuth: false,
+  },
+
+  auth: {
+    name: "auth",
+    host: `auth.${CORE_DOMAIN}`,
+    port: 3000, // monolith for now — same flat-overlay pattern as blog/tank
+    routePrefixes: [
       "/sign-in",
       "/sign-up",
       "/auth",
       "/forgot-password",
       "/reset-password",
+      "/mfa-challenge",
     ],
     requiresAuth: false,
   },
@@ -174,6 +185,10 @@ export interface ZonePromotion {
  * NOT promoted here (intentionally first-class / shared): "/u" — the public
  * profile + the /u/img and /u/doc service-role streaming routes are consumed
  * server-to-server on Core too, so redirecting them would break image/doc fetch.
+ *
+ * Auth is the second promoted zone — auth.unenter.live now owns the shared
+ * (auth-pages) route group and src/app/auth/* handlers exclusively; Core's
+ * copies redirect there instead of serving in parallel.
  */
 export const ZONE_PROMOTIONS: ZonePromotion[] = [
   { from: "/shop", toZone: "shop", status: "redirect", toPath: "/" },
@@ -181,6 +196,11 @@ export const ZONE_PROMOTIONS: ZonePromotion[] = [
   { from: "/collections", toZone: "shop", status: "redirect" },
   { from: "/checkout", toZone: "shop", status: "redirect" },
   { from: "/cart", toZone: "shop", status: "redirect" },
+  { from: "/sign-in", toZone: "auth", status: "redirect" },
+  { from: "/sign-up", toZone: "auth", status: "redirect" },
+  { from: "/auth", toZone: "auth", status: "redirect" },
+  { from: "/forgot-password", toZone: "auth", status: "redirect" },
+  { from: "/reset-password", toZone: "auth", status: "redirect" },
 ];
 
 /** Find the promotion entry that owns this pathname (longest `from` wins). */
@@ -382,8 +402,8 @@ export function getCanonicalHost(host: string | null | undefined): string {
 
 /** Given a URL pathname, returns the zone that owns it. */
 export function getZoneFromPathname(pathname: string): ZoneName {
-  // Check specific zones first (dashboard, shop, app before unenter)
-  const ordered: ZoneName[] = ["dashboard", "shop", "app", "unenter"];
+  // Check specific zones first (dashboard, shop, app, auth before unenter)
+  const ordered: ZoneName[] = ["dashboard", "shop", "app", "auth", "unenter"];
   for (const name of ordered) {
     const zone = ZONES[name];
     for (const prefix of zone.routePrefixes) {

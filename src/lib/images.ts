@@ -93,6 +93,44 @@ export function supabasePublicUrlFromImage(img?: DbImage | null): string | null 
 }
 
 /**
+ * Build a *transformed* public URL, served by the imgproxy instance already
+ * wired into this Supabase stack (`STORAGE_IMGPROXY_URL` in docker-compose).
+ *
+ * Why this matters: the source objects are print-resolution renders. Measured
+ * 2026-08-17 on `research-images` — 927 objects, 2.66 GB total, averaging
+ * 2.9 MB each, 912 of them over 1 MB. Serving those originals to browsers is
+ * what filled ~840 MB of a phone's Safari storage and, once the per-site
+ * quota is exhausted, breaks `localStorage` writes (Supabase persists the
+ * auth session there) — which locks the user out until they clear site data.
+ *
+ * Same object through the render endpoint:
+ *   original            4,484,796 bytes
+ *   width=600  q75       53,136 bytes   (~84x smaller)
+ *   width=1200 q80      150,488 bytes   (~30x smaller)
+ *
+ * `resize=contain` never upscales, so small sources are left alone.
+ */
+export function supabaseTransformedUrlFromImage(
+  img?: DbImage | null,
+  opts?: { width?: number; quality?: number },
+): string | null {
+  if (!img?.bucket_name || !img?.object_path) return null;
+  if (!STORAGE_BASE) return null;
+
+  const bucket = img.bucket_name.replace(/^\/+|\/+$/g, "");
+  const objectPath = img.object_path.replace(/^\/+/, "");
+  const encodedObjectPath = encodeObjectPath(objectPath);
+
+  const params = new URLSearchParams({
+    width: String(opts?.width ?? 1200),
+    quality: String(opts?.quality ?? 78),
+    resize: "contain",
+  });
+
+  return `${STORAGE_BASE}/storage/v1/render/image/public/${bucket}/${encodedObjectPath}?${params.toString()}`;
+}
+
+/**
  * Choose the primary image:
  * - prefer is_primary=true
  * - else lowest sort_order
@@ -129,8 +167,13 @@ export function pickPrimaryImage(images?: DbImage[] | null): DbImage | null {
  */
 export function getPrimaryImageUrl(images?: DbImage[] | null): string | null {
   const img = pickPrimaryImage(images);
-  const publicUrl = supabasePublicUrlFromImage(img);
-  return publicUrl ?? null;
+  // Transformed by default. These sources average ~2.9 MB (see
+  // supabaseTransformedUrlFromImage) and this is the hot path every product
+  // grid and card renders through, so shipping originals here is what
+  // actually fills users' device storage. Callers needing the untouched
+  // original (downloads, print, OG cards that bypass the transform) should
+  // call supabasePublicUrlFromImage directly.
+  return supabaseTransformedUrlFromImage(img) ?? supabasePublicUrlFromImage(img) ?? null;
 }
 
 /**

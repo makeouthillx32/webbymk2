@@ -27,6 +27,13 @@ export const UNAXIS_CLI_SCHEMA = {
         "--tail": { type: "number", description: "Lines of output to show per op (default 6)." }
       }
     },
+    host: {
+      description: "Inspect host resources, or diagnose Docker Desktop WSL VHD path and ownership guardrails.",
+      subcommands: ["doctor"],
+      options: {
+        "--json": { type: "boolean", description: "Output as structured JSON." }
+      }
+    },
     "build-doctor": {
       description: "Diagnose build-time SSG hangs: Docker memory + endpoint reachability from the unenter network.",
       arguments: [
@@ -122,6 +129,13 @@ export const UNAXIS_CLI_SCHEMA = {
     "db instances": {
       description: "List all active Supabase tenant databases.",
       options: {
+        "--json": { type: "boolean", description: "Output as structured JSON." }
+      }
+    },
+    "codev init": {
+      description: "Provision a local-only Supabase instance with fresh keys, seeded with Tank sample data, for an external contributor's own dev machine. No NPM/DNS, never touches the shared/production stack.",
+      options: {
+        "--slug": { type: "string", description: "Instance name (default: codev)." },
         "--json": { type: "boolean", description: "Output as structured JSON." }
       }
     },

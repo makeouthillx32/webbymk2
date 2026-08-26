@@ -20,6 +20,7 @@ import { Theme } from "@/types/theme";
 import { defaultThemeId, getThemeById, getAvailableThemeIds } from "@/themes";
 import { dynamicFontManager } from "@/lib/dynamicFontManager";
 import { transitionTheme, smoothThemeToggle } from "@/utils/themeTransitions";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ── Context type ──────────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
         const theme = await getThemeById(id);
         if (theme) {
           setThemeIdState(id);
-          localStorage.setItem("themeId", id);
+          safeStorage.setItem("themeId", id);
           setCookie("themeId", id, { path: "/", maxAge: 31536000 });
           console.log(`🎨 Theme changed to: ${theme.name} (${id})`);
         } else {
@@ -125,7 +126,7 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
     setMounted(true);
 
     const initializeTheme = async () => {
-      const savedThemeId = localStorage.getItem("themeId") || getCookie("themeId");
+      const savedThemeId = safeStorage.getItem("themeId") || getCookie("themeId");
       if (savedThemeId) {
         const theme = await getThemeById(savedThemeId);
         if (theme) setThemeIdState(savedThemeId);
@@ -135,7 +136,7 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
         }
       }
 
-      const savedThemeType = localStorage.getItem("theme") || getCookie("theme");
+      const savedThemeType = safeStorage.getItem("theme") || getCookie("theme");
       if (!savedThemeType) {
         const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
         setThemeType(systemPrefersDark ? "dark" : "light");
@@ -150,6 +151,31 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
   // Apply CSS variables, fonts, and persist selection whenever theme changes.
   useEffect(() => {
     if (!mounted || availableThemes.length === 0) return;
+
+    // Tank has its own dedicated, hardcoded arcade theme (theme.ts's
+    // ACTIVE_THEME, rendered via TankThemeStyles's own @font-face rules) —
+    // it doesn't consume useTheme() anywhere, so this DB-fetched platform
+    // theme was never meant to apply there at all. It was still running
+    // unconditionally in every zone (Tank's layout wraps in the same shared
+    // <Providers> as everywhere else), overwriting Tank's own font-family
+    // custom properties with whatever the platform default theme's fonts
+    // are (Plus Jakarta Sans / Source Serif 4 / JetBrains Mono) every time
+    // this effect re-ran — including on router.refresh(), which
+    // InternalAuthProvider fires on every auth-state observation (initial
+    // mount, pageshow, visibilitychange...). Two theme systems fighting,
+    // repeatedly, most visible on WebKit's less-forgiving custom-property
+    // repaint timing. Confirmed 2026-08-17 — reported as "fonts flashing"
+    // on mobile/WebKit specifically in Tank's director view.
+    const isTankZone =
+      process.env.NEXT_PUBLIC_ZONE === "tank" ||
+      (typeof window !== "undefined" &&
+        (window.location.hostname.includes("tank.") ||
+          window.location.pathname.startsWith("/tank")));
+
+    if (isTankZone) {
+      dismissPreloader();
+      return;
+    }
 
     const applyTheme = async () => {
       try {
@@ -185,7 +211,7 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
           document.body.style.letterSpacing = theme.typography.trackingNormal;
         }
 
-        localStorage.setItem("theme", themeType);
+        safeStorage.setItem("theme", themeType);
         setCookie("theme", themeType, { path: "/", maxAge: 31536000 });
 
         // Cache resolved bg + primary HSL values so the preloader inline script
@@ -193,8 +219,8 @@ export function ThemeProviderWrapper({ children }: { children: React.ReactNode }
         try {
           const bgValue = variables["--background"];
           const primaryValue = variables["--primary"];
-          if (bgValue) localStorage.setItem(`unenter-preloader-bg-${themeType}`, bgValue);
-          if (primaryValue) localStorage.setItem("unenter-preloader-primary", primaryValue);
+          if (bgValue) safeStorage.setItem(`unenter-preloader-bg-${themeType}`, bgValue);
+          if (primaryValue) safeStorage.setItem("unenter-preloader-primary", primaryValue);
         } catch (_) { /* non-critical */ }
 
         console.log(`✅ Theme applied: ${theme.name} (${themeType})`);

@@ -25,7 +25,10 @@ import { useEffect } from "react";
 
 const RELOAD_KEY = "__chunk_reload_ts";
 const COUNT_KEY = "__chunk_reload_count";
+const WINDOW_KEY = "__chunk_reload_window_start";
 const THROTTLE_MS = 10_000;
+const ATTEMPT_WINDOW_MS = 60_000;
+const SUCCESS_RESET_MS = 15_000;
 const MAX_ATTEMPTS = 3;
 
 function isChunkError(value: unknown): boolean {
@@ -43,10 +46,23 @@ export default function ChunkReloader() {
   useEffect(() => {
     const reloadOnce = () => {
       try {
+        const now = Date.now();
         const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
-        if (Date.now() - last < THROTTLE_MS) return; // already tried recently — avoid loop
+        if (now - last < THROTTLE_MS) return; // already tried recently — avoid loop
 
-        const attempts = Number(sessionStorage.getItem(COUNT_KEY) || 0) + 1;
+        const storedWindowStart = Number(
+          sessionStorage.getItem(WINDOW_KEY) || 0,
+        );
+        const windowStart =
+          storedWindowStart > 0 && now - storedWindowStart < ATTEMPT_WINDOW_MS
+            ? storedWindowStart
+            : now;
+        const previousAttempts =
+          windowStart === storedWindowStart
+            ? Number(sessionStorage.getItem(COUNT_KEY) || 0)
+            : 0;
+
+        const attempts = previousAttempts + 1;
         if (attempts > MAX_ATTEMPTS) {
           // Hard stop: a real fix (or manual refresh) is needed at this point.
           // Reloading kept us here before — see incident note above.
@@ -56,7 +72,8 @@ export default function ChunkReloader() {
           return;
         }
 
-        sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+        sessionStorage.setItem(WINDOW_KEY, String(windowStart));
+        sessionStorage.setItem(RELOAD_KEY, String(now));
         sessionStorage.setItem(COUNT_KEY, String(attempts));
       } catch {
         /* sessionStorage unavailable — fall through to reload */
@@ -73,7 +90,18 @@ export default function ChunkReloader() {
 
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
+    // A page that remains mounted has successfully crossed the stale-chunk
+    // danger window. Reset the incident budget so a deployment days later is
+    // not rejected because Safari retained three ancient attempts.
+    const successReset = window.setTimeout(() => {
+      try {
+        sessionStorage.removeItem(RELOAD_KEY);
+        sessionStorage.removeItem(COUNT_KEY);
+        sessionStorage.removeItem(WINDOW_KEY);
+      } catch {}
+    }, SUCCESS_RESET_MS);
     return () => {
+      window.clearTimeout(successReset);
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
     };

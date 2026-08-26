@@ -10,9 +10,10 @@ import React              from "react";
 import { Box, Text }      from "../../runtimeInk.js";
 import type { Zone }      from "../../../config/zones.ts";
 import type { Status }    from "../../docker.ts";
-import { statusColor }    from "../../components/StatusBadge.tsx";
+import { statusColor, statusLabel } from "../../components/StatusBadge.tsx";
 import { KeyHints }       from "../../components/KeyHint.tsx";
 import { useScrollIntoView } from "../../components/ScrollBox.js";
+import { dbGetLedger }    from "../../control-db.ts";
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -158,8 +159,24 @@ export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
         <Text dimColor>·</Text>
         <Text dimColor>{zone.domain}</Text>
         <Text dimColor>·</Text>
-        <Text color={statusColor(status)}>{status}</Text>
+        <Text color={statusColor(status)}>{statusLabel(status)}</Text>
       </Box>
+
+      {/* Vercel-hosted zones have no container to show uptime for — show
+          when UNAXIS last pushed source instead, since that's the thing
+          that actually determines what's live. */}
+      {zone.hosting === "vercel" && (() => {
+        const last = dbGetLedger({ zoneKey: zone.key, limit: 1 })[0];
+        return (
+          <Box paddingX={1} marginBottom={1}>
+            <Text dimColor>
+              {last?.createdAt
+                ? `last push: ${last.createdAt}  (${last.sourceRef || "unknown ref"})`
+                : "last push: never — press [b] to push this zone's source"}
+            </Text>
+          </Box>
+        );
+      })()}
 
       {/* ── Action rows ─────────────────────────────────────────────────── */}
       {actions.map((action, i) => {

@@ -1,4 +1,6 @@
 // lib/cookieUtils.ts
+import { safeStorage } from "./safeStorage";
+
 const DEFAULT_PATH = "/";
 const DEFAULT_MAX_AGE = 7 * 24 * 60 * 60;
 const DEFAULT_SAME_SITE = "lax";
@@ -109,7 +111,7 @@ export const setCookie = (
       // iOS fallback ONLY for auth cookies (NOT roles)
       if (isIOS && isAuthCookie) {
         try {
-          localStorage.setItem(
+          safeStorage.setItem(
             `backup_${name}`,
             JSON.stringify({
               value,
@@ -146,14 +148,14 @@ export const getCookie = (name: string): string | null => {
     const isIOS = isIOSDevice();
     const isAuthCookie = isAuthCookieName(name);
 
-    if (isIOS && isAuthCookie && typeof localStorage !== "undefined") {
+    if (isIOS && isAuthCookie) {
       try {
-        const backupData = localStorage.getItem(`backup_${name}`);
+        const backupData = safeStorage.getItem(`backup_${name}`);
         if (backupData) {
           const parsed = JSON.parse(backupData);
           const age = (Date.now() - parsed.timestamp) / 1000;
           if (age < parsed.maxAge) return parsed.value;
-          localStorage.removeItem(`backup_${name}`);
+          safeStorage.removeItem(`backup_${name}`);
         }
       } catch {}
     }
@@ -172,7 +174,7 @@ export const removeCookie = (
   setCookie(name, "", { ...options, expires: new Date(0), maxAge: 0 });
   if (isIOSDevice()) {
     try {
-      localStorage.removeItem(`backup_${name}`);
+      safeStorage.removeItem(`backup_${name}`);
     } catch {}
   }
 };
@@ -215,10 +217,8 @@ export const storage = {
     const serializedItem = JSON.stringify(item);
 
     try {
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(key, serializedItem);
-        return;
-      }
+      safeStorage.setItem(key, serializedItem);
+      return;
     } catch {}
 
     try {
@@ -238,7 +238,7 @@ export const storage = {
 
   get: <T>(key: string, defaultValue?: T, expectedUserId?: string): T | null => {
     const sources = [
-      { name: "localStorage", storage: typeof localStorage !== "undefined" ? localStorage : null },
+      { name: "safeStorage", storage: safeStorage },
       { name: "sessionStorage", storage: typeof sessionStorage !== "undefined" ? sessionStorage : null },
       { name: "cookie", storage: { getItem: (k: string) => getJSONCookie(k) } },
     ];
@@ -275,7 +275,7 @@ export const storage = {
 
   remove: (key: string): void => {
     try {
-      if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+      safeStorage.removeItem(key);
     } catch {}
     try {
       if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(key);
@@ -292,14 +292,12 @@ export const storage = {
     const result: { [source: string]: any } = {};
 
     try {
-      if (typeof localStorage !== "undefined") {
-        const item = localStorage.getItem(key);
-        result.localStorage = item
-          ? { exists: true, size: item.length, preview: item.slice(0, 100) + "..." }
-          : { exists: false };
-      }
+      const item = safeStorage.getItem(key);
+      result.safeStorage = item
+        ? { exists: true, size: item.length, preview: item.slice(0, 100) + "..." }
+        : { exists: false };
     } catch (e: any) {
-      result.localStorage = { error: e?.message || String(e) };
+      result.safeStorage = { error: e?.message || String(e) };
     }
 
     try {

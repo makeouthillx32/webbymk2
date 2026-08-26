@@ -88,6 +88,16 @@ async function handlePaymentSucceeded(
   stripe: Stripe,
   paymentIntent: Stripe.PaymentIntent
 ) {
+  // Tank store purchases (season pass / token packs / room-upgrade bones)
+  // carry tank_purchase_id instead of order_id — a season pass isn't a
+  // shipped order and doesn't belong in the orders/order_items schema.
+  // Branch before the order_id check below so this doesn't log a spurious
+  // "No order_id" error for every Tank purchase.
+  if (paymentIntent.metadata.tank_purchase_id) {
+    await handleTankPurchaseSucceeded(supabase, paymentIntent);
+    return;
+  }
+
   const orderId = paymentIntent.metadata.order_id;
 
   if (!orderId) {
@@ -241,6 +251,80 @@ async function handlePaymentSucceeded(
   } catch (notifErr) {
     // Non-fatal — order is already marked paid, don't throw
     console.error('[Notifications] ⚠️ Failed to send new order notification:', notifErr);
+  }
+}
+
+// Tank store fulfillment — token packs increment tank_profiles.tokens
+// directly; season pass flips season_pass_active; room_vip is deliberately
+// a placeholder (no real room-tier gating exists yet) that still proves the
+// purchase -> fulfillment path end to end. Same duplicate-delivery guard as
+// the shop path: only transitions FROM 'pending', so a Stripe retry that
+// redelivers this event matches zero rows the second time and no-ops.
+async function handleTankPurchaseSucceeded(supabase: any, paymentIntent: Stripe.PaymentIntent) {
+  const purchaseId = paymentIntent.metadata.tank_purchase_id;
+  const productKey = paymentIntent.metadata.product_key;
+  const userId = paymentIntent.metadata.user_id;
+
+  if (!purchaseId || !productKey || !userId) {
+    console.error('[Tank Store] Missing metadata on payment intent', paymentIntent.id);
+    return;
+  }
+
+  const { data: purchase, error } = await supabase
+    .from('tank_purchases')
+    .update({ status: 'paid', fulfilled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', purchaseId)
+    .eq('status', 'pending')
+    .select('id, product_key')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[Tank Store] Failed to mark purchase paid:', error);
+    return;
+  }
+  if (!purchase) {
+    console.log(`[Tank Store] Purchase ${purchaseId} already processed — skipping fulfillment`);
+    return;
+  }
+
+  try {
+    if (productKey.startsWith('tokens_')) {
+      const TOKEN_AMOUNTS: Record<string, number> = {
+        tokens_500: 500,
+        tokens_1500: 1500,
+        tokens_5000: 5000,
+      };
+      const grant = TOKEN_AMOUNTS[productKey] ?? 0;
+      if (grant > 0) {
+        const { data: profile } = await supabase
+          .from('tank_profiles')
+          .select('tokens')
+          .eq('user_id', userId)
+          .maybeSingle();
+        await supabase
+          .from('tank_profiles')
+          .upsert(
+            { user_id: userId, tokens: (profile?.tokens ?? 0) + grant, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' },
+          );
+        console.log(`[Tank Store] Granted ${grant} tokens to ${userId} (purchase ${purchaseId})`);
+      }
+    } else if (productKey === 'season_pass') {
+      await supabase
+        .from('tank_profiles')
+        .upsert(
+          { user_id: userId, season_pass_active: true, season_pass_purchased_at: new Date().toISOString() },
+          { onConflict: 'user_id' },
+        );
+      console.log(`[Tank Store] Activated season pass for ${userId} (purchase ${purchaseId})`);
+    } else if (productKey === 'room_vip') {
+      // Bones only — no room-tier gating exists yet to actually grant.
+      console.log(`[Tank Store] room_vip purchase ${purchaseId} paid — no gating wired yet, purchase recorded only`);
+    }
+  } catch (fulfillErr) {
+    // Non-fatal — the purchase is marked paid regardless; a stuck
+    // fulfillment can be replayed manually from tank_purchases.
+    console.error('[Tank Store] Fulfillment error:', fulfillErr);
   }
 }
 

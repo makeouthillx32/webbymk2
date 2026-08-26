@@ -17,6 +17,7 @@ export type StreamIngestEventType =
   | "stream_start"
   | "stream_stop"
   | "reconnect_grace"
+  | "audio_track_assigned"
   | "stream_retired";
 
 export type CameraLifecycleResult = CameraLifecycleMemory & {

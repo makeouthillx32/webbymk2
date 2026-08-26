@@ -64,8 +64,7 @@ export default async function SignUpPage({
       <SignInWithGoogle />
       <p className="mt-2 text-center text-[11px] text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-relaxed">
         By continuing with Google you agree to our{" "}
-        <Link href="/terms" className="underline hover:text-[hsl(var(--sidebar-primary))]">Terms</Link>{" "}
-        and research-use terms.
+        <Link href="/terms" className="underline hover:text-[hsl(var(--sidebar-primary))]">Terms</Link>.
       </p>
 
       <div className="flex items-center my-6">
@@ -172,9 +171,11 @@ export default async function SignUpPage({
           </div>
         </div>
 
-        {/* Required — this is what grants the "researcher" role that gates
-            research-compound checkout (see signUpAction). Not just a
-            decorative link: no checkbox, no account. */}
+        {/* Required for every account, but no longer grants "researcher" —
+            that's a separate, deliberate opt-in at /research-access now
+            (requestResearcherAccessAction). No checkbox, no account, same
+            as before; it just doesn't unlock research-compound checkout
+            by itself anymore. */}
         <div className="flex items-start gap-2.5 pt-1">
           <input
             id="accept_terms"
@@ -195,7 +196,7 @@ export default async function SignUpPage({
             <Link href="/privacy" className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200">
               Privacy Policy
             </Link>
-            , including the research-use terms required to purchase research compounds.
+            .
           </Label>
         </div>
 

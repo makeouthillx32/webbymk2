@@ -41,6 +41,7 @@ function getGitSourceRef(): string {
 
 export const DOCKER_ENV: Record<string, string> = {
   ...(process.env as Record<string, string>),
+  DOCKER_API_VERSION: process.env.DOCKER_API_VERSION || "1.45",
   ...(process.platform !== "win32"
     ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
     : {}),

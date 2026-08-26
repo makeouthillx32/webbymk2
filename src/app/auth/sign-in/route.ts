@@ -100,9 +100,19 @@ export async function POST(request: NextRequest) {
     return redirectWithError(request, "Authentication failed.", explicitNext);
   }
 
+  // A verified TOTP factor means password alone (aal1) isn't enough yet —
+  // detour through /mfa-challenge before granting the app cookies
+  // (userRole etc.) that populateUserCookies below would otherwise set.
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    const challengeUrl = new URL("/mfa-challenge", getPublicOrigin(request));
+    challengeUrl.searchParams.set("next", nextPath);
+    challengeUrl.searchParams.set("remember", remember ? "true" : "false");
+    return NextResponse.redirect(challengeUrl, 303);
+  }
+
   authLogger.memberSignIn(data.user.id, data.user.email || "", remember);
   await populateUserCookies(data.user.id, remember);
 
-  const separator = nextPath.includes("?") ? "&" : "?";
-  return redirectTo(request, `${nextPath}${separator}refresh=true`);
+  return redirectTo(request, nextPath);
 }

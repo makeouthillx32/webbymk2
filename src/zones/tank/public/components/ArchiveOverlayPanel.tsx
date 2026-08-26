@@ -26,6 +26,7 @@ type Segment = {
   durationSeconds: number;
   tier: "hot" | "cold" | "expired";
   playbackUrl: string | null;
+  codec?: "h264" | "av1";
 };
 
 type BrowseResponse = {
@@ -36,6 +37,10 @@ type BrowseResponse = {
   days: ArchiveDay[];
   segments: Segment[];
 };
+
+// Kept in step with TANK_ARCHIVE_BROWSABLE_DAYS. If the window changes, this
+// is the number the notice quotes at viewers.
+const ARCHIVE_PUBLIC_DAYS = 5;
 
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -56,6 +61,23 @@ function formatDuration(totalSeconds: number): string {
 function clock(iso: string) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+
+/**
+ * True when this browser can play AV1.
+ *
+ * Segments past the public window are AV1, which Safari decodes only on newer
+ * hardware (A17 Pro / M3 and later). Without this check those viewers get a
+ * black player and no explanation, so the answer drives a plain-language
+ * notice rather than a silent failure.
+ */
+function canPlayAv1(): boolean {
+  if (typeof document === "undefined") return true;
+  const v = document.createElement("video");
+  // "probably" and "maybe" both count: browsers are deliberately vague here,
+  // and an empty string is the only clear "no".
+  return v.canPlayType('video/mp4; codecs="av01.0.05M.08"') !== "";
 }
 
 export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: string }) {
@@ -107,6 +129,11 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
 
   const active = playable[activeIndex] ?? null;
 
+  // Older footage is AV1, which needs a recent device. Work out whether this
+  // viewer is affected rather than letting them hit a silent black player.
+  const av1Supported = useMemo(() => canPlayAv1(), []);
+  const viewingAv1 = (data?.segments ?? []).some((x) => x.codec === "av1");
+
   // A day is many segments; roll into the next one so it plays as one
   // continuous recording rather than stopping every ten minutes.
   const onEnded = useCallback(() => {
@@ -130,7 +157,7 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           Sign in to browse recorded footage room by room.
         </p>
         <a
-          href="https://www.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live"
+          href="https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live"
           className="mt-1 rounded bg-[#f26d4b] px-3 py-1 text-xs font-black uppercase text-white"
         >
           Sign in
@@ -151,10 +178,10 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
               setRoom(r.slug);
               setDate("");
             }}
-            className={`rounded border px-2 py-1 text-[11px] font-black uppercase tracking-wide transition ${
+            className={`rounded border px-2.5 py-1 text-[11px] font-black uppercase tracking-wider transition ${
               r.slug === room
-                ? "border-black/60 bg-[#f26d4b] text-white"
-                : "border-black/25 bg-white/70 text-[#241f14] hover:bg-white"
+                ? "border-black/60 bg-gradient-to-b from-[#ff8a7a] to-[#ff3b2f] text-white shadow"
+                : "border-black/30 bg-black/80 text-yellow-400 hover:bg-black/90"
             }`}
           >
             {r.name}
@@ -168,16 +195,16 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           type="button"
           aria-label="Earlier dates"
           onClick={() => stripRef.current?.scrollBy({ left: -200, behavior: "smooth" })}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded border border-black/30 bg-white/70 text-[#241f14]"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded border border-black/40 bg-black/80 text-yellow-400 hover:bg-black/90 active:scale-95 shadow"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
 
-        <div ref={stripRef} className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
-          {loading && <p className="py-2 text-xs" style={{ color: "#4c4630" }}>Loading…</p>}
+        <div ref={stripRef} className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-1 scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {loading && <p className="py-2 text-xs font-mono text-slate-400">Loading telemetry…</p>}
           {!loading && daysWithFootage.length === 0 && (
-            <p className="py-2 text-xs" style={{ color: "#4c4630" }}>
-              No footage recorded for this room yet.
+            <p className="py-2 text-xs font-mono text-slate-400">
+              No recorded logs in this sector yet.
             </p>
           )}
           {daysWithFootage.map((d) => {
@@ -189,17 +216,15 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
                 type="button"
                 title={`${formatDuration(d.totalSeconds)} across ${d.segmentCount} recordings${d.isComplete ? "" : " — still recording"}`}
                 onClick={() => setDate(d.date)}
-                className={`flex w-[58px] shrink-0 flex-col items-center rounded border px-1 py-0.5 transition ${
+                className={`flex w-[62px] shrink-0 flex-col items-center rounded border px-1.5 py-1 transition ${
                   selected
-                    ? "border-black/60 bg-[#f26d4b] text-white"
-                    : "border-black/30 bg-white text-[#241f14] hover:bg-[#ffe9c9]"
+                    ? "border-yellow-400 bg-amber-950/80 text-yellow-300 ring-2 ring-yellow-400 shadow-[0_0_8px_rgba(234,179,8,0.5)]"
+                    : "border-black/40 bg-black/80 text-slate-300 hover:bg-black/90"
                 }`}
               >
-                <span className="text-[8px] font-bold leading-tight">{month}</span>
-                <span className="text-xs font-black leading-tight">{day}</span>
-                {/* How much of the day was captured, and whether it is final.
-                    A day still recording is unfinished, not short. */}
-                <span className="text-[7px] font-bold leading-tight opacity-70">
+                <span className="text-[8px] font-mono font-bold leading-tight uppercase">{month}</span>
+                <span className="text-sm font-mono font-black leading-tight">{day}</span>
+                <span className="text-[7px] font-black leading-tight opacity-75 uppercase">
                   {d.isComplete ? formatDuration(d.totalSeconds) : "REC"}
                 </span>
               </button>
@@ -211,14 +236,14 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           type="button"
           aria-label="Later dates"
           onClick={() => stripRef.current?.scrollBy({ left: 200, behavior: "smooth" })}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded border border-black/30 bg-white/70 text-[#241f14]"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded border border-black/40 bg-black/80 text-yellow-400 hover:bg-black/90 active:scale-95 shadow"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
       </div>
 
       {/* Player */}
-      <div className="overflow-hidden rounded border border-black/30 bg-black">
+      <div className="overflow-hidden rounded border border-black/60 bg-black/95 shadow-inner">
         {active?.playbackUrl ? (
           <video
             key={active.id}
@@ -231,10 +256,10 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           />
         ) : (
           <div className="grid aspect-video w-full place-items-center px-4 text-center">
-            <p className="text-xs text-white/60">
+            <p className="text-xs font-mono text-slate-400">
               {date && playable.length === 0
-                ? "No streamable footage for this day."
-                : "Pick a room and a date."}
+                ? "No streamable footage for this cycle."
+                : "Select a camera room and timestamp to initiate playback."}
             </p>
           </div>
         )}
@@ -242,16 +267,16 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
 
       {/* Segment rail */}
       {playable.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5 pt-1">
           {playable.map((s, i) => (
             <button
               key={s.id}
               type="button"
               onClick={() => setActiveIndex(i)}
-              className={`rounded border px-1.5 py-0.5 text-[10px] font-bold transition ${
+              className={`rounded border px-2 py-1 font-mono text-[10px] font-black transition ${
                 i === activeIndex
-                  ? "border-black/60 bg-[#f26d4b] text-white"
-                  : "border-black/25 bg-white/80 text-[#241f14] hover:bg-white"
+                  ? "border-yellow-400 bg-gradient-to-b from-[#ff8a7a] to-[#ff3b2f] text-white shadow-[0_0_8px_rgba(234,179,8,0.5)]"
+                  : "border-black/40 bg-black/80 text-yellow-400/90 hover:bg-black"
               }`}
             >
               {clock(s.segmentStart)}
@@ -260,22 +285,28 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
         </div>
       )}
 
-      {/* Cold footage exists but cannot stream — say so rather than quietly
-          showing a shorter day than was actually recorded. */}
-      {date && (data?.segments.length ?? 0) > playable.length && (
-        <p className="text-[11px]" style={{ color: "#4c4630" }}>
-          {(data!.segments.length - playable.length)} recording(s) from this day are in cold
-          storage and aren&apos;t streamable here.
+      {/* Device can't decode what it's being handed */}
+      {viewingAv1 && !av1Supported && (
+        <p className="rounded border border-amber-500/40 bg-amber-950/80 p-2 text-[11px] font-mono text-amber-300">
+          ⚠️ This footage format requires AV1 codec hardware. Older archives ({ARCHIVE_PUBLIC_DAYS}+ days) are encoded in AV1. Recent footage plays on all devices.
         </p>
       )}
 
-      <a
-        href={fullPageHref}
-        className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide"
-        style={{ color: "#241f14" }}
-      >
-        Open full archive <ExternalLink className="h-3 w-3" />
-      </a>
+      {/* Cold footage notice */}
+      {date && (data?.segments.length ?? 0) > playable.length && (
+        <p className="text-[10px] font-mono text-slate-700">
+          ℹ️ {(data!.segments.length - playable.length)} segment(s) archived in cold vault storage.
+        </p>
+      )}
+
+      <div className="pt-1">
+        <a
+          href={fullPageHref}
+          className="inline-flex items-center gap-1.5 rounded border border-black/40 bg-black/80 px-3 py-1.5 text-[11px] font-black uppercase tracking-wider text-yellow-400 hover:bg-black/90 shadow transition"
+        >
+          Open Master Archive Vault <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
     </div>
   );
 }

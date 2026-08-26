@@ -27,6 +27,7 @@ type Segment = {
   durationSeconds: number;
   tier: "hot" | "cold" | "expired";
   playbackUrl: string | null;
+  codec?: "h264" | "av1";
 };
 
 type BrowseResponse = {
@@ -37,6 +38,10 @@ type BrowseResponse = {
   days: ArchiveDay[];
   segments: Segment[];
 };
+
+// Kept in step with TANK_ARCHIVE_BROWSABLE_DAYS — this is the number the
+// notice quotes at viewers.
+const ARCHIVE_PUBLIC_DAYS = 5;
 
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -123,6 +128,23 @@ function Dropdown({
   );
 }
 
+
+/**
+ * True when this browser can play AV1.
+ *
+ * Segments past the public window are AV1, which Safari decodes only on newer
+ * hardware (A17 Pro / M3 and later). Without this check those viewers get a
+ * black player and no explanation, so the answer drives a plain-language
+ * notice rather than a silent failure.
+ */
+function canPlayAv1(): boolean {
+  if (typeof document === "undefined") return true;
+  const v = document.createElement("video");
+  // "probably" and "maybe" both count: browsers are deliberately vague here,
+  // and an empty string is the only clear "no".
+  return v.canPlayType('video/mp4; codecs="av01.0.05M.08"') !== "";
+}
+
 export function ArchivePageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -191,6 +213,11 @@ export function ArchivePageClient() {
   );
 
   const activeSegment = playable[activeIndex] ?? null;
+
+  // Older footage is AV1, which needs a recent device. Detected once rather
+  // than assumed, so the warning appears only for viewers it actually affects.
+  const av1Supported = useMemo(() => canPlayAv1(), []);
+  const viewingAv1 = (data?.segments ?? []).some((x) => x.codec === "av1");
 
   // A day is many segments, so play them as one continuous recording: when one
   // ends, roll straight into the next instead of stopping every 10 minutes.
@@ -332,7 +359,7 @@ export function ArchivePageClient() {
                       <Lock className="h-6 w-6" />
                       <p className="text-sm font-bold">Archives are for members</p>
                       <a
-                        href="https://www.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Farchives"
+                        href="https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Farchives"
                         className="mt-1 rounded bg-[#f26d4b] px-3 py-1 text-xs font-black uppercase text-white"
                       >
                         Sign in
@@ -365,6 +392,18 @@ export function ArchivePageClient() {
                   </button>
                 ))}
               </div>
+            )}
+
+            {/* The device cannot decode what it is being handed. Shown only
+                when it applies: a permanent banner everyone learns to ignore
+                is worse than one that appears exactly when it matters. */}
+            {isMember && viewingAv1 && !av1Supported && (
+              <p className="mx-auto mt-2 max-w-5xl rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-[12px] text-amber-200">
+                This footage won&apos;t play on your device. Archives older than{" "}
+                {ARCHIVE_PUBLIC_DAYS} days are stored in AV1 to save space, which needs a
+                newer phone or computer. The most recent {ARCHIVE_PUBLIC_DAYS} days play
+                everywhere.
+              </p>
             )}
 
             {/* Cold segments exist but cannot stream from Supabase — say so

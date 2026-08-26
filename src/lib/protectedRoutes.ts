@@ -9,6 +9,7 @@ export const PROTECTED_PREFIXES = [
   "/dashboard",
   "/settings",
   "/protected",
+  "/research-access",
 ] as const;
 
 export const AUTH_ROUTES = [

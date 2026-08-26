@@ -41,7 +41,7 @@ const subtle        = webcrypto.subtle;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const AGENT_VERSION = "1.1.1";
+const AGENT_VERSION = "1.2.0";
 const UPDATER_IMAGE = "ghcr.io/makeouthillx32/unaxis-updater:v0";
 
 const AGENT_PORT    = parseInt(process.env.AGENT_PORT    ?? "8888", 10);
@@ -283,6 +283,130 @@ async function buildProxyStatus() {
     notes: "container-level only; cert expiry + route targets need NPM API creds (v2)",
     probedAt: new Date().toISOString(),
   };
+}
+
+// ── Status-page collector ────────────────────────────────────────────────────
+// Periodically samples every unt_*/srt-* container this node can see and
+// appends one entry per service to a local JSON history file — UNAXIS's own
+// data, deliberately NOT stored in db.unenter.live (that database is scoped
+// to unenter.live application data only; the one exception is the public
+// zones catalog, which UNAXIS already owns for a different reason). The
+// public status page (status.unenter.live, Vercel-hosted) reads this via a
+// key-gated read-only endpoint proxied through server.js — see
+// getPublicStatusSnapshot() and STATUS_PUBLIC_KEY below.
+
+const STATUS_HISTORY_FILE        = process.env.STATUS_HISTORY_FILE || path.join(path.dirname(STATE_FILE), "status-history.json");
+const STATUS_INCIDENTS_FILE      = process.env.STATUS_INCIDENTS_FILE || path.join(path.dirname(STATE_FILE), "status-incidents.json");
+const STATUS_PUBLIC_KEY          = process.env.STATUS_PUBLIC_KEY || "";
+const STATUS_COLLECT_INTERVAL_MS = 60_000;
+const STATUS_RETENTION_MS        = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+const STATUS_DB_SERVICES    = new Set(["kong", "db", "auth", "rest", "realtime", "storage", "meta", "studio", "imgproxy"]);
+const STATUS_CORE_SERVICES  = new Set(["app"]);
+const STATUS_INFRA_SERVICES = new Set(["mediamtx"]);
+const STATUS_RANK           = { operational: 0, degraded: 1, down: 2 };
+
+function classifyStatusService(name) {
+  if (name.startsWith("srt-")) return "cameras";
+  if (!name.startsWith("unt_")) return null; // not ours (e.g. buildx builder container)
+  const bare = name.replace(/^unt_/, "");
+  if (STATUS_DB_SERVICES.has(bare))    return "database";
+  if (STATUS_CORE_SERVICES.has(bare))  return "core";
+  if (STATUS_INFRA_SERVICES.has(bare)) return "media-gateway";
+  if (bare === "proxy")                return "proxy";
+  return `zone:${bare}`;
+}
+
+const STATUS_GROUP_LABELS = {
+  core:            "Core Application",
+  database:        "Database & API",
+  proxy:            "Edge Proxy",
+  cameras:          "Live Camera Ingest",
+  "media-gateway":  "Media Gateway",
+};
+function statusGroupLabel(groupId) {
+  if (STATUS_GROUP_LABELS[groupId]) return STATUS_GROUP_LABELS[groupId];
+  if (groupId.startsWith("zone:")) {
+    const key = groupId.slice("zone:".length);
+    return `${key.split(/[-_]/).map((w) => w[0]?.toUpperCase() + w.slice(1)).join(" ")} Zone`;
+  }
+  return groupId;
+}
+
+function statusFromBrief(brief) {
+  if (brief.state !== "running") return "down";
+  if (brief.healthy === false)   return "degraded";
+  return "operational";
+}
+
+function readJsonSafe(file, fallback) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch { return fallback; }
+}
+
+function writeJsonSafe(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data), "utf8");
+}
+
+async function collectStatusSnapshot() {
+  try {
+    const containers = await dockerGet(DOCKER_SOCKET, "/containers/json?all=1");
+    const now = Date.now();
+    const groupStatus = new Map(); // groupId -> worst status this sample
+
+    for (const c of containers) {
+      const brief = containerBrief(c);
+      const groupId = classifyStatusService(brief.name);
+      if (!groupId) continue;
+      const status = statusFromBrief(brief);
+      const prev = groupStatus.get(groupId);
+      groupStatus.set(groupId, !prev || STATUS_RANK[status] > STATUS_RANK[prev] ? status : prev);
+    }
+    if (groupStatus.size === 0) return;
+
+    const history = readJsonSafe(STATUS_HISTORY_FILE, []);
+    for (const [groupId, status] of groupStatus) {
+      history.push({ g: groupId, s: status, t: now });
+    }
+    const cutoff = now - STATUS_RETENTION_MS;
+    writeJsonSafe(STATUS_HISTORY_FILE, history.filter((e) => e.t >= cutoff));
+  } catch (err) {
+    log.err("status collector: sample failed", { error: err.message });
+  }
+}
+
+// ── Public snapshot — current status + 90-day daily rollup + incidents ──────
+
+function getPublicStatusSnapshot() {
+  const history = readJsonSafe(STATUS_HISTORY_FILE, []);
+  const incidents = readJsonSafe(STATUS_INCIDENTS_FILE, []);
+
+  const latestByGroup = new Map();
+  for (const e of history) {
+    const prev = latestByGroup.get(e.g);
+    if (!prev || e.t > prev.t) latestByGroup.set(e.g, e);
+  }
+  const current = [...latestByGroup.entries()]
+    .map(([g, e]) => ({ id: g, label: statusGroupLabel(g), status: e.s }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const dayKey = (t) => new Date(t).toISOString().slice(0, 10);
+  const dailyByGroup = new Map(); // groupId -> Map(day -> worst status)
+  for (const e of history) {
+    if (!dailyByGroup.has(e.g)) dailyByGroup.set(e.g, new Map());
+    const days = dailyByGroup.get(e.g);
+    const day = dayKey(e.t);
+    const prev = days.get(day);
+    days.set(day, !prev || STATUS_RANK[e.s] > STATUS_RANK[prev] ? e.s : prev);
+  }
+  const history90 = [...dailyByGroup.entries()].map(([g, days]) => ({
+    id: g,
+    label: statusGroupLabel(g),
+    days: [...days.entries()].map(([day, status]) => ({ day, status })).sort((a, b) => a.day.localeCompare(b.day)),
+  })).sort((a, b) => a.label.localeCompare(b.label));
+
+  return { current, history: history90, incidents, generatedAt: new Date().toISOString() };
 }
 
 async function withConcurrency(tasks, limit) {
@@ -933,7 +1057,18 @@ agentServer.listen(AGENT_PORT, AGENT_HOST, () => {
   });
   log.inf("auth: tofu — first tui to connect pairs automatically", { auth: "tofu" });
   log.inf("routes: GET /health | GET /db/status | GET /zones/status | GET /proxy/status | GET /docker/dashboard | POST /stacks/deploy | POST /self-update | * /docker/*", {});
+
+  log.inf("status collector: enabled", { interval_ms: STATUS_COLLECT_INTERVAL_MS, history_file: STATUS_HISTORY_FILE });
+  collectStatusSnapshot();
+  setInterval(collectStatusSnapshot, STATUS_COLLECT_INTERVAL_MS);
+  if (!STATUS_PUBLIC_KEY) {
+    log.inf("status public endpoint: STATUS_PUBLIC_KEY not set — public status route will refuse all requests", {});
+  }
 });
 
 process.on("SIGTERM", () => { agentServer.close(() => process.exit(0)); });
 process.on("SIGINT",  () => { agentServer.close(() => process.exit(0)); });
+
+// ── Exports (used by server.js to serve the public status route) ───────────
+
+module.exports = { getPublicStatusSnapshot, STATUS_PUBLIC_KEY };

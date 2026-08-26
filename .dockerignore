@@ -38,8 +38,10 @@ supabase/.temp
 # this repo-root context and COPY zones/<key>/src/app/ (see zones/*/Dockerfile).
 # Exclude the bulk, re-include exactly what zone builds copy.
 zones/
-!zones/*/src
-!zones/*/src/**
+!zones/auth/src
+!zones/auth/src/**
+!zones/tank/src
+!zones/tank/src/**
 
 # Platform packages — agent + updater have their own build contexts
 packages/

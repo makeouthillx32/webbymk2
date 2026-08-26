@@ -7,7 +7,8 @@
 //   • Uses a named volume for node_modules (isolates platform-native binaries
 //     from the Windows host filesystem — prevents cross-platform breakage)
 //   • Loads the project .env file for full environment parity
-//   • Runs `bun install && bun dev` for true HMR hot-reload
+//   • Runs `bun dev` (Turbopack) for true HMR hot-reload; installs only
+//     when bun.lock has changed, and keeps the .next cache between restarts
 //   • Registers a proxy route so the zone is immediately reachable at
 //       dev.<zone-key>.<coreDomain>   (e.g. dev.shop.unenter.live)
 //       dev.<coreDomain>              (e.g. dev.unenter.live  — for core)
@@ -134,7 +135,7 @@ function devOverlayCommand(zoneKey: string): string {
 set -eu
 find /app/src/app -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
-for name in api actions _components providers; do
+for name in api actions auth _components providers; do
   [ -e "/source/src/app/$name" ] || continue
   cp -a "/source/src/app/$name" "/app/src/app/$name"
 done
@@ -147,13 +148,46 @@ done
 for entry in /source/zones/${zoneKey}/src/app/* /source/zones/${zoneKey}/src/app/.[!.]* /source/zones/${zoneKey}/src/app/..?*; do
   [ -e "$entry" ] || continue
   name="\${entry##*/}"
-  rm -rf "/app/src/app/$name"
-  cp -a "$entry" "/app/src/app/$name"
+  # ALWAYS merge, never rm -rf a whole top-level entry first. The very first
+  # line of this script already wipes all of /app/src/app clean on every
+  # boot, so that rm -rf never bought any real freshness guarantee — its
+  # only actual effect was silently deleting whatever core had at that same
+  # top-level name (api/actions/_components/providers, or auth/*) the moment
+  # a zone ALSO had a top-level entry with that name, since core is restored
+  # first and the zone loop ran after. Confirmed live 2026-08-25 twice: once
+  # for api/ (a new zones/tank/src/app/api/.../attention/ route wiped
+  # telemetry, telemetry/live, telemetry/simulate), then again for auth/ (a
+  # pre-existing zones/tank/src/app/auth/callback/ wiped auth/sync,
+  # auth/logout, auth/logout/finish, auth/sign-in, auth/provider/[provider] —
+  # "[AuthProvider] Server session sync failed" was POST /auth/sync 404ing).
+  # This merge-always approach matches production's plain
+  # \`COPY zones/<key>/src/app/ ./src/app/\`, which merges directory trees and
+  # deletes nothing, for every top-level name uniformly — not just the ones
+  # this class of bug has been caught on so far.
+  if [ -d "$entry" ]; then
+    mkdir -p "/app/src/app/$name"
+    cp -a "$entry/." "/app/src/app/$name/"
+  else
+    cp -a "$entry" "/app/src/app/$name"
+  fi
 done
 
 cd /app
-find .next -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-bun install
+# .next is a Docker volume that survives restarts — it is the only compile
+# cache this container has. Wiping it on every start meant every run was a cold
+# build, which is most of why the dev URL felt slow enough to be unusable.
+# Run bun run dev:clean to clear it deliberately when a stale cache is suspected.
+
+# Reinstalling on every start costs a minute for a result that is almost always
+# identical. Install only when the lockfile has actually moved since last time.
+LOCK_STAMP=/app/node_modules/.unaxis-lock-stamp
+if [ ! -f "$LOCK_STAMP" ] || [ /app/bun.lock -nt "$LOCK_STAMP" ]; then
+  echo "[dev] lockfile changed — installing"
+  bun install && cp /app/bun.lock "$LOCK_STAMP"
+else
+  echo "[dev] dependencies unchanged — skipping install"
+fi
+
 bun dev
 `.trim();
 }
@@ -193,6 +227,19 @@ export async function startDevContainer(
     "run", "-d",
     "--name",    container,
     "--network", "unenter",
+    // 3g was not enough for this app, then 6g wasn't either. Next's dev
+    // server accumulates memory across HMR recompiles, and Turbopack's cold
+    // scan walks the ENTIRE bind-mounted /app/src/zones tree (every zone,
+    // not just this one — the mount below is the whole repo root, and
+    // nothing scopes the watcher to one zone) — with 14+ zones now in the
+    // repo that scan alone hit ENOMEM mid-boot (confirmed live 2026-08-24:
+    // "ENOMEM: not enough memory, scandir '/app/src/zones/status...'" while
+    // starting dev-tank, which has nothing to do with the status zone).
+    // The host has 64GB; this cap is the binding constraint, not the
+    // machine. Scoping the mount/watcher to just this zone's src would be
+    // the real fix; raising the cap is the immediate unblock.
+    "--memory",  "8g",
+    "--cpus",    "2",
     // Source mount — live code available inside the container
     "-v", `${mountSource()}:/app`,
     "-v", `${mountSource()}:/source:ro`,
@@ -204,6 +251,7 @@ export async function startDevContainer(
     ...(existsSync(envFile) ? ["--env-file", envFile] : []),
     // Zone identity override
     "-e", `NEXT_PUBLIC_ZONE=${zone.key}`,
+    "-e", "NODE_OPTIONS=--max-old-space-size=2048",
     // Windows bind mounts do not always deliver filesystem events into Linux
     // containers. Polling keeps Next dev/HMR honest for host-side edits.
     "-e", "WATCHPACK_POLLING=true",

@@ -3,11 +3,11 @@ import { Radio, Search, Shield, Video } from "lucide-react";
 import type { ReactNode } from "react";
 
 const coreSignIn =
-  "https://www.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2F";
+  "https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2F";
 
 export function PublicShell({ children }: { children: ReactNode }) {
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen min-h-[100dvh] bg-background text-foreground">
       <div className="sticky top-0 z-40 border-b border-border/70 bg-background/90 backdrop-blur-xl">
         <div className="container flex h-16 items-center gap-4">
           <Link

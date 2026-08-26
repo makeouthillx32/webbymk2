@@ -37,8 +37,36 @@ import { isProtectedRoute } from "@/lib/protectedRoutes";
 const LOCALES = ["en", "de"] as const;
 const LOCALE_COOKIE = "Next-Locale";
 const LOCALE_HEADER = "X-Next-Locale";
+// Keep this comfortably below NPM's upstream timeout. A stale Kong/GoTrue
+// request must degrade a public zone to signed-out; it must never turn the
+// entire page request into the 504 handled by the independent status site.
+const AUTH_FETCH_TIMEOUT_MS = 4_000;
 
 type Locale = (typeof LOCALES)[number];
+
+const fetchAuthWithDeadline: typeof fetch = async (input, init) => {
+  const controller = new AbortController();
+  const upstreamSignal = init?.signal;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+
+  if (upstreamSignal?.aborted) {
+    abortFromUpstream();
+  } else {
+    upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+  }
+
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("Auth backend deadline exceeded", "TimeoutError")),
+    AUTH_FETCH_TIMEOUT_MS,
+  );
+
+  try {
+    return await globalThis.fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+    upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+  }
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,7 +101,21 @@ export async function middleware(request: NextRequest) {
   const isLocal = isLocalDevelopmentHost(normalizedHost);
 
   // ── 1. www → canonical redirect ───────────────────────────────────────────
-  if (!isLocal && normalizedHost !== canonicalHost) {
+  // Never applied to /api/*. Two reasons, both load-bearing:
+  //
+  //   1. Service-to-service calls arrive with a container hostname in the Host
+  //      header (unt_tank, dev-tank, unt_mediamtx). getCanonicalHost has no
+  //      idea what those are, so it resolves them to www.unenter.live and the
+  //      caller is bounced off the private network to the public one.
+  //   2. A 301 on a POST is silently destructive — most clients (BusyBox wget
+  //      among them) re-issue as GET and drop the body, so the request "works"
+  //      and does nothing.
+  //
+  // An API is called by machines that already know the URL they want; there is
+  // nothing to canonicalise for SEO. Browsers hitting a page still redirect.
+  const isApiPath = url.pathname.startsWith("/api/");
+
+  if (!isLocal && !isApiPath && normalizedHost !== canonicalHost) {
     url.hostname = canonicalHost;
     url.port = ""; // strip internal container port — public URL has none
     return NextResponse.redirect(url, 301);
@@ -282,6 +324,9 @@ export async function middleware(request: NextRequest) {
         name: "sb-unenter-auth-token",
         domain: isLocal ? undefined : `.${CORE_DOMAIN}`,
       },
+      global: {
+        fetch: fetchAuthWithDeadline,
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -346,14 +391,17 @@ export async function middleware(request: NextRequest) {
     isTankBackstage;
 
   if (routeIsProtected && !user) {
-    // /sign-in only lives on the core zone (www.unenter.live) — cloning the
-    // current request URL and swapping the pathname 404s on every zone
-    // subdomain (app.unenter.live, which is entirely requiresAuth:true;
-    // labs.unenter.live/research-checkout; any future protected zone).
-    // Locally all zones share one host via path-based routing, so the
-    // original same-host redirect is still correct there.
-    // Found via E2E checkout test, 2026-08-06.
-    if (isLocal || onCoreHost) {
+    // /sign-in lives on the dedicated auth zone (auth.unenter.live), not
+    // core and not the requesting zone's own host — cloning the current
+    // request URL and swapping the pathname 404s on every zone subdomain
+    // (app.unenter.live, which is entirely requiresAuth:true;
+    // labs.unenter.live/research-checkout; any future protected zone), core
+    // included now that core no longer serves /sign-in itself (see
+    // ZONE_PROMOTIONS in multiZone.ts). Locally all zones share one host via
+    // path-based routing, so the original same-host redirect is still
+    // correct there. Found via E2E checkout test, 2026-08-06; auth moved to
+    // its own zone 2026-08-17.
+    if (isLocal) {
       const signInUrl = request.nextUrl.clone();
       signInUrl.pathname = "/sign-in";
       signInUrl.searchParams.set("next", url.pathname);
@@ -364,13 +412,41 @@ export async function middleware(request: NextRequest) {
     // proxy (e.g. 0.0.0.0:3000), not the public host — must rebuild from
     // canonicalHost (already resolved from x-forwarded-host above) instead,
     // same as getPublicOrigin() in app/auth/sign-in/route.ts.
-    const signInUrl = new URL(`https://www.${CORE_DOMAIN}/sign-in`);
+    const signInUrl = new URL(`https://auth.${CORE_DOMAIN}/sign-in`);
     const publicNextUrl = `https://${canonicalHost}${url.pathname}${url.search}`;
     signInUrl.searchParams.set("next", publicNextUrl);
     return NextResponse.redirect(signInUrl);
   }
 
-  return supabaseResponse.current;
+  const finalResponse = supabaseResponse.current;
+
+  // ── 8. Global legacy cookie sanitation ──────────────────────────────────
+  // Scrub legacy Tank UI cookies from HTTP headers so they never bloat requests
+  // or trigger HTTP 431 / proxy buffer overflow errors.
+  const LEGACY_TANK_COOKIE_NAMES = [
+    "tank_mobile_chat_size",
+    "tank_room_mode",
+    "tank_room_slug",
+    "tank_chat_target",
+    "tank_room_origin",
+    "tank_background_theme",
+  ];
+
+  for (const name of LEGACY_TANK_COOKIE_NAMES) {
+    if (request.cookies.has(name)) {
+      finalResponse.cookies.delete(name);
+      if (!isLocal) {
+        finalResponse.cookies.set(name, "", {
+          path: "/",
+          domain: `.${CORE_DOMAIN}`,
+          maxAge: 0,
+          sameSite: "lax",
+        });
+      }
+    }
+  }
+
+  return finalResponse;
 }
 
 // ── Matcher ───────────────────────────────────────────────────────────────────

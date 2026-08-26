@@ -5,8 +5,8 @@
 // Engineered for 50,000+ congruent viewers across iOS Safari, Android, Chrome, Firefox, Electron, Smart TVs, and WebViews.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { detectNetworkProfile, subscribeToNetworkProfile, type NetworkProfile } from "./networkQuality";
-import { useStreamSlot, type StreamPriority } from "./streamAdmission";
+import { detectNetworkProfile, getHydrationSafeNetworkProfile, subscribeToNetworkProfile, type NetworkProfile } from "./networkQuality";
+import { useStreamSlot, useConnectDelay, type StreamPriority } from "./streamAdmission";
 import { VideoErrorBoundary } from "./components/VideoErrorBoundary";
 import Hls from "hls.js";
 import { CameraOff, VolumeX, Volume2, Maximize, Loader2, Wifi, WifiOff, RefreshCw, Zap, AlertTriangle } from "lucide-react";
@@ -38,6 +38,24 @@ export type BufferingInfo = {
   retryCount: number;
 };
 
+/**
+ * How rough this stream's ride has actually been — real counters, not a
+ * guess about the viewer's ISP. `bufferingInfo.retryCount` resets to 0 the
+ * moment a stream recovers, which is right for deciding whether to retry
+ * again but wrong for "has this camera been solid or flaky" — a camera that
+ * drops and recovers every 30 seconds looks identical to one that's been
+ * rock-solid the instant each drop clears. `reconnectCount` never resets for
+ * the life of a given playbackUrl, so it answers that question instead.
+ */
+export type StreamStabilityInfo = {
+  /** WHEP drops (pc.connectionState -> disconnected/failed) plus HLS engine
+   *  recovery attempts, counted since this playbackUrl was first connected. */
+  reconnectCount: number;
+  isBuffering: boolean;
+  bufferingReason: BufferingInfo["reason"] | null;
+  lastEventAt: number | null;
+};
+
 export type CameraPlayerHandle = {
   togglePlayback: () => void;
   requestFullscreen: () => void;
@@ -58,6 +76,7 @@ type CameraPlayerProps = {
   volume?: number;
   onPlayStateChange?: (paused: boolean) => void;
   onLiveEdgeChange?: (info: LiveEdgeInfo) => void;
+  onStabilityChange?: (info: StreamStabilityInfo) => void;
   onWatching?: () => void;
   onClick?: () => void;
   onDoubleClick?: () => void;
@@ -104,7 +123,17 @@ export function isMobileOrCellular(): boolean {
 
 // HLS is served from the `-hls` sibling path when transcoded, or directly from
 // `cameras/{id}/index.m3u8` for direct IRL/USB/OBS ingest.
+//
+// obs/<slug> rooms are the OPPOSITE polarity from cameras/<id>: OBS is the
+// one actively publishing the base path, so nothing can transcode it in
+// place — the base path IS the HLS-ready (AAC) content, and -whep is the
+// ADDED Opus sibling (see provisionObsWhepSibling in server/mediaGateway.ts).
+// Stripping -whep back to the bare path is therefore the correct HLS
+// fallback for a room, the mirror image of adding -hls for a camera.
 function deriveHlsUrl(url: string, direct = false): string {
+  if (/-whep\//.test(url)) {
+    return url.replace(/-whep\/(?:whep|index\.m3u8)(\?.*)?$/, "/index.m3u8$1");
+  }
   if (direct) {
     return url.replace(
       /\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/(?:whep|index\.m3u8)(\?.*)?$/,
@@ -138,8 +167,40 @@ function prefersLowRung(): boolean {
 function deriveWhepUrl(url: string): string {
   return url.replace(
     /\/(cameras\/[^/]+?)(?:-hls)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-    "/$1/whep$2",
+    "/$1/whep",
   );
+}
+
+function getIceServers(): RTCIceServer[] {
+  const customTurnUrl = process.env.NEXT_PUBLIC_TANK_TURN_URL;
+  const customTurnUser = process.env.NEXT_PUBLIC_TANK_TURN_USERNAME;
+  const customTurnPass = process.env.NEXT_PUBLIC_TANK_TURN_CREDENTIAL;
+
+  const servers: RTCIceServer[] = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: ["stun:stun.cloudflare.com:3478"] },
+  ];
+
+  if (customTurnUrl) {
+    servers.push({
+      urls: customTurnUrl.split(",").map((u) => u.trim()),
+      ...(customTurnUser ? { username: customTurnUser } : {}),
+      ...(customTurnPass ? { credential: customTurnPass } : {}),
+    });
+  } else {
+    // Public fallback TURN-over-TLS/TCP relay for strict UDP-filtered corporate and cellular firewalls
+    servers.push({
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turns:openrelay.metered.ca:443?transport=tcp",
+      ],
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    });
+  }
+
+  return servers;
 }
 
 function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs: number): Promise<void> {
@@ -172,6 +233,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       volume = 1.0,
       onPlayStateChange,
       onLiveEdgeChange,
+      onStabilityChange,
       onWatching,
       onClick,
       onDoubleClick,
@@ -200,10 +262,13 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
     // How thin is the pipe? Recovery aggressiveness is tuned off this: the
     // numbers that self-heal a LAN stream actively destroy a cellular one.
-    const [netProfile, setNetProfile] = useState<NetworkProfile>(() => detectNetworkProfile());
+    const [netProfile, setNetProfile] = useState<NetworkProfile>(() => getHydrationSafeNetworkProfile());
     const netProfileRef = useRef(netProfile);
     netProfileRef.current = netProfile;
-    useEffect(() => subscribeToNetworkProfile(setNetProfile), []);
+    useEffect(() => {
+      setNetProfile(detectNetworkProfile());
+      return subscribeToNetworkProfile(setNetProfile);
+    }, []);
     const [activeEngine, setActiveEngine] = useState<"whep" | "native-hls" | "hls-js" | "direct">("whep");
 
     const pausedAtRef = useRef<number | null>(null);
@@ -225,18 +290,62 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       retryCount: 0,
     });
 
+    // Counts real drops for THIS playbackUrl — never reset by a recovery, only
+    // by a genuinely new source (see the [playbackUrl] reset effect below).
+    const [reconnectCount, setReconnectCount] = useState(0);
+    const wasConnectedRef = useRef(false);
+
+    useEffect(() => {
+      setReconnectCount(0);
+      wasConnectedRef.current = false;
+    }, [playbackUrl]);
+
+    useEffect(() => {
+      onStabilityChange?.({
+        reconnectCount,
+        isBuffering: bufferingInfo.isBuffering,
+        bufferingReason: bufferingInfo.isBuffering ? bufferingInfo.reason : null,
+        lastEventAt: bufferingInfo.stalledSince,
+      });
+      // onStabilityChange is a caller-supplied setter; including it would
+      // re-fire this on every parent render, not just on a real change here.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reconnectCount, bufferingInfo]);
+
+    const [isLiveStable, setIsLiveStable] = useState(false);
+    const [userRequestedWatch, setUserRequestedWatch] = useState(false);
+
+    const effectivePriority: StreamPriority = userRequestedWatch ? "hero" : priority;
     const wantsStream = Boolean(playbackUrl) && playbackProtocol !== "none" && online;
 
     // Wanting to stream and being allowed to are different things when
     // bandwidth is scarce. Everything downstream keys off hasSource, so a
     // player without a slot simply never opens a connection.
-    const admitted = useStreamSlot(priority, wantsStream);
-    const hasSource = wantsStream && admitted;
+    const admitted = useStreamSlot(effectivePriority, wantsStream);
 
-    // Deliberately holding back is not a fault. Without this distinction a
+    // Being allowed to connect and being FIRST to connect are also different
+    // things — see useConnectDelay. A thumbnail can be admitted immediately
+    // and still wait a short, deliberate beat before it starts negotiating,
+    // so the hero isn't racing it for ICE/decode time.
+    const connectDelayMs = useConnectDelay(effectivePriority);
+    const [staggerElapsed, setStaggerElapsed] = useState(connectDelayMs === 0);
+    useEffect(() => {
+      if (connectDelayMs === 0) {
+        setStaggerElapsed(true);
+        return;
+      }
+      setStaggerElapsed(false);
+      const timer = setTimeout(() => setStaggerElapsed(true), connectDelayMs);
+      return () => clearTimeout(timer);
+    }, [connectDelayMs]);
+
+    const hasSource = wantsStream && admitted && staggerElapsed;
+
+    // Deliberately holding back is not a fault, whether that's no slot yet or
+    // a thumbnail still in its stagger window. Without this distinction a
     // bandwidth-limited grid would show six red NO SIGNAL alarms for six
     // perfectly healthy cameras, which reads as "the site is broken".
-    const awaitingSlot = wantsStream && !admitted;
+    const awaitingSlot = wantsStream && (!admitted || !staggerElapsed);
 
     const pcRefA = useRef<RTCPeerConnection | null>(null);
     const pcRefB = useRef<RTCPeerConnection | null>(null);
@@ -500,6 +609,29 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       }
     }, [muted, volume]);
 
+    // Periodic stream telemetry beaconing (every 30s during active playback).
+    //
+    // No client-measured bitrate exists anywhere in this component — WHEP/HLS
+    // don't expose one cheaply — so bitrateKbps is left out rather than
+    // invented. reconnectCount (real WHEP drops + HLS recovery attempts,
+    // tracked above) is what this table's stall_count actually wants: real
+    // rough-ride evidence, not a guess.
+    useEffect(() => {
+      if (!playbackUrl) return;
+      const interval = setInterval(() => {
+        const cameraId = cameraLabelFromUrl(playbackUrl);
+        const protocol = activeEngine === "whep" ? "webrtc" : "hls";
+        const latencyMs = liveEdgeInfo ? Math.round(liveEdgeInfo.latencySec * 1000) : undefined;
+        void fetch("/api/tank/stream-telemetry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cameraId, protocol, latencyMs, stallCount: reconnectCount }),
+          keepalive: true,
+        }).catch(() => {});
+      }, 30000);
+      return () => clearInterval(interval);
+    }, [playbackUrl, activeEngine, liveEdgeInfo, reconnectCount]);
+
     // Attach playback listeners to active video & handle DVR stale buffer recovery
     useEffect(() => {
       const activeVideo = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
@@ -640,13 +772,23 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         const activeVideo = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
         if (!activeVideo || !hasSource) return;
 
-        // 1. Unsync Auto-Snap: If latency drift exceeds 4.0s (e.g. from network stutter or tab lag),
-        // automatically snap straight to the live edge immediately with ZERO user intervention.
-        if (info.latencySec > 4.0) {
+        // 1. Unsync Auto-Snap: WHEP should never sit behind live — sub-second
+        // is the whole point, so >4s there really is broken. HLS is not the
+        // same story: every source's actual keyframe interval is ~4s (both
+        // OBS and real house cameras confirmed live 2026-08-22 — MediaMTX's
+        // hlsSegmentDuration: 2s in mediamtx.yml is only a target, it can't
+        // cut a segment without a keyframe), so hls.js/native HLS sitting
+        // several seconds behind live is normal, healthy buffering, not
+        // drift. Applying the WHEP threshold here meant latencySec almost
+        // never dropped below 4s, so this fired on nearly every tick and
+        // fought hls.js's own buffering — that fight WAS the stutter.
+        const driftThresholdSec =
+          activeEngine === "whep" ? 4.0 : Math.max(12, netProfileRef.current.liveEdgeTargetSeconds * 3);
+        if (info.latencySec > driftThresholdSec) {
           const cameraLabel = playbackUrl ? cameraLabelFromUrl(playbackUrl) : "unknown";
           logCameraDebug(
             cameraLabel,
-            `autonomous sync: drift detected (latency=${info.latencySec}s > 4s) — auto-snapping to live edge`,
+            `autonomous sync: drift detected (latency=${info.latencySec}s > ${driftThresholdSec}s) — auto-snapping to live edge`,
           );
           snapToLiveEdge();
           return;
@@ -698,6 +840,40 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         }
       };
     }, [activeBuffer, activeEngine]);
+
+    // ── REVEAL SAFETY NET ──
+    //
+    // `isLiveStable` has exactly one writer: promoteToLive(), which is guarded
+    // by the connect effect's `cancelled` flag. If that effect re-runs while
+    // the verification window is open — a reconnect, a protocol failover, a
+    // camera swap — the pending promotion is cancelled and NOTHING re-arms it.
+    // The stream then plays perfectly, forever, behind an opaque preroll clip:
+    // the worst possible failure, because every other signal says it is fine.
+    //
+    // So the reveal does not depend solely on that path. If the active buffer
+    // is demonstrably playing, it gets shown, whatever happened upstream.
+    useEffect(() => {
+      if (isLiveStable || !hasSource) return;
+
+      let last = -1;
+      const check = setInterval(() => {
+        const v = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
+        if (!v) return;
+        const t = v.currentTime || 0;
+        // Two consecutive advances, so a single decoded frame on a stalled
+        // stream is not mistaken for playback.
+        if (last >= 0 && t > last + 0.05 && v.readyState >= 3 && !v.paused) {
+          logCameraDebug(
+            playbackUrl ? cameraLabelFromUrl(playbackUrl) : "unknown",
+            "reveal safety net: buffer is playing but was never promoted — revealing",
+          );
+          setIsLiveStable(true);
+        }
+        last = t;
+      }, 1000);
+
+      return () => clearInterval(check);
+    }, [isLiveStable, hasSource, activeBuffer, playbackUrl]);
 
     // ── STAGNATION WATCHDOG ──
     //
@@ -791,6 +967,13 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         }
 
         recoveryRef.current.attempts += 1;
+        setReconnectCount((n) => n + 1);
+        // Same re-arm as the WHEP disconnect/failed branches above — this
+        // only fires once buffered data has genuinely stopped growing (the
+        // "stuck but fed" checks above already ruled out ordinary
+        // rebuffering), so the picture really has frozen and the preroll
+        // loop should cover it rather than leaving a static last frame up.
+        setIsLiveStable(false);
         // 3s, 6s, 12s, 24s… capped, so a long outage settles down rather than
         // retrying every 2.5s all night.
         const backoffMs = Math.min(30000, 3000 * 2 ** (recoveryRef.current.attempts - 1));
@@ -823,6 +1006,20 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       }
 
       let cancelled = false;
+      // connectNativeHls registers 5 element listeners plus a document-level
+      // `visibilitychange` listener and never removed any of them — a real,
+      // unbounded leak: it's called from every native-HLS fallback branch
+      // (including re-entrantly within one connect cycle), and this whole
+      // effect re-runs on every room switch / reconnect for the life of the
+      // page. Confirmed 2026-08-25 by grep: zero matching removeEventListener
+      // calls existed anywhere in this file. The document-level listener in
+      // particular can never be garbage-collected on its own since document
+      // itself never goes away — each stale closure keeps its own targetVideo
+      // and retry state alive too. This is the exact class of "excessive
+      // client memory pressure / lifecycle-resume leakage" the Brave Memory
+      // Saver reproduction pointed at (vault/Core/
+      // tank-ios-safari-persisted-site-data-forever-load.md).
+      let detachNativeHlsListeners: (() => void) | null = null;
       const currentActive = activeBuffer;
       const targetSlot =
         currentActive === "A" && streamConnectedA
@@ -848,35 +1045,86 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       targetVideo.setAttribute("autoplay", "true");
 
       const onFrameReady = () => {
-        if (cancelled) return;
+        if (cancelled || !targetVideo) return;
         if (targetSlot === "A") {
           setStreamConnectedA(true); streamConnectedARef.current = true;
-          setActiveBuffer("A");
-          if (pcRefB.current) {
-            pcRefB.current.close();
-            pcRefB.current = null;
-          }
-          if (hlsRefB.current) {
-            hlsRefB.current.destroy();
-            hlsRefB.current = null;
-          }
-          setStreamConnectedB(false); streamConnectedBRef.current = false;
         } else {
           setStreamConnectedB(true); streamConnectedBRef.current = true;
-          setActiveBuffer("B");
-          if (pcRefA.current) {
-            pcRefA.current.close();
-            pcRefA.current = null;
-          }
-          if (hlsRefA.current) {
-            hlsRefA.current.destroy();
-            hlsRefA.current = null;
-          }
-          setStreamConnectedA(false); streamConnectedARef.current = false;
         }
         setConnectionFailed(false);
-        onWatching?.();
-        logCameraDebug(cameraLabel, `FRAME READY — slot ${targetSlot} now live`);
+
+        // ── 2-Second Live Stability Verification Gate ────────────────────
+        // Don't cut over on a raw single frame packet — verify continuous,
+        // smooth playback for at least 1.2s to eliminate false-positive stutters.
+        let verificationStart = performance.now();
+        let initialTime = targetVideo.currentTime;
+        let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const cleanupStabilityListeners = () => {
+          if (stabilityTimer) {
+            clearTimeout(stabilityTimer);
+            stabilityTimer = null;
+          }
+          targetVideo.removeEventListener("waiting", onStallDuringWarmup);
+          targetVideo.removeEventListener("stalled", onStallDuringWarmup);
+          targetVideo.removeEventListener("timeupdate", checkStabilityProgress);
+        };
+
+        const promoteToLive = () => {
+          if (cancelled) return;
+          cleanupStabilityListeners();
+          setActiveBuffer(targetSlot);
+          setIsLiveStable(true);
+          if (targetSlot === "A") {
+            if (pcRefB.current) { pcRefB.current.close(); pcRefB.current = null; }
+            if (hlsRefB.current) { hlsRefB.current.destroy(); hlsRefB.current = null; }
+            setStreamConnectedB(false); streamConnectedBRef.current = false;
+          } else {
+            if (pcRefA.current) { pcRefA.current.close(); pcRefA.current = null; }
+            if (hlsRefA.current) { hlsRefA.current.destroy(); hlsRefA.current = null; }
+            setStreamConnectedA(false); streamConnectedARef.current = false;
+          }
+          onWatching?.();
+          logCameraDebug(cameraLabel, `FRAME READY & STABLE — slot ${targetSlot} verified live`);
+        };
+
+        const onStallDuringWarmup = () => {
+          // Re-arm verification if buffer stalls during warmup
+          verificationStart = performance.now();
+          initialTime = targetVideo.currentTime;
+          if (stabilityTimer) clearTimeout(stabilityTimer);
+          stabilityTimer = setTimeout(deadlineReached, 1400);
+        };
+
+        const checkStabilityProgress = () => {
+          const elapsed = performance.now() - verificationStart;
+          const playheadAdvanced = targetVideo.currentTime - initialTime;
+          if (elapsed >= 1000 && playheadAdvanced >= 0.4) {
+            promoteToLive();
+          }
+        };
+
+        // The deadline below is a backstop, not a promotion signal. It used to
+        // promote unconditionally, which meant a stream that had loaded
+        // metadata but never rendered a frame was revealed anyway — the gate
+        // "verified" nothing. Re-arm instead while the playhead is still
+        // stuck; the watchdog elsewhere is what gets a stalled element moving.
+        const deadlineReached = () => {
+          if (cancelled) return;
+          if (targetVideo.currentTime - initialTime >= 0.2 || targetVideo.readyState >= 3) {
+            promoteToLive();
+            return;
+          }
+          verificationStart = performance.now();
+          initialTime = targetVideo.currentTime;
+          stabilityTimer = setTimeout(deadlineReached, 1000);
+        };
+
+        targetVideo.addEventListener("waiting", onStallDuringWarmup);
+        targetVideo.addEventListener("stalled", onStallDuringWarmup);
+        targetVideo.addEventListener("timeupdate", checkStabilityProgress);
+        stabilityTimer = setTimeout(deadlineReached, 1500);
+
         targetVideo.removeEventListener("playing", onFrameReady);
         targetVideo.removeEventListener("play", onFrameReady);
         targetVideo.removeEventListener("canplay", onFrameReady);
@@ -900,6 +1148,12 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       // Protocol 1: Native Apple WebKit HLS (iOS Safari / iPadOS Gold Standard)
       function connectNativeHls(hlsUrl: string) {
         if (cancelled || !targetVideo) return;
+        // Called from several fallback branches and can re-enter within a
+        // single connect cycle (e.g. transcode path fails -> direct path
+        // retried) — detach whatever this same connect cycle registered
+        // last time before adding a fresh set, instead of stacking both.
+        detachNativeHlsListeners?.();
+        detachNativeHlsListeners = null;
         setActiveEngine("native-hls");
         logCameraDebug(cameraLabel, `native-hls: attaching src=${hlsUrl}`);
 
@@ -917,14 +1171,29 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
             `native-hls: video error code=${err?.code ?? "?"} message=${err?.message || "(none)"}`,
           );
           if (cancelled || !targetVideo) return;
+
+          // If the transcode path failed, immediately attempt the direct ingest path on retry 1
+          if (nativeHlsRetries === 0 && hlsUrl.includes("-hls")) {
+            const directHls = deriveHlsUrl(hlsUrl, true);
+            if (directHls !== hlsUrl) {
+              logCameraDebug(cameraLabel, `native-hls: failover to direct path ${directHls}`);
+              nativeHlsRetries += 1;
+              targetVideo.src = directHls;
+              targetVideo.load();
+              void targetVideo.play().catch(() => {});
+              return;
+            }
+          }
+
           if (nativeHlsRetries >= MAX_NATIVE_HLS_RETRIES) {
             logCameraDebug(cameraLabel, "native-hls: retries exhausted");
             setConnectionFailed(true);
+            setBufferingInfo((prev) => ({ ...prev, isBuffering: false }));
+            targetVideo.removeAttribute("src");
+            targetVideo.load();
             return;
           }
           nativeHlsRetries += 1;
-          // Exponential, not linear: a camera that is genuinely down should
-          // stop costing the viewer data every second and a half.
           const delay = Math.min(20000, 1500 * 2 ** (nativeHlsRetries - 1));
           logCameraDebug(cameraLabel, `native-hls: retry ${nativeHlsRetries} in ${delay}ms`);
           setTimeout(() => {
@@ -1007,6 +1276,17 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         targetVideo.addEventListener("loadstart", onLoadStart, { once: true });
         document.addEventListener("visibilitychange", onVisibilityChange);
 
+        detachNativeHlsListeners = () => {
+          if (stallTimeout) clearTimeout(stallTimeout);
+          targetVideo.removeEventListener("error", onVideoError);
+          targetVideo.removeEventListener("stalled", onStalled);
+          targetVideo.removeEventListener("waiting", onWaiting);
+          targetVideo.removeEventListener("playing", onPlaying);
+          targetVideo.removeEventListener("canplay", onCanPlay);
+          targetVideo.removeEventListener("loadstart", onLoadStart);
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+        };
+
         targetVideo.src = hlsUrl;
         targetVideo.muted = muted;
         targetVideo.defaultMuted = muted;
@@ -1033,6 +1313,17 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         if (cancelled || !targetVideo) return;
         setActiveEngine("hls-js");
         logCameraDebug(cameraLabel, `hls-js: attaching src=${hlsUrl}, isSupported=${Hls.isSupported()}`);
+
+        // Guards the direct-ingest fallback below to fire at most once per
+        // connect cycle. Without this, a manifest error on the fallback path
+        // itself re-derives and reloads the SAME url forever — hlsUrl is the
+        // original -hls param, never updated, so `directHls !== hlsUrl` stays
+        // true on every subsequent error. Confirmed live 2026-08-23: one
+        // camera's fallback path errored persistently and produced 270+
+        // unthrottled manifest requests in under a minute, which was also
+        // starving the shared proxy enough to trip unrelated Tank API calls
+        // into their own 502s.
+        let firedDirectFallback = false;
 
         if (Hls.isSupported()) {
           const hls = new Hls({
@@ -1093,13 +1384,16 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
             logCameraDebug(cameraLabel, `hls-js: error type=${data.type} details=${data.details} fatal=${data.fatal}`);
             
             // If the transcoded -hls path returned 404 (e.g. direct IRL/USB stream without transcode),
-            // instantly retry loading the native direct path.
+            // instantly retry loading the native direct path. Only once per
+            // connect cycle — see firedDirectFallback above.
             if (
-              data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
-              data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
+              !firedDirectFallback &&
+              (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+                data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT)
             ) {
               const directHls = deriveHlsUrl(hlsUrl, true);
               if (directHls !== hlsUrl) {
+                firedDirectFallback = true;
                 logCameraDebug(
                   cameraLabel,
                   `hls-js: 404 on ${hlsUrl}, retrying direct ingest path ${directHls}`,
@@ -1157,10 +1451,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
         try {
           const pc = new RTCPeerConnection({
-            iceServers: [
-              { urls: "stun:stun.l.google.com:19302" },
-              { urls: "stun:stun1.l.google.com:19302" },
-            ],
+            iceServers: getIceServers(),
             bundlePolicy: "max-bundle",
             iceCandidatePoolSize: 1,
           });
@@ -1174,7 +1465,31 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                 stalledSince: Date.now(),
                 retryCount: 0,
               });
-            } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+            } else if (pc.connectionState === "failed") {
+              logCameraDebug(cameraLabel, "whep: connection failed (UDP likely filtered), triggering immediate HLS failover");
+              if (wasConnectedRef.current) {
+                wasConnectedRef.current = false;
+                setReconnectCount((n) => n + 1);
+                // Re-arm the preroll loop and the reveal safety net below it —
+                // isLiveStable otherwise has no writer that ever sets it back
+                // to false, so a stream that was live once stays "revealed"
+                // forever even while genuinely down mid-session. Matters most
+                // for IRL/SRTLA senders bonding across wifi/cellular handoffs,
+                // where a real drop-and-reconnect is routine, not exceptional.
+                setIsLiveStable(false);
+              }
+              const fallbackHls = deriveHlsUrl(whepUrl);
+              if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
+                connectNativeHls(fallbackHls);
+              } else {
+                connectHlsJs(fallbackHls);
+              }
+            } else if (pc.connectionState === "disconnected") {
+              if (wasConnectedRef.current) {
+                wasConnectedRef.current = false;
+                setReconnectCount((n) => n + 1);
+                setIsLiveStable(false);
+              }
               setBufferingInfo((prev) => ({
                 isBuffering: true,
                 reason: "reconnecting",
@@ -1183,6 +1498,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                 retryCount: prev.retryCount + 1,
               }));
             } else if (pc.connectionState === "connected") {
+              wasConnectedRef.current = true;
               setBufferingInfo({
                 isBuffering: false,
                 reason: "buffering",
@@ -1265,13 +1581,24 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           // it was when this timer was scheduled (false), so a state read would
           // fire the failover on EVERY camera 3.5s after a successful
           // handshake, tearing a healthy sub-second WHEP stream down onto HLS.
+          //
+          // OBS rooms can arrive with broadcaster-controlled GOPs much longer
+          // than Tank's camera rungs. The live Admin feed measured 8.33s
+          // between IDRs on 2026-08-24. Abandoning WHEP at the normal camera
+          // deadline sent the viewer onto an 8s HLS ladder just before the
+          // WebRTC frame would have arrived, turning one wait into two. Keep
+          // the fast camera deadline, but give an OBS sibling one full long-GOP
+          // window while older publishers/configurations age out.
+          const firstFrameDeadlineMs = whepUrl.includes("/obs/")
+            ? Math.max(10_000, netProfileRef.current.whepFirstFrameMs)
+            : netProfileRef.current.whepFirstFrameMs;
           setTimeout(() => {
             if (cancelled) return;
             const isSlotConnected =
               targetSlot === "A" ? streamConnectedARef.current : streamConnectedBRef.current;
             if (!isSlotConnected) {
               console.warn("[CameraPlayer] WHEP frame timeout, auto-failover to HLS");
-              logCameraDebug(cameraLabel, "whep: 3.5s frame timeout, failing over to HLS");
+              logCameraDebug(cameraLabel, `whep: ${firstFrameDeadlineMs}ms frame timeout, failing over to HLS`);
               const fallbackHls = deriveHlsUrl(whepUrl);
               if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
                 connectNativeHls(fallbackHls);
@@ -1279,7 +1606,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                 connectHlsJs(fallbackHls);
               }
             }
-          }, netProfileRef.current.whepFirstFrameMs);
+          }, firstFrameDeadlineMs);
         } catch (err) {
           console.warn("[CameraPlayer] WHEP error, falling back to HLS:", err);
           logCameraDebug(cameraLabel, `whep: threw — ${err instanceof Error ? err.message : String(err)}`);
@@ -1350,6 +1677,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
       return () => {
         cancelled = true;
+        detachNativeHlsListeners?.();
       };
     }, [hasSource, playbackUrl, playbackProtocol]);
 
@@ -1386,7 +1714,12 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       <div
         ref={playerContainerRef}
         className="relative h-full w-full overflow-hidden bg-black select-none cursor-pointer group"
-        onClick={onClick}
+        onClick={(e) => {
+          if (awaitingSlot) {
+            setUserRequestedWatch(true);
+          }
+          onClick?.();
+        }}
         onDoubleClick={onDoubleClick}
       >
         {/* ── Preroll Loop (z-0, underneath everything) ──
@@ -1399,10 +1732,9 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           <video
             key={prerollLoopUrl}
             src={prerollLoopUrl}
-            className={`absolute inset-0 z-0 h-full w-full object-cover ${
-              // Dimmed only when it is a backdrop for an arriving live stream.
-              // While waiting for a slot it IS the picture, so show it fully.
-              awaitingSlot ? "opacity-100" : "opacity-70"
+            className={`absolute inset-0 z-0 h-full w-full object-cover transition-opacity duration-500 ${
+              // Fully visible while waiting or verifying; fades smoothly once live is stable.
+              awaitingSlot || !isLiveStable ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}
             autoPlay
             loop
@@ -1412,11 +1744,6 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
             preload={netProfile.preload}
             aria-hidden="true"
             tabIndex={-1}
-            // A camera with no loop yet (archiving off, or a camera that has
-            // not completed its first segment) 404s here. Remove the element
-            // rather than leaving a broken <video> on the stack — the result
-            // is the plain black background this replaced, which is the
-            // correct fallback.
             onError={(e) => {
               e.currentTarget.style.display = "none";
             }}
@@ -1428,8 +1755,8 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           ref={videoRefA}
           className={`${
             className ?? "absolute inset-0 h-full w-full object-cover"
-          } transition-opacity duration-150 ${
-            activeBuffer === "A" && streamConnectedA && !isOffline
+          } transition-opacity duration-500 ${
+            activeBuffer === "A" && streamConnectedA && isLiveStable && !isOffline
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
           }`}
@@ -1444,8 +1771,8 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           ref={videoRefB}
           className={`${
             className ?? "absolute inset-0 h-full w-full object-cover"
-          } transition-opacity duration-150 ${
-            activeBuffer === "B" && streamConnectedB && !isOffline
+          } transition-opacity duration-500 ${
+            activeBuffer === "B" && streamConnectedB && isLiveStable && !isOffline
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
           }`}
@@ -1459,36 +1786,37 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         {/* Clean, unobscured video canvas — floating LIVE badges removed for pristine presentation */}
 
         {/* Clean Standard Video Buffering Spinner (Truly transparent, no container box) */}
-        {bufferingInfo.isBuffering && hasAnyConnectedStream && !isOffline && (
+        {bufferingInfo.isBuffering && hasAnyConnectedStream && isLiveStable && !isOffline && (
           <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none transition-opacity duration-150">
             <Loader2 className="h-10 w-10 sm:h-12 sm:w-12 animate-spin text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] stroke-[2.5]" />
           </div>
         )}
 
-        {/* Healthy camera, deliberately not connected: the link is too thin to
-            carry every tile at once. Says so plainly rather than crying offline,
-            and stays quiet so it reads as standby, not failure. */}
-        {awaitingSlot && (
-          <div className="absolute inset-0 z-20 flex select-none items-end justify-center p-2">
-            {/* When a recent clip exists, THAT is the placeholder — a tile
-                showing the room a moment ago is worth far more than a tile
-                saying it is saving data, and it costs one short cached file
-                instead of an open live connection. Only the label sits on top,
-                so the preroll underneath stays visible. */}
+        {/* Standby surface.
+            
+            The machinery underneath is unchanged: a tile may be holding back
+            for a stream slot, or warming a live buffer behind the cached clip
+            until it is verified stable. None of that is the viewer's problem,
+            so none of it is labelled — no "tap to watch", no "verifying". The
+            recent clip simply plays, and the live feed dissolves in over it
+            when it is genuinely ready.
+
+            Tapping still promotes this tile to a stream slot; it is just no
+            longer advertised. Only the case with no clip to show gets a
+            surface at all, and it is a plain dark panel rather than a notice. */}
+        {(awaitingSlot || (!isLiveStable && hasSource && !isOffline)) && (
+          <div
+            className="absolute inset-0 z-20 select-none"
+            onClick={(e) => {
+              if (awaitingSlot) {
+                e.stopPropagation();
+                setUserRequestedWatch(true);
+              }
+            }}
+          >
             {!prerollLoopUrl && (
               <div className="absolute inset-0 bg-gradient-to-b from-[#141517] to-[#08080a]" />
             )}
-            <div className="relative flex items-center gap-1.5 rounded bg-black/55 px-2 py-0.5 backdrop-blur-[2px]">
-              <span
-                className="text-[9px] font-black uppercase tracking-[0.16em] text-white/75"
-                style={{ fontFamily: ACTIVE_THEME.fonts.label }}
-              >
-                Tap to watch
-              </span>
-              <span className="text-[8px] font-bold text-white/40">
-                {prerollLoopUrl ? "recent clip" : "saving data"}
-              </span>
-            </div>
           </div>
         )}
 

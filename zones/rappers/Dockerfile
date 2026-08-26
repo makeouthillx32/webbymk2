@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # zones/rappers/Dockerfile
 # ─────────────────────────────────────────────────────────────────────────────
 # Build context: project root
@@ -5,13 +6,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS deps
+FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 COPY package.json bun.lock* ./
-RUN bun install
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS builder
+FROM oven/bun:1.3.14 AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -69,10 +70,10 @@ ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
 ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 
-RUN bun run build
+RUN --mount=type=cache,target=/app/.next/cache,id=nextcache-rappers bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
-FROM oven/bun:1.2-slim AS runner
+FROM oven/bun:1.3.14-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

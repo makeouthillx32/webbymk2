@@ -1,5 +1,6 @@
 // lib/analytics.ts - UPDATED WITH COOKIE CONSENT INTEGRATION
 import { v4 as uuidv4 } from 'uuid';
+import { safeStorage } from './safeStorage';
 
 interface PerformanceMetric {
   type: 'LCP' | 'FID' | 'CLS' | 'TTFB';
@@ -91,17 +92,23 @@ const CookieConsentManager = {
   clearAnalyticsData(): void {
     if (typeof window === 'undefined') return;
 
-    // Clear analytics session data
-    localStorage.removeItem('analytics_session_id');
-    localStorage.removeItem('analytics_last_activity');
-    sessionStorage.removeItem('analytics_session_id');
-    
-    // Clear any other analytics-related localStorage items
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('analytics_') || key.startsWith('tracking_')) {
-        localStorage.removeItem(key);
+    try {
+      // Clear analytics session data
+      safeStorage.removeItem('analytics_session_id');
+      safeStorage.removeItem('analytics_last_activity');
+      try {
+        sessionStorage.removeItem('analytics_session_id');
+      } catch {}
+      
+      // Clear any other analytics-related localStorage items
+      if (window.localStorage) {
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('analytics_') || key.startsWith('tracking_')) {
+            safeStorage.removeItem(key);
+          }
+        });
       }
-    });
+    } catch {}
 
     console.log('🧹 Analytics data cleared due to consent revocation');
   }
@@ -156,16 +163,18 @@ class AnalyticsClient {
       return uuidv4(); // Temporary session for initialization
     }
 
-    // Try to get session from localStorage first (persists across browser tabs/sessions)
-    let existingSession = localStorage.getItem('analytics_session_id');
+    // Try to get session from safeStorage first (persists across browser tabs/sessions)
+    let existingSession = safeStorage.getItem('analytics_session_id');
     
-    // If no localStorage session, check sessionStorage (tab-specific)
+    // If no safeStorage session, check sessionStorage (tab-specific)
     if (!existingSession) {
-      existingSession = sessionStorage.getItem('analytics_session_id');
+      try {
+        existingSession = sessionStorage.getItem('analytics_session_id');
+      } catch {}
     }
     
     // Check if session is still valid (not older than 30 minutes of inactivity)
-    const lastActivity = localStorage.getItem('analytics_last_activity');
+    const lastActivity = safeStorage.getItem('analytics_last_activity');
     const now = Date.now();
     const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in ms
     
@@ -174,27 +183,33 @@ class AnalyticsClient {
       
       if (timeSinceLastActivity < thirtyMinutes) {
         // Session is still valid, update last activity
-        localStorage.setItem('analytics_last_activity', now.toString());
-        sessionStorage.setItem('analytics_session_id', existingSession);
+        safeStorage.setItem('analytics_last_activity', now.toString());
+        try {
+          sessionStorage.setItem('analytics_session_id', existingSession);
+        } catch {}
         console.log('🔄 Reusing valid session:', existingSession);
         return existingSession;
       } else {
         console.log('⏰ Session expired, creating new one');
         // Session expired, clear old data
-        localStorage.removeItem('analytics_session_id');
-        localStorage.removeItem('analytics_last_activity');
-        sessionStorage.removeItem('analytics_session_id');
+        safeStorage.removeItem('analytics_session_id');
+        safeStorage.removeItem('analytics_last_activity');
+        try {
+          sessionStorage.removeItem('analytics_session_id');
+        } catch {}
       }
     }
 
     // Generate new session ID
     const newSessionId = uuidv4();
     
-    // Store in both localStorage and sessionStorage (only if consent given)
+    // Store in both safeStorage and sessionStorage (only if consent given)
     if (CookieConsentManager.isAnalyticsAllowed()) {
-      localStorage.setItem('analytics_session_id', newSessionId);
-      localStorage.setItem('analytics_last_activity', now.toString());
-      sessionStorage.setItem('analytics_session_id', newSessionId);
+      safeStorage.setItem('analytics_session_id', newSessionId);
+      safeStorage.setItem('analytics_last_activity', now.toString());
+      try {
+        sessionStorage.setItem('analytics_session_id', newSessionId);
+      } catch {}
       console.log('✨ Created new session with consent:', newSessionId);
     } else {
       console.log('✨ Created temporary session (no storage):', newSessionId);
@@ -207,7 +222,7 @@ class AnalyticsClient {
   private updateActivity(): void {
     if (typeof window !== 'undefined' && CookieConsentManager.isAnalyticsAllowed()) {
       const now = Date.now();
-      localStorage.setItem('analytics_last_activity', now.toString());
+      safeStorage.setItem('analytics_last_activity', now.toString());
     }
   }
 
@@ -743,9 +758,8 @@ class AnalyticsClient {
     // Check session persistence
     if (typeof window !== 'undefined') {
       console.log('Session Storage:', {
-        localStorage: localStorage.getItem('analytics_session_id'),
-        sessionStorage: sessionStorage.getItem('analytics_session_id'),
-        lastActivity: localStorage.getItem('analytics_last_activity')
+        safeStorage: safeStorage.getItem('analytics_session_id'),
+        lastActivity: safeStorage.getItem('analytics_last_activity')
       });
     }
     

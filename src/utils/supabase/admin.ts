@@ -19,10 +19,14 @@
 import { createClient } from "@supabase/supabase-js";
 
 export function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  let url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://db.unenter.live";
+  // On host/node/bun outside Docker, kong:8000 is not reachable; fallback to public/internal URL
+  if (url.includes("kong:8000")) {
+    url = process.env.SUPABASE_INTERNAL_URL || "https://db.unenter.live";
+  }
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error("admin client: NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set");
+  if (!key) {
+    throw new Error("admin client: SUPABASE_SERVICE_ROLE_KEY not set");
   }
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },

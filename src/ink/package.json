@@ -1,6 +1,6 @@
 {
   "name": "@untsystems/unaxis",
-  "version": "0.0.70",
+  "version": "0.0.74",
   "description": "UNAXIS — unenter infrastructure manager. Terminal UI for zone orchestration.",
   "type": "module",
   "bin": {

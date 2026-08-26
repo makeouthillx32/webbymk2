@@ -10,6 +10,7 @@ import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ChevronLeft, Lock } from "lucide-react";
+import { safeStorage } from "@/lib/safeStorage";
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
@@ -118,7 +119,7 @@ export default function CheckoutPaymentPage() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-session-id': localStorage.getItem('unenter_session_id') || '',
+          'x-session-id': safeStorage.getItem('unenter_session_id') || '',
         },
         body: JSON.stringify({
           cart_id: cart?.id,

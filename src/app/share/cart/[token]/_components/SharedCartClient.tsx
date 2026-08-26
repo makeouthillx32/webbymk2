@@ -14,6 +14,7 @@ import {
   MessageSquareQuote,
 } from "lucide-react";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,10 +69,10 @@ function getOptionSummary(options: Record<string, any> | null): string {
 
 function getSessionId(): string {
   if (typeof window === "undefined") return `anon_${Date.now()}`;
-  let id = localStorage.getItem("unenter_session_id");
+  let id = safeStorage.getItem("unenter_session_id");
   if (!id) {
     id = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("unenter_session_id", id);
+    safeStorage.setItem("unenter_session_id", id);
   }
   return id;
 }

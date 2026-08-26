@@ -54,8 +54,8 @@ export async function generateSiteMetadata(): Promise<Metadata> {
   let coreZone: ZoneMetadataRow | null = null;
   try {
     const databaseUrl =
-      process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
-      process.env.NEXT_PUBLIC_SUPABASE_URL;
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!databaseUrl || !serviceKey)
       throw new Error("Catalog connection unavailable");

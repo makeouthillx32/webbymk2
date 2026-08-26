@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # zones/tank/Dockerfile
 # ─────────────────────────────────────────────────────────────────────────────
 # Tank Director zone  ·  tank.unenter.live
@@ -27,13 +28,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS deps
+FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 COPY package.json bun.lock* ./
-RUN bun install
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
-FROM oven/bun:1.2 AS builder
+FROM oven/bun:1.3.14 AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -52,7 +53,7 @@ COPY public/ ./public/
 #   app     → api actions _components providers                 (pure web app, no e-commerce routes)
 #   minimal → api actions _components providers                 (bare canvas)
 RUN mkdir -p /tmp/core-app && \
-    for dir in api actions _components providers; do \
+    for dir in api actions auth _components providers; do \
       if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \
     done && \
     if [ -f src/app/provider.tsx ]; then cp src/app/provider.tsx /tmp/core-app/; fi && \
@@ -77,13 +78,14 @@ RUN cp /tmp/core-app/globals.css src/app/globals.css 2>/dev/null || true
 ENV NEXT_PUBLIC_ZONE=tank
 ENV NEXT_TELEMETRY_DISABLED=1
 
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG NEXT_PUBLIC_SUPABASE_URL_BROWSER
-ARG NEXT_PUBLIC_APP_TITLE
-ARG NEXT_PUBLIC_COMPANY_NAME
-ARG NEXT_PUBLIC_OWNER_USERNAME
-ARG NEXT_PUBLIC_OWNER_EMAIL
+ARG NEXT_PUBLIC_SUPABASE_URL=https://db.unenter.live
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjE3OTk1MzU2MDB9.MVkGz6juIGwT8xbjL7buKbA5a3oZU3Wkl1TWcG69rqg
+ARG NEXT_PUBLIC_SUPABASE_URL_BROWSER=https://db.unenter.live
+ARG NEXT_PUBLIC_APP_TITLE=unenter.live
+ARG NEXT_PUBLIC_COMPANY_NAME=unenter
+ARG NEXT_PUBLIC_OWNER_USERNAME=unenter
+ARG NEXT_PUBLIC_OWNER_EMAIL=enter@unenter.live
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51QHuWWClUw60GabaJEQh1H6Yu8RgqaV3iBeiyY0YHOPNaIDBJyZTJ4KzFgETVlF4VleUfHHlTF58Aa8dcmUtCNrx00uY2aym0e
 
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -92,11 +94,12 @@ ENV NEXT_PUBLIC_APP_TITLE=$NEXT_PUBLIC_APP_TITLE
 ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
 ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
-RUN bun run build
+RUN --mount=type=cache,target=/app/.next/cache,id=nextcache-tank bun run build
 
 # ─── Stage 3: Runner ──────────────────────────────────────────────────────────
-FROM oven/bun:1.2-slim AS runner
+FROM oven/bun:1.3.14-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -104,13 +107,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_ZONE=tank
 ENV HOME=/tmp
 
-RUN addgroup --system --gid 1001 nodejs &&     adduser  --system --uid 1001 nextjs
+COPY --from=builder --chown=bun:bun /app/public           ./public
+COPY --from=builder --chown=bun:bun /app/.next/standalone ./
+COPY --from=builder --chown=bun:bun /app/.next/static     ./.next/static
 
-COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
-
-USER nextjs
+USER bun
 
 EXPOSE 3000
 ENV PORT=3000

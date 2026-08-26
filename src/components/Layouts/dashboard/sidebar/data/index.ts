@@ -147,6 +147,44 @@ export const NAV_DATA = [
         ],
       },
 
+      // ── Tank ────────────────────────────────
+      {
+        title: "Tank",
+        icon: Icons.Table,
+        items: [
+          {
+            title: "Cameras",
+            url: "/settings/tank/cameras",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Rooms",
+            url: "/settings/tank/rooms",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Audio Sources",
+            url: "/settings/tank/audio-sources",
+            icon: Icons.Table,
+          },
+          {
+            title: "Art",
+            url: "/settings/tank/art",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Emoji",
+            url: "/settings/tank/emoji",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Soundboard",
+            url: "/settings/tank/soundboard",
+            icon: Icons.Table,
+          },
+        ],
+      },
+
       // ── LIMS & Peptide Testing Engine ───────
       {
         title: "LIMS & Peptide Testing Engine",

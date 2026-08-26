@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 import { authLogger } from "@/lib/authLogger";
 import { RoleProvider } from "@/lib/roleContext";
 import { isLastPageExcluded } from "@/lib/protectedRoutes";
+import { safeStorage } from "@/lib/safeStorage";
 
 // ── Context type ──────────────────────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ export function AuthProviderWrapper({
           access_token: newSession.access_token,
           refresh_token: newSession.refresh_token,
           next: redirectTo,
-          remember: window.localStorage.getItem("rememberMe") === "true",
+          remember: safeStorage.getItem("rememberMe") === "true",
         }),
       });
 
@@ -242,7 +243,7 @@ export function AuthProviderWrapper({
       }
 
       window.sessionStorage.removeItem("postSignInRedirect");
-      window.location.assign(payload.redirectTo || `${redirectTo}?refresh=true`);
+      window.location.assign(payload.redirectTo || redirectTo);
     } catch (error) {
       console.error("[AuthProvider] Server session sync threw:", error);
     } finally {

@@ -30,6 +30,8 @@ The platform is divided into three logical planes:
 | **Recovery** | **Heal** | Automated repair or reconciliation of a degraded state. |
 | **Data Safety** | **Snapshot** | A point-in-time state capture of a volume or database. |
 | **Data Safety** | **Restore** | The recovery of an environment or database from a snapshot. |
+| **Media Plane** | **Archive** | The historical 24-hour continuous recorded film/length of footage for a room per day. |
+| **Media Plane** | **2-Minute Clips (Magic Trick Loop)** | Short ~2-minute pre-recorded video clips played in room feeds to maintain the illusion of an active camera when offline/standby. Strictly distinct from Archive. |
 | **Rendering** | **Constraint** | A rule-based width or height limit enforced to prevent visual shatter and maintain column ownership. |
 
 ## 3. Naming Conventions

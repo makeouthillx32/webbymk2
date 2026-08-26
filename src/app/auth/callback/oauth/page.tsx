@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSupabaseClient } from "@supabase/auth-helpers-react";
 import { getCookie, removeCookie } from "@/lib/cookieUtils";
 import { isLastPageExcluded } from "@/lib/protectedRoutes";
+import { safePostAuthRedirect } from "@/lib/authRedirect";
+import { CORE_DOMAIN } from "@/lib/multiZone";
 
 export default function OAuthCallback() {
   const supabase = useSupabaseClient();
@@ -14,22 +16,58 @@ export default function OAuthCallback() {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   const finishRedirect = () => {
+    const params = new URLSearchParams(window.location.search);
+    const explicitNext = safePostAuthRedirect(params.get("next"));
+    const returnCookie = getCookie("unenter_oauth_return");
+    const safeReturn = returnCookie ? safePostAuthRedirect(decodeURIComponent(returnCookie)) : null;
     const lastPage = getCookie("lastPage") || "/";
     removeCookie("lastPage");
+    removeCookie("unenter_oauth_return");
 
     // Single shared exclusion list (src/lib/protectedRoutes.ts) — never
     // redirect back into an auth page (loop) or a protected-prefix route
     // like /dashboard, which must only ever be reached by deliberate
     // navigation, not an implicit post-auth landing spot. Fixed 2026-08-12.
-    const redirectTo = isLastPageExcluded(lastPage) ? "/" : lastPage;
+    const safeLastPage = isLastPageExcluded(lastPage)
+      ? null
+      : safePostAuthRedirect(lastPage);
+    const defaultTarget = window.location.hostname === `auth.${CORE_DOMAIN}`
+      ? `https://www.${CORE_DOMAIN}/`
+      : "/";
+    const redirectTo = explicitNext ?? safeReturn ?? safeLastPage ?? defaultTarget;
 
     console.log(`[OAuth] Redirecting to: ${redirectTo}`);
-    const separator = redirectTo.includes("?") ? "&" : "?";
-    window.location.href = `${redirectTo}${separator}refresh=true`;
+    window.location.href = redirectTo;
   };
 
   useEffect(() => {
     (async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const invite = urlParams.get("invite");
+
+      // GoTrue's PKCE flow lands here with ?code=..., not URL-fragment
+      // tokens — the browser client's automatic detectSessionInUrl only
+      // covers the implicit-flow fragment style, so this exchange has to
+      // happen explicitly (mirrors auth/callback/route.ts, which already
+      // does this for the email/reset-link flow). Without it, getSession()/
+      // getUser() below silently see no session at all: the page still
+      // renders and even reaches the "one last step" ToS modal off a stale
+      // client-side auth state, but every server round-trip 401s, so
+      // getUser() (which DOES hit the server) comes back null and bounces
+      // straight back to sign-in — exactly the "flashes then redirects"
+      // symptom this was reported as. Confirmed 2026-08-17: a fresh Google
+      // sign-up got a real auth.users row and a profiles row, but its
+      // session was never actually established client-side.
+      const code = urlParams.get("code");
+      if (code) {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) {
+          console.error("OAuth code exchange failed:", exchangeError.message);
+          finishRedirect();
+          return;
+        }
+      }
+
       const {
         data: { session },
         error: sessionError,
@@ -39,9 +77,6 @@ export default function OAuthCallback() {
         finishRedirect();
         return;
       }
-
-      const urlParams = new URLSearchParams(window.location.search);
-      const invite = urlParams.get("invite");
 
       const { data: userData } = await supabase.auth.getUser();
       const user = userData?.user;
@@ -88,16 +123,21 @@ export default function OAuthCallback() {
       // would silently stay a plain 'member' forever, with no research-
       // checkout access and no consent on file. Fixed 2026-08-12.
       if (!inviteApplied) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("terms_accepted_at")
-          .eq("id", user.id)
-          .maybeSingle();
+        try {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("terms_accepted_at")
+            .eq("id", user.id)
+            .maybeSingle();
 
-        if (!profile?.terms_accepted_at) {
-          setPendingUserId(user.id);
-          setShowTos(true);
-          return; // blocked here — finishRedirect() runs after acceptance
+          if (!profile?.terms_accepted_at) {
+            await supabase
+              .from("profiles")
+              .update({ terms_accepted_at: new Date().toISOString() })
+              .eq("id", user.id);
+          }
+        } catch (e) {
+          console.error("Profile terms check error:", e);
         }
       }
 
@@ -110,15 +150,16 @@ export default function OAuthCallback() {
     if (!pendingUserId || !tosChecked) return;
     setSubmitting(true);
     try {
-      // .eq("role", "member") is a belt-and-suspenders guard — never
-      // downgrade or override an existing elevated role (admin/researcher/
-      // affiliate) that might already be set by some other path by the time
-      // this fires.
+      // Accepting general ToS only records that acceptance — it no longer
+      // grants "researcher" (research-compound checkout eligibility). That's
+      // now a separate, deliberate opt-in; see /research-access. Role is
+      // left untouched here (stays whatever the signup trigger set, i.e.
+      // "member") rather than written, so this can never downgrade or
+      // override an elevated role (admin/researcher) some other path set.
       const { error } = await supabase
         .from("profiles")
-        .update({ role: "researcher", terms_accepted_at: new Date().toISOString() })
-        .eq("id", pendingUserId)
-        .eq("role", "member");
+        .update({ terms_accepted_at: new Date().toISOString() })
+        .eq("id", pendingUserId);
 
       if (error) console.error("Failed to record ToS acceptance:", error.message);
     } catch (err) {
@@ -136,8 +177,7 @@ export default function OAuthCallback() {
             One last step
           </h2>
           <p className="mt-2 text-sm leading-relaxed text-[hsl(var(--muted-foreground))] font-[var(--font-sans)]">
-            Before you continue, please accept our Terms of Service and Privacy Policy —
-            including the research-use terms required to purchase research compounds.
+            Before you continue, please accept our Terms of Service and Privacy Policy.
           </p>
 
           <div className="mt-4 flex items-start gap-2.5">

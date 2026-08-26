@@ -24,6 +24,7 @@ import type { ReactNode } from "react";
 import { cookies, headers } from "next/headers";
 import { Providers } from "@/app/provider";
 import ClientLayout from "@/components/Layouts/ClientLayout";
+import ChunkReloader from "@/components/system/ChunkReloader";
 import { generateSiteMetadata } from "@/lib/zoneMetadata";
 import "./globals.css";
 
@@ -37,7 +38,30 @@ export const viewport: Viewport = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  return generateSiteMetadata();
+  const meta = await generateSiteMetadata();
+  const title = "Tank — My Livestream House";
+  const description =
+    "24/7 interactive streamer house, live multi-camera feeds, viewer items & house games.";
+
+  return {
+    ...meta,
+    title: {
+      default: title,
+      template: `%s | ${title}`,
+    },
+    description,
+    openGraph: {
+      ...meta.openGraph,
+      title,
+      description,
+      siteName: "Tank — My Livestream House",
+    },
+    twitter: {
+      ...meta.twitter,
+      title,
+      description,
+    },
+  };
 }
 
 const VALID_LOCALES = ["en", "de"] as const;
@@ -60,6 +84,7 @@ export default async function RootLayout({
     <html lang={locale} suppressHydrationWarning>
       <head />
       <body className={titillium.className} suppressHydrationWarning>
+        <ChunkReloader />
         <Providers>
           <ClientLayout locale={locale}>{children}</ClientLayout>
         </Providers>

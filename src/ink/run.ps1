@@ -122,8 +122,10 @@ if ($Dev) {
     # Use absolute paths — relative paths trigger a bun file-watcher bug on Windows
     # where tsconfig.json is registered as a watched directory instead of a file,
     # producing "Internal error: directory mismatch" and a resolver crash.
+    $tuiTsConfig = ($TUI_DIR + "/tsconfig.json").Replace('\', '/')
+    $mainEntry   = ($PROJECT_DIR + "/src/main.tsx").Replace('\', '/')
     Push-Location $PROJECT_DIR
-    bun --tsconfig-override "$TUI_DIR\tsconfig.json" --watch "$PROJECT_DIR\src\main.tsx"
+    bun --tsconfig-override "$tuiTsConfig" --watch "$mainEntry"
     Pop-Location
     exit $LASTEXITCODE
 }

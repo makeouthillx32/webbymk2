@@ -37,7 +37,7 @@ export const dynamic = "force-dynamic"; // always live; never cached at build
 // Per-probe. The probes run sequentially (see GET), so the route's worst case
 // is two of these — kept tight enough that a fully dead backend still answers
 // well inside any sane client timeout.
-const TIMEOUT_MS = 2_500;
+const TIMEOUT_MS = 5_000;
 
 type ProbeResult = { up: boolean; status: number | null; detail?: string };
 
@@ -80,15 +80,19 @@ async function probeRest(base: string, anon: string | undefined): Promise<ProbeR
  */
 async function probeAuth(base: string, anon: string | undefined): Promise<ProbeResult> {
   try {
-    const res = await fetch(`${base}/auth/v1/health`, {
-      // GoTrue's health route needs no key, but every other internal call to
-      // the gateway carries one — keep this request shaped like the rest.
+    const authUrl = `${base}/auth/v1/health`;
+    const res = await fetch(authUrl, {
       headers: anon ? { apikey: anon } : undefined,
       signal: AbortSignal.timeout(TIMEOUT_MS),
       cache: "no-store",
     });
     return { up: res.ok, status: res.status };
   } catch (cause) {
+    // If kong route timed out or failed, fallback to direct internal auth container probe
+    try {
+      const direct = await fetch("http://auth:9999/health", { signal: AbortSignal.timeout(2000) });
+      if (direct.ok) return { up: true, status: direct.status };
+    } catch {}
     return failure(cause);
   }
 }

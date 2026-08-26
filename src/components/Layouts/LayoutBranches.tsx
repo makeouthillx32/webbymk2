@@ -51,7 +51,7 @@ export function MinimalLayout({ children, screenSize }: MinimalLayoutProps) {
   return (
     <>
       <main
-        className="min-h-screen"
+        className="min-h-screen min-h-[100dvh]"
         style={{ backgroundColor: "hsl(var(--background))" }}
         data-layout="minimal"
       >
@@ -81,7 +81,7 @@ export function BlogLayout({ children, screenSize }: BlogLayoutProps) {
       <div data-layout="landing" className="blog-chrome">
         <BlogHeader />
         <main
-          className="min-h-screen"
+          className="min-h-screen min-h-[100dvh]"
           style={{ backgroundColor: "hsl(var(--background))" }}
         >
           {children}
@@ -117,7 +117,7 @@ export function LandingLayout({
           <LandingHeader />
           {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
           <main
-            className="min-h-screen"
+            className="min-h-screen min-h-[100dvh]"
             style={{ backgroundColor: "hsl(var(--background))" }}
           >
             {children}
@@ -185,7 +185,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
     <CartProvider>
       {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
       <main
-        className="min-h-screen"
+        className="min-h-screen min-h-[100dvh]"
         style={{ backgroundColor: "hsl(var(--background))" }}
       >
         {children}
@@ -215,7 +215,7 @@ export function AppLayout({ children, screenSize, footer }: AppLayoutProps) {
       <div data-layout="app">
         <AppHeader />
         <main
-          className="min-h-screen"
+          className="min-h-screen min-h-[100dvh]"
           style={{ backgroundColor: "hsl(var(--background))" }}
         >
           {children}
@@ -298,7 +298,9 @@ export function ShopLayout({
           {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
           <main
             className={
-              IS_LABS_ZONE ? "min-h-screen pt-4 sm:pt-5" : "min-h-screen"
+              IS_LABS_ZONE
+                ? "min-h-screen min-h-[100dvh] pt-4 sm:pt-5"
+                : "min-h-screen min-h-[100dvh]"
             }
             style={{ backgroundColor: "hsl(var(--background))" }}
           >

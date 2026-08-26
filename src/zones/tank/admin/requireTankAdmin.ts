@@ -17,7 +17,7 @@ export async function requireTankAdmin() {
   if (!access.ok) {
     redirect(
       access.status === 401
-        ? "https://www.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Fadmin"
+        ? "https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Fadmin"
         : "/?error=access_denied",
     );
   }

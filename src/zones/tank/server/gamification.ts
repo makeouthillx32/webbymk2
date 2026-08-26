@@ -1,6 +1,7 @@
-import "server-only";
-
+import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
+import { resolveTankDisplayName } from "../identity";
+import { getLevelForXp } from "../xpLevels";
 
 // Read-only data-access layer over the tank_* gamification tables added in
 // supabase/migrations/20260814140000_tank_platform_bones.sql. Every export
@@ -12,10 +13,26 @@ import { createClient } from "@/utils/supabase/server";
 // still needs to be wired on top of these bones — not done in this pass.
 
 export type TankPlayerProfile = {
+  /**
+   * The auth user id. Was missing entirely, so every `initialProfile?.id` in
+   * the app silently evaluated to undefined — including the `currentUserId`
+   * the chat panel uses to mark your own messages, which is why the "you"
+   * badge never appeared.
+   */
+  id: string | null;
   xp: number;
   level: number;
   tokens: number;
   displayName: string | null;
+  avatarUrl?: string | null;
+  nameColor?: string | null;
+  bio?: string | null;
+  settings?: Record<string, unknown> | null;
+  role?: string | null;
+  emailVerified?: boolean;
+  profileSetupComplete?: boolean;
+  freeRenameAvailable?: boolean;
+  renameTicketQuantity?: number;
 };
 
 export type TankSeason = {
@@ -62,13 +79,23 @@ export type TankInventoryEntry = {
   rarity: string;
   iconUrl: string | null;
   quantity: number;
+  audioEffectType?: "sfx_pass" | "tts_pass" | "hazard_effect" | null;
 };
 
 const EMPTY_PROFILE: TankPlayerProfile = {
+  id: null,
   xp: 0,
   level: 1,
   tokens: 0,
   displayName: null,
+  avatarUrl: null,
+  nameColor: null,
+  bio: null,
+  settings: null,
+  emailVerified: false,
+  profileSetupComplete: false,
+  freeRenameAvailable: true,
+  renameTicketQuantity: 0,
 };
 
 export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null> {
@@ -79,19 +106,55 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
     } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const { data, error } = await supabase
-      .from("tank_profiles")
-      .select("xp, level, tokens, display_name")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    const [{ data: tankData }, { data: mainProfile }, { data: renameTicket }] = await Promise.all([
+      supabase
+        .from("tank_profiles")
+        .select("xp, level, tokens, display_name, display_name_confirmed_at, free_rename_used_at")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("profiles")
+        .select("role, display_name, avatar_url")
+        .eq("id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("tank_player_inventory")
+        .select("quantity, tank_inventory_items!inner(slug)")
+        .eq("user_id", user.id)
+        .eq("tank_inventory_items.slug", "rename-ticket")
+        .maybeSingle(),
+    ]);
 
-    if (error || !data) return EMPTY_PROFILE;
+    const meta = user.user_metadata || {};
+    const role = mainProfile?.role || meta.role || "user";
+    const xp = tankData?.xp ?? 0;
+    const level = getLevelForXp(xp);
 
     return {
-      xp: data.xp ?? 0,
-      level: data.level ?? 1,
-      tokens: data.tokens ?? 0,
-      displayName: data.display_name ?? null,
+      id: user.id,
+      xp,
+      level,
+      tokens: tankData?.tokens ?? 0,
+      displayName: resolveTankDisplayName({
+        tankDisplayName: tankData?.display_name,
+        coreDisplayName: mainProfile?.display_name,
+        authDisplayName: meta.display_name,
+        providerFullName: meta.full_name,
+        providerUserName: meta.user_name,
+        email: user.email,
+      }),
+      avatarUrl:
+        mainProfile?.avatar_url ||
+        meta.avatar_url ||
+        "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png",
+      nameColor: meta.name_color || "#ff3b2f",
+      bio: meta.bio || "",
+      settings: (meta.tank_settings as Record<string, unknown>) || null,
+      role,
+      emailVerified: Boolean(user.email_confirmed_at || user.confirmed_at),
+      profileSetupComplete: Boolean(tankData?.display_name_confirmed_at),
+      freeRenameAvailable: !tankData?.free_rename_used_at,
+      renameTicketQuantity: renameTicket?.quantity ?? 0,
     };
   } catch {
     return EMPTY_PROFILE;
@@ -202,17 +265,17 @@ export async function getCurrentUserClan(): Promise<TankClanMembership | null> {
     if (!user) return null;
 
     const { data, error } = await supabase
-      .from("tank_clan_members")
-      .select("clan_id, tank_clans(name, tag, banner_color)")
+      .from("tank_click_members")
+      .select("click_id, tank_clicks(name, tag, banner_color)")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (error || !data || !data.tank_clans) return null;
-    const clan = Array.isArray(data.tank_clans) ? data.tank_clans[0] : data.tank_clans;
+    if (error || !data || !data.tank_clicks) return null;
+    const clan = Array.isArray(data.tank_clicks) ? data.tank_clicks[0] : data.tank_clicks;
     if (!clan) return null;
 
     return {
-      clanId: data.clan_id,
+      clanId: data.click_id,
       name: clan.name,
       tag: clan.tag,
       bannerColor: clan.banner_color,
@@ -232,18 +295,20 @@ export type TankClanSummary = {
 
 export async function getClans(): Promise<TankClanSummary[]> {
   try {
-    const supabase = await createClient();
+    // Public discovery may show aggregate membership counts, but raw Click
+    // membership is private under RLS. Assemble the safe summary server-side.
+    const supabase = createAdminClient();
     const { data, error } = await supabase
-      .from("tank_clans")
-      .select("id, name, tag, banner_color, tank_clan_members(count)")
+      .from("tank_clicks")
+      .select("id, name, tag, banner_color, tank_click_members(count)")
       .order("name", { ascending: true });
 
     if (error || !data) return [];
 
     return data.map((row) => {
-      const countRow = Array.isArray(row.tank_clan_members)
-        ? row.tank_clan_members[0]
-        : row.tank_clan_members;
+      const countRow = Array.isArray(row.tank_click_members)
+        ? row.tank_click_members[0]
+        : row.tank_click_members;
       return {
         id: row.id,
         name: row.name,
@@ -333,13 +398,13 @@ export async function getCurrentUserInventory(): Promise<TankInventoryEntry[]> {
 
     const { data, error } = await supabase
       .from("tank_player_inventory")
-      .select("item_id, quantity, tank_inventory_items(slug, name, description, rarity, icon_url)")
+      .select("item_id, quantity, tank_inventory_items(slug, name, description, rarity, icon_url, audio_effect_type)")
       .eq("user_id", user.id);
 
     if (error || !data) return [];
 
     return data
-      .map((row) => {
+      .map<TankInventoryEntry | null>((row) => {
         const item = Array.isArray(row.tank_inventory_items)
           ? row.tank_inventory_items[0]
           : row.tank_inventory_items;
@@ -352,6 +417,7 @@ export async function getCurrentUserInventory(): Promise<TankInventoryEntry[]> {
           rarity: item.rarity,
           iconUrl: item.icon_url,
           quantity: row.quantity ?? 1,
+          audioEffectType: item.audio_effect_type as TankInventoryEntry["audioEffectType"],
         } satisfies TankInventoryEntry;
       })
       .filter((entry): entry is TankInventoryEntry => entry !== null);

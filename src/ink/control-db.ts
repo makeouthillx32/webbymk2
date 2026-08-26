@@ -177,6 +177,13 @@ const MIGRATIONS: string[] = [
     snapshot_ref   TEXT NOT NULL DEFAULT '',
     created_at     TEXT NOT NULL DEFAULT (datetime('now'))
   );`,
+
+  // 002 — zone hosting mode. 'docker' (default): normal UNAXIS lifecycle,
+  // build/rebuild run buildZone+pullAndUp. 'vercel': build/rebuild instead
+  // git add+commit+push the zone's source and skip Docker entirely — the
+  // zone is built and served by an external Vercel project watching the
+  // same repo. See zone-build.ts gitCommitAndPushZone().
+  `ALTER TABLE zones ADD COLUMN hosting TEXT NOT NULL DEFAULT 'docker';`,
 ];
 
 function runMigrations(db: Database): void {
@@ -216,6 +223,7 @@ interface ZoneRow {
   sort_order:       number;
   enabled:          number;   // SQLite INTEGER: 1 = true, 0 = false
   environment_id:   string | null;
+  hosting:          string;   // 'docker' (default) | 'vercel'
 }
 
 interface EnvironmentRow {
@@ -262,6 +270,7 @@ function rowToZone(r: ZoneRow): Zone {
     dockerfile:     r.dockerfile ?? undefined,
     upstreamEnvKey: r.upstream_env_key,
     environmentId:  r.environment_id ?? null,
+    hosting:        r.hosting === "vercel" ? "vercel" : "docker",
   };
 }
 
@@ -580,6 +589,24 @@ export function dbDisableZone(key: string): void {
   db.run(
     "UPDATE zones SET enabled = 0, updated_at = datetime('now') WHERE key = ?",
     [key],
+  );
+}
+
+/** Mark a previously-disabled zone as enabled again. */
+export function dbEnableZone(key: string): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET enabled = 1, updated_at = datetime('now') WHERE key = ?",
+    [key],
+  );
+}
+
+/** Set a zone's hosting mode. 'vercel' zones skip Docker entirely on build/rebuild. */
+export function dbSetZoneHosting(key: string, hosting: "docker" | "vercel"): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET hosting = ?, updated_at = datetime('now') WHERE key = ?",
+    [hosting, key],
   );
 }
 

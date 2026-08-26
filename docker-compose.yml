@@ -21,14 +21,12 @@ networks:
                     # zone compose files reference this as: networks.unenter: external: true
 
 volumes:
-  unt-db-data:
-    name: webbymk2_unt-db-data
   unt-storage-data:
     name: webbymk2_unt-storage-data
+  unt-db-data:
+    name: webbymk2_unt-db-data
   # MediaMTX recording staging area — see the mediamtx service for why this is
   # a small bounded buffer rather than the archive itself.
-  unt-tank-spool:
-    name: webbymk2_unt-tank-spool
   # unt-ink-modules and unt-tui-modules removed — TUI now runs natively via Bun (tui/run.ps1)
 
 services:
@@ -388,6 +386,7 @@ services:
       CORE_DOMAIN:        "${CORE_DOMAIN:-unenter.live}"
       AGENT_PORT:         "8888"                       # TOFU — no secret needed, first TUI to connect pairs automatically
       AGENT_STATE_FILE:   "/proxy-config/agent-state.json"  # embedded context — state in proxy-config volume
+      STATUS_PUBLIC_KEY:  "${STATUS_PUBLIC_KEY}"             # gates GET /__status-api/public — set in .env, kept out of git
       # Fallback env vars — used only if proxy-config/routes.json is missing.
       UPSTREAM_UNENTER:   "http://unt_app:3000"
       UPSTREAM_BLOG:      "http://blog:3000"
@@ -492,7 +491,24 @@ services:
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
       TANK_ARCHIVE_NOTIFY_URL: ${TANK_ARCHIVE_NOTIFY_URL:-http://unt_tank:3000/api/tank/archive/segment-complete}
       TANK_ARCHIVE_INGEST_SECRET: ${TANK_ARCHIVE_INGEST_SECRET}
-      TANK_PREROLL_SECONDS: ${TANK_PREROLL_SECONDS:-15}
+      # Consumed by mediamtx/scripts/archive-transcode.sh — the AV1 converter
+      # runs here because this is the only container with ffmpeg and the GPU.
+      TANK_ARCHIVE_LOCAL_ROOT: ${TANK_ARCHIVE_LOCAL_ROOT:-/archive}
+      TANK_ARCHIVE_TRANSCODE_URL: ${TANK_ARCHIVE_TRANSCODE_URL:-http://unt_tank:3000/api/tank/archive/transcode}
+      TANK_ARCHIVE_TRANSCODE_BATCH: ${TANK_ARCHIVE_TRANSCODE_BATCH:-3}
+      TANK_ARCHIVE_TRANSCODE_INTERVAL: ${TANK_ARCHIVE_TRANSCODE_INTERVAL:-900}
+      # The viewer facade is intentionally a full two-minute recent clip.
+      # Keep this deterministic: a long-running UNAXIS process can retain an
+      # older inherited value and override .env during a scoped recreate.
+      TANK_PREROLL_SECONDS: 120
+      # Per-path recent-clip worker. Fixed cameras are stability-gated against
+      # the receiver manager's safe telemetry endpoint; OBS uses MediaMTX path
+      # readiness. At most two GPU encodes run together after a stack restart.
+      TANK_RECEIVER_MANAGER_URL: ${SRT_MANAGER_INTERNAL_URL:-http://host.docker.internal:5050}
+      TANK_CLIP_REFRESH_SECONDS: ${TANK_CLIP_REFRESH_SECONDS:-600}
+      TANK_CLIP_RETRY_SECONDS: ${TANK_CLIP_RETRY_SECONDS:-60}
+      TANK_CLIP_MAX_CONCURRENT: ${TANK_CLIP_MAX_CONCURRENT:-2}
+      TANK_CLIP_MIN_BITRATE_KBPS: ${TANK_CLIP_MIN_BITRATE_KBPS:-500}
       # Where the OBS room lifecycle hooks report signal start/stop.
       TANK_OBS_SIGNAL_URL: ${TANK_OBS_SIGNAL_URL:-http://unt_tank:3000/api/tank/obs/signal}
     volumes:
@@ -503,7 +519,55 @@ services:
       # recordDeleteAfter. At 6 cameras x ~3 Mbps this is ~8 GB/hour, so the
       # 2h retention below caps it around 16 GB — it is a retry buffer, NOT
       # the archive. The 24h archive lives in Supabase Storage.
-      - unt-tank-spool:/recordings
+      # PROTOCOL: nothing Tank-related lives on C:.
+      #
+      # This spool is pure churn — a segment is written, uploaded, and deleted
+      # two hours later. Docker's virtual disk grows on every write and never
+      # shrinks on delete, so running this inside the VHDX grew that file all
+      # night and took C: to 5.5% free, which killed the core Supabase stack.
+      # A host bind mount writes to the real filesystem, where deletes actually
+      # return the space.
+      # PROTOCOL: nothing Tank-related on C:. This spool is pure churn — write
+      # a segment, upload it, delete it two hours later. Inside Docker's virtual
+      # disk that churn grows the VHDX forever (it grows on write, never shrinks
+      # on delete), which is what took C: to 5% and killed the core stack.
+      - U:/tank-spool:/recordings
+      # The archive itself, on the same disk as the spool so a finished segment
+      # is MOVED into place rather than uploaded. Nothing about the archive
+      # touches C: — that is what filled the disk and took the stack down.
+      - U:/tank-archive:/archive
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "media"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
+  # ── TURN/STUN relay for WebRTC (WHEP) ────────────────────────────────────
+  # See coturn/turnserver.conf for why this exists: MediaMTX's WHEP output
+  # only advertises host ICE candidates, so anyone not on the LAN or a
+  # permissive network silently falls back to slower HLS today. This gives
+  # WHEP a real relay path for that traffic instead.
+  #
+  # Additive to the core stack, same as mediamtx — bring it up scoped:
+  #   docker compose up -d coturn
+  #
+  # REQUIRES A ROUTER-LEVEL PORT FORWARD nothing in this repo can do:
+  # UDP+TCP 3478 and UDP 49160-49180 forwarded to this host's LAN IP. Ask
+  # for the exact router steps rather than assuming they're done.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    container_name: unt_coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49180:49160-49180/udp"
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
     networks:
       - unenter
     labels:

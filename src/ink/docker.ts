@@ -21,7 +21,8 @@ export type Status =
   | "starting"   // container running, healthcheck in start_period / retrying
   | "unhealthy"  // container running but healthcheck is failing
   | "stopped"    // container exists but not running
-  | "missing";   // container doesn't exist
+  | "missing"    // container doesn't exist
+  | "vercel";    // hosting: 'vercel' — never has a Docker container; not a failure
 
 // ── Docker environment helpers ─────────────────────────────────────────────────
 //
@@ -413,7 +414,9 @@ export async function pollAll(
   ]);
 
   const zoneStatuses: Record<string, Status> = {};
-  zones.forEach((z) => { zoneStatuses[z.key] = statuses[z.container] ?? "missing"; });
+  zones.forEach((z) => {
+    zoneStatuses[z.key] = z.hosting === "vercel" ? "vercel" : (statuses[z.container] ?? "missing");
+  });
 
   let proxyStatus: Status = statuses[PROXY.container] ?? "missing";
   // Container "running" but admin API dark → process crashed / restarting.

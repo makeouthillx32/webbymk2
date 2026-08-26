@@ -1,15 +1,56 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { ChromePanel } from "./ChromePanel";
 import { ConsoleButton } from "./ConsoleButton";
 import { CameraPlayer } from "../CameraPlayer";
-import { getCameraLoopUrl } from "../../mediaPlayback";
 import { ACTIVE_THEME } from "../../theme";
 import type { DiscoveredCamera } from "../../contracts";
 
 const LED_GREEN = "#39ff6a";
 const LED_RED = "#ff3b2f";
+
+function RetryingLoopPreview({ url, online }: { url: string; online: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setAttempt(0);
+    setFailed(false);
+  }, [url, online]);
+
+  useEffect(() => {
+    if (!failed || !online) return;
+    // A loop may not exist on the first request (new/reconnected camera), and
+    // Supabase Storage keeps the same public URL after the refresher uploads
+    // it. Retry with a cache-buster instead of leaving the card hidden until a
+    // full browser reload.
+    const timer = window.setTimeout(() => {
+      setAttempt((value) => value + 1);
+      setFailed(false);
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [failed, online]);
+
+  const separator = url.includes("?") ? "&" : "?";
+  const src = attempt === 0 ? url : `${url}${separator}previewAttempt=${attempt}`;
+
+  return (
+    <video
+      key={src}
+      src={src}
+      className={`h-full w-full object-cover transition-opacity ${failed ? "opacity-0" : "opacity-100"}`}
+      autoPlay
+      loop
+      muted
+      playsInline
+      preload="metadata"
+      aria-hidden="true"
+      onCanPlay={() => setFailed(false)}
+      onError={() => setFailed(true)}
+    />
+  );
+}
 const glow = (rgb: string) => ({ textShadow: `0 0 6px ${rgb}, 0 0 1px ${rgb}` });
 
 export type CameraRosterItem = {
@@ -93,6 +134,13 @@ export function CameraRosterPanel({
           const isSelected = mode === "room" && selectedRoomSlug === room.roomKey;
           const isOnline = Boolean(room.isOnline);
           const hasFeed = Boolean(room.camera?.playbackUrl);
+          const loopUrl = room.camera?.recentClipUrl ?? null;
+          const usesLivePreviewRung =
+            room.camera?.protocol === "rtmp" ||
+            room.camera?.protocol === "srtla" ||
+            room.camera?.tags?.includes("obs") === true ||
+            room.camera?.tags?.includes("mobile") === true;
+          const previewUrl = room.camera?.previewUrl ?? null;
 
           return (
             <button
@@ -108,19 +156,34 @@ export function CameraRosterPanel({
                 backgroundColor: "#0d0e10",
               }}
             >
-              {/* Live Video Preview or Retro CRT fallback */}
-              <div className="relative h-full w-full overflow-hidden bg-black flex items-center justify-center pointer-events-none">
-                <CameraPlayer
-                  priority="thumbnail"
-                  playbackUrl={room.camera?.playbackUrl ?? null}
-                  playbackProtocol={room.camera?.playbackProtocol ?? "none"}
-                  online={isOnline && hasFeed}
-                  // Recent clip stands in while this tile waits for a stream
-                  // slot on a thin connection.
-                  prerollLoopUrl={room.camera?.id ? getCameraLoopUrl(room.camera.id) : null}
-                  muted={true}
-                  className="h-full w-full object-cover pointer-events-none"
-                />
+              {/*
+                Lightweight room preview. These cards used to mount one live
+                WHEP/HLS player apiece, so the public page decoded six 4K house
+                feeds plus OBS plus the hero simultaneously. Besides heating
+                phones, that made a clicked room compete with its own thumbnail
+                for ICE, bandwidth, and decode time. The roster now uses the
+                existing recent-room loop while the one selected hero owns the
+                real live connection. Director tooling has its own monitors and
+                is not affected by this public-page budget.
+              */}
+              <div
+                className={`relative h-full w-full overflow-hidden bg-gradient-to-br ${
+                  room.camera?.accent ?? "from-slate-800 via-slate-950 to-black"
+                } flex items-center justify-center pointer-events-none`}
+              >
+                {usesLivePreviewRung && previewUrl ? (
+                  <CameraPlayer
+                    key={room.camera?.id ?? room.roomKey}
+                    priority="thumbnail"
+                    playbackUrl={previewUrl}
+                    playbackProtocol={room.camera?.previewProtocol ?? "whep"}
+                    online={isOnline}
+                    muted
+                    className="h-full w-full object-cover"
+                  />
+                ) : loopUrl ? (
+                  <RetryingLoopPreview url={loopUrl} online={isOnline} />
+                ) : null}
 
                 {/* Subtle Room Name in Top-Left Corner */}
                 <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded bg-black/70 px-2 py-0.5 backdrop-blur-sm">

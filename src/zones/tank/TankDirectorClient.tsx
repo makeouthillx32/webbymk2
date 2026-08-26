@@ -109,7 +109,7 @@ export default function TankDirectorClient() {
     );
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen min-h-[100dvh] bg-background text-foreground">
       <section className="border-b border-border/70 bg-[hsl(var(--card)/0.72)]">
         <div className="container py-7 md:py-9">
           <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">

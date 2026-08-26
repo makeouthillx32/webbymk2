@@ -13,8 +13,13 @@ export default function ConditionalOverlays() {
   const pathname = usePathname();
   const isShopZone = process.env.NEXT_PUBLIC_ZONE === "shop";
   const isLabsZone = process.env.NEXT_PUBLIC_ZONE === "labs";
+  const isTankZone = process.env.NEXT_PUBLIC_ZONE === "tank";
 
-  // Exclude overlays from app and dashboard pages
+  // Exclude overlays from tank, app, and dashboard pages
+  if (isTankZone) {
+    return null;
+  }
+
   const isAppPage = pathname?.startsWith('/app');
   const isDashboardPage = pathname?.startsWith('/dashboard');
   

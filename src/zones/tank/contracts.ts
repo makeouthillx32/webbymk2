@@ -14,7 +14,7 @@ export type DeliveryMode = "webrtc" | "hls" | "coming-soon";
 //   rtmp         OBS / Streamlabs publishing to a Tank-issued stream key
 export type CameraProtocol = "srt" | "srtla" | "rtmp" | "ip-camera" | "usb" | "unknown";
 export type CameraPlaybackStatus = "ready" | "standby" | "unconfigured";
-export type CameraAudioPolicy = "passthrough" | "transcode-required";
+export type CameraAudioPolicy = "passthrough" | "transcode-required" | "none";
 export type CameraPlayback = {
   status: CameraPlaybackStatus;
   path: string;
@@ -67,6 +67,7 @@ export type TankAudioSource = {
   tags: string[];
   kind?: "ip-mic" | "line-in" | "house-mic";
   connectionHint?: string | null;
+  streamUrl?: string | null;
 };
 
 export type TankCamera = {
@@ -119,6 +120,17 @@ export type DiscoveredCamera = {
   audioSourceName?: string;
   playbackUrl: string | null;
   playbackProtocol: PlaybackProtocol;
+  /** Low-resolution video-only rung for roster cards; never an ingest URL. */
+  previewUrl?: string | null;
+  previewProtocol?: PlaybackProtocol;
+  /** Validated recent clip. Null whenever metadata is missing or too old. */
+  recentClipUrl?: string | null;
+  recentClipCapturedAt?: string | null;
+  recentClipExpiresAt?: string | null;
+  recentClipStatus?: "ready" | "stale" | "missing";
+  recentClipDurationSeconds?: number | null;
+  recentClipGeneration?: number | null;
+  recentClipSourceStableAt?: string | null;
   audioMode: CameraAudioMode;
   audioStatus: CameraAudioStatus;
   audioWarning: string | null;
@@ -172,9 +184,28 @@ export type DerivedRoom = {
   audioInputSourceId: string | null;
 };
 
-export type TankAudioRequestKind = "tts" | "sfx";
+export type TankAudioRequestKind = "tts" | "sfx" | "hazard_effect";
 export type TankAudioRequestTarget = "website" | "room";
-export type TankAudioRequestStatus = "pending" | "approved" | "rejected" | "played";
+export type TankAudioRequestStatus =
+  | "pending"
+  | "approved"
+  | "playing"
+  | "completed"
+  | "failed"
+  | "rejected";
+
+export type TankSfxLibraryEntry = {
+  id: string;
+  soundKey: string;
+  name: string;
+  fileUrl: string;
+  category: string;
+  defaultVolume: number;
+  durationMs: number | null;
+  isPremium: boolean;
+  requiredItemSlug: string | null;
+  tokenCost: number;
+};
 
 // Unified TTS + SFX request — see the migration comment in
 // supabase/migrations/20260816160000_tank_room_audio_and_requests.sql for
@@ -190,6 +221,9 @@ export type TankAudioRequest = {
   targetRoomKey: string | null;
   cost: number;
   status: TankAudioRequestStatus;
+  priority?: number;
+  attempts?: number;
+  errorMessage?: string | null;
   createdAt: string;
 };
 
@@ -201,6 +235,8 @@ export type TankAudioPlaybackEvent = {
   kind: TankAudioRequestKind;
   message: string | null;
   voiceOrSoundKey: string;
+  audioUrl?: string | null;
+  targetRoomKey?: string | null;
 };
 
 export type CameraDirectorySnapshot = {
@@ -299,7 +335,8 @@ export type ChatMessage = {
   user: string;
   body: string;
   time: string;
-  role?: "viewer" | "member" | "regular" | "vip" | "moderator" | "admin" | "bot";
+  createdAt?: string;
+  role?: "viewer" | "member" | "regular" | "vip" | "moderator" | "admin";
   level?: number;
   xp?: number;
   rank?: ChatRank;
@@ -316,6 +353,15 @@ export type ChatMessage = {
    * message twice.
    */
   clientNonce?: string;
+  replyToMessageId?: string;
+  replyToUserId?: string;
+  replyToUserName?: string;
+  replyPreview?: string;
+  reactions?: Array<{
+    reaction: "love" | "laugh" | "wow" | "fire" | "skull";
+    count: number;
+    reactedByMe: boolean;
+  }>;
   /** Rendered but not yet acknowledged by the server. */
   pending?: boolean;
   /** The send failed; the row stays visible so the text isn't lost. */

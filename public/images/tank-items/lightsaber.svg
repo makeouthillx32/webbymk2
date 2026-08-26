@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+    <defs>
+      <filter id="laserGlow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="8" result="blur1"/>
+        <feGaussianBlur stdDeviation="16" result="blur2"/>
+        <feMerge>
+          <feMergeNode in="blur2"/>
+          <feMergeNode in="blur1"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+      <linearGradient id="hiltMetal" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#475569"/>
+        <stop offset="40%" stop-color="#cbd5e1"/>
+        <stop offset="100%" stop-color="#1e293b"/>
+      </linearGradient>
+    </defs>
+    <g transform="rotate(45 128 128)">
+      <!-- Glowing Energy Blade -->
+      <rect x="120" y="16" width="16" height="150" rx="8" fill="#38bdf8" filter="url(#laserGlow)"/>
+      <rect x="124" y="20" width="8" height="142" rx="4" fill="#ffffff"/>
+      <!-- Metal Hilt -->
+      <rect x="116" y="160" width="24" height="74" rx="4" fill="url(#hiltMetal)" stroke="#0f172a" stroke-width="3"/>
+      <!-- Hilt Grips & Emitter -->
+      <rect x="114" y="156" width="28" height="10" rx="2" fill="#0284c7"/>
+      <rect x="118" y="180" width="20" height="4" fill="#0f172a"/>
+      <rect x="118" y="192" width="20" height="4" fill="#0f172a"/>
+      <rect x="118" y="204" width="20" height="4" fill="#0f172a"/>
+      <circle cx="128" cy="172" r="3" fill="#ef4444"/>
+      <!-- Pommel Cap -->
+      <rect x="112" y="230" width="32" height="8" rx="3" fill="#94a3b8"/>
+    </g>
+  </svg>

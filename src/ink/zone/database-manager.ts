@@ -55,7 +55,7 @@ import {
   type RuntimeInstance,
   getInstanceProjectName,
 }                           from "./supabase-factory.ts";
-import { DOMAIN, STACK_HOST } from "../../config/stack.ts";
+import { DOMAIN, STACK_HOST, PROJECT_DIR } from "../../config/stack.ts";
 import { loadRegistry, updateInstanceStatus } from "./supabase-factory.ts";
 import { existsSync }          from "fs";
 import type { OnLine }         from "./types.ts";
@@ -655,6 +655,132 @@ export async function createBlankDatabase(
     if (!didStart) {
       await removeFromRegistry(instance.id).catch(() => {});
     }
+    throw err;
+  }
+}
+
+// ── provisionCodevDatabase ─────────────────────────────────────────────────────
+
+export interface CodevDatabaseResult {
+  instance:  RuntimeInstance;
+  studioUrl: string;
+  apiUrl:    string;
+  migrationsApplied: number;
+  migrationErrors:   string[];
+}
+
+/**
+ * Spin up a completely local, isolated Supabase instance for an external
+ * contributor's own machine — no NPM, no DNS, no public domain, nothing
+ * shared with the real POWER/L0V3 stack. Deliberately does NOT go through
+ * createBlankDatabase(): that function unconditionally reads STACK_HOST.ip
+ * and DOMAIN at its very top (database-manager.ts, "const stackIp =
+ * STACK_HOST.ip"), both of which throw/are empty on a fresh clone with no
+ * %APPDATA%\unaxis\unenter\config.json — and since stack.ts resolves that
+ * config ONCE at module load time, writing a config file mid-process can't
+ * fix it retroactively. createRuntimeInstance() itself needs neither value
+ * (pure ports/secrets/docker-compose, no domain concept at all), so this
+ * reuses that primitive directly and simply never calls the domain-coupled
+ * addDatabaseRoutes/npmAddDatabaseHosts/writeMcpConfig steps — which this
+ * local-only use case has no reason to want anyway.
+ *
+ * After the stack is up, applies every supabase/migrations/*.sql file (in
+ * filename order, same as they'd apply anywhere else) plus one new seed file
+ * (supabase/seed-codev.sql) that inserts the 7 sample Tank rooms from
+ * src/zones/tank/fixtures.ts as real tank_rooms rows — a fresh instance
+ * otherwise has zero app data, so Tank would render with the fixture
+ * fallback's client-side placeholders instead of anything DB-backed.
+ * Applied via `docker cp` + `docker exec psql -f`, not a host-installed
+ * psql client — nothing this needs beyond Docker itself.
+ */
+export async function provisionCodevDatabase(
+  slug:   string,
+  onLine: OnLine,
+): Promise<CodevDatabaseResult> {
+  await validateDatabaseSlug(slug);
+  await assertDockerRunning();
+
+  onLine(`🆕 Creating local codev database: ${slug}`);
+  onLine(`   Local only — no NPM, no DNS, nothing shared with the real stack.`);
+
+  onLine("\n[1/4] Scaffolding instance...");
+  const instance = await createRuntimeInstance(slug, onLine);
+  onLine(`  ✓ slug:  ${instance.slug}`);
+  onLine(`  ✓ ports: Kong:${instance.ports.kong}  Studio:${instance.ports.studio}  PG:${instance.ports.postgres}`);
+
+  try {
+    onLine("\n[2/4] Starting Supabase stack...");
+    const { code: upCode, out: upOut } = await spawnRun(
+      "docker",
+      ["compose", "--project-name", getInstanceProjectName(instance), "up", "-d", "--remove-orphans"],
+      { cwd: instance.dockerPath, timeout: 120_000,
+        env: envWithFile(`${instance.dockerPath}/.env`) },
+    );
+    if (upCode !== 0) throw new Error(`docker compose up failed:\n${upOut}`);
+    onLine("  ✓ containers started");
+
+    onLine("\n[3/4] Waiting for Postgres...");
+    const dbCont = instance.containerPrefix ? `${instance.containerPrefix}db` : `${instance.slug}-db`;
+    let pgReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const { out } = await _dockerExec(["exec", dbCont, "pg_isready", "-U", "postgres"]);
+      if (out.includes("accepting connections")) { pgReady = true; break; }
+      if ((i + 1) % 5 === 0) onLine(`  … waiting (${(i + 1) * 2}s)`);
+    }
+    if (!pgReady) throw new Error("Postgres did not become ready within 60s");
+    onLine("  ✓ Postgres ready");
+
+    onLine("\n[4/4] Applying app migrations + sample data...");
+    const migrationErrors: string[] = [];
+    let migrationsApplied = 0;
+
+    const migrationsDir = join(PROJECT_DIR, "supabase", "migrations");
+    const seedFile       = join(PROJECT_DIR, "supabase", "seed-codev.sql");
+    const files: string[] = [];
+    try {
+      const entries = await fs.readdir(migrationsDir);
+      files.push(...entries.filter((f) => f.endsWith(".sql")).sort().map((f) => join(migrationsDir, f)));
+    } catch (e) {
+      migrationErrors.push(`Could not read migrations directory: ${String(e)}`);
+    }
+    if (existsSync(seedFile)) files.push(seedFile);
+
+    for (const file of files) {
+      const remotePath = `/tmp/${Date.now()}-${file.split(/[\\/]/).pop()}`;
+      const cpResult = await _dockerExec(["cp", file, `${dbCont}:${remotePath}`]);
+      if (cpResult.code !== 0) {
+        migrationErrors.push(`${file}: docker cp failed — ${cpResult.out.slice(0, 200)}`);
+        continue;
+      }
+      const runResult = await _dockerExec([
+        "exec", dbCont, "psql", "-U", "postgres", "-d", "postgres",
+        "-v", "ON_ERROR_STOP=1", "-f", remotePath,
+      ]);
+      if (runResult.code !== 0) {
+        migrationErrors.push(`${file.split(/[\\/]/).pop()}: ${runResult.out.slice(0, 300)}`);
+      } else {
+        migrationsApplied += 1;
+      }
+    }
+    onLine(`  ✓ ${migrationsApplied}/${files.length} SQL files applied`);
+    if (migrationErrors.length > 0) {
+      onLine(`  ⚠ ${migrationErrors.length} file(s) had errors — see migrationErrors in the result`);
+    }
+
+    const apiUrl    = `http://127.0.0.1:${instance.ports.kong}`;
+    const studioUrl = `http://127.0.0.1:${instance.ports.studio}`;
+
+    onLine(`\n✓ Local codev database ready: ${slug}`);
+    onLine(`  Studio:            ${studioUrl}`);
+    onLine(`  API (Kong):        ${apiUrl}`);
+    onLine(`  anon key:          ${instance.secrets.anonKey}`);
+    onLine(`  service role key:  ${instance.secrets.serviceRoleKey}`);
+    onLine(`  Studio password:   ${instance.secrets.dashboardPassword}`);
+
+    return { instance, studioUrl, apiUrl, migrationsApplied, migrationErrors };
+  } catch (err) {
+    await removeFromRegistry(instance.id).catch(() => {});
     throw err;
   }
 }

@@ -5,11 +5,11 @@ import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
 import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
 import { devContainerName, devDomain, startDevContainer, stopDevContainer } from "../dev-container.ts";
-import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts, recreateCoreService } from "../docker.ts";
+import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts, recreateCoreService, syncSharedZonesCompose } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
 import { parseLogTail, snapshotContainerLogs } from "../log-snapshot.ts";
-import { loadZones } from "../zone-store.ts";
+import { loadZones, removeZone, restoreZone, setZoneHosting } from "../zone-store.ts";
 import { fetchContainers, fetchContainerLogs, fetchImages, fetchVolumes, fetchNetworks, inspectContainer, fetchImageHistory, fetchDockerEvents, containerAction, fetchContainerStats, removeImage } from "../agent-client.ts";
 import { probeEnvironments, probeStateTile } from "../env-probe.ts";
 import { updateRemoteAgent } from "../agent-ops.ts";
@@ -43,13 +43,15 @@ import {
 import {
   provisionDatabase,
   createBlankDatabase,
+  provisionCodevDatabase,
   smokeTestDatabase,
   validateDatabaseSlug,
 } from "../zone/database-manager.ts";
 import { loadRegistry } from "../zone/supabase-factory.ts";
 import { NPM_HOST } from "../../config/stack.ts";
-import { addZoneRoute, getRoutes } from "../proxy-config.ts";
-import { buildAndDeploy, deployZone, deployAll } from "../zone-build.ts";
+import { addZoneRoute, getRoutes, removeZoneRoute } from "../proxy-config.ts";
+import { deleteZoneNpmHost } from "../zone/npm-cleanup.ts";
+import { buildAndDeploy, deployZone, deployAll, gitCommitAndPushZone, promoteVercelZone } from "../zone-build.ts";
 import {
   deleteZone, deriveZone, findNextDevPort, LAYOUT_OPTIONS,
   type LayoutType, type AppFooterType,
@@ -69,6 +71,7 @@ import {
 import { UNAXIS_CLI_SCHEMA } from "../cli-schema.js";
 import { fetchZoneVisibility, setZoneVisibility, type ZoneVisibility } from "../zone-visibility.js";
 import type { NotificationType, NotificationPriority, NotificationOptions } from "../components/Notifications.js";
+import { formatDockerWslVhdReport, inspectDockerWslVhd } from "../windows-wsl-vhd-guard.js";
 
 declare const UNAXIS_VERSION: string;
 
@@ -226,7 +229,10 @@ export async function coldStartCoreStack(
     await new Promise((r) => setTimeout(r, 5000));
   }
   if (!daemonUp) {
-    onLine("✗ Docker daemon unreachable after 90s — start Docker Desktop, then re-run: unaxis up");
+    onLine("✗ Docker daemon unreachable after 90s");
+    const report = await inspectDockerWslVhd();
+    for (const line of formatDockerWslVhdReport(report)) onLine(line);
+    onLine("No automatic Docker/WSL restart or VHD mutation was attempted.");
     return 1;
   }
 
@@ -256,8 +262,15 @@ export async function coldStartCoreStack(
   }
 
   // 4. Hydrate control DB (zones + environments). Safe to re-run.
+  // Route reconciliation must happen AFTER this step. The independent startup
+  // effect can run before hydration and legitimately see zero zones, which
+  // used to overwrite routes.json with an empty map until an operator manually
+  // ran `sync-routes`.
   if (opts.skipHydrate) {
-    onLine("✓ core stack up (hydration skipped via --no-hydrate)");
+    onLine("→ reconciling proxy routes from existing control DB…");
+    const [zones, envs] = await Promise.all([loadZones(), loadEnvironments()]);
+    await reconcileProxyRoutes(zones, envs, (name) => getStatus(name), onLine);
+    onLine("✓ core stack up · hydration skipped · proxy routes reconciled");
     return 0;
   }
   onLine("→ hydrating control DB from unenter.db…");
@@ -268,7 +281,14 @@ export async function coldStartCoreStack(
     return 4;
   }
 
-  onLine("✓ core stack up · control DB hydrated · unaxis fully operational");
+  // 5. Rebuild the proxy map from the now-hydrated source of truth. This is
+  // deliberately in the cold-start transaction rather than relying on the
+  // concurrent best-effort boot effect.
+  onLine("→ reconciling proxy routes after hydration…");
+  const [zones, envs] = await Promise.all([loadZones(), loadEnvironments()]);
+  await reconcileProxyRoutes(zones, envs, (name) => getStatus(name), onLine);
+
+  onLine("✓ core stack up · control DB hydrated · proxy routes reconciled · unaxis fully operational");
   return 0;
 }
 
@@ -573,7 +593,9 @@ export function useIpcBridge({
         const proxyStatus = proxyS;
 
         // ── Zones ────────────────────────────────────────────────────────────
-        const deployable = all.filter((z: any) => z.key !== "unenter" && z.key !== "proxy");
+        const deployable = all.filter((z: any) =>
+          z.key !== "unenter" && z.key !== "proxy" && z.hosting !== "vercel"
+        );
         const zoneItems: { key: string; label: string; domain: string; status: string }[] = [];
         for (const z of deployable) {
           const s = await getStatus(z.container ?? z.key);
@@ -705,6 +727,15 @@ export function useIpcBridge({
       // Snapshot of host CPU / RAM / uptime. No deps on Docker or NPM.
       // TUI equivalent: CoreView perf NOC + useHostMonitor hook.
       host: async (args, onLine) => {
+        if (args[0] === "doctor") {
+          const report = await inspectDockerWslVhd();
+          if (args.includes("--json")) {
+            onLine(JSON.stringify(report));
+          } else {
+            for (const line of formatDockerWslVhdReport(report)) onLine(line);
+          }
+          return report.error ? 1 : 0;
+        }
         const json = args.includes("--json");
         const os = await import("os");
         const cpus = os.cpus();
@@ -1903,6 +1934,47 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         return 2;
       },
 
+      // unaxis codev <sub> [args…]
+      //
+      // Subcommands:
+      //   init [--slug <name>]  — provision a local-only Supabase instance
+      //                           (no NPM, no DNS, own fresh keys) seeded
+      //                           with Tank sample data, for an external
+      //                           contributor's own machine. See
+      //                           provisionCodevDatabase() for why this
+      //                           can't reuse createBlankDatabase/db provision.
+      codev: async (args, onLine) => {
+        const sub = args[0];
+
+        if (sub === "init") {
+          const slug = argValue(args, "--slug") ?? "codev";
+          try {
+            const result = await provisionCodevDatabase(slug, onLine);
+            onLine("");
+            onLine("Add these to your .env (or .env.local) before `bun run dev`:");
+            onLine(`  NEXT_PUBLIC_SUPABASE_URL=${result.apiUrl}`);
+            onLine(`  NEXT_PUBLIC_SUPABASE_URL_BROWSER=${result.apiUrl}`);
+            onLine(`  NEXT_PUBLIC_SUPABASE_ANON_KEY=${result.instance.secrets.anonKey}`);
+            onLine(`  SUPABASE_SERVICE_ROLE_KEY=${result.instance.secrets.serviceRoleKey}`);
+            onLine("");
+            onLine(`Studio (browse/edit data): ${result.studioUrl}`);
+            if (result.migrationErrors.length > 0) {
+              onLine("");
+              onLine(`⚠ ${result.migrationErrors.length} SQL file(s) failed to apply — instance still usable, but some tables/data may be missing:`);
+              for (const e of result.migrationErrors.slice(0, 10)) onLine(`  ${e}`);
+            }
+            return result.migrationErrors.length > 0 ? 4 : 0;
+          } catch (e) {
+            onLine(`✗ codev init failed: ${e instanceof Error ? e.message : String(e)}`);
+            return 1;
+          }
+        }
+
+        onLine(`✗ unknown codev command: "${sub}"`);
+        onLine("  usage: codev init [--slug <name>]");
+        return 2;
+      },
+
       // unaxis db <sub> [args…]
       //
       // Subcommands:
@@ -3090,6 +3162,14 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
       // unaxis zone <name> status
       // unaxis zone <name> tag|untag|pinned
+      // unaxis zone <name> disable   (soft: stop container, drop from compose
+      //                               + proxy route, keep source — for zones
+      //                               served externally, e.g. Vercel)
+      // unaxis zone <name> enable    (undo disable; re-add to compose + proxy,
+      //                               still needs a manual `build` after)
+      // unaxis zone <name> hosting [docker|vercel]  (read/set hosting mode —
+      //                               vercel zones' "build" pushes to git,
+      //                               skips Docker entirely)
       // unaxis zone <name> logs [--tail <lines>]
       // unaxis zone <name> dev start|stop|restart|secure
       // unaxis zone <name> dev logs [--tail <lines>]
@@ -3196,6 +3276,71 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           }
         }
 
+        // ── Soft disable/enable — pull a zone out of the Docker lifecycle ────
+        // without deleting its source. Stops + removes the container, drops
+        // it from the shared compose sync (enabled=0 → dbGetZones excludes
+        // it, so it never spins back up on a POWER/Docker restart), and
+        // removes its proxy route. Unlike `delete`, zones/{key}/ and
+        // src/zones/{key}/ are left untouched — for a zone that's meant to
+        // be served externally (e.g. Vercel) but still wants its source
+        // scaffolded from the same template.
+        if (action === "disable") {
+          try {
+            await removeZoneDockerArtifacts(zone.key, zone.container, zone.image, onLine);
+            removeZone(zone.key, true);
+            onLine(`✓ Marked disabled in control-db (SQLite)`);
+            await syncSharedZonesCompose(onLine);
+            await removeZoneRoute(zone.key, onLine);
+            await deleteZoneNpmHost(zone.key, onLine);
+            onLine("");
+            onLine(`✓ Zone "${zone.key}" disabled — source kept, won't rebuild/redeploy/spin up until re-enabled`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        if (action === "enable") {
+          try {
+            restoreZone(zone.key);
+            onLine(`✓ Marked enabled in control-db (SQLite)`);
+            await syncSharedZonesCompose(onLine);
+            await addZoneRoute(zone.key, `http://${zone.service}:3000`, onLine);
+            onLine("");
+            onLine(`✓ Zone "${zone.key}" enabled — run "unaxis zone ${zone.key} build" to bring it back up`);
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
+        // unaxis zone <name> hosting              — read current hosting mode
+        // unaxis zone <name> hosting docker|vercel — set it
+        if (action === "hosting") {
+          const requested = args[2];
+          if (!requested) {
+            onLine(`  ${zone.label}  hosting: ${zone.hosting ?? "docker"}`);
+            return 0;
+          }
+          if (requested !== "docker" && requested !== "vercel") {
+            onLine(`✗ usage: unaxis zone ${zone.key} hosting docker|vercel`);
+            return 2;
+          }
+          try {
+            setZoneHosting(zone.key, requested);
+            onLine(`✓ ${zone.label} hosting set to "${requested}"`);
+            if (requested === "vercel") {
+              onLine(`  "unaxis zone ${zone.key} build" now pushes source to git instead of building Docker`);
+            }
+            return 0;
+          } catch (error) {
+            onLine(`✗ ${error instanceof Error ? error.message : String(error)}`);
+            return 1;
+          }
+        }
+
         if (action === "logs") {
           const tail = parseTail(args.slice(2));
           const result = await captureDockerLogs({
@@ -3207,9 +3352,44 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return result.code;
         }
 
+        if (action === "promote") {
+          if (zone.hosting !== "vercel") {
+            onLine(`✗ ${zone.label} is Docker-hosted; promote is only for Vercel zones.`);
+            return 2;
+          }
+          const deploymentUrl = args[2];
+          if (!deploymentUrl) {
+            onLine(`✗ usage: unaxis zone ${zone.key} promote https://<deployment>.vercel.app [--bg]`);
+            return 2;
+          }
+          const runner = (line: (value: string) => void) => promoteVercelZone(zone, deploymentUrl, line);
+          if (args.includes("--bg")) {
+            runOpQueued(`Promote  ${zone.label}`, runner);
+            onLine(`⚡ Promote ${zone.label} queued — watch: unaxis stacks`);
+            return 3;
+          }
+          return runOpVisible(`Promote  ${zone.label}`, runner, onLine);
+        }
+
         if (action === "build" || action === "rebuild") {
           const noCache = action === "rebuild" || args.includes("--no-cache");
           const verb = noCache ? "Rebuild" : "Build";
+
+          // Vercel-hosted zones skip Docker entirely: "build" is a scoped
+          // git add+commit+push of the zone's own source. An external
+          // Vercel project (Root Directory scoped to this zone, watching
+          // the same repo) builds and deploys on its own from that push.
+          if (zone.hosting === "vercel") {
+            const runner = (l: (line: string) => void) => gitCommitAndPushZone(zone, l);
+            if (args.includes("--bg")) {
+              runOpQueued(`Push  ${zone.label}`, runner);
+              if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `Push  ${zone.label}` }));
+              else onLine(`⚡ ${zone.label} (vercel-hosted) — pushing to git — watch: unaxis stacks`);
+              return 3;
+            }
+            return runOpVisible(`Push  ${zone.label}`, runner, onLine);
+          }
+
           // --bg: enqueue as a TUI stack op and return immediately (no socket
           // wait). Lets the operator fire several zone builds concurrently and
           // watch them via `unaxis stacks` instead of blocking for ~5 min.
@@ -3225,6 +3405,10 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         }
 
         if (action === "deploy") {
+          if (zone.hosting === "vercel") {
+            onLine(`✗ ${zone.label} is vercel-hosted — there's no Docker container to deploy. Use "build" to push source instead.`);
+            return 1;
+          }
           if (args.includes("--bg")) {
             runOpQueued(`Deploy  ${zone.label}`, async (bgLine) => deployZone(zone, bgLine));
             if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `Deploy  ${zone.label}` }));

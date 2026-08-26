@@ -5,9 +5,11 @@ import defaultTheme from './default';
 import monochromeTheme from './monochrome';
 import vintageTheme from './vintage';
 import sharpTheme from './sharp';
+import tankGreenTheme from './tank-green';
+import tankBlueTheme from './tank-blue';
 
 // Bundled fallback themes — always available even when DB is unreachable
-const LOCAL_THEMES: Theme[] = [defaultTheme, monochromeTheme, vintageTheme, sharpTheme];
+const LOCAL_THEMES: Theme[] = [defaultTheme, monochromeTheme, vintageTheme, sharpTheme, tankGreenTheme, tankBlueTheme];
 const LOCAL_THEME_MAP: Record<string, Theme> = Object.fromEntries(
   LOCAL_THEMES.map(t => [t.id, t])
 );
@@ -16,8 +18,9 @@ const LOCAL_THEME_MAP: Record<string, Theme> = Object.fromEntries(
 // URL (e.g. http://localhost:8001). NEXT_PUBLIC_SUPABASE_URL may point to the
 // Docker-internal hostname (kong:8000) which browsers cannot resolve.
 const supabaseUrl =
-  process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  typeof window === "undefined"
+    ? (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER!)
+    : (process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL!);
 
 // Create Supabase client
 const supabase = createBrowserClient(

@@ -12,9 +12,7 @@ import type { ScreenSize } from "@/components/Layouts/hooks/useScreenSize";
 const AccessibilityOverlay = lazy(
   () => import("@/components/Layouts/overlays/accessibility/accessibility")
 );
-const CookieConsent = lazy(() =>
-  import("@/components/CookieConsent").then((m) => ({ default: m.CookieConsent }))
-);
+const CookieConsent = lazy(() => import("@/components/CookieConsent"));
 
 // ─── Toaster (shared config) ─────────────────────────────
 
@@ -49,6 +47,7 @@ export function AppToaster() {
 // ─── Accessibility overlay (shared) ──────────────────────
 
 export function AppAccessibility() {
+  if (process.env.NEXT_PUBLIC_ZONE === "tank") return null;
   return (
     <Suspense fallback={null}>
       <AccessibilityOverlay />
@@ -67,10 +66,12 @@ const COOKIE_MESSAGES: Record<ScreenSize, string> = {
     "We use cookies to enhance your experience, analyze site usage, and improve our services. Essential cookies are required for basic functionality.",
 };
 
-export function AppCookieConsent({ screenSize }: { screenSize: ScreenSize }) {
+export function AppCookieConsent({ screenSize = "desktop" }: { screenSize?: ScreenSize }) {
+  if (process.env.NEXT_PUBLIC_ZONE === "tank") return null;
+  const msg = COOKIE_MESSAGES[screenSize] || COOKIE_MESSAGES.desktop;
   return (
     <Suspense fallback={null}>
-      <CookieConsent message={COOKIE_MESSAGES[screenSize]} />
+      <CookieConsent message={msg} />
     </Suspense>
   );
 }

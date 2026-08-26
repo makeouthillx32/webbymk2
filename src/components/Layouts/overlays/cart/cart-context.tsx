@@ -1,7 +1,5 @@
-// lib/cart-context.tsx
-"use client";
-
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { safeStorage } from "@/lib/safeStorage";
 
 // Types
 export interface CartItem {
@@ -79,10 +77,10 @@ export function useCart() {
 // ─────────────────────────────────────────────
 function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return "";
-  let sessionId = localStorage.getItem("unenter_session_id");
+  let sessionId = safeStorage.getItem("unenter_session_id");
   if (!sessionId) {
     sessionId = `guest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem("unenter_session_id", sessionId);
+    safeStorage.setItem("unenter_session_id", sessionId);
   }
   return sessionId;
 }
