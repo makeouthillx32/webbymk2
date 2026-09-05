@@ -77,8 +77,10 @@ export async function getSiteAssets<K extends string>(
   if (keys.length === 0) return resolved;
 
   try {
-    const { createClient } = await import("@/utils/supabase/server");
-    const supabase = await createClient();
+    const { createClient } = await import("@supabase/supabase-js");
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "http://127.0.0.1:8001";
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.dummy";
+    const supabase = createClient(url, key);
     const { data, error } = await supabase
       .from("site_assets")
       .select("asset_key, public_url, kind, format")
