@@ -9,6 +9,43 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const sortByPos = (a: any, b: any) => (a.position ?? 0) - (b.position ?? 0);
 
+export interface ResearchProductSection {
+  id: string;
+  product_id: string | null;
+  category_id: string | null;
+  form_factor: string | null;
+  section_key: string;
+  section_type: string;
+  title: string | null;
+  eyebrow: string | null;
+  html_content: string | null;
+  content_json: Record<string, any> | null;
+  position: number;
+  is_enabled: boolean;
+  status: string;
+  source_level: "product_override" | "form_template" | "category_template" | "labs_default";
+}
+
+export async function getResearchProductSections(
+  supabase: SupabaseClient,
+  productId: string,
+  categoryId?: string | null,
+  formFactor?: string | null,
+): Promise<ResearchProductSection[]> {
+  const { data, error } = await supabase.rpc("get_product_sections", {
+    p_product_id: productId,
+    p_category_id: categoryId ?? null,
+    p_form_factor: formFactor ?? null,
+  });
+
+  if (error) {
+    console.error("[research] get_product_sections error:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as ResearchProductSection[];
+}
+
 export async function getResearchProductBySlug(supabase: SupabaseClient, slug: string) {
   const { data: product, error } = await supabase
     .from("research_products")
@@ -31,6 +68,7 @@ export async function getResearchProductBySlug(supabase: SupabaseClient, slug: s
       purity_percent,
       research_use_only,
       coa_url,
+      form_factor,
       created_at,
       updated_at,
       research_product_images (
@@ -67,8 +105,21 @@ export async function getResearchProductBySlug(supabase: SupabaseClient, slug: s
           slug
         )
       ),
+      research_batches (
+        id,
+        batch_number,
+        status,
+        is_current_shipping,
+        manufactured_date,
+        expiration_date,
+        remaining_quantity,
+        created_at
+      ),
       research_lab_reports (
         *,
+        research_batches ( id, batch_number, status, is_current_shipping, manufactured_date, expiration_date ),
+        research_lab_report_assets ( id, asset_type, page_number, file_url, storage_path, filename, file_size_bytes, mime_type, sha256_checksum, is_primary ),
+        research_lab_report_instrument_readings ( id, reading_type, peak_number, retention_time_min, area, height, area_pct, chemical_species, signal_to_noise, theoretical_mz, observed_mz, mass_error_ppm, relative_abundance_pct, ion_adduct, instrument_parameters ),
         research_lab_report_results ( id, section, analyte, limit_spec, result, unit, status, position ),
         research_lab_report_conformity_samples ( id, sample_label, purity_pct, net_content_mg, identification, result, is_representative, position ),
         research_lab_report_stats ( id, metric_name, mean_value, std_dev, unit, position )
@@ -97,6 +148,7 @@ export async function getResearchProductBySlug(supabase: SupabaseClient, slug: s
     purity_percent: (product as any).purity_percent ?? null,
     research_use_only: (product as any).research_use_only ?? null,
     coa_url: (product as any).coa_url ?? null,
+    form_factor: (product as any).form_factor ?? null,
     images: ((product as any).research_product_images || []).slice().sort(
       (a: any, b: any) => (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0),
     ),
@@ -129,12 +181,24 @@ export async function getResearchProductBySlug(supabase: SupabaseClient, slug: s
     categories: ((product as any).research_product_categories || [])
       .map((pc: any) => pc.research_categories)
       .filter(Boolean),
-    lab_reports: ((product as any).research_lab_reports || []).map((r: any) => ({
-      ...r,
-      results: (r.research_lab_report_results ?? []).slice().sort(sortByPos),
-      conformity_samples: (r.research_lab_report_conformity_samples ?? []).slice().sort(sortByPos),
-      stats: (r.research_lab_report_stats ?? []).slice().sort(sortByPos),
-    })),
+    batches: ((product as any).research_batches || [])
+      .slice()
+      .sort((a: any, b: any) => {
+        if (a.is_current_shipping && !b.is_current_shipping) return -1;
+        if (!a.is_current_shipping && b.is_current_shipping) return 1;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      }),
+    lab_reports: ((product as any).research_lab_reports || [])
+      .filter((r: any) => r.published_status === "published" || (r.published_status == null && r.verified !== false && !r.pending))
+      .map((r: any) => ({
+        ...r,
+        batch: r.research_batches ?? null,
+        assets: (r.research_lab_report_assets ?? []).slice().sort((a: any, b: any) => (a.page_number ?? 0) - (b.page_number ?? 0)),
+        instrument_readings: (r.research_lab_report_instrument_readings ?? []).slice().sort((a: any, b: any) => (a.peak_number ?? 0) - (b.peak_number ?? 0)),
+        results: (r.research_lab_report_results ?? []).slice().sort(sortByPos),
+        conformity_samples: (r.research_lab_report_conformity_samples ?? []).slice().sort(sortByPos),
+        stats: (r.research_lab_report_stats ?? []).slice().sort(sortByPos),
+      })),
   };
 }
 
@@ -148,6 +212,44 @@ export async function getLabReportByAccessCode(supabase: SupabaseClient, code: s
     .select(
       `
       *,
+      research_batches (
+        id,
+        batch_number,
+        manufactured_date,
+        expiration_date,
+        status,
+        is_current_shipping
+      ),
+      research_lab_report_assets (
+        id,
+        asset_type,
+        page_number,
+        file_url,
+        storage_path,
+        filename,
+        file_size_bytes,
+        mime_type,
+        sha256_checksum,
+        is_primary
+      ),
+      research_lab_report_instrument_readings (
+        id,
+        reading_type,
+        peak_number,
+        retention_time_min,
+        area,
+        height,
+        area_pct,
+        chemical_species,
+        signal_to_noise,
+        theoretical_mz,
+        observed_mz,
+        mass_error_ppm,
+        relative_abundance_pct,
+        ion_adduct,
+        instrument_parameters,
+        position
+      ),
       research_lab_report_results ( id, section, analyte, limit_spec, result, unit, status, position ),
       research_lab_report_conformity_samples ( id, sample_label, purity_pct, net_content_mg, identification, result, is_representative, position ),
       research_lab_report_stats ( id, metric_name, mean_value, std_dev, unit, position ),
@@ -155,6 +257,7 @@ export async function getLabReportByAccessCode(supabase: SupabaseClient, code: s
     `,
     )
     .eq("access_code", code)
+    .eq("published_status", "published")
     .maybeSingle();
 
   if (error || !data) return null;
@@ -167,6 +270,9 @@ export async function getLabReportByAccessCode(supabase: SupabaseClient, code: s
     results: ((data as any).research_lab_report_results ?? []).slice().sort(sortByPos),
     conformity_samples: ((data as any).research_lab_report_conformity_samples ?? []).slice().sort(sortByPos),
     stats: ((data as any).research_lab_report_stats ?? []).slice().sort(sortByPos),
+    assets: ((data as any).research_lab_report_assets ?? []).slice().sort(sortByPos),
+    instrument_readings: ((data as any).research_lab_report_instrument_readings ?? []).slice().sort(sortByPos),
+    batch: (data as any).research_batches ?? null,
     product: { id: product.id, title: product.title, slug: product.slug },
   };
 }
@@ -192,12 +298,51 @@ export async function getLabReportLibraryForProduct(supabase: SupabaseClient, sl
     .select(
       `
       *,
+      research_batches (
+        id,
+        batch_number,
+        manufactured_date,
+        expiration_date,
+        status,
+        is_current_shipping
+      ),
+      research_lab_report_assets (
+        id,
+        asset_type,
+        page_number,
+        file_url,
+        storage_path,
+        filename,
+        file_size_bytes,
+        mime_type,
+        sha256_checksum,
+        is_primary
+      ),
+      research_lab_report_instrument_readings (
+        id,
+        reading_type,
+        peak_number,
+        retention_time_min,
+        area,
+        height,
+        area_pct,
+        chemical_species,
+        signal_to_noise,
+        theoretical_mz,
+        observed_mz,
+        mass_error_ppm,
+        relative_abundance_pct,
+        ion_adduct,
+        instrument_parameters,
+        position
+      ),
       research_lab_report_results ( id, section, analyte, limit_spec, result, unit, status, position ),
       research_lab_report_conformity_samples ( id, sample_label, purity_pct, net_content_mg, identification, result, is_representative, position ),
       research_lab_report_stats ( id, metric_name, mean_value, std_dev, unit, position )
     `,
     )
     .eq("product_id", product.id)
+    .eq("published_status", "published")
     .order("date_confirmed", { ascending: false, nullsFirst: false })
     .order("position", { ascending: true });
 
@@ -210,64 +355,126 @@ export async function getLabReportLibraryForProduct(supabase: SupabaseClient, sl
       results: (r.research_lab_report_results ?? []).slice().sort(sortByPos),
       conformity_samples: (r.research_lab_report_conformity_samples ?? []).slice().sort(sortByPos),
       stats: (r.research_lab_report_stats ?? []).slice().sort(sortByPos),
+      assets: (r.research_lab_report_assets ?? []).slice().sort(sortByPos),
+      instrument_readings: (r.research_lab_report_instrument_readings ?? []).slice().sort(sortByPos),
+      batch: r.research_batches ?? null,
     })),
   };
 }
 
 // Related products for the detail page — other active products sharing at
 // least one category with the current product, newest first, current
-// product excluded. Shaped identically to getResearchCatalog's product list
-// so the result can feed straight into <ResearchProductCard>.
+// product excluded. If category matches are insufficient (< limit), falls
+// back to other active catalog products so the related shelf is never empty.
+// Shaped identically to getResearchCatalog's product list so the result can
+// feed straight into <ResearchProductCard> or <RelatedResearchCard>.
 export async function getRelatedResearchProducts(
   supabase: SupabaseClient,
   productId: string,
-  categoryIds: string[],
+  categoryIds: string[] = [],
   limit = 4,
 ) {
-  if (categoryIds.length === 0) return [];
+  let candidateIds: string[] = [];
+  const validCategoryIds = (Array.isArray(categoryIds) ? categoryIds : [categoryIds]).filter(Boolean);
 
-  const { data: links, error: linksError } = await supabase
-    .from("research_product_categories")
-    .select("product_id")
-    .in("category_id", categoryIds)
-    .neq("product_id", productId);
+  if (validCategoryIds.length > 0) {
+    const { data: links } = await supabase
+      .from("research_product_categories")
+      .select("product_id")
+      .in("category_id", validCategoryIds)
+      .neq("product_id", productId);
 
-  if (linksError) return [];
+    if (links && links.length > 0) {
+      const allIds = links.map((l: any) => l.product_id as string);
+      candidateIds = allIds.filter((id: string, idx: number, arr: string[]) => arr.indexOf(id) === idx);
+    }
+  }
 
-  const candidateIds = [...new Set((links ?? []).map((l: any) => l.product_id))];
-  if (candidateIds.length === 0) return [];
+  let products: any[] = [];
 
-  const { data: products, error } = await supabase
-    .from("research_products")
-    .select(
-      `
-      id,
-      slug,
-      title,
-      dosage_label,
-      price_cents,
-      compare_at_price_cents,
-      currency,
-      badge,
-      tags,
-      research_product_images (
+  if (candidateIds.length > 0) {
+    const { data } = await supabase
+      .from("research_products")
+      .select(
+        `
         id,
-        bucket_name,
-        object_path,
-        alt_text,
-        sort_order,
-        position,
-        is_primary,
-        is_public
+        slug,
+        title,
+        dosage_label,
+        price_cents,
+        compare_at_price_cents,
+        currency,
+        badge,
+        tags,
+        research_product_images (
+          id,
+          bucket_name,
+          object_path,
+          alt_text,
+          sort_order,
+          position,
+          is_primary,
+          is_public
+        )
+      `,
       )
-    `,
-    )
-    .in("id", candidateIds)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+      .in("id", candidateIds)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-  if (error || !products) return [];
+    if (data) {
+      products = data;
+    }
+  }
+
+  // Catalog fallback if category matches are insufficient (< limit)
+  if (products.length < limit) {
+    const existingIds = new Set<string>();
+    existingIds.add(productId);
+    for (const p of products) existingIds.add(p.id);
+    const needed = limit - products.length;
+
+    const { data: fallback } = await supabase
+      .from("research_products")
+      .select(
+        `
+        id,
+        slug,
+        title,
+        dosage_label,
+        price_cents,
+        compare_at_price_cents,
+        currency,
+        badge,
+        tags,
+        research_product_images (
+          id,
+          bucket_name,
+          object_path,
+          alt_text,
+          sort_order,
+          position,
+          is_primary,
+          is_public
+        )
+      `,
+      )
+      .neq("id", productId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(needed + existingIds.size);
+
+    if (fallback) {
+      for (const p of fallback) {
+        if (!existingIds.has(p.id)) {
+          products.push(p);
+          existingIds.add(p.id);
+          if (products.length >= limit) break;
+        }
+      }
+    }
+  }
 
   return products.map((p: any) => ({
     id: p.id,
@@ -286,7 +493,7 @@ export async function getRelatedResearchProducts(
 }
 
 // Site-wide COA library — every lab report on file, across every product,
-// grouped by product. Powers /verify, the searchable "find your batch"
+// grouped by product. Powers /verify and /coa, the searchable "find your batch"
 // index page (product dropdown + batch/lot search), distinct from
 // /verify/product/<slug> which only covers one compound at a time.
 export async function getLabResultsLibrary(supabase: SupabaseClient) {
@@ -295,15 +502,66 @@ export async function getLabResultsLibrary(supabase: SupabaseClient) {
     .select(
       `
       id,
+      batch_id,
+      published_status,
       access_code,
       lot_number,
       coa_number,
+      lab_name,
+      purity_pct,
       verified,
       pending,
       product_label,
       test_type,
       date_confirmed,
       pdf_url,
+      paper_image_url,
+      verification_url,
+      sha256_checksum,
+      raw_telemetry,
+      methodology,
+      notes,
+      appearance,
+      research_batches (
+        id,
+        batch_number,
+        manufactured_date,
+        expiration_date,
+        status,
+        is_current_shipping
+      ),
+      research_lab_report_assets (
+        id,
+        asset_type,
+        page_number,
+        file_url,
+        storage_path,
+        filename,
+        file_size_bytes,
+        mime_type,
+        sha256_checksum,
+        is_primary
+      ),
+      research_lab_report_instrument_readings (
+        id,
+        reading_type,
+        peak_number,
+        retention_time_min,
+        area,
+        height,
+        area_pct,
+        chemical_species,
+        signal_to_noise,
+        theoretical_mz,
+        observed_mz,
+        mass_error_ppm,
+        relative_abundance_pct,
+        ion_adduct,
+        instrument_parameters,
+        position
+      ),
+      research_lab_report_results ( id, section, analyte, limit_spec, result, unit, status, position ),
+      research_lab_report_conformity_samples ( id, sample_label, purity_pct, net_content_mg, identification, result, is_representative, position ),
       research_products!inner (
         id,
         slug,
@@ -314,6 +572,7 @@ export async function getLabResultsLibrary(supabase: SupabaseClient) {
     `,
     )
     .eq("research_products.status", "active")
+    .eq("published_status", "published")
     .order("date_confirmed", { ascending: false, nullsFirst: false });
 
   if (error || !reports) return [];
@@ -325,18 +584,7 @@ export async function getLabResultsLibrary(supabase: SupabaseClient) {
       slug: string;
       title: string;
       dosage_label: string | null;
-      reports: {
-        id: string;
-        access_code: string | null;
-        lot_number: string | null;
-        coa_number: string | null;
-        verified: boolean;
-        pending: boolean;
-        product_label: string | null;
-        test_type: string | null;
-        date_confirmed: string | null;
-        pdf_url: string | null;
-      }[];
+      reports: any[];
     }
   >();
 
@@ -354,19 +602,35 @@ export async function getLabResultsLibrary(supabase: SupabaseClient) {
     }
     byProduct.get(product.id)!.reports.push({
       id: r.id,
+      batch_id: r.batch_id,
+      published_status: r.published_status,
       access_code: r.access_code,
       lot_number: r.lot_number,
       coa_number: r.coa_number,
+      lab_name: r.lab_name,
+      purity_pct: r.purity_pct,
       verified: r.verified,
       pending: r.pending,
       product_label: r.product_label,
       test_type: r.test_type,
       date_confirmed: r.date_confirmed,
       pdf_url: r.pdf_url,
+      paper_image_url: r.paper_image_url,
+      verification_url: r.verification_url,
+      sha256_checksum: r.sha256_checksum,
+      raw_telemetry: r.raw_telemetry,
+      methodology: r.methodology,
+      notes: r.notes,
+      appearance: r.appearance,
+      research_batches: r.research_batches,
+      research_lab_report_assets: r.research_lab_report_assets,
+      research_lab_report_instrument_readings: r.research_lab_report_instrument_readings,
+      results: (r.research_lab_report_results ?? []).slice().sort(sortByPos),
+      conformity_samples: (r.research_lab_report_conformity_samples ?? []).slice().sort(sortByPos),
     });
   }
 
-  return [...byProduct.values()].sort((a, b) => a.title.localeCompare(b.title));
+  return Array.from(byProduct.values()).sort((a, b) => a.title.localeCompare(b.title));
 }
 
 export async function getResearchCategoryBySlug(supabase: SupabaseClient, slug: string) {

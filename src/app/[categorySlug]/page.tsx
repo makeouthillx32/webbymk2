@@ -18,6 +18,8 @@ import {
   getResearchProductBySlug,
   getResearchCatalog,
   getRelatedResearchProducts,
+  getResearchProductSections,
+  type ResearchProductSection,
 } from "@/lib/research/queries";
 import ResearchCatalogClient from "@/components/research/ResearchCatalogClient";
 import ResearchProductDetailClient from "@/components/research/ResearchProductDetailClient";
@@ -243,13 +245,30 @@ export default async function CategorySlugPage({
 
     const product = await getResearchProductBySlug(supabase, categorySlug);
     if (product) {
-      const related = await getRelatedResearchProducts(
-        supabase,
-        product.id,
-        product.categories.map((c) => c.id),
-      );
+      const primaryCategory = product.categories[0] ?? null;
+      // Explicit reviewed form factor from database record (no tag guessing)
+      const formFactor = (product as any).form_factor ?? null;
+
+      const [related, sections] = await Promise.all([
+        getRelatedResearchProducts(
+          supabase,
+          product.id,
+          product.categories.map((c) => c.id),
+        ),
+        getResearchProductSections(
+          supabase,
+          product.id,
+          primaryCategory?.id ?? null,
+          formFactor,
+        ),
+      ]);
+
       return (
-        <ResearchProductDetailClient product={product as any} related={related} />
+        <ResearchProductDetailClient
+          product={product as any}
+          related={related}
+          sections={sections}
+        />
       );
     }
 
