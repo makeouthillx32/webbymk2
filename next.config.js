@@ -67,8 +67,19 @@ const nextConfig = {
   // (vm.overcommit_memory=1) so forks are copy-on-write-cheap and decouple from
   // resident memory — then this can rise to 16-32 regardless of what else runs.
   // That's the real fix; this cap is the "works today on a packed box" setting.
+  //
+  // Dev-only exemption: this cap was written for `next build`'s SSG fork
+  // storm on a shared, memory-overcommit-off build host — it has nothing to
+  // do with `next dev`'s Turbopack compiler, which was inheriting the same
+  // 2-core throttle and paying for it on every cold route compile (measured
+  // live 2026-08-30: a heavy route routinely outran the proxy's request
+  // timeout under this cap, on hardware with far more than 2 cores free).
+  // `next dev` always runs with NODE_ENV=development, so gating on that is
+  // exact — no risk of accidentally uncapping a real production build.
   experimental: {
-    cpus: 2,
+    cpus: isDev
+      ? undefined
+      : (process.env.NEXT_BUILD_CPUS ? parseInt(process.env.NEXT_BUILD_CPUS, 10) : 2),
   },
   // ── Dev origins ────────────────────────────────────────────────────────────
   // Suppresses the "Cross origin request detected" warning when accessing the
@@ -94,19 +105,19 @@ const nextConfig = {
         protocol: "http",
         hostname: "localhost",
         port:     "8000",
-        pathname: "/storage/v1/object/public/**",
+        pathname: "/storage/v1/**",
       },
       {
         protocol: "http",
         hostname: "localhost",
         port:     "8001",
-        pathname: "/storage/v1/object/public/**",
+        pathname: "/storage/v1/**",
       },
       // Production Supabase
       {
         protocol: "https",
         hostname: `**.${CORE_DOMAIN}`,
-        pathname: "/storage/v1/object/public/**",
+        pathname: "/storage/v1/**",
       },
     ],
   },

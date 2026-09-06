@@ -580,23 +580,28 @@ export async function buildZone(
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
     logBuild(`docker buildx build (builder=${BUILDX_BUILDER}, network=unenter) -t ${zone.image} .`);
 
-    // DOCKER_CONFIG points to our temp dir with embedded GHCR credentials
-    // for the push step; the build itself only uses public base images.
-    // 3-minute idle watchdog: kills + auto-resets the builder if the build
-    // goes fully silent (confirmed real failure mode, see spawnDocker).
-    let buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, 180_000);
+    // 7-minute idle watchdog (configurable via UNAXIS_BUILD_IDLE_TIMEOUT_MS):
+    // kills + auto-resets the builder if the build goes fully silent.
+    // 420s allows large multi-GB image tarball transfers and Next.js SSG page chunking
+    // without triggering false-positive watchdog kills.
+    const idleTimeoutMs = process.env.UNAXIS_BUILD_IDLE_TIMEOUT_MS
+      ? parseInt(process.env.UNAXIS_BUILD_IDLE_TIMEOUT_MS, 10)
+      : 420_000;
+
+    let buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs);
     if (buildCode === DOCKER_IDLE_TIMEOUT_CODE) {
       await resetBuildxBuilder(logBuild);
       logBuild(`--- retrying build once against the fresh builder ---`);
-      buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, 180_000);
+      buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs);
     }
     if (buildCode !== 0) {
       log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
       logBuild(`FAILED: build exited ${buildCode}`);
       return buildCode;
     }
+    const buildDurationSec = ((Date.now() - t0) / 1000).toFixed(1);
     log.info("build", "docker build complete", { zone: zone.key, ms: Date.now() - t0 });
-    logBuild(`OK: build complete`);
+    logBuild(`OK: build complete in ${buildDurationSec}s`);
 
     logPush(`--- push: ${zone.image} ---`);
     const tp = Date.now();
@@ -608,8 +613,9 @@ export async function buildZone(
       logPush("FAILED: push - set GHCR token in Settings [s] -> [t]");
       return pushCode;
     }
+    const pushDurationSec = ((Date.now() - tp) / 1000).toFixed(1);
     log.info("push", "complete", { zone: zone.key, image: zone.image, ms: Date.now() - tp });
-    logPush(`OK: pushed ${zone.image}`);
+    logPush(`OK: pushed ${zone.image} in ${pushDurationSec}s`);
 
     // ── Versioned tags — non-fatal, best-effort ──────────────────────────────
     // Push date+time and version tags alongside :latest so rollbacks are

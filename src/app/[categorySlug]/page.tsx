@@ -6,6 +6,7 @@
 // research_products (product detail) instead — so Labs gets
 // labs.unenter.live/<product-or-category> without a /products or /research
 // prefix, forked from this same route rather than a separate tree.
+import { cache } from "react";
 import { createServerClient } from "@/utils/supabase/server";
 import { createServerClient as createSupabaseClient } from "@supabase/ssr";
 import { notFound } from "next/navigation";
@@ -27,32 +28,82 @@ import { ClientInlineStaticPage } from "@/components/shop/_components/ClientInli
 
 import { getPrimaryImageUrl, getResearchProductOgImage } from "@/lib/images";
 
-// Generate static params for all active categories at build time, plus
-// research categories/products so the labs zone's build pre-renders them
-// too (harmless in other zones — those slugs simply won't resolve there).
+// React cache() memoizes queries across generateMetadata() and the page component
+// during a single request lifecycle, avoiding duplicate roundtrips.
+const getCachedResearchCategory = cache(async (slug: string) => {
+  const supabase = await createServerClient();
+  return getResearchCategoryBySlug(supabase, slug);
+});
+
+const getCachedResearchProduct = cache(async (slug: string) => {
+  const supabase = await createServerClient();
+  return getResearchProductBySlug(supabase, slug);
+});
+
+// Dynamic params allowed: pages not pre-rendered at build time are generated
+// on-demand on first request and cached via ISR according to revalidate.
+export const dynamicParams = true;
+
+// Zone-aware static parameter generation:
+//   • Core App / unenter: pre-renders only active store categories (~10-15 pages).
+//   • Labs: pre-renders research categories and featured research products (~25-30 pages).
+//     All other research products are rendered on demand via ISR.
+//   • Other zones: returns empty array (no catch-all slug pre-rendering).
 export async function generateStaticParams() {
-  const supabase = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => [], setAll: () => {} } },
-  );
+  const zone = process.env.NEXT_PUBLIC_ZONE ?? "unenter";
 
-  const [
-    { data: categories },
-    { data: researchCategories },
-    { data: researchProducts },
-  ] = await Promise.all([
-    supabase.from("categories").select("slug").eq("is_active", true),
-    supabase.from("research_categories").select("slug"),
-    supabase.from("research_products").select("slug").eq("status", "active"),
-  ]);
+  // Core App / unenter: Only pre-render active store categories.
+  if (zone === "unenter" || zone === "app") {
+    try {
+      const supabase = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { cookies: { getAll: () => [], setAll: () => {} } },
+      );
+      const { data: categories } = await supabase
+        .from("categories")
+        .select("slug")
+        .eq("is_active", true);
 
-  const slugs = new Set<string>();
-  (categories ?? []).forEach((c: any) => c.slug && slugs.add(c.slug));
-  (researchCategories ?? []).forEach((c: any) => c.slug && slugs.add(c.slug));
-  (researchProducts ?? []).forEach((p: any) => p.slug && slugs.add(p.slug));
+      return (categories ?? [])
+        .filter((c: any) => Boolean(c.slug))
+        .map((c: any) => ({ categorySlug: c.slug }));
+    } catch {
+      return [];
+    }
+  }
 
-  return [...slugs].map((categorySlug) => ({ categorySlug }));
+  // Labs zone: Pre-render research categories + featured research products.
+  if (zone === "labs") {
+    try {
+      const supabase = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { cookies: { getAll: () => [], setAll: () => {} } },
+      );
+      const [
+        { data: researchCategories },
+        { data: featuredProducts },
+      ] = await Promise.all([
+        supabase.from("research_categories").select("slug"),
+        supabase
+          .from("research_products")
+          .select("slug")
+          .eq("status", "active")
+          .eq("is_featured", true),
+      ]);
+
+      const slugs = new Set<string>();
+      (researchCategories ?? []).forEach((c: any) => c.slug && slugs.add(c.slug));
+      (featuredProducts ?? []).forEach((p: any) => p.slug && slugs.add(p.slug));
+
+      return [...slugs].map((categorySlug) => ({ categorySlug }));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
 }
 
 // Generate metadata for SEO
@@ -77,7 +128,7 @@ export async function generateMetadata({
       };
     }
 
-    const category = await getResearchCategoryBySlug(supabase, categorySlug);
+    const category = await getCachedResearchCategory(categorySlug);
     if (category) {
       const title = `${category.name} | Unenter Labs`;
       const description = `Browse high-purity ${category.name} research chemicals. For laboratory research use only.`;
@@ -105,7 +156,7 @@ export async function generateMetadata({
         },
       };
     }
-    const product = await getResearchProductBySlug(supabase, categorySlug);
+    const product = await getCachedResearchProduct(categorySlug);
     if (product) {
       const primaryImageUrl = getResearchProductOgImage(product);
       const title = `${product.title} | Unenter Labs`;
@@ -227,7 +278,7 @@ export default async function CategorySlugPage({
       );
     }
 
-    const category = await getResearchCategoryBySlug(supabase, categorySlug);
+    const category = await getCachedResearchCategory(categorySlug);
     if (category) {
       const { products, categories } = await getResearchCatalog(supabase);
       return (
@@ -243,7 +294,7 @@ export default async function CategorySlugPage({
       );
     }
 
-    const product = await getResearchProductBySlug(supabase, categorySlug);
+    const product = await getCachedResearchProduct(categorySlug);
     if (product) {
       const primaryCategory = product.categories[0] ?? null;
       // Explicit reviewed form factor from database record (no tag guessing)
