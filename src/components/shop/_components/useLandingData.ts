@@ -12,6 +12,14 @@ export type LandingCategory = {
   cover_image_path?: string | null;
   cover_image_alt?: string | null;
   coverImageUrl?: string | null;
+  // Optional editorial copy (2026-09-05). Empty on every existing row, so a
+  // card renders exactly as before until one of these is filled in.
+  eyebrow?: string | null;
+  tagline?: string | null;
+  subtitle?: string | null;
+  cta_label?: string | null;
+  /** Theme token override for THIS card's text. Beats the section default. */
+  text_color_token?: string | null;
 };
 
 export type LandingProductImage = {
@@ -60,7 +68,12 @@ export function useLandingData() {
         // Fetch ALL categories (no parent_id filter, no limit)
         const { data: categoriesData, error: categoriesError } = await supabase
           .from("categories")
-          .select("id, name, slug, cover_image_bucket, cover_image_path, cover_image_alt")
+          .select("id, name, slug, cover_image_bucket, cover_image_path, cover_image_alt, eyebrow, tagline, subtitle, cta_label, text_color_token")
+          // categories.is_active existed but was never honoured here, so
+          // deactivating a category in the dashboard left it rendering on the
+          // shop front end anyway. Nothing had been deactivated yet, so the bug
+          // was latent — it would have shown up the first time someone tried it.
+          .eq("is_active", true)
           .order("position", { ascending: true });
 
         if (categoriesError) {

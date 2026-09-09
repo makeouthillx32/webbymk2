@@ -38,7 +38,11 @@ export function useImageTransparency(imageUrl: string | null | undefined): boole
     let active = true;
     const img = new window.Image();
     img.crossOrigin = "anonymous";
-    img.src = imageUrl;
+    // Avoid duplicate full-resolution fetches; sample on a tiny 64px thumbnail
+    const sampleUrl = imageUrl.includes("/storage/v1/render/image/")
+      ? imageUrl.replace(/width=\d+/, "width=64").replace(/quality=\d+/, "quality=20")
+      : imageUrl;
+    img.src = sampleUrl;
 
     img.onload = () => {
       if (!active) return;

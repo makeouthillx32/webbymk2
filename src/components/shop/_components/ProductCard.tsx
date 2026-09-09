@@ -13,7 +13,7 @@ function formatMoney(price_cents: number, currency: string) {
 }
 
 export function LandingProductCard({ product }: { product: LandingProduct }) {
-  const imageUrl = getPrimaryImageUrl(product.product_images);
+  const imageUrl = getPrimaryImageUrl(product.product_images, { width: 600, quality: 78 });
   const primary = pickPrimaryImage(product.product_images);
   const alt = primary?.alt_text || product.title || "Product image";
 

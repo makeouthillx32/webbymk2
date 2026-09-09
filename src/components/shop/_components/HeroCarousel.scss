@@ -20,27 +20,48 @@
   animation: carousel-fade-in 0.4s ease-out;
 
   /* ---- Embla / shadcn carousel structural fixes ---- */
+  //
+  // These rules used to target :global(.carousel), :global(.carousel-viewport)
+  // and :global(.carousel-content). The shadcn carousel emits NONE of those
+  // class names — its markup is
+  //
+  //   <div class="relative">        <- Carousel root
+  //     <div class="overflow-hidden">  <- Embla viewport (no className prop)
+  //       <div class="flex">           <- CarouselContent track
+  //
+  // so all three selectors matched nothing and no height ever reached the
+  // slides. That went unnoticed because .hero-img's `height: 100%` against an
+  // auto-height parent silently degrades to `auto`, and a landscape 2880x1050
+  // slide happens to land near the 25/9 the container asks for. Put a portrait
+  // image in the desktop slot — as shop slide 3 has — and it renders at its own
+  // aspect instead: 1869px tall inside a 518px banner, with object-fit: cover
+  // never getting the chance to crop.
+  //
+  // Match the real structure. :not(.dots-container) keeps the absolutely
+  // positioned dots from being stretched to fill.
 
-  /* The root carousel wrapper should fill the container */
-  :global(.carousel) {
+  > div:not(.dots-container) {
+    /* Carousel root */
+    flex: 1 1 auto;
     width: 100%;
     height: 100%;
-    min-width: 0; /* prevents flex overflow weirdness */
-  }
+    min-width: 0;
+    min-height: 0;
 
-  /* Depending on your carousel.tsx, these often exist */
-  :global(.carousel-viewport) {
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-  }
+    > div {
+      /* Embla viewport */
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
 
-  /* The track MUST be flex and must fill height */
-  :global(.carousel-content) {
-    display: flex;
-    height: 100%;
-    width: 100%;
-    margin-left: 0 !important; /* you were passing ml-0; enforce it */
+      > div {
+        /* Track */
+        display: flex;
+        height: 100%;
+        width: 100%;
+        margin-left: 0 !important;
+      }
+    }
   }
 
   /* Each slide fills the container height */
@@ -52,15 +73,21 @@
     display: flex; /* helps child link stretch */
   }
 
-  /* Your link must fill the slide */
-  .slide-link {
+  /* Your link must fill the slide.
+     .slide-media is the overlay-slide wrapper: those slides are deliberately
+     NOT wrapped in an <a> (nesting the CTA anchors inside a full-bleed link is
+     invalid HTML and eats the clicks), so without these rules the image had no
+     sized ancestor and collapsed instead of covering the slide. */
+  .slide-link,
+  .slide-media {
     display: block;
     width: 100%;
     height: 100%;
   }
 
   /* next/image renders a wrapper span — force it to fill */
-  .slide-link :global(span) {
+  .slide-link span,
+  .slide-media span {
     display: block !important;
     width: 100% !important;
     height: 100% !important;

@@ -279,15 +279,16 @@ export function TopBanner() {
 
   const staticText = eligible.map((g) => g.text).join(separator);
 
-  // ✅ FIX: marquee duration must be LONG. We derive it from speedMs so your UI still “controls” it.
-  // Example mapping:
-  //   speedMs=450 => marquee ~ 24000ms (24s) (nice)
-  //   speedMs=900 => marquee ~ 18000ms (faster)
-  //   speedMs=200 => marquee ~ 30000ms (slower)
-  const marqueeDurationMs = Math.min(
-    60_000,
-    Math.max(12_000, Math.round(30_000 - speedMs * 15))
-  );
+  // Marquee scroll speed — pixel-speed model, not derived from animation_speed_ms
+  // (animation_speed_ms is a UI-transition/typewriter speed, not a scroll speed).
+  // Target: ~55px/s for a comfortable newspaper-ticker pace.
+  // The track is rendered as 3 copies of staticText; we animate -50% (1 copy width).
+  // Estimate content width from char count × avg char width (≈8.5px at 13px font).
+  const estimatedContentPx = Math.max(600, staticText.length * 8.5);
+  const targetPxPerSec = 55; // comfortable ticker pace — adjust here if needed
+  const marqueeDurationMs = Math.round((estimatedContentPx / targetPxPerSec) * 1000);
+  // Clamp: never faster than 30s, never slower than 90s
+  const marqueeDurationMsClamped = Math.min(90_000, Math.max(30_000, marqueeDurationMs));
 
   return (
     <div
@@ -299,7 +300,7 @@ export function TopBanner() {
           // used for slideshow/typewriter rotation
           ["--banner-interval-ms" as any]: `${intervalMs}ms`,
           // ✅ used ONLY for marquee scroll speed
-          ["--marquee-duration-ms" as any]: `${marqueeDurationMs}ms`,
+          ["--marquee-duration-ms" as any]: `${marqueeDurationMsClamped}ms`,
         } as any
       }
       onMouseEnter={() => setHovered(true)}
