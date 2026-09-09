@@ -41,7 +41,7 @@ export function Header() {
     >
       <button
         onClick={toggleSidebar}
-        className="rounded-[var(--radius)] border border-[hsl(var(--border))] px-1.5 py-1 dark:border-[hsl(var(--sidebar-border))] dark:bg-[hsl(var(--background))] hover:dark:bg-[hsla(var(--background),0.1)] lg:hidden"
+        className="rounded-[var(--radius)] border border-[hsl(var(--border))] px-1.5 py-1 dark:border-[hsl(var(--sidebar-border))] dark:bg-[hsl(var(--background))] hover:dark:bg-[hsla(var(--background),0.1)]"
       >
         <MenuIcon />
         <span className="sr-only">Toggle Sidebar</span>
@@ -60,12 +60,9 @@ export function Header() {
       )}
 
       <div className="max-xl:hidden">
-        <h1 className="mb-0.5 text-heading-5 font-bold text-[hsl(var(--foreground))] dark:text-[hsl(var(--card-foreground))]">
+        <h1 className="text-heading-5 font-bold text-[hsl(var(--foreground))] dark:text-[hsl(var(--card-foreground))]">
           Dashboard
         </h1>
-        <p className="font-medium text-[hsl(var(--muted-foreground))] dark:text-[hsl(var(--muted-foreground))]">
-          Byrd's Dashboard
-        </p>
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-2 min-[375px]:gap-4">

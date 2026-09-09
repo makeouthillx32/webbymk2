@@ -22,22 +22,13 @@ export const NAV_DATA = [
         items: [],
       },
 
-      // ── Chrome ──────────────────────────────
-      {
-        title: "Chrome",
-        icon: Icons.FourCircle,
-        items: [
-          {
-            title: "Categories Header",
-            url: "/settings/categories",
-            icon: Icons.Table,
-          },
-        ],
-      },
-
       // ── Content ─────────────────────────────
+      // ── Home (Core zone) ────────────────────
+      // Renamed from "Content": it manages the CORE zone's presentation, the
+      // same way Shop and Labs manage theirs. Shop/Labs landings moved to their
+      // own zones; Pages moved out because the page engine serves every zone.
       {
-        title: "Content",
+        title: "Home",
         icon: Icons.HomeIcon,
         items: [
           {
@@ -46,14 +37,17 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
-            title: "Hero Carousel",
-            url: "/settings/hero-carousel",
+            // Home has no hero carousel — hero_slides has zero page="home" rows
+            // and its hero is the interactive banner. This slot configures that
+            // banner's assets instead of managing slides that don't exist.
+            title: "Interactive Banner",
+            url: "/settings/home/interactive-banner",
             icon: Icons.FourCircle,
           },
           {
-            title: "Pages",
-            url: "/settings/static-pages",
-            icon: Icons.Table,
+            title: "Footer Artwork",
+            url: "/settings/home/footer-artwork",
+            icon: Icons.FourCircle,
           },
           {
             title: "Home-Page",
@@ -61,6 +55,16 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
         ],
+      },
+
+      // ── Pages ───────────────────────────────
+      // Top-level on purpose: the static-page engine backs every zone, so it
+      // isn't a Core-only concern.
+      {
+        title: "Pages",
+        url: "/settings/static-pages",
+        icon: Icons.Table,
+        items: [],
       },
 
       // ── Blog ────────────────────────────────
@@ -86,6 +90,21 @@ export const NAV_DATA = [
         title: "Shop",
         icon: Icons.Table,
         items: [
+          // Zone-scoped presentation. Content > Landing still manages all three
+          // landings in one tabbed page; these are the planned per-zone homes
+          // for that work. Routes do NOT exist yet — placed here to fix the
+          // information architecture before the migration, so both are expected
+          // to 404 until the pages land.
+          {
+            title: "Landing",
+            url: "/settings/shop/landing",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Hero Carousel",
+            url: "/settings/shop/hero-carousel",
+            icon: Icons.FourCircle,
+          },
           {
             title: "PoS",
             url: "/POS",
@@ -112,13 +131,12 @@ export const NAV_DATA = [
             icon: Icons.Table,
           },
           {
-            title: "Tags / Subcategories",
-            url: "/settings/tags",
-            icon: Icons.Alphabet,
-          },
-          {
-            title: "Collections",
-            url: "/settings/collections",
+            // One entry for all three product taxonomies. They were three
+            // separate items with overlapping names, which made it hard to tell
+            // which one a storefront row was reading from. The tables stay
+            // separate — only the interface is unified.
+            title: "Taxonomy",
+            url: "/settings/taxonomy",
             icon: Icons.FourCircle,
           },
           {
@@ -134,6 +152,31 @@ export const NAV_DATA = [
         title: "Labs",
         icon: Icons.Table,
         items: [
+          // Planned per-zone presentation for Labs — see the note in Shop.
+          // Routes do not exist yet.
+          {
+            title: "Landing",
+            url: "/settings/labs/landing",
+            icon: Icons.FourCircle,
+          },
+          {
+            title: "Hero Carousel",
+            url: "/settings/labs/hero-carousel",
+            icon: Icons.FourCircle,
+          },
+          {
+            // Labs keeps its own taxonomy: research_categories, its own nav
+            // tree and its own cover bucket, scoped apart from the shop.
+            title: "Taxonomy",
+            url: "/settings/labs-taxonomy",
+            icon: Icons.FourCircle,
+          },
+          {
+            // research_inventory — stock scoped apart from shop.
+            title: "Inventory",
+            url: "/settings/labs-inventory",
+            icon: Icons.Table,
+          },
           {
             title: "Research Chemicals",
             url: "/settings/research-products",
@@ -143,6 +186,12 @@ export const NAV_DATA = [
             title: "Creators",
             url: "/settings/creators",
             icon: Icons.User,
+          },
+          {
+            // Moved in from a top-level group — it is a Labs concern.
+            title: "LIMS & Peptide Testing",
+            url: "/settings/lims",
+            icon: Icons.PieChart,
           },
         ],
       },
@@ -177,27 +226,10 @@ export const NAV_DATA = [
             url: "/settings/tank/emoji",
             icon: Icons.FourCircle,
           },
-          {
-            title: "Soundboard",
-            url: "/settings/tank/soundboard",
-            icon: Icons.Table,
-          },
         ],
       },
 
       // ── LIMS & Peptide Testing Engine ───────
-      {
-        title: "LIMS & Peptide Testing Engine",
-        icon: Icons.PieChart,
-        items: [
-          {
-            title: "Overview",
-            url: "/settings/lims",
-            icon: Icons.Table,
-          },
-        ],
-      },
-
       // ── Admin ───────────────────────────────
       {
         title: "Admin",
@@ -212,11 +244,6 @@ export const NAV_DATA = [
             title: "Members",
             url: "/settings/members",
             icon: Icons.User,
-          },
-          {
-            title: "Permissions",
-            url: "/settings/permissions",
-            icon: Icons.Authentication,
           },
           {
             title: "Theme Maker",
@@ -234,19 +261,9 @@ export const NAV_DATA = [
       // ── Storage ─────────────────────────────
       {
         title: "Storage",
-        icon: Icons.Alphabet,
-        items: [
-          {
-            title: "Images",
-            url: "/settings/hero-carousel",
-            icon: Icons.FourCircle,
-          },
-          {
-            title: "Storage",
-            url: "/Documents",
-            icon: Icons.Alphabet,
-          },
-        ],
+        url: "/settings/storage",
+        icon: Icons.Table,
+        items: [],
       },
     ],
   },

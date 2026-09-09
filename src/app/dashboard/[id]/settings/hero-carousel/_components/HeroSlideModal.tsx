@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import LinkPicker from "./LinkPicker";
+import { HeroSlideOverlay, TEXT_COLOR_TOKENS } from "@/components/shop/_components/HeroSlideOverlay";
 import { createClient } from '@/utils/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Upload, X, Image as ImageIcon, Smartphone, Trash2 } from 'lucide-react';
@@ -32,6 +34,9 @@ type HeroSlide = {
   secondary_button_label: string | null;
   secondary_button_href: string | null;
   text_alignment: 'left' | 'center' | 'right';
+  show_overlay?: boolean | null;
+  cta_alignment?: 'inherit' | 'left' | 'center' | 'right' | null;
+  cta_underline?: boolean | null;
   text_color: 'dark' | 'light';
   position: number;
   is_active: boolean;
@@ -82,6 +87,17 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
     secondary_button_href: slide?.secondary_button_href || '',
     alt_text: slide?.alt_text || '',
     text_alignment: (slide?.text_alignment || 'left') as 'left' | 'center' | 'right',
+    show_overlay: (slide as any)?.show_overlay ?? false,
+    cta_alignment: ((slide as any)?.cta_alignment || 'inherit') as 'inherit' | 'left' | 'center' | 'right',
+    cta_underline: (slide as any)?.cta_underline ?? false,
+    cta_style: ((slide as any)?.cta_style || 'button') as 'button' | 'text',
+    text_color_token: (slide as any)?.text_color_token ?? '',
+    // numeric column -> arrives as a STRING ("0.30"); Number() or the range
+    // input renders empty and every drag writes NaN.
+    overlay_opacity: Number((slide as any)?.overlay_opacity ?? 0.3),
+    overlay_position: ((slide as any)?.overlay_position || 'center') as 'top' | 'center' | 'bottom',
+    overlay_pad_x: (slide as any)?.overlay_pad_x ?? 24,
+    overlay_pad_y: (slide as any)?.overlay_pad_y ?? 24,
     text_color: (slide?.text_color || 'dark') as 'dark' | 'light',
     is_active: slide?.is_active ?? true,
 
@@ -98,6 +114,9 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
   // ✅ Mobile image
   const [mobileImageFile, setMobileImageFile] = useState<File | null>(null);
   const [mobileImagePreview, setMobileImagePreview] = useState<string | null>(null);
+  // Which viewport the preview renders. Mobile art has a different aspect
+  // (1125x1470 vs 2880x1050), so one fixed box lied about placement on phones.
+  const [previewView, setPreviewView] = useState<'desktop' | 'mobile'>('desktop');
   const [mobileImageDimensions, setMobileImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [removeMobile, setRemoveMobile] = useState(false);
 
@@ -292,6 +311,15 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
 
         // Styling / status
         text_alignment: formData.text_alignment,
+        show_overlay: formData.show_overlay,
+        cta_alignment: formData.cta_alignment,
+        cta_underline: formData.cta_underline,
+        cta_style: formData.cta_style,
+        text_color_token: formData.text_color_token || null,
+        overlay_opacity: formData.overlay_opacity,
+        overlay_position: formData.overlay_position,
+        overlay_pad_x: formData.overlay_pad_x,
+        overlay_pad_y: formData.overlay_pad_y,
         text_color: formData.text_color,
         is_active: formData.is_active,
 
@@ -688,9 +716,286 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
             </div>
           </div>
 
+          {/* ── Live preview ────────────────────────────────────────────────
+              Renders the SAME <HeroSlideOverlay> the storefront uses, at the
+              real 2880x1050 aspect, so text position here is exactly where it
+              lands live. Purely reflects current form state — nothing is saved
+              by looking at it.
+
+              `interactive={false}` keeps the CTAs inert: a preview shouldn't
+              navigate you away mid-edit. */}
+          <div className="space-y-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--muted))]/20 p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <h3 className="font-semibold text-[hsl(var(--foreground))]">Preview</h3>
+                <div className="inline-flex rounded-md border border-[hsl(var(--border))] p-0.5">
+                  {(['desktop', 'mobile'] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setPreviewView(v)}
+                      disabled={v === 'mobile' && !mobileImagePreview}
+                      className={
+                        'rounded px-2 py-0.5 text-xs capitalize transition disabled:opacity-40 ' +
+                        (previewView === v
+                          ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
+                          : 'text-[hsl(var(--muted-foreground))]')
+                      }
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                {formData.show_overlay
+                  ? `text ${formData.text_alignment} · buttons ${
+                      formData.cta_alignment === 'inherit'
+                        ? formData.text_alignment + ' (inherited)'
+                        : formData.cta_alignment
+                    }`
+                  : 'overlay off — whole image links to the primary destination'}
+              </span>
+            </div>
+
+            {(() => {
+              const isMobileView = previewView === 'mobile' && !!mobileImagePreview;
+              const previewSrc = isMobileView ? mobileImagePreview : imagePreview;
+              // Aspect comes from the ACTUAL uploaded image so the box matches
+              // whatever resolution was used, instead of assuming 2880x1050.
+              const d = isMobileView
+                ? { w: (slide as any)?.mobile_width ?? 1125, h: (slide as any)?.mobile_height ?? 1470 }
+                : { w: (slide as any)?.width ?? 2880, h: (slide as any)?.height ?? 1050 };
+              return (
+            <div
+              className={'relative overflow-hidden rounded-md bg-[hsl(var(--muted))] ' + (isMobileView ? 'mx-auto w-full max-w-[260px]' : 'w-full')}
+              style={{ aspectRatio: (d.w || 2880) + ' / ' + (d.h || 1050) }}
+            >
+              {previewSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={previewSrc} alt="" className="absolute inset-0 h-full w-full object-cover" />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-[hsl(var(--muted-foreground))]">
+                  Upload {isMobileView ? 'a mobile' : 'a desktop'} image to preview placement
+                </div>
+              )}
+
+              {/* Always draw the overlay so you can POSITION the buttons and
+                  headline before committing to showing them. When show_overlay
+                  is off it is dimmed and labelled, because a preview that goes
+                  blank the moment the toggle is off reads as "the label isn't
+                  working" rather than "this slide is image-only". */}
+              <div className={formData.show_overlay ? '' : 'opacity-40'}>
+                <HeroSlideOverlay
+                  interactive={false}
+                  scale={0.35}
+                  slide={{
+                    pill_text: formData.pill_text,
+                    headline_line1: formData.headline_line1,
+                    headline_line2: formData.headline_line2,
+                    subtext: formData.subtext,
+                    primary_button_label: formData.primary_button_label,
+                    primary_button_href: formData.primary_button_href,
+                    secondary_button_label: formData.secondary_button_label,
+                    secondary_button_href: formData.secondary_button_href,
+                    text_alignment: formData.text_alignment,
+                    text_color: formData.text_color,
+                    cta_alignment: formData.cta_alignment,
+                    cta_underline: formData.cta_underline,
+                    cta_style: formData.cta_style,
+                    text_color_token: formData.text_color_token || null,
+                    overlay_opacity: formData.overlay_opacity,
+                    overlay_position: formData.overlay_position,
+                    overlay_pad_x: formData.overlay_pad_x,
+                    overlay_pad_y: formData.overlay_pad_y,
+                  }}
+                />
+              </div>
+
+              {!formData.show_overlay && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-[hsl(var(--background))]/85 px-3 py-1.5 text-center text-[11px] font-medium text-[hsl(var(--muted-foreground))]">
+                  Preview only — tick &ldquo;Show text &amp; buttons on the slide&rdquo; below to render this live
+                </div>
+              )}
+            </div>
+              );
+            })()}
+
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">
+              Same component as the live storefront — what you position here is what ships.
+            </p>
+          </div>
+
           {/* CTA (unchanged) */}
           <div className="space-y-4 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--muted))]/20 p-4">
             <h3 className="font-semibold text-[hsl(var(--foreground))]">Call-to-Action Buttons</h3>
+
+            <div className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-3">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={formData.show_overlay}
+                  onChange={(e) => setFormData({ ...formData, show_overlay: e.target.checked })}
+                />
+                <span className="text-sm text-[hsl(var(--foreground))]">
+                  Show text &amp; buttons on the slide
+                  <span className="block text-xs text-[hsl(var(--muted-foreground))]">
+                    Off = image only, and the whole image links to the primary destination
+                    (how every slide behaved before). On = the pill, headline, subtext and
+                    buttons render over the image.
+                  </span>
+                </span>
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label htmlFor="cta_alignment" className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                    Button placement
+                  </label>
+                  <select
+                    id="cta_alignment"
+                    className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))]"
+                    value={formData.cta_alignment}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, cta_alignment: e.target.value as any })}
+                  >
+                    <option value="inherit">Same as text ({formData.text_alignment})</option>
+                    <option value="left">Left</option>
+                    <option value="center">Center</option>
+                    <option value="right">Right</option>
+                  </select>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    Position the buttons independently of the text.
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                    Button text style
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer pt-2">
+                    <input
+                      type="checkbox"
+                      checked={formData.cta_underline}
+                      disabled={!formData.show_overlay}
+                      onChange={(e) => setFormData({ ...formData, cta_underline: e.target.checked })}
+                    />
+                    <span className="text-sm text-[hsl(var(--foreground))]">Underline button labels</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">CTA style</label>
+                  <select
+                    className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                    value={formData.cta_style}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, cta_style: e.target.value as any })}
+                  >
+                    <option value="button">Filled button</option>
+                    <option value="text">Plain text (no pill)</option>
+                  </select>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    Pick plain text when the artwork already leaves a place for the label.
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">Text colour</label>
+                  <select
+                    className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                    value={formData.text_color_token}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, text_color_token: e.target.value })}
+                  >
+                    <option value="">Auto (black / white from Text Color)</option>
+                    {TEXT_COLOR_TOKENS.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-2 pt-1">
+                    <span
+                      className="inline-block h-4 w-4 rounded-full border border-[hsl(var(--border))]"
+                      style={{
+                        background: formData.text_color_token
+                          ? 'hsl(var(--' + formData.text_color_token + '))'
+                          : formData.text_color === 'light' ? '#fff' : '#000',
+                      }}
+                    />
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Theme token, never a fixed hex, so it follows the active theme.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">Vertical position</label>
+                  <select
+                    className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                    value={formData.overlay_position}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, overlay_position: e.target.value as any })}
+                  >
+                    <option value="top">Top</option>
+                    <option value="center">Center</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                    Side padding — {formData.overlay_pad_x}px
+                  </label>
+                  <input
+                    type="range" min={0} max={200} step={2}
+                    value={formData.overlay_pad_x}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, overlay_pad_x: parseInt(e.target.value) })}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                    Edge padding — {formData.overlay_pad_y}px
+                  </label>
+                  <input
+                    type="range" min={0} max={200} step={2}
+                    value={formData.overlay_pad_y}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, overlay_pad_y: parseInt(e.target.value) })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    Distance from the anchored edge. Exact pixels — identical on desktop and mobile.
+                  </p>
+                </div>
+
+                {/* Until now this column had NO control, so every slide sat under
+                    a 30% wash it was given by default and no one could remove.
+                    On artwork that already reserves space for the label, 0 is
+                    usually what you want. */}
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                    Image wash — {Math.round(formData.overlay_opacity * 100)}%
+                  </label>
+                  <input
+                    type="range" min={0} max={0.8} step={0.05}
+                    value={formData.overlay_opacity}
+                    disabled={!formData.show_overlay}
+                    onChange={(e) => setFormData({ ...formData, overlay_opacity: parseFloat(e.target.value) })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    {formData.text_color === 'light' ? 'Black' : 'White'} veil over the photo to keep text
+                    readable. Set 0 when the artwork already has room for the text.
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -711,13 +1016,11 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
                 <label htmlFor="primary_button_href" className="block text-sm font-medium text-[hsl(var(--foreground))]">
                   Primary Button Link *
                 </label>
-                <input
+                <LinkPicker
                   id="primary_button_href"
-                  type="text"
                   required
-                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/20"
                   value={formData.primary_button_href}
-                  onChange={(e) => setFormData({ ...formData, primary_button_href: e.target.value })}
+                  onChange={(href) => setFormData({ ...formData, primary_button_href: href })}
                   placeholder="/shop"
                 />
               </div>
@@ -742,12 +1045,10 @@ export function HeroSlideModal({ mode, page = 'shop', slide, onClose, onSuccess 
                 <label htmlFor="secondary_button_href" className="block text-sm font-medium text-[hsl(var(--foreground))]">
                   Secondary Button Link
                 </label>
-                <input
+                <LinkPicker
                   id="secondary_button_href"
-                  type="text"
-                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/20"
                   value={formData.secondary_button_href}
-                  onChange={(e) => setFormData({ ...formData, secondary_button_href: e.target.value })}
+                  onChange={(href) => setFormData({ ...formData, secondary_button_href: href })}
                   placeholder="/collections/new-releases"
                   disabled={!formData.secondary_button_label}
                 />

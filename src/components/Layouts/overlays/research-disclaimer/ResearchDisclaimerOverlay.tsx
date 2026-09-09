@@ -83,10 +83,16 @@ export default function ResearchDisclaimerOverlay() {
     setOpen(false);
   }, []);
 
+  // "Accept All" checks every box so the visitor can see what they just
+  // agreed to — it does NOT also submit/close the dialog for them. That was
+  // the old behavior (setAck + grantAccess in the same tick meant the
+  // dialog unmounted before React ever painted the boxes as checked, so
+  // clicking Accept All just made the whole gate vanish with no visible
+  // confirmation). Now it only ticks the boxes; the visitor still has to
+  // hit "Submit & Enter" themselves, same as checking each box by hand.
   const handleAcceptAll = React.useCallback(() => {
     setAck(ALL_ACK);
-    grantAccess();
-  }, [grantAccess]);
+  }, []);
 
   const handleSubmit = React.useCallback(() => {
     if (!allChecked) return;

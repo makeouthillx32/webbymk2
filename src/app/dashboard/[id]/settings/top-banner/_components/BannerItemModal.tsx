@@ -139,7 +139,7 @@ export function BannerItemModal({ open, item, onClose, onSave }: Props) {
       <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={onClose} />
 
       {/* Modal */}
-      <div className="absolute left-1/2 top-1/2 w-[calc(100%-24px)] max-w-2xl -translate-x-1/2 -translate-y-1/2">
+      <div className="absolute left-1/2 top-1/2 w-[calc(100%-24px)] max-w-2xl -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--shadow-lg)]">
           <div className="flex items-center justify-between border-b border-[hsl(var(--border))] px-4 py-3">
             <h2 className="text-sm font-semibold text-[hsl(var(--foreground))]">

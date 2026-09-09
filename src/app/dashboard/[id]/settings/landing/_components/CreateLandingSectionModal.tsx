@@ -21,6 +21,9 @@ export default function CreateLandingSectionModal({
     type: "static_html",
     is_active: true,
     config: { slug: "" },
+    // LandingSectionRow requires `page` — this blank row omitted it, which has
+    // been a standing type error. "shop" matches the default tab.
+    page: "shop",
   };
 
   return (

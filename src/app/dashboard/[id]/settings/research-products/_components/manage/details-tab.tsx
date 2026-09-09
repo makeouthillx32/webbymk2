@@ -4,6 +4,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { centsToMoney } from "../utils";
 import type { ProductRow } from "../types";
 
+/**
+ * The presentation axis, as a closed list.
+ *
+ * Free text would re-fragment exactly what grouping fixed — "Spray", "spray"
+ * and "Nasal Spray" becoming three forms. These are the values derive_form()
+ * emits, so a hand correction and an auto-derivation stay comparable.
+ */
+export const PRODUCT_FORMS = [
+  "lyophilized",
+  "liquid",
+  "spray",
+  "capsules",
+  "drops",
+  "topical",
+  "tablet",
+  "patch",
+  "raw material",
+] as const;
+
 interface DetailsTabProps {
   detail: ProductRow;
   formTitle: string;
@@ -13,6 +32,8 @@ interface DetailsTabProps {
   formBrand: string;
   formCasNumber: string;
   formPurity: string;
+  formCompound: string;
+  formPresentation: string;
   formResearchUseOnly: boolean;
   formDesc: string;
   formFeatured: boolean;
@@ -24,6 +45,8 @@ interface DetailsTabProps {
   setFormBrand: (v: string) => void;
   setFormCasNumber: (v: string) => void;
   setFormPurity: (v: string) => void;
+  setFormCompound: (v: string) => void;
+  setFormPresentation: (v: string) => void;
   setFormResearchUseOnly: (v: boolean) => void;
   setFormDesc: (v: string) => void;
   setFormFeatured: (v: boolean) => void;
@@ -38,6 +61,8 @@ export function DetailsTab({
   formPrice,
   formBadge,
   formBrand,
+  formCompound,
+  formPresentation,
   formCasNumber,
   formPurity,
   formResearchUseOnly,
@@ -49,6 +74,8 @@ export function DetailsTab({
   setFormPrice,
   setFormBadge,
   setFormBrand,
+  setFormCompound,
+  setFormPresentation,
   setFormCasNumber,
   setFormPurity,
   setFormResearchUseOnly,
@@ -71,6 +98,51 @@ export function DetailsTab({
           <Button type="button" variant="secondary" onClick={autoSlug}>
             Auto
           </Button>
+        </div>
+      </div>
+
+      {/* ── Grouping ─────────────────────────────────────────────────────
+          Both were bulk-derived from the title by regex across 751 products,
+          so some are wrong. Correcting them here is the only way to fix a card
+          that grouped badly — and a hand-set value is never re-derived. */}
+      <div className="space-y-2 rounded-md border border-[hsl(var(--border))] p-3">
+        <div>
+          <p className="text-sm font-semibold">Grouping</p>
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">
+            Auto-detected from the title. Fix either if it guessed wrong; clear a field to
+            re-detect it.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold">Compound</label>
+            <Input
+              value={formCompound}
+              placeholder="e.g. BPC-157"
+              onChange={(e) => setFormCompound(e.target.value)}
+            />
+            <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
+              The substance, without dose or form. Products sharing this share one inventory card.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-semibold">Form</label>
+            <select
+              value={formPresentation}
+              onChange={(e) => setFormPresentation(e.target.value)}
+              className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+            >
+              <option value="">Auto-detect from title</option>
+              {PRODUCT_FORMS.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
+              How it ships. Unmarked titles default to lyophilized, which is why some are wrong.
+            </p>
+          </div>
         </div>
       </div>
 

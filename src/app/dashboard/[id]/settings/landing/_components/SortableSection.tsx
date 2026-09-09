@@ -127,7 +127,7 @@ export function SortableSection({ section, index, onEdit, onRefresh }: SortableS
                   .slice(0, 3)
                   .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
                   .join(' • ')
-              : 'No config'}
+              : 'User config'}
           </div>
         </div>
 

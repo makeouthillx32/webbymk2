@@ -102,7 +102,7 @@ export function Header({ onMenuClick }: HeaderProps = {}) {
             </Link>
           ) : (
             <Link
-              href="/profile/me"
+              href="/account"
               className="inline-flex items-center gap-1.5 rounded-full p-2 text-xs font-bold transition-colors hover:bg-[hsl(var(--muted))] xl:px-3"
               aria-label="Account"
             >

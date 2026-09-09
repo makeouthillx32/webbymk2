@@ -105,6 +105,17 @@ export function MediaTab({
 
   return (
     <div className="space-y-6">
+      {/* Informative banner separating bottle photography from official batch COAs */}
+      <div className="flex items-start gap-3 rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.08)] p-3.5 text-xs">
+        <span className="mt-0.5 text-base leading-none">🧪</span>
+        <div>
+          <strong className="font-semibold text-[hsl(var(--foreground))]">Managing Batch Certificates of Analysis (COA)?</strong>
+          <p className="mt-0.5 text-[hsl(var(--muted-foreground))]">
+            Official multi-batch lab test reports, original PDFs, scanned lab paper facsimiles, and HPLC telemetry are now managed under the dedicated <span className="font-semibold text-[hsl(var(--primary))]">Batches & COAs</span> tab. This tab is reserved for product packaging, vials, and retail photography.
+          </p>
+        </div>
+      </div>
+
       {/* Autocomplete source for variant-label inputs below — reduces typo'd
           near-duplicate variants (e.g. "5 mg" vs "5mg") by suggesting the
           product's existing variant titles. */}

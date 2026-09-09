@@ -86,7 +86,7 @@ export default function SampleIntakeModal() {
       {/* Intake Modal */}
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-background max-w-lg w-full rounded-2xl border border-border p-6 shadow-2xl space-y-4">
+          <div className="bg-background max-w-lg w-full rounded-2xl border border-border p-6 shadow-2xl space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <h4 className="text-base font-bold text-foreground">Log Sample Shipment</h4>
               <button onClick={() => setOpen(false)} className="text-muted-foreground font-bold">

@@ -71,9 +71,9 @@ export default function Footer() {
       {
         title: "Your Account",
         links: [
-          { name: "Account Dashboard", href: "/profile/me" },
-          { name: "Orders", href: "/profile/me/orders" },
-          { name: "Saved Compounds", href: "/profile/me/saved" },
+          { name: "Account Dashboard", href: "/account" },
+          { name: "Orders", href: "/account?tab=orders" },
+          { name: "Your Waitlist", href: "/account?tab=waitlist" },
           { name: "Sign Out", href: "/auth/logout" },
         ],
       },

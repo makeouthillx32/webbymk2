@@ -4,18 +4,19 @@
 import { useState } from 'react';
 import LandingManager from './_components/LandingManager';
 import './_components/landing.scss';
-import { ShoppingBag, Home, FlaskConical } from 'lucide-react';
+import { Home } from 'lucide-react';
 
+// Shop and Labs moved to their own zones (Shop > Landing, Labs > Landing) —
+// same <LandingManager>, just reached from where the rest of that zone's
+// settings live. Content keeps the Core home page, which has no zone of its own.
 const TABS = [
-  { id: 'shop',  label: 'Shop Landing', icon: ShoppingBag,  desc: 'Manage shop hero carousel sections and their order' },
-  { id: 'home',  label: 'Home Heroes',  icon: Home,         desc: 'Edit Kick, Discord, Pickme and slogan sections on the home page' },
-  { id: 'labs',  label: 'Labs Landing', icon: FlaskConical, desc: 'Manage the Unenter Labs landing page sections and their order' },
+  { id: 'home',  label: 'Home Heroes',  icon: Home, desc: 'Edit Kick, Discord, Pickme and slogan sections on the home page' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
 export default function LandingSettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('shop');
+  const [activeTab, setActiveTab] = useState<TabId>('home');
   const active = TABS.find((t) => t.id === activeTab)!;
 
   return (
@@ -49,14 +50,8 @@ export default function LandingSettingsPage() {
       </div>
 
       {/* Panels — render both, hide inactive to preserve state */}
-      <div className={activeTab === 'shop' ? 'block' : 'hidden'}>
-        <LandingManager embedded page="shop" />
-      </div>
       <div className={activeTab === 'home' ? 'block' : 'hidden'}>
         <LandingManager embedded page="home" />
-      </div>
-      <div className={activeTab === 'labs' ? 'block' : 'hidden'}>
-        <LandingManager embedded page="labs" />
       </div>
     </div>
   );

@@ -2,12 +2,13 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { Menu, User } from "lucide-react";
+import { Menu, ShoppingBag, User } from "lucide-react";
 import Link from "next/link";
 import { useTheme, useAuth } from "@/app/provider";
 import SwitchtoDarkMode from "@/components/Layouts/SwitchtoDarkMode";
 import DesktopNav from "@/components/Layouts/shop/DesktopNav";
 import { useSignInHref } from "@/lib/useSignInHref";
+import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -17,6 +18,7 @@ export function Header({ onMenuClick }: HeaderProps = {}) {
   const { session, refreshSession } = useAuth();
   const { themeType } = useTheme();
   const signInHref = useSignInHref();
+  const { itemCount, toggleCart } = useCart();
 
   const handleAccountClick = () => {
     window.location.href = "/profile/me";
@@ -120,6 +122,21 @@ export function Header({ onMenuClick }: HeaderProps = {}) {
               </button>
             )}
           </div>
+
+          {/* Cart Trigger */}
+          <button
+            onClick={toggleCart}
+            className="header-cart relative inline-flex items-center justify-center p-2 rounded-full text-[var(--lt-fg)] hover:text-primary transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+            aria-label={`Shopping cart with ${itemCount} items`}
+            type="button"
+          >
+            <ShoppingBag className="w-5 h-5" aria-hidden="true" />
+            {itemCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground shadow-sm">
+                {itemCount > 99 ? "99+" : itemCount}
+              </span>
+            )}
+          </button>
 
           {/* Theme Switcher */}
           <div className="theme-switcher text-[var(--lt-fg)] hover:text-primary transition-colors">

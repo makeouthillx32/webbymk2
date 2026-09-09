@@ -486,6 +486,21 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   box-shadow: var(--shadow-2xl);
+
+  /* The modal had no height bound at all, so it grew to whatever its content
+     needed and ran off the bottom of the screen — taking the Save button with
+     it, with nothing scrollable to reach it. Content-dependent overflow like
+     this stays invisible until one form gets long enough; the card-overlay
+     editor is what crossed the line.
+
+     Column flex with a capped height so the header and footer stay put and the
+     BODY is what scrolls. 32px accounts for .modal-overlay's 16px padding. */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  /* Small viewports report 100vh larger than the usable area; dvh follows the
+     browser chrome where supported. */
+  max-height: calc(100dvh - 32px);
 }
 
 @media (max-width: 768px) {
@@ -508,6 +523,7 @@
   justify-content: space-between;
   padding: 24px;
   border-bottom: 1px solid hsl(var(--border));
+  flex-shrink: 0;
 }
 
 .modal-title {
@@ -539,6 +555,12 @@
 
 .modal-body {
   padding: 24px;
+  /* min-height:0 is required — a flex child defaults to min-height:auto and
+     would refuse to shrink below its content, defeating the overflow. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 768px) {
@@ -565,6 +587,7 @@
   gap: 12px;
   padding: 24px;
   border-top: 1px solid hsl(var(--border));
+  flex-shrink: 0;
 }
 
 .form-field {
@@ -972,4 +995,12 @@
     min-height: 44px;
     padding: 10px 16px;
   }
+}
+/* LandingSectionModal uses .modal-grid where the others use .modal-body, so it
+   needs the same treatment or it overflows the capped .modal on its own. */
+.modal-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }

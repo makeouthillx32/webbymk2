@@ -14,7 +14,7 @@ import { CreateTagModal } from "./_components/CreateTagModal";
 import { EditTagForm } from "./_components/EditTagForm";
 import { DeleteConfirmModal } from "./_components/DeleteConfirmModal";
 
-export default function TagsPage() {
+export default function TagsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const supabase = useMemo(() => {
     return createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,7 +40,7 @@ export default function TagsPage() {
 
     const { data, error } = await supabase
       .from("tags")
-      .select("id,name,slug")
+      .select("id,name,slug,description,is_home_section,is_active,position,eyebrow,tagline,subtitle,cta_label")
       .order("name", { ascending: true });
 
     if (error) {
@@ -91,7 +91,16 @@ export default function TagsPage() {
     setEditOpen(true);
   };
 
-  const handleSave = async (data: { id: string; name: string; slug: string }) => {
+  const handleSave = async (data: {
+    id: string; name: string; slug: string;
+    description?: string | null;
+    is_home_section?: boolean;
+    is_active?: boolean;
+    eyebrow?: string | null;
+    tagline?: string | null;
+    subtitle?: string | null;
+    cta_label?: string | null;
+  }) => {
     setErr(null);
 
     const { error } = await supabase
@@ -99,6 +108,13 @@ export default function TagsPage() {
       .update({
         name: data.name,
         slug: data.slug,
+        description: data.description ?? null,
+        is_home_section: data.is_home_section ?? false,
+        is_active: data.is_active ?? true,
+        eyebrow: data.eyebrow ?? null,
+        tagline: data.tagline ?? null,
+        subtitle: data.subtitle ?? null,
+        cta_label: data.cta_label ?? null,
       })
       .eq("id", data.id);
 
@@ -132,14 +148,16 @@ export default function TagsPage() {
   return (
     <div className="tags-manager">
       <div className="tags-header">
-        <div>
-          <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">
-            Tags / Subcategories
-          </h1>
-          <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Manage product tags. These can be used like subcategories and filters.
-          </p>
-        </div>
+        {!embedded && (
+          <div>
+            <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">
+              Attributes (Tags)
+            </h1>
+            <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+              What a product is LIKE — cross-cutting traits used as filters (a tee can be Fem and Limited Edition at once). Not a category, not a merchandising row.
+            </p>
+          </div>
+        )}
 
         <TagsActionBar
           search={search}

@@ -14,7 +14,7 @@ import CreateCollectionModal from "./_components/CreateCollectionModal";
 import { EditCollectionForm } from "./_components/EditCollectionForm";
 import { DeleteConfirmModal } from "./_components/DeleteConfirmModal";
 
-export default function CollectionsPage() {
+export default function CollectionsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const supabase = useMemo(() => {
     return createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -172,12 +172,14 @@ export default function CollectionsPage() {
   return (
     <div className="collections-manager">
       <div className="collections-header">
-        <div>
-          <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Collections</h1>
-          <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Manage storefront collections (used in /collections/* and footer links).
-          </p>
-        </div>
+        {!embedded && (
+          <div>
+            <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Collections</h1>
+            <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+              Manage storefront collections (used in /collections/* and footer links).
+            </p>
+          </div>
+        )}
 
         <CollectionsActionBar
           search={search}

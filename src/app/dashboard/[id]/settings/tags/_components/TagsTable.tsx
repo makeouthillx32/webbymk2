@@ -7,6 +7,15 @@ export type TagRow = {
   id: string;
   name: string;
   slug: string;
+  // Copy and visibility. Cover art deliberately absent — see EditTagForm.
+  description?: string | null;
+  is_home_section?: boolean | null;
+  is_active?: boolean | null;
+  position?: number | null;
+  eyebrow?: string | null;
+  tagline?: string | null;
+  subtitle?: string | null;
+  cta_label?: string | null;
 };
 
 type Props = {

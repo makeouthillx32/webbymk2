@@ -32,21 +32,27 @@ export default function ProductModal({
   onOpenChange,
   productId,
   title = "Manage Product",
+  initialTab = "details",
   onChanged,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   productId: string | null;
   title?: string;
+  initialTab?: TabType;
   onChanged: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<TabType>("details");
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const { state, actions } = useManageProduct(productId, open, onChanged);
 
-  // ✅ Prevent stale tab when switching products / reopening
+  // ✅ Update active tab when modal opens or initialTab changes
   useEffect(() => {
-    if (!open) setActiveTab("details");
-  }, [open, productId]);
+    if (open) {
+      setActiveTab(initialTab);
+    } else {
+      setActiveTab("details");
+    }
+  }, [open, productId, initialTab]);
 
   const tabBtn = (key: TabType, icon: React.ReactNode, label: string) => {
     const active =
@@ -97,7 +103,7 @@ export default function ProductModal({
             {tabBtn("media", <ImageIcon size={16} />, "Photos")}
             {tabBtn("variants", <Package size={16} />, "Variants")}
             {tabBtn("inventory", <Box size={16} />, "Inventory")}
-            {tabBtn("labdata", <FlaskConical size={16} />, "Lab Data")}
+            {tabBtn("labdata", <FlaskConical size={16} />, "Batches & COAs")}
             {tabBtn("categories", <FolderTree size={16} />, "Categories")}
             {tabBtn("advanced", <AlertTriangle size={16} />, "Advanced")}
           </div>
@@ -123,6 +129,8 @@ export default function ProductModal({
               formPrice={state.formPrice}
               formBadge={state.formBadge}
               formBrand={state.formBrand}
+              formCompound={state.formCompound}
+              formPresentation={state.formPresentation}
               formCasNumber={state.formCasNumber}
               formPurity={state.formPurity}
               formResearchUseOnly={state.formResearchUseOnly}
@@ -134,6 +142,8 @@ export default function ProductModal({
               setFormPrice={actions.setFormPrice}
               setFormBadge={actions.setFormBadge}
               setFormBrand={actions.setFormBrand}
+              setFormCompound={actions.setFormCompound}
+              setFormPresentation={actions.setFormPresentation}
               setFormCasNumber={actions.setFormCasNumber}
               setFormPurity={actions.setFormPurity}
               setFormResearchUseOnly={actions.setFormResearchUseOnly}

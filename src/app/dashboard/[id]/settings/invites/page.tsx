@@ -141,7 +141,7 @@ export default function InvitesPage() {
 
         {showGenerator && (
           <div className="generator-overlay fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="generator-modal relative bg-white rounded-lg p-6 max-w-md w-full shadow-lg">
+            <div className="generator-modal relative bg-white rounded-lg p-6 max-w-md w-full shadow-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
               <button className="absolute top-3 right-3 text-gray-600 hover:text-gray-800" onClick={() => setShowGenerator(false)}>
                 <X size={24} />
               </button>

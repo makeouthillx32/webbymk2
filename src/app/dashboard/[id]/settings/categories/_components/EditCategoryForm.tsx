@@ -2,11 +2,15 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X, Upload, Trash2, ImageIcon } from "lucide-react";
-import { createBrowserClient } from "@/utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 
-const BUCKET = "category-covers";
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+/** Default cover bucket. Labs passes its own — see the `bucket` prop. */
+const DEFAULT_BUCKET = "category-covers";
+import { publicStorageUrl } from "@/lib/storageUrl";
+import {
+  CardOverlaySlots,
+  CardScrim,
+} from "@/components/shop/_components/CardOverlaySlots";
 
 type Category = {
   id: string;
@@ -17,14 +21,43 @@ type Category = {
   cover_image_bucket?: string | null;
   cover_image_path?: string | null;
   cover_image_alt?: string | null;
+  eyebrow?: string | null;
+  tagline?: string | null;
+  subtitle?: string | null;
+  cta_label?: string | null;
 };
+
+/**
+ * Which concern this editor is serving.
+ *
+ * The same category row answers two unrelated questions, and mixing them is
+ * what made this area confusing. "structure" is the nav tree — name, slug and
+ * nesting. "display" is the artwork a card renders with — cover image and the
+ * copy laid over it. Splitting the FORM rather than the TABLE keeps one row of
+ * truth while letting each screen ask only what it is actually for.
+ *
+ * Hidden fields still hydrate from the row and still round-trip through save,
+ * so editing in one mode never blanks what the other mode owns.
+ */
+export type CategoryFormMode = "structure" | "display";
 
 interface EditCategoryFormProps {
   open: boolean;
   category: Category | null;
   categories: Category[];
+  mode?: CategoryFormMode;
+  /** Storage bucket for cover uploads. Lets Labs reuse this editor as-is. */
+  bucket?: string;
+  /**
+   * Table the cover write targets.
+   *
+   * The image is saved directly by this form rather than through onSave, so it
+   * needs the table too — hardcoded to "categories" it would have written a
+   * Labs cover path onto the shop table and silently matched no row.
+   */
+  table?: "categories" | "research_categories";
   onClose: () => void;
-  onSave: (data: { id: string; name: string; slug: string; parent_id: string | null }) => Promise<void>;
+  onSave: (data: { id: string; name: string; slug: string; parent_id: string | null; eyebrow: string | null; tagline: string | null; subtitle: string | null; cta_label: string | null }) => Promise<void>;
 }
 
 function slugify(str: string) {
@@ -36,26 +69,36 @@ function slugify(str: string) {
     .replace(/-+/g, "-");
 }
 
-function getCoverUrl(bucket: string | null | undefined, path: string | null | undefined): string | null {
-  if (!bucket || !path) return null;
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
-}
+/** Browser-safe public URL — see lib/storageUrl. */
+const getCoverUrl = publicStorageUrl;
 
 export function EditCategoryForm({
   open,
   category,
   categories,
+  mode = "structure",
+  bucket = DEFAULT_BUCKET,
+  table = "categories",
   onClose,
   onSave,
 }: EditCategoryFormProps) {
-  const supabase = React.useMemo(
-    () => createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY),
-    []
-  );
+  const isDisplay = mode === "display";
+  // Calling createClient() directly rather than passing a url/key: the wrapper
+  // ignores both arguments anyway, so passing them only implied a control that
+  // does not exist. Uploads were always fine; it was the hand-built public URL
+  // (see lib/storageUrl) that pointed at the unreachable internal address.
+  const supabase = React.useMemo(() => createClient(), []);
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [parentId, setParentId] = useState<string>("");
+  // Optional editorial copy — all blank renders the plain card.
+  const [eyebrow, setEyebrow] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [subtitle, setSubtitle] = useState("");
+  const [ctaLabel, setCtaLabel] = useState("");
+  // Optional editorial copy — blank means "render the plain card".
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +115,10 @@ export function EditCategoryForm({
       setName(category.name);
       setSlug(category.slug);
       setParentId(category.parent_id ?? "");
+      setEyebrow(category.eyebrow ?? "");
+      setTagline(category.tagline ?? "");
+      setSubtitle(category.subtitle ?? "");
+      setCtaLabel(category.cta_label ?? "");
       setError(null);
       setImageError(null);
       setImagePath(category.cover_image_path ?? null);
@@ -129,7 +176,7 @@ export function EditCategoryForm({
     try {
       // Delete old image first if exists
       if (imagePath) {
-        await supabase.storage.from(BUCKET).remove([imagePath]);
+        await supabase.storage.from(bucket).remove([imagePath]);
       }
 
       const ext = file.name.split(".").pop() ?? "jpg";
@@ -137,7 +184,7 @@ export function EditCategoryForm({
       const cleanPath = `${category.id}/cover.${ext}`;
 
       const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
+        .from(bucket)
         .upload(cleanPath, file, { upsert: true });
 
       if (uploadError) {
@@ -147,9 +194,9 @@ export function EditCategoryForm({
 
       // Save to DB
       const { error: dbError } = await supabase
-        .from("categories")
+        .from(table)
         .update({
-          cover_image_bucket: BUCKET,
+          cover_image_bucket: bucket,
           cover_image_path: cleanPath,
           cover_image_alt: name,
         })
@@ -161,7 +208,7 @@ export function EditCategoryForm({
       }
 
       setImagePath(cleanPath);
-      setImageUrl(`${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${cleanPath}?t=${Date.now()}`);
+      setImageUrl(publicStorageUrl(bucket, cleanPath, true));
     } catch (e: any) {
       setImageError(e?.message ?? "Upload failed.");
     } finally {
@@ -177,10 +224,10 @@ export function EditCategoryForm({
     setImageError(null);
 
     try {
-      await supabase.storage.from(BUCKET).remove([imagePath]);
+      await supabase.storage.from(bucket).remove([imagePath]);
 
       await supabase
-        .from("categories")
+        .from(table)
         .update({ cover_image_bucket: null, cover_image_path: null, cover_image_alt: null })
         .eq("id", category.id);
 
@@ -200,7 +247,16 @@ export function EditCategoryForm({
     setSaving(true);
     setError(null);
     try {
-      await onSave({ id: category.id, name: name.trim(), slug: slug.trim(), parent_id: parentId || null });
+      await onSave({
+        id: category.id,
+        name: name.trim(),
+        slug: slug.trim(),
+        parent_id: parentId || null,
+        eyebrow: eyebrow.trim() || null,
+        tagline: tagline.trim() || null,
+        subtitle: subtitle.trim() || null,
+        cta_label: ctaLabel.trim() || null,
+      });
     } catch (e: any) {
       setError(e?.message ?? "Unexpected error.");
     } finally {
@@ -236,18 +292,38 @@ export function EditCategoryForm({
             </p>
           )}
 
-          {/* Cover Image */}
+          {/* Cover Image — display concern only. */}
+          {isDisplay && (
           <div className="space-y-2">
             <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
               Cover Image
             </label>
 
             {imageUrl ? (
-              <div className="relative group rounded-lg overflow-hidden border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+              // 1:1, because the storefront card is aspect-square. The old
+              // preview was a 160px-tall letterbox strip, so it cropped
+              // differently from the real card and the overlay landed nowhere
+              // near where it actually sits.
+              <div
+                className="group relative mx-auto w-full max-w-[320px] overflow-hidden rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--muted))]"
+                style={{ aspectRatio: "1 / 1" }}
+              >
                 <img
                   src={imageUrl}
                   alt={name}
-                  className="w-full h-40 object-cover"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+
+                {/* The real renderer, over the real art, at the real ratio. */}
+                <CardScrim opacity={0.25} />
+                <CardOverlaySlots
+                  card={{
+                    name,
+                    eyebrow: eyebrow || null,
+                    tagline: tagline || null,
+                    subtitle: subtitle || null,
+                    cta_label: ctaLabel || null,
+                  }}
                 />
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
                   <button
@@ -305,6 +381,7 @@ export function EditCategoryForm({
               <p className="text-xs text-red-600">{imageError}</p>
             )}
           </div>
+          )}
 
           {/* Name */}
           <div className="space-y-1.5">
@@ -333,7 +410,75 @@ export function EditCategoryForm({
             <p className="text-xs text-[hsl(var(--muted-foreground))]">/shop/{slug || "…"}</p>
           </div>
 
-          {/* Parent Category */}
+          {/* Card copy — display concern only. Text laid over the artwork
+              instead of baked into it, so it stays editable and readable. */}
+          {isDisplay && (
+          <div className="space-y-3 rounded-md border border-[hsl(var(--border))] p-3">
+            <div>
+              <p className="text-sm font-medium text-[hsl(var(--foreground))]">Card copy (optional)</p>
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                Text laid over the cover image on the shop front end. Leave blank for the plain card.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-[hsl(var(--foreground))]">Eyebrow</span>
+                <input
+                  type="text"
+                  value={eyebrow}
+                  onChange={(e) => setEyebrow(e.target.value)}
+                  maxLength={40}
+                  placeholder="UNENTER"
+                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                />
+                <span className="mt-1 block text-[11px] text-[hsl(var(--muted-foreground))]">Small label, top-left</span>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-[hsl(var(--foreground))]">Tagline</span>
+                <input
+                  type="text"
+                  value={tagline}
+                  onChange={(e) => setTagline(e.target.value)}
+                  maxLength={60}
+                  placeholder="EST. 2024 BUILT DIFFERENT"
+                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                />
+                <span className="mt-1 block text-[11px] text-[hsl(var(--muted-foreground))]">Top-right corner</span>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-[hsl(var(--foreground))]">Subtitle</span>
+                <input
+                  type="text"
+                  value={subtitle}
+                  onChange={(e) => setSubtitle(e.target.value)}
+                  maxLength={80}
+                  placeholder="FRESH DROPS. SAME ENERGY."
+                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                />
+                <span className="mt-1 block text-[11px] text-[hsl(var(--muted-foreground))]">Under the name</span>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-[hsl(var(--foreground))]">CTA label</span>
+                <input
+                  type="text"
+                  value={ctaLabel}
+                  onChange={(e) => setCtaLabel(e.target.value)}
+                  maxLength={30}
+                  placeholder="SHOP NOW"
+                  className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                />
+                <span className="mt-1 block text-[11px] text-[hsl(var(--muted-foreground))]">The card is already a link</span>
+              </label>
+            </div>
+          </div>
+          )}
+
+          {/* Parent Category — nav concern only. */}
+          {!isDisplay && (
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
               Parent Category
@@ -356,6 +501,7 @@ export function EditCategoryForm({
                 : "Top-level — appears directly in the navigation bar."}
             </p>
           </div>
+          )}
         </div>
 
         {/* Footer */}

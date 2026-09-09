@@ -25,6 +25,7 @@ export default function CartDrawer() {
     <Sheet open={isOpen} onOpenChange={(open) => !open && closeCart()}>
       <SheetContent
         side="right"
+        hideCloseButton
         className="flex flex-col w-full sm:max-w-[420px] p-0 gap-0 border-l border-[hsl(var(--border))]"
       >
         {/* ── Header ───────────────────────────────────────────────────── */}

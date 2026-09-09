@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FlaskConical } from "lucide-react";
 
 // Internal Modular Imports
 import { useCreateProduct } from "./create/use-create-product";
@@ -195,7 +196,17 @@ export default function CreateProductModal({
             </div>
           </CollapsibleSection>
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="flex items-start gap-2.5 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-xs text-[hsl(var(--foreground))]">
+            <FlaskConical size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-emerald-600 dark:text-emerald-400">COAs, Batches & Lab Reports</p>
+              <p className="text-[hsl(var(--muted-foreground))] mt-0.5">
+                Once created, you can immediately upload third-party lab PDFs, scan paper reports, and auto-parse HPLC telemetry using the dedicated <span className="font-semibold text-[hsl(var(--foreground))]">[+ COA]</span> button on the chemicals table.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => { onOpenChange(false); actions.reset(); }} disabled={state.creating}>Cancel</Button>
             <Button onClick={actions.create} disabled={state.creating}>{state.creating ? "Creating..." : "Create Product"}</Button>
           </div>
