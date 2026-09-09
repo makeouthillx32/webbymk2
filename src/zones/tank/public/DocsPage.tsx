@@ -19,6 +19,7 @@ import {
   Users,
   CheckCircle,
   HelpCircle,
+  Gift,
 } from "lucide-react";
 
 type PageId =
@@ -31,6 +32,7 @@ type PageId =
   | "xp"
   | "items"
   | "missions"
+  | "drops"
   | "clicks";
 
 const PAGES: { id: PageId; label: string; group: string; icon?: string }[] = [
@@ -43,6 +45,7 @@ const PAGES: { id: PageId; label: string; group: string; icon?: string }[] = [
   { id: "xp", label: "XP & Streaks", group: "Features" },
   { id: "items", label: "Tankems & Crafting", group: "Features" },
   { id: "missions", label: "Chores & Quests", group: "Features" },
+  { id: "drops", label: "Drops", group: "Features" },
   { id: "clicks", label: "Clicks & Alliances", group: "Features" },
 ];
 
@@ -60,6 +63,7 @@ export function DocsPage() {
       const found = PAGES.find((p) => p.id === hash);
       if (found) setActiveTab(found.id);
       else if (hash === "chores" || hash === "directives") setActiveTab("missions");
+      else if (hash === "drop" || hash === "watch-and-earn" || hash === "watch2earn") setActiveTab("drops");
       else if (hash === "clicks" || hash === "cliques") setActiveTab("clicks");
       else if (hash === "trinkets" || hash === "tanktoys") setActiveTab("tanktoys");
       else if (hash === "tankems" || hash === "tankitems") setActiveTab("items");
@@ -624,6 +628,74 @@ export function DocsPage() {
                     <em>"Watch 30 minutes of Director Mode"</em>, <em>"Cheer for your Click"</em>). Fulfilling them
                     rewards your account with instant token payouts and progression XP.
                   </p>
+                </div>
+              </article>
+            )}
+
+            {/* ═══════════ SECTION: DROPS ═══════════ */}
+            {activeTab === "drops" && (
+              <article className="space-y-8 animate-fadeIn">
+                <header className="border-b border-white/10 pb-6">
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#f30e00]">
+                    Watch & Earn
+                  </span>
+                  <h1 className="mt-1 text-3xl font-black tracking-tight text-white sm:text-4xl">
+                    Drops
+                  </h1>
+                  <p className="mt-3 text-base text-slate-400 leading-relaxed">
+                    Just have Tank open? That's worth something. Watch a camera long enough during a live Drops
+                    campaign and claim tokens, XP, or rare items — no purchase required.
+                  </p>
+                </header>
+
+                <div className="prose prose-invert max-w-none text-slate-300 space-y-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">How it works</h2>
+                    <p className="leading-relaxed">
+                      When a Drops campaign is live, a purple banner shows up above the player with a progress bar
+                      and a target time. Keep watching — the tab has to stay in focus — and the bar fills on its own.
+                      Hit the target and a <strong>Claim Drop</strong> button lights up. Nothing is granted
+                      automatically: you press claim, and the reward lands straight in your account.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 not-prose my-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white flex items-center gap-2">
+                        <Gift className="h-4 w-4 text-purple-400" /> Tiered Rewards
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        A campaign can have several tiers — a quick 15-minute payout, then bigger rewards the longer
+                        you stay. Each tier claims independently once you've watched long enough.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-yellow-400" /> Flash Drops
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Sometimes a producer fires off a short, high-value drop the moment something wild happens on
+                        camera — first come, first watched.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Room-targeted campaigns</h2>
+                    <p className="leading-relaxed">
+                      Some Drops apply everywhere; others only count toward one specific camera — a nudge to check
+                      out a room that isn't getting attention. The banner tells you which camera counts if a
+                      campaign is room-specific.
+                    </p>
+                  </div>
+
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Sign-in required</h2>
+                    <p className="leading-relaxed">
+                      Progress is tied to your account, not your browser tab, so it survives reloads and device
+                      switches — but you do need to be signed in for it to count at all.
+                    </p>
+                  </div>
                 </div>
               </article>
             )}

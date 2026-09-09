@@ -119,8 +119,68 @@ export function bitrateDerivedMotionScore(cameraId: string, bitrateKbps: number)
   return Math.max(0, Math.min(1, excessRatio));
 }
 
+import { createAdminClient } from "@/utils/supabase/admin";
+
 export function setOperatorMode(mode: SubjectMode | null): void {
   g_operatorMode = mode;
+}
+
+export async function persistOperatorModeToDb(
+  mode: SubjectMode | null,
+  operator = "Operator",
+): Promise<void> {
+  g_operatorMode = mode;
+  try {
+    const admin = createAdminClient();
+    await admin.from("tank_platform_settings").upsert(
+      {
+        key: "director_operator_mode",
+        value: {
+          mode,
+          operator,
+          updatedAt: new Date().toISOString(),
+        },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" },
+    );
+  } catch (err) {
+    console.error("[DirectorTelemetryStore] Failed to persist operator mode:", err);
+  }
+}
+
+export async function loadPersistedOperatorModeFromDb(): Promise<SubjectMode | null> {
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("tank_platform_settings")
+      .select("value")
+      .eq("key", "director_operator_mode")
+      .maybeSingle();
+
+    if (data?.value && typeof data.value === "object") {
+      const modeVal = (data.value as { mode?: SubjectMode }).mode;
+      if (
+        modeVal &&
+        (modeVal === "speaker" ||
+          modeVal === "group" ||
+          modeVal === "motion" ||
+          modeVal === "animals" ||
+          modeVal === "person" ||
+          modeVal === "feet" ||
+          modeVal === "face" ||
+          modeVal === "crowd" ||
+          modeVal === "chaos" ||
+          modeVal === "rotation" ||
+          modeVal === "manual" ||
+          modeVal === "auto")
+      ) {
+        g_operatorMode = modeVal;
+        return modeVal;
+      }
+    }
+  } catch {}
+  return g_operatorMode;
 }
 
 export function getOperatorMode(): SubjectMode | null {
@@ -247,6 +307,17 @@ export function normaliseTelemetryReading(raw: any): CameraTelemetryInput | null
           nh: num(b?.nh, 0, 1),
           label: typeof b?.label === "string" ? b.label.slice(0, 48) : "object",
           depthZone: b?.depthZone,
+          // Was dropped here silently — the simulate route stores raw boxes
+          // unsanitized (see recordTelemetry), so confidence/targetName only
+          // ever worked for simulated boxes and quietly vanished for
+          // anything from a real detector routed through this normalizer
+          // (the external shared-secret route and the real browser-YOLO
+          // route both call this). Same clamp-don't-trust posture as every
+          // other field here — just no longer discarding the value outright.
+          confidence: b?.confidence != null ? num(b.confidence, 0, 1) : undefined,
+          isMovement: typeof b?.isMovement === "boolean" ? b.isMovement : undefined,
+          velocity: b?.velocity != null ? num(b.velocity, 0, 100) : undefined,
+          targetName: typeof b?.targetName === "string" ? b.targetName.slice(0, 48) : undefined,
         }))
       : undefined,
   };

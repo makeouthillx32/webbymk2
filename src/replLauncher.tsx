@@ -18,12 +18,12 @@ export async function launchRepl(options: LaunchReplOptions = {}): Promise<void>
     }>
   }
   const { setupGracefulShutdown } = await import('./utils/gracefulShutdown.js') as {
-    setupGracefulShutdown: () => void
+    setupGracefulShutdown: (options?: { ignoreSigint?: boolean }) => void
   }
   const { ThemeProvider } = await import('./ink/components/design-system/ThemeProvider.js')
   const { renderSync } = await import('./ink/root.js')
 
-  setupGracefulShutdown()
+  setupGracefulShutdown({ ignoreSigint: true })
 
   const element = (
     <ThemeProvider initialState="dark" enableAutoTheme={false}>

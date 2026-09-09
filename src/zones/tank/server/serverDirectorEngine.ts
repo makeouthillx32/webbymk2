@@ -327,7 +327,16 @@ declare global {
   // eslint-disable-next-line no-var
   var __tankDirectorTickTimer: ReturnType<typeof setInterval> | undefined;
 }
-if (process.env.NEXT_PHASE !== "phase-production-build" && !globalThis.__tankDirectorTickTimer) {
+const isTankZone =
+  process.env.NEXT_PUBLIC_ZONE === "tank" ||
+  process.env.ZONE === "tank" ||
+  (!process.env.NEXT_PUBLIC_ZONE && process.env.NODE_ENV !== "production");
+
+if (
+  isTankZone &&
+  process.env.NEXT_PHASE !== "phase-production-build" &&
+  !globalThis.__tankDirectorTickTimer
+) {
   globalThis.__tankDirectorTickTimer = setInterval(() => {
     getServerDirectorState().catch((err) => {
       console.error("[ServerDirectorEngine] background tick failed:", err);

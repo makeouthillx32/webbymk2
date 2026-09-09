@@ -2,6 +2,8 @@
 import { createServerClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
+import { verifyShippingRateQuote } from "@/lib/shippingQuote";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +16,7 @@ export async function POST(request: NextRequest) {
     // can't even JSON.parse() ("Unexpected end of JSON input"), instead of
     // the graceful JSON error this route already returns for every other
     // failure mode. Found via E2E checkout test, 2026-08-06.
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    const { stripe } = createCommerceStripe("shop");
     const supabase = await createServerClient();
     const body = await request.json();
 
@@ -113,9 +115,21 @@ export async function POST(request: NextRequest) {
     const isUSPSRate = shipping_rate_id.startsWith("usps-");
 
     if (isUSPSRate) {
-      // Price and name were passed directly from the client alongside the rate ID
-      shipping_cents = shipping_rate_data?.price_cents ?? 0;
-      shipping_method_name = shipping_rate_data?.name ?? "Standard Shipping";
+      const quote = verifyShippingRateQuote({
+        token: shipping_rate_data?.quote_token,
+        lane: "shop",
+        cartId: cart_id,
+        subtotalCents: subtotal_cents,
+        rateId: shipping_rate_id,
+      });
+      if (!quote) {
+        return NextResponse.json(
+          { error: "Shipping quote is invalid or expired. Please choose shipping again." },
+          { status: 400 },
+        );
+      }
+      shipping_cents = quote.priceCents;
+      shipping_method_name = quote.name;
       console.log(`USPS rate: ${shipping_method_name} — $${(shipping_cents / 100).toFixed(2)}`);
     } else {
       // Flat DB rate — look up by UUID
@@ -349,6 +363,7 @@ export async function POST(request: NextRequest) {
       const updatedPI = await stripe.paymentIntents.update(existing.stripe_payment_intent_id, {
         amount: total_cents,
         metadata: {
+          payment_lane: "shop",
           order_id: existing.id,
           order_number: existing.order_number,
           auth_user_id: authUserId ?? "",
@@ -486,6 +501,7 @@ export async function POST(request: NextRequest) {
         currency: "usd",
         automatic_payment_methods: { enabled: true },
         metadata: {
+          payment_lane: "shop",
           order_id: order.id,
           order_number: order.order_number,
           auth_user_id: authUserId ?? "",
@@ -495,7 +511,7 @@ export async function POST(request: NextRequest) {
         description: `Order ${order.order_number}`,
         shipping: shippingForStripe,
       },
-      { idempotencyKey: `pi-create-${order.id}` }
+      { idempotencyKey: `shop-pi-create-${order.id}` }
     );
 
     console.log("Payment intent created:", paymentIntent.id);

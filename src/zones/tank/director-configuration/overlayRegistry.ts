@@ -17,6 +17,8 @@ export type OverlayId =
   | "person"
   | "member"
   | "guest"
+  | "dog"
+  | "cat"
   | "feet"
   | "audio"
   | "motion"
@@ -76,6 +78,20 @@ export const OVERLAY_DEFINITIONS: OverlayDefinition[] = [
     defaultOn: false,
     hint: "Red dot where a person meets the floor",
     relevantModes: ["feet"],
+  },
+  {
+    id: "dog",
+    label: "Dogs",
+    group: "subjects",
+    defaultOn: true,
+    hint: "Box around a detected dog — species only, no per-pet naming yet",
+  },
+  {
+    id: "cat",
+    label: "Cats",
+    group: "subjects",
+    defaultOn: true,
+    hint: "Box around a detected cat — species only, no per-pet naming yet",
   },
 
   // ── Signals: what the room is doing ─────────────────────────────────────

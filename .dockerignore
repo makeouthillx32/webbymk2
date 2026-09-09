@@ -8,6 +8,8 @@ node_modules
 .pnp.js
 
 # Build output
+**/.next
+**/.next/**
 .next
 out
 build
@@ -36,12 +38,13 @@ supabase/.temp
 
 # Zone overlays — the core app build doesn't need them, BUT zone builds share
 # this repo-root context and COPY zones/<key>/src/app/ (see zones/*/Dockerfile).
-# Exclude the bulk, re-include exactly what zone builds copy.
-zones/
-!zones/auth/src
-!zones/auth/src/**
-!zones/tank/src
-!zones/tank/src/**
+# Exclude the bulk, re-include every zone's source overlay. Keep the directory
+# chain visible so Docker can traverse newly scaffolded zones; hard-coding
+# today's zone names breaks the one-click creation pipeline.
+zones/**
+!zones/**/
+!zones/unenter/src
+!zones/unenter/src/**
 
 # Platform packages — agent + updater have their own build contexts
 packages/
@@ -69,6 +72,24 @@ vault
 __pycache__
 .turbo
 .vercel
+.claude
+.codex
+.codex-tmp
+.cursor
+.ok
+.openclaw-scratch
+.trash
+.vscode
+coturn
+mediamtx
+openclaw
+automations
+Architecture
+users
+memory
+services
+logs
+*.tsbuildinfo
 
 # ── Non-app repo cruft — host-only tooling, vendored clones, dumps, scratch ──
 # The core image only needs src/, public/, zones/ overlays, i18n/, and config

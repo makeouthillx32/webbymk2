@@ -1,0 +1,10 @@
+{
+  "name": "@unenter/unenter-pw",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3014",
+    "build": "next build",
+    "start": "next start"
+  }
+}

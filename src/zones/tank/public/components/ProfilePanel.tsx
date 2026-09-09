@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Home,
   Shield,
+  Video,
 } from "lucide-react";
 import { ChromePanel } from "./ChromePanel";
 import { ConsoleButton } from "./ConsoleButton";
@@ -54,6 +55,14 @@ export function ProfilePanel({
 }: ProfilePanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Standard menu-item icons pick up the viewer's own chosen profile color
+  // (same nameColor used for their chat username) instead of a fixed brand
+  // orange — a personal touch, and Tailwind can't express a runtime value
+  // via an arbitrary-value class, so these render via inline style instead
+  // of text-[#ff4d00]. Staff Room / Creator Dashboard keep their own fixed
+  // accent colors on purpose — those are role badges, not generic items.
+  const menuIconColor = initialProfile?.nameColor || "#ff4d00";
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -157,7 +166,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <User className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <User className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Profile</span>
           </button>
 
@@ -178,6 +187,26 @@ export function ProfilePanel({
             </Link>
           )}
 
+          {/* Creator Dashboard — same "who can stream" gate as /stream itself
+              (obsRooms.ts: admin or moderator). No "streamer" role/tag exists
+              in profiles yet, so this can't be scoped to streamers alone the
+              way it eventually should be — admin/moderator is the real
+              current boundary, streamer support is a follow-up once that
+              role exists. */}
+          {(initialProfile?.role === "admin" || initialProfile?.role === "moderator") && (
+            <Link
+              href="/stream"
+              onClick={() => setMenuOpen(false)}
+              className="flex w-full items-center gap-3 rounded border border-purple-500/50 bg-gradient-to-r from-purple-950/60 to-fuchsia-950/60 px-3 py-2.5 text-left text-sm font-black tracking-tight text-purple-200 transition hover:bg-purple-900/80 active:scale-[0.98] shadow-[0_0_10px_rgba(168,85,247,0.2)]"
+            >
+              <Video className="h-4 w-4 shrink-0 stroke-[2.5] text-purple-400" />
+              <span className="flex-1">Creator Dashboard</span>
+              <span className="rounded bg-purple-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-white shadow">
+                {initialProfile?.role === "moderator" ? "MOD" : "ADMIN"}
+              </span>
+            </Link>
+          )}
+
           {/* Notifications */}
           <button
             type="button"
@@ -187,7 +216,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <Bell className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <Bell className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Notifications</span>
             {unreadNotificationsCount > 0 && (
               <span className="rounded-full bg-[#ff4d00] px-1.5 py-0.2 text-[10px] font-black text-white">
@@ -205,7 +234,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <CreditCard className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <CreditCard className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Billing</span>
           </button>
 
@@ -218,7 +247,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <Megaphone className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <Megaphone className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Advertise</span>
           </button>
 
@@ -231,7 +260,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <HelpCircle className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <HelpCircle className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Help</span>
           </button>
 
@@ -247,7 +276,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-[#ff4d00]/20 hover:text-[#ff4d00] active:scale-[0.98]"
           >
-            <LogOut className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <LogOut className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Log Out</span>
           </button>
         </div>

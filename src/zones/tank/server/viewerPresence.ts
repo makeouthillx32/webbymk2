@@ -216,7 +216,17 @@ async function broadcastPresenceIfChanged(snapshot: PresenceSnapshot): Promise<v
     const admin = createAdminClient();
     const channel = admin.channel(PRESENCE_CHANNEL);
     try {
-      await channel.httpSend("presence", snapshot);
+      // Event name deliberately NOT "presence" — confirmed live 2026-09-01:
+      // realtime:v2.25.50's RealtimeWeb.RealtimeChannel.handle_out/3 crashes
+      // with UndefinedFunctionError on ANY broadcast whose event is literally
+      // "presence" (it collides with the library's own, separately-broken,
+      // native Presence machinery — see the memory note on that). The crash
+      // took out sibling channel processes on the same client socket,
+      // including the chat channel, silently dropping /roll and /unbox
+      // results for whoever was subscribed at that moment. This is a plain
+      // custom broadcast, unrelated to Supabase Presence — renaming it is a
+      // full fix, not a workaround.
+      await channel.httpSend("presence_update", snapshot);
     } finally {
       await admin.removeChannel(channel);
     }

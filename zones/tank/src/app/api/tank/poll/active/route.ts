@@ -1,12 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getPublicActivePoll } from "@/zones/tank/server/pollSystem";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  const poll = await getPublicActivePoll(
-    request.headers.get("x-tank-voter-id") ?? undefined,
-  );
+export async function GET() {
+  const poll = await getPublicActivePoll();
   return NextResponse.json(
     { poll },
     { headers: { "Cache-Control": "private, no-store, max-age=0" } },

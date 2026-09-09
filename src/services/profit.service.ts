@@ -1,48 +1,32 @@
+import { getFinancialDaily } from "@/lib/finance/dashboard";
+
+const DAY_MS = 86_400_000;
+
 export async function getWeeksProfitData(timeFrame?: string) {
-  // Fake delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const currentWeekStart = todayUtc - now.getUTCDay() * DAY_MS;
+  const startMs = timeFrame === "last week" ? currentWeekStart - 7 * DAY_MS : currentWeekStart;
+  const endMs = startMs + 7 * DAY_MS;
+  const start = new Date(startMs);
+  const end = new Date(endMs);
 
-  if (timeFrame === "last week") {
+  try {
+    const daily = await getFinancialDaily("live", start, end);
+    const byDay = new Map(daily.map((row) => [row.day, row]));
+    const days = Array.from({ length: 7 }, (_, index) => new Date(startMs + index * DAY_MS));
     return {
-      sales: [
-        { x: "Sat", y: 33 },
-        { x: "Sun", y: 44 },
-        { x: "Mon", y: 31 },
-        { x: "Tue", y: 57 },
-        { x: "Wed", y: 12 },
-        { x: "Thu", y: 33 },
-        { x: "Fri", y: 55 },
-      ],
-      revenue: [
-        { x: "Sat", y: 10 },
-        { x: "Sun", y: 20 },
-        { x: "Mon", y: 17 },
-        { x: "Tue", y: 7 },
-        { x: "Wed", y: 10 },
-        { x: "Thu", y: 23 },
-        { x: "Fri", y: 13 },
-      ],
+      sales: days.map((day) => ({
+        x: day.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+        y: (byDay.get(day.toISOString().slice(0, 10))?.grossCents ?? 0) / 100,
+      })),
+      revenue: days.map((day) => ({
+        x: day.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+        y: (byDay.get(day.toISOString().slice(0, 10))?.netCents ?? 0) / 100,
+      })),
     };
+  } catch (error) {
+    console.error("Weekly net proceeds unavailable:", error);
+    return { sales: [], revenue: [] };
   }
-
-  return {
-    sales: [
-      { x: "Sat", y: 44 },
-      { x: "Sun", y: 55 },
-      { x: "Mon", y: 41 },
-      { x: "Tue", y: 67 },
-      { x: "Wed", y: 22 },
-      { x: "Thu", y: 43 },
-      { x: "Fri", y: 65 },
-    ],
-    revenue: [
-      { x: "Sat", y: 13 },
-      { x: "Sun", y: 23 },
-      { x: "Mon", y: 20 },
-      { x: "Tue", y: 8 },
-      { x: "Wed", y: 13 },
-      { x: "Thu", y: 27 },
-      { x: "Fri", y: 15 },
-    ],
-  };
 }

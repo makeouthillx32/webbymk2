@@ -1,8 +1,8 @@
 "use server";
 
-import Stripe from "stripe";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
 import { TANK_PRODUCTS, type TankProductKey } from "../tankProducts";
 
 // Bones only — test-mode Stripe keys (STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET
@@ -33,7 +33,7 @@ export async function createTankPurchaseIntent(productKey: TankProductKey): Prom
   const admin = createAdminClient();
 
   try {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    const { stripe, mode } = createCommerceStripe("tank");
 
     const { data: purchase, error: insertError } = await admin
       .from("tank_purchases")
@@ -41,6 +41,8 @@ export async function createTankPurchaseIntent(productKey: TankProductKey): Prom
         user_id: user.id,
         product_key: product.key,
         amount_cents: product.amountCents,
+        currency: "usd",
+        stripe_mode: mode,
         status: "pending",
       })
       .select("id")
@@ -57,6 +59,7 @@ export async function createTankPurchaseIntent(productKey: TankProductKey): Prom
         automatic_payment_methods: { enabled: true },
         description: `Tank — ${product.name}`,
         metadata: {
+          payment_lane: "tank",
           tank_purchase_id: purchase.id,
           product_key: product.key,
           user_id: user.id,

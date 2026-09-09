@@ -184,20 +184,67 @@ export async function getActiveSeason(): Promise<TankSeason | null> {
   }
 }
 
-export async function getActiveMissions(): Promise<TankMission[]> {
+/**
+ * Deterministically select distinct daily missions for a specific user and date.
+ * If userId is provided, generates a personalized RNG daily challenge set for that user.
+ * If no userId is provided, falls back to a global daily seed.
+ */
+export function selectDailyMissions<T>(
+  missions: T[],
+  count = 3,
+  dateStr?: string,
+  userId?: string | null
+): T[] {
+  if (missions.length <= count) return missions;
+  const today = dateStr || new Date().toISOString().slice(0, 10);
+  const seedString = `${userId || "global"}_${today}`;
+
+  // 32-bit FNV-1a / Murmur-like hash for high entropy
+  let seed = 2166136261;
+  for (let i = 0; i < seedString.length; i++) {
+    seed ^= seedString.charCodeAt(i);
+    seed = Math.imul(seed, 16777619);
+  }
+
+  // Mulberry32 deterministic PRNG
+  let state = seed >>> 0;
+  const random = () => {
+    state += 0x6d2b79f5;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  // Fisher-Yates shuffle copy of missions array
+  const pool = [...missions];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    const temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+
+  return pool.slice(0, count);
+}
+
+export async function getActiveMissions(dailyCount = 3): Promise<TankMission[]> {
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const { data: missions, error } = await supabase
+    const { data: rawMissions, error } = await supabase
       .from("tank_missions")
       .select("id, title, description, reward_tokens, reward_xp, target_count")
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
 
-    if (error || !missions) return [];
+    if (error || !rawMissions) return [];
+
+    // Deterministically cycle to 2-3 active missions per user per day
+    const missions = selectDailyMissions(rawMissions, dailyCount, undefined, user?.id);
 
     let progressById = new Map<string, { progress: number; completed_at: string | null }>();
     if (user) {

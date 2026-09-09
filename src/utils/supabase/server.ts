@@ -12,9 +12,16 @@ const COOKIE_DOMAIN = process.env.NODE_ENV === "production" ? `.${CORE_DOMAIN}` 
 export async function createClient() {
   const cookieStore = await cookies();
 
+  // Use dynamic process.env index lookup so Next.js build-time compiler does not
+  // inline/constant-fold build-time URLs (like http://kong:8000) into server bundles,
+  // allowing remote environments (e.g. L0V3) to point to their designated gateway via runtime env.
+  const env = process.env;
+  const supabaseUrl = env["SUPABASE_URL"] || env["NEXT_PUBLIC_SUPABASE_URL"] || "https://db.unenter.live";
+  const supabaseAnonKey = env["SUPABASE_ANON_KEY"] || env["NEXT_PUBLIC_SUPABASE_ANON_KEY"]!;
+
   return createSupabaseServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       // Pinned explicitly: @supabase/ssr defaults the auth cookie name to
       // `sb-${new URL(url).hostname.split(".")[0]}-auth-token`. This client
@@ -39,7 +46,10 @@ export async function createClient() {
         setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, {
+                ...options,
+                ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+              })
             );
           } catch {
             // setAll called from a Server Component — safe to ignore

@@ -12,7 +12,6 @@ import {
   type AutomodConfig,
   type BannedUserEntry,
 } from "./chatModerationDb";
-import { ITEM_DEFINITIONS } from "./gamification";
 import { getLevelForXp } from "../xpLevels";
 import { ITEM_ACTION_DEFINITIONS } from "./chatRngEvents";
 

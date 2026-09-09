@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildDirectorProgramPlayback,
   buildPublicCameraPlayback,
   cameraMediaPath,
 } from "../mediaPlayback";
@@ -40,5 +41,20 @@ describe("Tank media gateway public contract", () => {
     expect(serialized).not.toContain("srt://");
     expect(serialized).not.toContain("streamkey");
     expect(serialized).not.toContain("srtauth");
+  });
+
+  test("builds one stable Director program path independent of camera cuts", () => {
+    const playback = buildDirectorProgramPlayback(true, {
+      whepBaseUrl: "https://media.tank.unenter.live/webrtc",
+      hlsBaseUrl: "https://media.tank.unenter.live/hls",
+    });
+
+    expect(playback.path).toBe("obs/director");
+    expect(playback.whepUrl).toBe(
+      "https://media.tank.unenter.live/webrtc/obs/director-whep/whep",
+    );
+    expect(playback.hlsUrl).toBe(
+      "https://media.tank.unenter.live/hls/obs/director/index.m3u8",
+    );
   });
 });

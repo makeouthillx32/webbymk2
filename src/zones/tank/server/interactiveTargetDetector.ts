@@ -32,6 +32,8 @@ export type InteractiveTarget = {
   expiresAt: number;
 };
 
+export const DEFAULT_TOUCH_TOLERANCE = 0.035;
+
 // Preset catalog of house clutter, trash, and hidden objects
 export const PRESET_CLUTTER_TARGETS: Omit<InteractiveTarget, "id" | "createdAt" | "expiresAt">[] = [
   {
@@ -195,11 +197,19 @@ export function evaluateTapHitTest(
   camSlug: string,
   nx: number,
   ny: number,
+  tolerance = DEFAULT_TOUCH_TOLERANCE,
 ): InteractiveTarget | null {
-  const targets = getActiveTargets(camSlug);
+  // Newer overlays sit on top of older/default boxes in the Director canvas,
+  // so hit testing must use the same visual stacking order.
+  const targets = getActiveTargets(camSlug).reverse();
   for (const target of targets) {
     const { xMin, yMin, xMax, yMax } = target.box;
-    if (nx >= xMin && nx <= xMax && ny >= yMin && ny <= yMax) {
+    if (
+      nx >= xMin - tolerance &&
+      nx <= xMax + tolerance &&
+      ny >= yMin - tolerance &&
+      ny <= yMax + tolerance
+    ) {
       return target;
     }
   }
@@ -222,4 +232,72 @@ export function recordUserTargetClaim(
   const next = current + 1;
   userClaimsMap.set(key, next);
   return { allowed: true, currentClaims: next };
+}
+
+/**
+ * Computes dynamic age-based XP multiplier for trash/clutter targets.
+ * The longer an item has been sitting in the room, the more XP it awards!
+ */
+export function calculateTargetAgeXp(
+  target: InteractiveTarget,
+  now = Date.now(),
+): { baseMultiplier: number; ageMinutes: number; ageBonusXp: number; totalXp: number } {
+  const ageMinutes = Math.max(0, Math.floor((now - target.createdAt) / 60000));
+  // 5 XP per minute sitting, up to 150 bonus XP max
+  const isTrashOrClutter = target.kind === "trash" || target.kind === "clutter";
+  const ageBonusXp = isTrashOrClutter ? Math.min(150, ageMinutes * 5) : 0;
+  const baseMultiplier = Number((1 + (ageBonusXp / Math.max(1, target.xpReward))).toFixed(2));
+  const totalXp = target.xpReward + ageBonusXp;
+
+  return {
+    baseMultiplier,
+    ageMinutes,
+    ageBonusXp,
+    totalXp,
+  };
+}
+
+/**
+ * Clears an active target upon collection or physical cleanup.
+ */
+export function clearInteractiveTarget(
+  targetId: string,
+): { cleared: boolean; target?: InteractiveTarget } {
+  const target = activeTargetsMap.get(targetId);
+  if (!target || !target.active) {
+    return { cleared: false };
+  }
+
+  target.active = false;
+  return { cleared: true, target };
+}
+
+/**
+ * Re-scan clearance checker: If an active target's bounding box is no longer
+ * detected during room vision scans, marks it cleared.
+ */
+export function evaluateTrashReScanClearance(
+  camSlug: string,
+  detectedBoxes: BoundingBox[],
+): InteractiveTarget[] {
+  const activeTargets = getActiveTargets(camSlug);
+  const cleared: InteractiveTarget[] = [];
+
+  for (const target of activeTargets) {
+    if (target.kind !== "trash" && target.kind !== "clutter") continue;
+
+    // Check if any freshly detected box overlaps with the target box
+    const hasOverlap = detectedBoxes.some((d) => {
+      const xOverlap = Math.max(0, Math.min(target.box.xMax, d.xMax) - Math.max(target.box.xMin, d.xMin));
+      const yOverlap = Math.max(0, Math.min(target.box.yMax, d.yMax) - Math.max(target.box.yMin, d.yMin));
+      return xOverlap > 0 && yOverlap > 0;
+    });
+
+    if (!hasOverlap) {
+      target.active = false;
+      cleared.push(target);
+    }
+  }
+
+  return cleared;
 }

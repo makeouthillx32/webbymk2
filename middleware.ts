@@ -31,6 +31,12 @@ import {
   PROMOTION_ZONE_HEADER,
 } from "@/lib/multiZone";
 import { isProtectedRoute } from "@/lib/protectedRoutes";
+import { createShieldChallenge, verifyClearanceToken } from "@/lib/shield/crypto";
+import { renderShieldVerificationHtml } from "@/lib/shield/template";
+import { SHIELD_COOKIE_NAME } from "@/lib/shield/types";
+import { getShieldPolicyForHost } from "@/lib/shield/policy";
+import { inspectRequest } from "@/lib/shield/waf";
+import { globalRateLimiter } from "@/lib/shield/ratelimit";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -85,6 +91,50 @@ function stripLocaleFromPathname(pathname: string, locale: Locale): string {
   return pathname;
 }
 
+function getClientIp(request: NextRequest): string {
+  const xForwardedFor = request.headers.get("x-forwarded-for");
+  if (xForwardedFor) return xForwardedFor.split(",")[0].trim();
+  const xRealIp = request.headers.get("x-real-ip");
+  if (xRealIp) return xRealIp.trim();
+  return "127.0.0.1";
+}
+
+function shouldCheckShield(request: NextRequest, normalizedHost: string, clientIp: string): boolean {
+  const path = request.nextUrl.pathname;
+  if (
+    path.startsWith("/_next") ||
+    path.startsWith("/api/shield") ||
+    path.startsWith("/__status-api") ||
+    path.startsWith("/storage/v1") ||
+    /\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|woff2|ttf|mp3|mp4|m3u8|ts)$/i.test(path)
+  ) {
+    return false;
+  }
+  // Testing trigger via query param ?__shield=1 or header
+  if (request.nextUrl.searchParams.has("__shield")) return true;
+  if (request.headers.get("x-unt-shield") === "1") return true;
+
+  // Global attack mode trigger
+  if (process.env["SHIELD_MODE"] === "under_attack") return true;
+
+  // ── Scope 1: LABS ZONE — always challenge unverified visitors on load.
+  // Disabled for a few hours on 2026-09-04 after the solver hung past 5s,
+  // but that was a workaround, not a fix — the real problem was
+  // crypto.subtle.digest()'s per-attempt async dispatch cost, not the
+  // trigger itself. Restored now that the solver is a synchronous SHA-256
+  // (src/lib/shield/sha256.ts / mirrored in shield/template.ts) with no
+  // per-attempt async overhead, verified correct against Node's own
+  // crypto.createHash and fast enough (~450k hashes/sec, Node/V8 single
+  // core) to clear difficulty 4 in well under a second on real hardware.
+  const isLabs = getZoneFromHost(normalizedHost) === "labs";
+  if (isLabs) return true;
+
+  // ── Rate-limit burst trigger (Automated bot / brute force defense) ──────
+  if (globalRateLimiter.check(clientIp).challengeRequired) return true;
+
+  return false;
+}
+
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 export async function middleware(request: NextRequest) {
@@ -99,6 +149,7 @@ export async function middleware(request: NextRequest) {
   const normalizedHost = normalizeHost(rawHost);
   const canonicalHost = getCanonicalHost(normalizedHost);
   const isLocal = isLocalDevelopmentHost(normalizedHost);
+  const clientIp = getClientIp(request);
 
   // ── 1. www → canonical redirect ───────────────────────────────────────────
   // Never applied to /api/*. Two reasons, both load-bearing:
@@ -119,6 +170,79 @@ export async function middleware(request: NextRequest) {
     url.hostname = canonicalHost;
     url.port = ""; // strip internal container port — public URL has none
     return NextResponse.redirect(url, 301);
+  }
+
+  // ── 1a. WAF Threat Inspection (SQLi, Traversal, Malicious Scanners) ────────
+  const wafCheck = inspectRequest(request.url, request.headers.get("user-agent"));
+  if (!wafCheck.clean) {
+    return new NextResponse(
+      JSON.stringify({
+        error: "Forbidden: Request blocked by Unenter Edge WAF",
+        reason: wafCheck.reason,
+        threat: wafCheck.threatType,
+      }),
+      {
+        status: 403,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Unt-Waf-Action": "BLOCK",
+        },
+      }
+    );
+  }
+
+  // ── 1b. Rate Limiter (Subnet Aggregator & Hard DDoS Block) ─────────────────
+  const isStatic =
+    url.pathname.startsWith("/_next") ||
+    /\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|woff2|ttf|mp3|mp4|m3u8|ts)$/i.test(url.pathname);
+
+  if (!isStatic && !url.pathname.startsWith("/api/shield")) {
+    globalRateLimiter.record(clientIp);
+    const rateStatus = globalRateLimiter.check(clientIp);
+    if (rateStatus.isBlocked) {
+      return new NextResponse(
+        JSON.stringify({
+          error: "Too Many Requests: Subnet rate limit exceeded. Cooling down.",
+          retryAfterMs: rateStatus.resetMs,
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": Math.ceil(rateStatus.resetMs / 1000).toString(),
+          },
+        }
+      );
+    }
+  }
+
+  // ── 1c. Edge Shield Bot Verification (In-Place Interstitial) ─────────────
+  if (shouldCheckShield(request, normalizedHost, clientIp)) {
+    const clearanceCookie = request.cookies.get(SHIELD_COOKIE_NAME)?.value;
+    const isVerified = clearanceCookie
+      ? (await verifyClearanceToken(clearanceCookie, normalizedHost, clientIp)).valid
+      : false;
+
+    if (!isVerified) {
+      // Difficulty is per-zone: labs (research) solves a harder puzzle than
+      // tank (livestream). The clearance TTL that follows a successful solve
+      // is resolved from the same policy inside signClearanceToken.
+      const { difficulty } = getShieldPolicyForHost(normalizedHost);
+      const { challenge, serialized } = await createShieldChallenge(
+        normalizedHost,
+        clientIp,
+        difficulty
+      );
+      const html = renderShieldVerificationHtml(challenge, serialized);
+      return new NextResponse(html, {
+        status: 429,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "X-Unenter-Ray": challenge.rayId,
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      });
+    }
   }
 
   // Resolve locale before zone ownership and promotion. Otherwise a localized
@@ -340,7 +464,10 @@ export async function middleware(request: NextRequest) {
           requestHeaders.set("cookie", request.cookies.toString());
           const refreshed = createRoutedResponse();
           cookiesToSet.forEach(({ name, value, options }) =>
-            refreshed.cookies.set(name, value, options ?? {}),
+            refreshed.cookies.set(name, value, {
+              ...options,
+              ...(isLocal ? {} : { domain: `.${CORE_DOMAIN}` }),
+            }),
           );
           // Carry over our zone headers
           refreshed.headers.set(ZONE_HEADER, zoneFromHost);
@@ -358,20 +485,84 @@ export async function middleware(request: NextRequest) {
   // Public-first outage resilience: if the auth backend (kong) is unreachable,
   // an auth check must NEVER take the whole site down. Degrade to logged-out —
   // public pages keep serving; protected routes redirect to sign-in as usual.
-  // (Chaos drill 2026-07-11: unhandled failure here = empty 500 on every route.)
   //
-  // NOTE: this is only a 500-safety net, NOT the outage detector. For an
-  // anonymous visitor (no session cookie) getUser() returns "session missing"
-  // WITHOUT calling the backend, so it can't see an outage. The user-facing
-  // "data may not be fresh" toast is driven by a real health probe
-  // (/api/health/backend) that <BackendStatusToast> checks — that works for
-  // every visitor, logged-in or not.
+  // Race against a hard deadline, not just a try/catch. Confirmed live
+  // 2026-09-02: a malformed stored session (missing its `.user` field) can
+  // make @supabase/auth-js's internal session-recovery path throw inside a
+  // detached promise that this call's own try/catch never sees — the request
+  // hangs with no response at all, which nginx eventually reports as a 502.
+  // The auto-recovery block below (purges stale cookies so the NEXT request
+  // is clean) already exists for exactly this class of problem, but only
+  // runs once `authError` is set — a hang that never resolves or rejects
+  // skips it entirely, permanently stranding whichever visitor's cookie hit
+  // it (nothing a real user would ever think to "clear cookies" over). The
+  // race below guarantees this block is always reached within
+  // AUTH_FETCH_TIMEOUT_MS regardless of why the underlying call misbehaves,
+  // so any visitor who hits this self-heals on their very next request
+  // instead of needing to know how to clear a browser cookie.
   let user: { id: string } | null = null;
+  let authError = false;
   try {
-    const { data } = await supabase.auth.getUser();
-    user = data.user;
+    const { data, error } = await Promise.race([
+      supabase.auth.getUser(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("auth check deadline exceeded")), AUTH_FETCH_TIMEOUT_MS),
+      ),
+    ]);
+    if (error) {
+      authError = true;
+    } else {
+      user = data.user;
+    }
   } catch {
     user = null;
+    authError = true;
+  }
+
+  const finalResponse = supabaseResponse.current;
+
+  // Auto-recovery for stale/corrupted cookies (Webkit/Brave deploy recovery):
+  // If an auth cookie is present in the request but Supabase fails/rejects it
+  // (e.g. after a deploy, session invalidation, or corrupted cookie chunks),
+  // immediately purge the stale cookies from the response (both domain and host-only)
+  // so the client never enters an infinite redirect loop or HTTP 431 header overflow.
+  if (!user && authError) {
+    const authCookieNames = [
+      "userRole",
+      "userRoleUserId",
+      "userDisplayName",
+      "userPermissions",
+      "rememberMe",
+      "lastPage",
+      "sb-unenter-auth-token",
+      "sb-unenter-auth-token-code-verifier",
+      "sb-unenter-auth-token.0",
+      "sb-unenter-auth-token.1",
+      "sb-unenter-auth-token.2",
+      "sb-unenter-auth-token.3",
+      "sb-unenter-auth-token.4",
+      "sb-unenter-auth-token.5",
+    ];
+
+    for (const name of authCookieNames) {
+      if (request.cookies.has(name)) {
+        finalResponse.cookies.set(name, "", {
+          path: "/",
+          maxAge: 0,
+          expires: new Date(0),
+        });
+        if (!isLocal) {
+          finalResponse.cookies.set(name, "", {
+            path: "/",
+            domain: `.${CORE_DOMAIN}`,
+            secure: true,
+            sameSite: "lax",
+            maxAge: 0,
+            expires: new Date(0),
+          });
+        }
+      }
+    }
   }
 
   // Protect zones that require auth + individual protected routes.
@@ -391,16 +582,6 @@ export async function middleware(request: NextRequest) {
     isTankBackstage;
 
   if (routeIsProtected && !user) {
-    // /sign-in lives on the dedicated auth zone (auth.unenter.live), not
-    // core and not the requesting zone's own host — cloning the current
-    // request URL and swapping the pathname 404s on every zone subdomain
-    // (app.unenter.live, which is entirely requiresAuth:true;
-    // labs.unenter.live/research-checkout; any future protected zone), core
-    // included now that core no longer serves /sign-in itself (see
-    // ZONE_PROMOTIONS in multiZone.ts). Locally all zones share one host via
-    // path-based routing, so the original same-host redirect is still
-    // correct there. Found via E2E checkout test, 2026-08-06; auth moved to
-    // its own zone 2026-08-17.
     if (isLocal) {
       const signInUrl = request.nextUrl.clone();
       signInUrl.pathname = "/sign-in";
@@ -408,31 +589,26 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(signInUrl);
     }
 
-    // request.nextUrl's origin is the internal upstream address behind the
-    // proxy (e.g. 0.0.0.0:3000), not the public host — must rebuild from
-    // canonicalHost (already resolved from x-forwarded-host above) instead,
-    // same as getPublicOrigin() in app/auth/sign-in/route.ts.
     const signInUrl = new URL(`https://auth.${CORE_DOMAIN}/sign-in`);
     const publicNextUrl = `https://${canonicalHost}${url.pathname}${url.search}`;
     signInUrl.searchParams.set("next", publicNextUrl);
     return NextResponse.redirect(signInUrl);
   }
 
-  const finalResponse = supabaseResponse.current;
-
   // ── 8. Global legacy cookie sanitation ──────────────────────────────────
-  // Scrub legacy Tank UI cookies from HTTP headers so they never bloat requests
-  // or trigger HTTP 431 / proxy buffer overflow errors.
-  const LEGACY_TANK_COOKIE_NAMES = [
+  // Scrub legacy Tank UI cookies and heavy JSON bloat from HTTP headers so they
+  // never bloat requests or trigger HTTP 431 / proxy buffer overflow errors.
+  const LEGACY_COOKIE_NAMES = [
     "tank_mobile_chat_size",
     "tank_room_mode",
     "tank_room_slug",
     "tank_chat_target",
     "tank_room_origin",
     "tank_background_theme",
+    "userPermissions",
   ];
 
-  for (const name of LEGACY_TANK_COOKIE_NAMES) {
+  for (const name of LEGACY_COOKIE_NAMES) {
     if (request.cookies.has(name)) {
       finalResponse.cookies.delete(name);
       if (!isLocal) {

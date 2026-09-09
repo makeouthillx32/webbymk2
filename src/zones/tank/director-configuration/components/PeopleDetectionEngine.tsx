@@ -46,7 +46,18 @@ const MODEL_URL = "/models/yolov8n.onnx";
 const MODEL_INPUT_NAME = "images";
 const MODEL_SIZE = 640; // Confirmed against the exported model: input [1,3,640,640].
 const NUM_ANCHORS = 8400; // Confirmed against the exported model: output0 [1,84,8400].
-const PERSON_CLASS_INDEX = 0; // COCO class 0. Channels 4..83 in output0 are the 80 class scores.
+
+// COCO class indices this engine decodes, and the label each one becomes
+// downstream. The model already knows all 80 COCO classes (it's the stock
+// pretrained checkpoint) — until tonight this decoder only ever read index
+// 0 and threw the other 79 channels away. Standard COCO ordering: 0=person,
+// 15=cat, 16=dog (https://docs.ultralytics.com/datasets/detect/coco/ — this
+// is the same class order Ultralytics' own export uses, unchanged here).
+const DETECTED_CLASSES: Record<number, string> = {
+  0: "person",
+  15: "cat",
+  16: "dog",
+};
 
 type LetterboxInfo = { scale: number; padX: number; padY: number };
 
@@ -93,7 +104,7 @@ function frameToTensor(ctx: CanvasRenderingContext2D): Float32Array {
   return out;
 }
 
-type Box = { x1: number; y1: number; x2: number; y2: number; score: number };
+type Box = { x1: number; y1: number; x2: number; y2: number; score: number; label: string };
 
 function iou(a: Box, b: Box): number {
   const x1 = Math.max(a.x1, b.x1);
@@ -107,12 +118,17 @@ function iou(a: Box, b: Box): number {
   return union > 0 ? inter / union : 0;
 }
 
-/** Standard greedy NMS — YOLO's raw output has many overlapping boxes per real object. */
+/**
+ * Standard greedy NMS — YOLO's raw output has many overlapping boxes per
+ * real object. Scoped per-label: a person box and a dog box can legitimately
+ * overlap in the same frame (someone holding a cat), so suppression only
+ * competes boxes of the SAME class against each other, never across classes.
+ */
 function nonMaxSuppression(boxes: Box[]): Box[] {
   const sorted = [...boxes].sort((a, b) => b.score - a.score);
   const kept: Box[] = [];
   for (const box of sorted) {
-    if (kept.every((k) => iou(k, box) < IOU_THRESHOLD)) kept.push(box);
+    if (kept.every((k) => k.label !== box.label || iou(k, box) < IOU_THRESHOLD)) kept.push(box);
     if (kept.length >= MAX_DETECTIONS) break;
   }
   return kept;
@@ -130,27 +146,30 @@ function parseYoloOutput(
   letterbox: LetterboxInfo,
   videoWidth: number,
   videoHeight: number,
-): Array<{ nx: number; ny: number; nw: number; nh: number; label: string }> {
+): Array<{ nx: number; ny: number; nw: number; nh: number; label: string; confidence: number }> {
   const { scale, padX, padY } = letterbox;
   const candidates: Box[] = [];
 
   for (let a = 0; a < NUM_ANCHORS; a++) {
-    const score = data[(4 + PERSON_CLASS_INDEX) * NUM_ANCHORS + a];
-    if (score < MIN_SCORE) continue;
+    for (const [classIndex, label] of Object.entries(DETECTED_CLASSES)) {
+      const score = data[(4 + Number(classIndex)) * NUM_ANCHORS + a];
+      if (score < MIN_SCORE) continue;
 
-    const cx = data[0 * NUM_ANCHORS + a];
-    const cy = data[1 * NUM_ANCHORS + a];
-    const w = data[2 * NUM_ANCHORS + a];
-    const h = data[3 * NUM_ANCHORS + a];
+      const cx = data[0 * NUM_ANCHORS + a];
+      const cy = data[1 * NUM_ANCHORS + a];
+      const w = data[2 * NUM_ANCHORS + a];
+      const h = data[3 * NUM_ANCHORS + a];
 
-    // Undo the letterbox pad/scale to land back in the real frame's pixels.
-    candidates.push({
-      x1: (cx - w / 2 - padX) / scale,
-      y1: (cy - h / 2 - padY) / scale,
-      x2: (cx + w / 2 - padX) / scale,
-      y2: (cy + h / 2 - padY) / scale,
-      score,
-    });
+      // Undo the letterbox pad/scale to land back in the real frame's pixels.
+      candidates.push({
+        x1: (cx - w / 2 - padX) / scale,
+        y1: (cy - h / 2 - padY) / scale,
+        x2: (cx + w / 2 - padX) / scale,
+        y2: (cy + h / 2 - padY) / scale,
+        score,
+        label,
+      });
+    }
   }
 
   return nonMaxSuppression(candidates).map((b) => {
@@ -163,7 +182,8 @@ function parseYoloOutput(
       ny: y1 / videoHeight,
       nw: (x2 - x1) / videoWidth,
       nh: (y2 - y1) / videoHeight,
-      label: "person",
+      label: b.label,
+      confidence: b.score,
     };
   });
 }
@@ -195,6 +215,7 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
   const ortRef = useRef<any>(null);
   const loadedRef = useRef<Map<string, Loaded>>(new Map());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevBoxesRef = useRef<Map<string, Array<{ nx: number; ny: number; time: number }>>>(new Map());
 
   // Load the model once. Dynamic import keeps onnxruntime-web's real weight
   // out of every other page — this component only ever mounts on the
@@ -203,13 +224,31 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
     let cancelled = false;
     (async () => {
       try {
+        let modelBuffer: ArrayBuffer | null = null;
+        try {
+          const res = await fetch(MODEL_URL);
+          if (res.ok) {
+            const ct = res.headers.get("content-type") || "";
+            if (!ct.includes("text/html")) {
+              modelBuffer = await res.arrayBuffer();
+            }
+          }
+        } catch {}
+
+        if (!modelBuffer || cancelled) {
+          if (!modelBuffer) {
+            console.warn("[PeopleDetectionEngine] Model file /models/yolov8n.onnx unavailable, skipping browser-side AI inference.");
+          }
+          return;
+        }
+
         const ort = await import("onnxruntime-web");
         // The bundler can't resolve onnxruntime-web's WASM binaries through
         // Next.js's asset pipeline reliably (a well-documented gotcha with
         // this package under webpack/Turbopack) — point it at the matching
         // version on a CDN instead of trying to bundle/copy them ourselves.
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/";
-        const session = await ort.InferenceSession.create(MODEL_URL, {
+        const session = await ort.InferenceSession.create(modelBuffer, {
           // Tries WebGPU first for near-native framerates on hardware that
           // supports it, automatically falling back to multi-threaded WASM
           // where it doesn't (Safari's WebGPU support is still inconsistent).
@@ -220,7 +259,7 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
         sessionRef.current = session;
         setModelReady(true);
       } catch (error) {
-        console.error("[PeopleDetectionEngine] Failed to load detection model:", error);
+        console.warn("[PeopleDetectionEngine] Detection model init skipped:", error);
       }
     })();
     return () => {
@@ -315,11 +354,47 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
             const output = await session.run({ [MODEL_INPUT_NAME]: tensor });
             const raw = output.output0.data as Float32Array;
 
-            const boundingBoxes = parseYoloOutput(raw, letterbox, video.videoWidth, video.videoHeight);
+            const rawBoxes = parseYoloOutput(raw, letterbox, video.videoWidth, video.videoHeight);
+            const now = Date.now();
+            const prevBoxes = prevBoxesRef.current.get(cameraId) ?? [];
+
+            const boundingBoxes = rawBoxes.map((box) => {
+              let minDistance = 999;
+              let matchedPrev: { nx: number; ny: number; time: number } | null = null;
+              for (const prev of prevBoxes) {
+                const dist = Math.hypot(box.nx - prev.nx, box.ny - prev.ny);
+                if (dist < minDistance && dist < 0.25) {
+                  minDistance = dist;
+                  matchedPrev = prev;
+                }
+              }
+
+              let velocity = 0;
+              let isMovement = false;
+              if (matchedPrev && matchedPrev.time > 0) {
+                const dtSeconds = Math.max(0.1, (now - matchedPrev.time) / 1000);
+                velocity = Number((minDistance / dtSeconds).toFixed(3));
+                isMovement = velocity >= 0.03; // > 3% normalized frame unit / s
+              }
+
+              return {
+                ...box,
+                velocity,
+                isMovement,
+              };
+            });
+
+            prevBoxesRef.current.set(
+              cameraId,
+              boundingBoxes.map((b) => ({ nx: b.nx, ny: b.ny, time: now })),
+            );
 
             readings.push({
               cameraId,
-              peopleCount: boundingBoxes.length,
+              // Was boundingBoxes.length — correct only while every box was a
+              // person. Now that dog/cat share the same array, a pet in
+              // frame would have inflated the person count.
+              peopleCount: boundingBoxes.filter((b) => b.label === "person").length,
               motionScore: 0,
               audioPeak: 0,
               isSpeaking: false,

@@ -37,6 +37,8 @@ export async function getNavTree(): Promise<CategoryNode[]> {
   const { data, error } = await supabase
     .from("categories")
     .select("id, slug, name, parent_id, position")
+    // Honour is_active (see api/nav/route.ts).
+    .eq("is_active", true)
     .order("position", { ascending: true });
 
   if (error) throw new Error(error.message);

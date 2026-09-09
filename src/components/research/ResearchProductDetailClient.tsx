@@ -45,6 +45,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import type { ResearchProductSection } from "@/lib/research/queries";
+import { MoleculeViewport } from "@/components/research/MoleculeViewport";
+import type { MoleculeDrawing } from "@/components/research/molecule-drawio";
 
 type ProductImage = {
   id: string;
@@ -102,6 +104,7 @@ type Product = {
   research_use_only?: boolean | null;
   coa_url?: string | null;
   form_factor?: string | null;
+  molecule_drawing?: MoleculeDrawing | null;
   images: ProductImage[];
   variants: Variant[];
   categories: { id: string; name: string; slug: string }[];
@@ -610,6 +613,13 @@ export default function ResearchProductDetailClient({
               {product.description}
             </p>
           )}
+
+          <MoleculeViewport
+            drawing={product.molecule_drawing}
+            label={`${product.title} chemical structure`}
+            className="mx-auto mt-6 max-w-xl"
+            color="primary"
+          />
 
           {/* ── Active Lot Status Summary Card ────────────────────────── */}
           <div className="mt-6 rounded-xl border border-[var(--border)] bg-[hsl(var(--card))] p-4 shadow-sm">

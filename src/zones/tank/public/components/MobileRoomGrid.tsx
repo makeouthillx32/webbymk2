@@ -116,6 +116,16 @@ export function MobileRoomGrid({
           );
         })}
       </div>
+
+      {/* Rooms disappear entirely (not flagged, absent) when an admin takes
+          them offline — see roomProjection.ts's deriveRooms(). Without this,
+          an all-rooms-off moment reads as a loading glitch instead of a
+          deliberate, calm state. */}
+      {rooms.length === 0 && (
+        <p className="mt-3 text-center text-xs font-medium text-white/50">
+          Nothing live in the rooms right now — check back soon.
+        </p>
+      )}
     </div>
   );
 }

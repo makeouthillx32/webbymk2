@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { Coins, Trophy, Home, Lock, ArrowLeft } from "lucide-react";
 import { TANK_PRODUCTS, type TankProductKey } from "../../tankProducts";
 import { createTankPurchaseIntent } from "../../server/tankStore";
-
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+import { useStripeLane } from "@/lib/stripe/useStripeLane";
 
 const PRODUCT_ICON: Record<TankProductKey, React.ReactNode> = {
   season_pass: <Trophy className="h-5 w-5" />,
@@ -86,6 +84,7 @@ function CheckoutForm({ onBack }: { onBack: () => void }) {
 }
 
 export function TankStorePanel() {
+  const stripeLane = useStripeLane("tank");
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<TankProductKey | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,8 +102,10 @@ export function TankStorePanel() {
   };
 
   if (clientSecret) {
+    if (stripeLane.error) return <p className="text-sm text-red-400">{stripeLane.error}</p>;
+    if (!stripeLane.stripe) return <p className="text-sm text-white/60">Loading secure payment…</p>;
     return (
-      <Elements stripe={stripePromise} options={{ clientSecret }}>
+      <Elements stripe={stripeLane.stripe} options={{ clientSecret }}>
         <CheckoutForm onBack={() => setClientSecret(null)} />
       </Elements>
     );

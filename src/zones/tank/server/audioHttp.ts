@@ -147,7 +147,7 @@ export async function handleSfxGet() {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("tank_sfx_library")
-    .select("id, sound_key, name, file_url, category, default_volume, duration_ms, is_premium, required_item_slug, token_cost")
+    .select("id, sound_key, name, file_url, icon_url, category, default_volume, duration_ms, is_premium, required_item_slug, token_cost")
     .eq("is_active", true)
     .order("category")
     .order("name");
@@ -157,6 +157,7 @@ export async function handleSfxGet() {
     soundKey: row.sound_key,
     name: row.name,
     fileUrl: row.file_url,
+    iconUrl: row.icon_url ?? null,
     category: row.category,
     defaultVolume: row.default_volume,
     durationMs: row.duration_ms,

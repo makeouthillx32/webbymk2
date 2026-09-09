@@ -39,6 +39,9 @@ export async function GET() {
     const { data, error } = await supabase
       .from("categories")
       .select("id, slug, name, parent_id, position")
+      // Honour is_active — this path ignored it, so a "hidden" category still
+      // appeared in storefront nav while the /api/navigation/tree path hid it.
+      .eq("is_active", true)
       .order("position", { ascending: true });
 
     if (error) {

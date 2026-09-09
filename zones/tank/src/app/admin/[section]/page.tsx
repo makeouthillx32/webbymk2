@@ -4,26 +4,20 @@ import { requireTankAdmin } from "@/zones/tank/admin/requireTankAdmin";
 import type { AdminSection } from "@/zones/tank/contracts";
 
 const sections: AdminSection[] = [
+  "overview",
   "director",
   "sources",
   "channels",
   "chat",
+  "economy",
+  "drops",
+  "tavern",
   "webhooks",
   "users",
   "system",
 ];
-export default async function AdminSectionPage({
-  params,
-}: {
-  params: Promise<{ section: string }>;
-}) {
-  const { section } = await params;
-  if (!sections.includes(section as AdminSection)) notFound();
-  const { profile, user } = await requireTankAdmin();
-  return (
-    <AdminConsole
-      section={section as AdminSection}
-      operatorName={profile.display_name || user.email || "Admin"}
-    />
-  );
+
+export default async function AdminSectionPage() {
+  await requireTankAdmin();
+  return <AdminConsole />;
 }

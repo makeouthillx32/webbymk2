@@ -53,7 +53,7 @@ COPY public/ ./public/
 #   app     → api actions _components providers                 (pure web app, no e-commerce routes)
 #   minimal → api actions _components providers                 (bare canvas)
 RUN mkdir -p /tmp/core-app && \
-    for dir in api actions _components providers [categorySlug] products collections checkout research-checkout pages verify; do \
+    for dir in api actions _components providers [categorySlug] products collections checkout research-checkout pages verify contact; do \
       if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \
     done && \
     if [ -f src/app/provider.tsx ]; then cp src/app/provider.tsx /tmp/core-app/; fi && \
@@ -91,6 +91,11 @@ ARG NEXT_PUBLIC_OWNER_EMAIL
 # STRIPE_SECRET_KEY is set. Missing here while zones/shop/Dockerfile already
 # has it — found via E2E checkout test, 2026-08-06.
 ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_STRIPE_COMMERCE_MODE
+ARG NEXT_PUBLIC_STRIPE_LABS_MODE
+ARG NEXT_PUBLIC_STRIPE_LABS_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_STRIPE_LABS_LIVE_PUBLISHABLE_KEY
 
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -100,6 +105,11 @@ ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME
 ENV NEXT_PUBLIC_OWNER_USERNAME=$NEXT_PUBLIC_OWNER_USERNAME
 ENV NEXT_PUBLIC_OWNER_EMAIL=$NEXT_PUBLIC_OWNER_EMAIL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_STRIPE_COMMERCE_MODE=$NEXT_PUBLIC_STRIPE_COMMERCE_MODE
+ENV NEXT_PUBLIC_STRIPE_LABS_MODE=$NEXT_PUBLIC_STRIPE_LABS_MODE
+ENV NEXT_PUBLIC_STRIPE_LABS_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_LABS_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_STRIPE_LABS_LIVE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_LABS_LIVE_PUBLISHABLE_KEY
 
 RUN --mount=type=cache,target=/app/.next/cache,id=nextcache-labs bun run build
 
@@ -112,13 +122,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_ZONE=labs
 ENV HOME=/tmp
 
-RUN addgroup --system --gid 1001 nodejs &&     adduser  --system --uid 1001 nextjs
+# oven/bun:*-slim no longer guarantees Debian's adduser/addgroup helpers —
+# same fix as the root Dockerfile: use the `bun` user/group already baked
+# into the base image instead of creating a custom nextjs:nodejs one.
+COPY --from=builder --chown=bun:bun /app/public           ./public
+COPY --from=builder --chown=bun:bun /app/.next/standalone ./
+COPY --from=builder --chown=bun:bun /app/.next/static     ./.next/static
 
-COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
-
-USER nextjs
+USER bun
 
 EXPOSE 3000
 ENV PORT=3000

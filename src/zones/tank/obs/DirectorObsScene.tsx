@@ -75,7 +75,7 @@ export function DirectorObsScene() {
   useEffect(() => {
     if (urlLock) {
       // Manual URL lock override for specific OBS scene setups
-      const lockedCam = cameras.find((c) => c.roomKey === urlLock || c.id === urlLock);
+      const lockedCam = cameras.find((c) => c.roomScope === urlLock || c.id === urlLock);
       if (lockedCam && lockedCam.id !== activeCamId) {
         setActiveCamId(lockedCam.id);
         setActiveReason(`[OBS URL LOCK] Locked to ${lockedCam.name}`);
@@ -224,6 +224,20 @@ export function DirectorObsScene() {
   const currentDb = currentMetric ? Math.round(currentMetric.decibels) : -45;
   const energyPercent = Math.min(100, Math.max(0, ((currentDb + 60) / 60) * 100));
 
+  const programVideoStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (serverDirector.mode !== "MANUAL_PILOT" || !serverDirector.ptzState) return undefined;
+    const zoom = Math.min(3, Math.max(1, serverDirector.ptzState.zoomFactor || 1));
+    const maxPanX = Math.max(0, 3840 - 3840 / zoom);
+    const maxPanY = Math.max(0, 2160 - 2160 / zoom);
+    const panX = Math.min(maxPanX, Math.max(0, serverDirector.ptzState.panOffsetX || 0));
+    const panY = Math.min(maxPanY, Math.max(0, serverDirector.ptzState.panOffsetY || 0));
+    return {
+      transformOrigin: "top left",
+      transform: `scale(${zoom}) translate(${-panX / 38.4}%, ${-panY / 21.6}%)`,
+      transition: "transform 120ms linear, opacity 200ms",
+    };
+  }, [serverDirector.mode, serverDirector.ptzState]);
+
   const formatTimer = (seconds: number | null) => {
     if (seconds === null) return "LOCK";
     const mins = Math.floor(seconds / 60);
@@ -244,6 +258,7 @@ export function DirectorObsScene() {
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             activeBuffer === "A" ? "opacity-100 z-10" : "opacity-0 z-0"
           }`}
+          style={programVideoStyle}
         />
 
         {/* Buffer B */}
@@ -255,6 +270,7 @@ export function DirectorObsScene() {
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             activeBuffer === "B" ? "opacity-100 z-10" : "opacity-0 z-0"
           }`}
+          style={programVideoStyle}
         />
 
         {/* CRT Glitch Transition */}

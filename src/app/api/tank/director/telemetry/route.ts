@@ -30,7 +30,18 @@ function authorised(request: Request): boolean {
 }
 
 const SUBJECT_MODES: SubjectMode[] = [
-  "auto", "person", "speaker", "feet", "face", "motion", "crowd", "chaos", "manual",
+  "auto",
+  "person",
+  "speaker",
+  "feet",
+  "face",
+  "motion",
+  "crowd",
+  "group",
+  "animals",
+  "chaos",
+  "manual",
+  "rotation",
 ];
 
 export async function POST(request: Request) {

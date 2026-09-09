@@ -11,10 +11,16 @@ import {
 import {
   processChatRngTrigger,
   executeItemUsage,
+  executeItemFlex,
   ITEM_ACTION_DEFINITIONS,
 } from "./chatRngEvents";
 import { checkChatActivityTriggers } from "./overlays";
-import { setOperatorMode, getEffectiveMode } from "./directorTelemetryStore";
+import {
+  setOperatorMode,
+  getEffectiveMode,
+  persistOperatorModeToDb,
+} from "./directorTelemetryStore";
+import { recordMovementLog } from "./directorMovementLogStore";
 import type { SubjectMode } from "./directorVirtualAtlas";
 import {
   getDirectorFeedPriorities,
@@ -38,6 +44,24 @@ import {
   triggerHouseMultiplierEvent,
   triggerPeriodicChatEvents,
 } from "./chatMinigames";
+
+import { getCurrentTankProfile } from "./gamification";
+import {
+  claimScavengerQuestTap,
+  generateScavengerQuest,
+  getActiveScavengerQuest,
+  type ScavengerQuest,
+} from "./scavengerHuntEngine";
+import type { TankPlayerProfile } from "./gamification";
+
+// Thin "use server" wrapper — gamification.ts itself has no "use server"
+// directive (it's a plain server-only data-access module, safe to import
+// from other server code but not as a runtime value from client code), so
+// client components that need a fresh profile read after an action settles
+// (Bazaar buyout/bid/listing) call this instead of gamification.ts directly.
+export async function refreshTankProfile(): Promise<TankPlayerProfile | null> {
+  return getCurrentTankProfile();
+}
 
 export type SendChatMessageResult = {
   success: boolean;
@@ -80,7 +104,7 @@ export async function sendChatMessage(
   }
 
   const adminSupabase = createAdminClient();
-  const [{ data: platformProfile }, { data: beforeTankProfile }] = await Promise.all([
+  const [{ data: platformProfile }, { data: beforeTankProfile }, { data: clickMembership }] = await Promise.all([
     adminSupabase
       .from("profiles")
       .select("display_name, role, avatar_url")
@@ -91,7 +115,19 @@ export async function sendChatMessage(
       .select("xp, level")
       .eq("user_id", user.id)
       .maybeSingle(),
+    // Click membership lives in tank_click_members (RLS: readable only by the
+    // member themself), not a denormalized profiles.clan_id column — service
+    // role reads it here so the tag can render on every viewer's copy of the
+    // message, same precedent as tank_leaderboard already surfacing it publicly.
+    adminSupabase
+      .from("tank_click_members")
+      .select("tank_clicks(tag, banner_color)")
+      .eq("user_id", user.id)
+      .maybeSingle(),
   ]);
+  const clickClan = clickMembership?.tank_clicks
+    ? (Array.isArray(clickMembership.tank_clicks) ? clickMembership.tank_clicks[0] : clickMembership.tank_clicks)
+    : undefined;
 
   // Chat identity comes from the server-owned profile row. User-editable JWT
   // metadata is presentation input, never an authorization source.
@@ -138,15 +174,22 @@ export async function sendChatMessage(
       ).catch(() => {});
     }
 
-    const { data: afterTankProfile } = await adminSupabase
-      .from("tank_profiles")
-      .select("xp, level")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    const newXp = afterTankProfile?.xp ?? beforeTankProfile?.xp ?? 0;
-    const newLevel = afterTankProfile?.level ?? getLevelForXp(newXp);
-    const oldLevel = beforeTankProfile?.level ?? getLevelForXp(beforeTankProfile?.xp ?? 0);
-    const leveledUp = newLevel > oldLevel;
+    // Was a separate, sequential, awaited re-fetch of tank_profiles here,
+    // purely to detect a level-up — a whole extra DB round trip gating the
+    // broadcast below on every single message. Nothing in this function or
+    // the tank_insert_chat_message RPC actually grants XP, so level-up
+    // detection only ever matters for the rare case where something else
+    // (e.g. watch-time accrual) changed the profile concurrently — not worth
+    // blocking every message on. Confirmed via git history this refetch was
+    // introduced in a broad Aug 25 refactor that wasn't about chat latency at
+    // all; console/system messages never had it and were never slow.
+    // The outgoing message's own level/rank now come straight from
+    // beforeTankProfile (already fetched for free above) via the pure,
+    // synchronous level/rank functions — zero extra round trips. Real
+    // level-up detection moved to a fire-and-forget block AFTER the
+    // broadcast, below.
+    const newXp = beforeTankProfile?.xp ?? 0;
+    const newLevel = beforeTankProfile?.level ?? getLevelForXp(newXp);
     const newRank = getRankForLevel(newLevel);
 
     const avatarUrl =
@@ -174,6 +217,8 @@ export async function sendChatMessage(
       xp: newXp,
       rank: newRank,
       messageType: "text",
+      ...(clickClan?.tag ? { clanTag: clickClan.tag } : {}),
+      ...(clickClan?.banner_color ? { clanColor: clickClan.banner_color } : {}),
       ...(data.client_nonce ? { clientNonce: data.client_nonce } : {}),
       ...(data.reply_to_message_id ? { replyToMessageId: data.reply_to_message_id } : {}),
       ...(data.reply_to_user_id ? { replyToUserId: data.reply_to_user_id } : {}),
@@ -193,38 +238,55 @@ export async function sendChatMessage(
       }
     }
 
-    // 4. Trigger level up announcement if user leveled up
-    if (leveledUp && !isClickChat) {
-      try {
-        void sendSystemConsoleAnnouncement(
-          roomId,
-          `🎉 [LEVEL UP] @${userName} reached Level ${newLevel}! Rank Unlocked: ${newRank}!`,
-          "level_up",
-        );
-      } catch {}
+    // 4. Level-up detection + announcement — fire-and-forget, runs after the
+    // broadcast above so the message is already visible to everyone before
+    // this does its own (now off-critical-path) profile re-fetch. Replaces
+    // the old awaited afterTankProfile fetch that used to gate the broadcast.
+    if (!isClickChat) {
+      void (async () => {
+        const { data: afterTankProfile } = await adminSupabase
+          .from("tank_profiles")
+          .select("xp, level")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        const postLevel = afterTankProfile?.level ?? getLevelForXp(afterTankProfile?.xp ?? 0);
+        const preLevel = beforeTankProfile?.level ?? getLevelForXp(beforeTankProfile?.xp ?? 0);
+        if (postLevel > preLevel) {
+          await sendSystemConsoleAnnouncement(
+            roomId,
+            `🎉 [LEVEL UP] @${userName} reached Level ${postLevel}! Rank Unlocked: ${getRankForLevel(postLevel)}!`,
+            "level_up",
+          );
+        }
+      })().catch((err) => console.error("[ChatSend] level-up check failed:", { userId: user.id, roomId, err }));
     }
 
     // 5. Check if message answers an active Chat Minigame (Trivia / Camera Scavenger)
     if (!isClickChat) {
-      try {
-        void processMinigameAnswer(user.id, userName, roomId, trimmed);
-      } catch {}
+      void processMinigameAnswer(user.id, userName, roomId, trimmed)
+        .catch((err) => console.error("[ChatSend] processMinigameAnswer failed:", { userId: user.id, roomId, err }));
     }
 
     // 6. Manual Staff / Command Minigame Triggers (!trivia, !quest, /trivia, /quest)
+    // Was `try { void fn() } catch {}` at every one of these six call sites —
+    // dead code: `void` discards the promise, so the try/catch could only
+    // ever catch a synchronous throw from starting the call, never a real
+    // async rejection from inside it. Every failure here was silently
+    // invisible. Replaced with `.catch()` on the promise itself so a real
+    // error actually surfaces in logs instead of vanishing — still
+    // fire-and-forget on purpose (awaiting any of these would put it back on
+    // sendChatMessage's critical path, which is what made chat slow in the
+    // first place, see the level-up refetch removed above).
     const lowerText = trimmed.toLowerCase();
     if (!isClickChat && (lowerText === "!trivia" || lowerText === "/trivia")) {
-      try {
-        void triggerHouseTriviaRound(roomId);
-      } catch {}
+      void triggerHouseTriviaRound(roomId)
+        .catch((err) => console.error("[ChatSend] triggerHouseTriviaRound failed:", { roomId, err }));
     } else if (!isClickChat && (lowerText === "!quest" || lowerText === "/quest")) {
-      try {
-        void triggerCameraScavengerQuest(roomId);
-      } catch {}
+      void triggerCameraScavengerQuest(roomId)
+        .catch((err) => console.error("[ChatSend] triggerCameraScavengerQuest failed:", { roomId, err }));
     } else if (!isClickChat && (lowerText === "!multiplier" || lowerText === "/multiplier")) {
-      try {
-        void triggerHouseMultiplierEvent(2, 15, roomId);
-      } catch {}
+      void triggerHouseMultiplierEvent(2, 15, roomId)
+        .catch((err) => console.error("[ChatSend] triggerHouseMultiplierEvent failed:", { roomId, err }));
     }
 
     // Automated Mission Progress Tracking
@@ -242,31 +304,34 @@ export async function sendChatMessage(
     }
 
     // Check for In-game RNG / Action triggers (/me, /use, /fart, /roll, auto RNG drops)
+    //
+    // Was `try { void processChatRngTrigger(...) } catch {}` — dead code, see
+    // the comment above: `void` discards the promise so this could never
+    // catch a real failure inside /roll, /unbox, or any other RNG command.
+    // Confirmed live 2026-08-31 as the reason /roll and /unbox appeared to
+    // silently do nothing — any real error was an invisible unhandled
+    // promise rejection. Still fire-and-forget (not awaited) on purpose.
     if (!isClickChat) {
-      try {
-        void processChatRngTrigger(user.id, userName, roomId, trimmed);
-      } catch {}
+      void processChatRngTrigger(user.id, userName, roomId, trimmed)
+        .catch((err) => console.error("[ChatRngTrigger] processChatRngTrigger failed:", { userId: user.id, roomId, trimmed, err }));
     }
 
     // Check for periodic Discord console message broadcast
     if (!isClickChat) {
-      try {
-        void checkAndTriggerDiscordAnnouncement(roomId);
-      } catch {}
+      void checkAndTriggerDiscordAnnouncement(roomId)
+        .catch((err) => console.error("[ChatSend] checkAndTriggerDiscordAnnouncement failed:", { roomId, err }));
     }
 
     // Activity-driven overlay triggers
     if (!isClickChat) {
-      try {
-        void checkChatActivityTriggers(roomId, trimmed);
-      } catch {}
+      void checkChatActivityTriggers(roomId, trimmed)
+        .catch((err) => console.error("[ChatSend] checkChatActivityTriggers failed:", { roomId, err }));
     }
 
     // Periodic Chat Events Cron Helper (e.g. Trivia every 15 mins)
     if (!isClickChat) {
-      try {
-        void triggerPeriodicChatEvents(roomId);
-      } catch {}
+      void triggerPeriodicChatEvents(roomId)
+        .catch((err) => console.error("[ChatSend] triggerPeriodicChatEvents failed:", { roomId, err }));
     }
 
     return { success: true, message: chatMsg };
@@ -456,6 +521,29 @@ export async function useTankItem(
   return { success: !!msg, message: msg ?? undefined };
 }
 
+/**
+ * Shows off an owned item in chat without consuming it ("Trophy Catch"
+ * flex). Unlike useTankItem, this works for ANY item in TANK_ITEM_CATALOG —
+ * not just the ITEM_ACTION_DEFINITIONS subset with a "use" effect — since
+ * pure collectibles are exactly the kind of thing worth flexing.
+ */
+export async function flexTankItem(
+  itemSlug: string,
+  roomId = "director",
+): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Sign in required to flex items." };
+
+  const userName =
+    (user.user_metadata?.full_name as string) ||
+    (user.user_metadata?.user_name as string) ||
+    user.email?.split("@")[0] ||
+    "Member";
+
+  return executeItemFlex(user.id, userName, roomId, itemSlug);
+}
+
 export async function getRecentChatMessages(roomId: string): Promise<ChatMessage[]> {
   try {
     const supabase = await createClient();
@@ -499,10 +587,11 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
     // Collect distinct user IDs to fetch profile XP/Level/Rank
     const userIds = Array.from(new Set(data.map((r) => r.user_id).filter(Boolean))) as string[];
     const profileMap = new Map<string, { xp: number; level: number; rank: ChatRank; avatarUrl?: string }>();
+    const clanByUserId = new Map<string, { tag: string; bannerColor?: string }>();
 
     if (userIds.length > 0) {
       try {
-        const [{ data: profiles }, { data: coreProfiles }] = await Promise.all([
+        const [{ data: profiles }, { data: coreProfiles }, { data: clickMemberships }] = await Promise.all([
           supabase
             .from("tank_profiles")
             .select("user_id, xp, level")
@@ -511,7 +600,19 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
             .from("profiles")
             .select("id, avatar_url")
             .in("id", userIds),
+          // tank_click_members RLS only allows reading your own row, so a
+          // service-role read is required to resolve every sender's Click tag
+          // — same reasoning as sendChatMessage's clickMembership lookup.
+          createAdminClient()
+            .from("tank_click_members")
+            .select("user_id, tank_clicks(tag, banner_color)")
+            .in("user_id", userIds),
         ]);
+
+        for (const row of clickMemberships ?? []) {
+          const clan = Array.isArray(row.tank_clicks) ? row.tank_clicks[0] : row.tank_clicks;
+          if (clan?.tag) clanByUserId.set(row.user_id, { tag: clan.tag, bannerColor: clan.banner_color || undefined });
+        }
 
         const avatarByUserId = new Map(
           (coreProfiles ?? []).map((profile) => [profile.id, profile.avatar_url || undefined]),
@@ -610,6 +711,7 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
       const level = profile?.level ?? 1;
       const xp = profile?.xp ?? 0;
       const rank: ChatRank = profile?.rank ?? getRankForLevel(level);
+      const clan = row.user_id ? clanByUserId.get(row.user_id) : undefined;
 
       return {
         id: row.id,
@@ -626,6 +728,8 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
         xp,
         rank,
         messageType: msgType,
+        ...(clan?.tag ? { clanTag: clan.tag } : {}),
+        ...(clan?.bannerColor ? { clanColor: clan.bannerColor } : {}),
         clientNonce: row.client_nonce || undefined,
         replyToMessageId: row.reply_to_message_id || undefined,
         replyToUserId: row.reply_to_user_id || undefined,
@@ -1058,18 +1162,58 @@ export async function saveTankUserSettings(
   }
 }
 
+export type PrizeReelSlot = {
+  slug: string;
+  name: string;
+  iconUrl: string;
+  rarity: string;
+};
+
+// One canonical reel — same list backs both the visual strip and the actual
+// weighted roll, so what a spin can land on and what the reel displays can
+// never drift apart. Slugs pulled from ITEM_ACTION_DEFINITIONS (already
+// imported above) rather than a second catalog import.
+const PRIZE_REEL: { slug: string; weight: number }[] = [
+  { slug: "battery", weight: 30 },
+  { slug: "broken-monitor", weight: 22 },
+  { slug: "love-letter", weight: 18 },
+  { slug: "boxing-gloves", weight: 12 },
+  { slug: "lightsaber", weight: 10 },
+  { slug: "test-haunted-phone", weight: 5 },
+  { slug: "test-golden-remote", weight: 2.5 },
+  { slug: "test-tank-heart", weight: 0.5 },
+];
+
+const PRIZE_SPIN_COST = 50;
+
+function buildPrizeReelSlots(): PrizeReelSlot[] {
+  return PRIZE_REEL.map(({ slug }) => {
+    const def = ITEM_ACTION_DEFINITIONS[slug];
+    return {
+      slug,
+      name: def?.name ?? slug,
+      iconUrl: def?.iconUrl ?? "",
+      rarity: def?.rarity ?? "common",
+    };
+  });
+}
+
 /**
  * spinTankPrizeMachine
- * 
- * Deducts 100 tokens from tank_profiles, spins the prize wheel, and writes
- * any won items/tokens/XP directly to tank_player_inventory and tank_profiles.
+ *
+ * The one real prize-spin path — deducts tokens from tank_profiles, rolls a
+ * weighted pick from PRIZE_REEL, and writes the won item straight to
+ * tank_player_inventory. Returns the full reel plus the winning index so the
+ * UI can animate the strip landing on the result instead of just popping a
+ * result in.
  */
 export async function spinTankPrizeMachine(): Promise<{
   success: boolean;
-  prize?: string;
-  rewardType?: "item" | "tokens" | "xp";
+  reel?: PrizeReelSlot[];
+  winningIndex?: number;
+  wonSlug?: string;
+  wonName?: string;
   newTokens?: number;
-  newXp?: number;
   error?: string;
 }> {
   const supabase = await createClient();
@@ -1078,99 +1222,60 @@ export async function spinTankPrizeMachine(): Promise<{
 
   const admin = createAdminClient();
 
-  // 1. Fetch current tank_profiles tokens
   const { data: profile } = await admin
     .from("tank_profiles")
-    .select("tokens, xp, level, display_name")
+    .select("tokens, display_name")
     .eq("user_id", user.id)
     .maybeSingle();
 
   const currentTokens = profile?.tokens || 0;
-  const SPIN_COST = 100;
-  if (currentTokens < SPIN_COST) {
-    return { success: false, error: `Not enough tokens! You have ${currentTokens} $UNT (Need ${SPIN_COST}).` };
+  if (currentTokens < PRIZE_SPIN_COST) {
+    return {
+      success: false,
+      error: `Not enough tokens! You have ${currentTokens} (Need ${PRIZE_SPIN_COST}).`,
+    };
   }
 
-  // 2. Deduct cost
-  const tokensAfterCost = currentTokens - SPIN_COST;
-  await admin
-    .from("tank_profiles")
-    .update({ tokens: tokensAfterCost, updated_at: new Date().toISOString() })
-    .eq("user_id", user.id);
-
+  // Spend, not a reward — deliberately does NOT go through tank_grant_reward
+  // (that boundary is reward-only; the spec's own exclusion list names
+  // "spends, wagers" explicitly). This insert's AFTER INSERT trigger on
+  // tank_token_transactions already applies the -PRIZE_SPIN_COST delta to
+  // tank_profiles.tokens — the manual UPDATE that used to sit here was a
+  // real, live double-charge bug (players paid 2x the intended spin cost).
+  // Computed (not written) purely so the response can report the post-spend
+  // balance immediately without a re-read.
+  const tokensAfterCost = currentTokens - PRIZE_SPIN_COST;
   await admin.from("tank_token_transactions").insert({
     user_id: user.id,
-    amount: -SPIN_COST,
+    amount: -PRIZE_SPIN_COST,
     reason: "Prize Machine Spin",
   });
 
-  // 3. Roll Prize
-  const possibleRewards = [
-    { type: "tokens" as const, amount: 250, label: "+250 Tokens (Jackpot!)" },
-    { type: "tokens" as const, amount: 150, label: "+150 Tokens" },
-    { type: "xp" as const, amount: 100, label: "+100 XP" },
-    { type: "item" as const, slug: "royal-jelly", label: "Royal Jelly (Legendary)" },
-    { type: "item" as const, slug: "fucked-up-shit", label: "Mystery Concoction (Epic)" },
-    { type: "item" as const, slug: "crisp-shorts", label: "Crisp Shorts (Uncommon)" },
-    { type: "item" as const, slug: "boxing-gloves", label: "Boxing Gloves (Uncommon)" },
-    { type: "item" as const, slug: "battery", label: "Batteries (Common)" },
-  ];
-
-  const won = possibleRewards[Math.floor(Math.random() * possibleRewards.length)];
-  let finalTokens = tokensAfterCost;
-  let finalXp = profile?.xp || 0;
-
-  if (won.type === "tokens") {
-    finalTokens += won.amount;
-    await admin
-      .from("tank_profiles")
-      .update({ tokens: finalTokens, updated_at: new Date().toISOString() })
-      .eq("user_id", user.id);
-
-    await admin.from("tank_token_transactions").insert({
-      user_id: user.id,
-      amount: won.amount,
-      reason: "Prize Machine Win",
-    });
-  } else if (won.type === "xp") {
-    finalXp += won.amount;
-    const newLevel = Math.floor(Math.sqrt(finalXp / 10)) + 1;
-    await admin
-      .from("tank_profiles")
-      .update({ xp: finalXp, level: newLevel, updated_at: new Date().toISOString() })
-      .eq("user_id", user.id);
-  } else if (won.type === "item") {
-    // Find item ID
-    const { data: dbItem } = await admin
-      .from("tank_inventory_items")
-      .select("id")
-      .eq("slug", won.slug)
-      .maybeSingle();
-
-    if (dbItem) {
-      const { data: existingSlot } = await admin
-        .from("tank_player_inventory")
-        .select("quantity")
-        .eq("user_id", user.id)
-        .eq("item_id", dbItem.id)
-        .maybeSingle();
-
-      const newQty = (existingSlot?.quantity || 0) + 1;
-      await admin.from("tank_player_inventory").upsert(
-        {
-          user_id: user.id,
-          item_id: dbItem.id,
-          quantity: newQty,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,item_id" }
-      );
+  const totalWeight = PRIZE_REEL.reduce((sum, slot) => sum + slot.weight, 0);
+  let roll = Math.random() * totalWeight;
+  let winningIndex = PRIZE_REEL.length - 1;
+  for (let i = 0; i < PRIZE_REEL.length; i++) {
+    if (roll < PRIZE_REEL[i].weight) {
+      winningIndex = i;
+      break;
     }
+    roll -= PRIZE_REEL[i].weight;
   }
+  const won = PRIZE_REEL[winningIndex];
+  const wonDef = ITEM_ACTION_DEFINITIONS[won.slug];
 
-  // 4. Dispatch System Notice to Chat
+  // Centralized, locked, max-stack-aware grant (Tavern Phase 0) — replaces
+  // this function's own select-then-upsert, which was one of several
+  // independently-duplicated copies of the same unlocked, uncapped logic.
+  await admin.rpc("tank_grant_inventory_item", {
+    p_user_id: user.id,
+    p_item_slug: won.slug,
+    p_quantity: 1,
+    p_source: "prize_machine",
+  });
+
   const userName = profile?.display_name || user.email?.split("@")[0] || "Viewer";
-  const consoleNotice = `[SYSTEM CONSOLE] 🎰 ${userName} spun the Prize Machine and won ${won.label}!`;
+  const consoleNotice = `[SYSTEM CONSOLE] 🎰 ${userName} spun the Prize Machine and won ${wonDef?.name ?? won.slug}!`;
 
   try {
     await admin.from("tank_chat_messages").insert({
@@ -1198,10 +1303,11 @@ export async function spinTankPrizeMachine(): Promise<{
 
   return {
     success: true,
-    prize: won.label,
-    rewardType: won.type,
-    newTokens: finalTokens,
-    newXp: finalXp,
+    reel: buildPrizeReelSlots(),
+    winningIndex,
+    wonSlug: won.slug,
+    wonName: wonDef?.name ?? won.slug,
+    newTokens: tokensAfterCost,
   };
 }
 
@@ -1307,9 +1413,48 @@ export async function craftTankFusion(
 }
 
 
-export async function setDirectorModeAction(mode: SubjectMode): Promise<{ success: boolean; mode: SubjectMode; error?: string }> {
+export async function setDirectorModeAction(
+  mode: SubjectMode,
+  operatorName = "Operator",
+): Promise<{ success: boolean; mode: SubjectMode; error?: string }> {
   try {
     setOperatorMode(mode);
+    await persistOperatorModeToDb(mode, operatorName);
+
+    // Broadcast change across Realtime channel
+    const admin = createAdminClient();
+    const channel = admin.channel("tank:director:state");
+    await channel.send({
+      type: "broadcast",
+      event: "director_mode_changed",
+      payload: {
+        mode,
+        operator: operatorName,
+        timestamp: Date.now(),
+      },
+    });
+
+    // Record audit log entry
+    recordMovementLog({
+      eventType: "auto_cut",
+      operator: { user: operatorName, connectionType: "browser_web" },
+      source: {
+        roomId: "director",
+        cameraName: "Director",
+        panX: 0,
+        panY: 0,
+        zoom: 1,
+      },
+      trajectory: {
+        vx: 0,
+        vy: 0,
+        deltaX: 0,
+        deltaY: 0,
+        deltaZoom: 0,
+        easingCurve: `mode:${mode}`,
+      },
+    });
+
     return { success: true, mode };
   } catch (err: any) {
     return { success: false, mode: "auto", error: err?.message || "Failed to set director mode" };
@@ -1425,6 +1570,12 @@ export type HouseRoomData = {
     muted?: boolean;
     [key: string]: any;
   };
+  /**
+   * Admin kill-switch. When true, roomProjection.ts's deriveRooms() omits
+   * this room from every public response entirely — not flagged-but-hidden,
+   * actually absent. See the migration comment on tank_rooms.is_offline.
+   */
+  is_offline: boolean;
 };
 
 export async function listHouseRoomsAction(): Promise<{ success: boolean; rooms: HouseRoomData[]; error?: string }> {
@@ -1454,12 +1605,13 @@ export async function updateHouseRoomAction(
     muted?: boolean;
     live?: boolean;
     audioOutputKind?: "embedded" | "client-broadcast" | "host-bluetooth";
+    isOffline?: boolean;
   }
 ): Promise<{ success: boolean; room?: HouseRoomData; error?: string }> {
   try {
     if (!(await requireStaff())) return { success: false, error: "Staff access required." };
     const admin = createAdminClient();
-    
+
     const { data: current } = await admin
       .from("tank_rooms")
       .select("*")
@@ -1483,6 +1635,7 @@ export async function updateHouseRoomAction(
     if (updates.description !== undefined) updatePayload.description = updates.description;
     if (updates.live !== undefined) updatePayload.live = updates.live;
     if (updates.audioOutputKind !== undefined) updatePayload.audio_output_kind = updates.audioOutputKind;
+    if (updates.isOffline !== undefined) updatePayload.is_offline = updates.isOffline;
 
     const { data, error } = await admin
       .from("tank_rooms")
@@ -1497,6 +1650,35 @@ export async function updateHouseRoomAction(
     return { success: true, room: data as HouseRoomData };
   } catch (err: any) {
     return { success: false, error: err?.message || "Failed to update room" };
+  }
+}
+
+/**
+ * Bulk kill-switch for the "ALL ROOMS OFF"/"ALL ROOMS ON" panic button.
+ * Deliberately updates every row already listed in tank_rooms (what
+ * listHouseRoomsAction/houseRooms already shows the operator) rather than
+ * re-deriving from cameras — the operator is looking at exactly the rooms
+ * this should apply to.
+ */
+export async function setAllHouseRoomsOfflineAction(
+  isOffline: boolean
+): Promise<{ success: boolean; count?: number; error?: string }> {
+  try {
+    if (!(await requireStaff())) return { success: false, error: "Staff access required." };
+    const admin = createAdminClient();
+
+    const { data, error } = await admin
+      .from("tank_rooms")
+      .update({ is_offline: isOffline, updated_at: new Date().toISOString() })
+      .not("id", "is", null) // Supabase requires an explicit filter on bulk update
+      .select("id");
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true, count: data?.length ?? 0 };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Failed to toggle all rooms" };
   }
 }
 
@@ -1721,4 +1903,210 @@ export async function createTankClanAction(
   } catch (err: any) {
     return { success: false, error: err?.message || "Failed to create clan" };
   }
+}
+
+// ─── Tank Messenger (1:1 DMs) ───────────────────────────────────────────────
+// Conversations live in tank_dm_conversations; the messages themselves reuse
+// tank_chat_messages via room_id = "dm:<conversationId>" — see the
+// 20260826150000_tank_direct_messages migration for the RLS/RPC side of this.
+
+export type TankDmConversationSummary = {
+  id: string;
+  otherUserId: string;
+  otherDisplayName: string;
+  otherAvatarUrl: string | null;
+  lastMessageAt: string;
+  lastMessageBody: string | null;
+};
+
+export async function listMyDmConversations(): Promise<TankDmConversationSummary[]> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data: rows } = await supabase
+    .from("tank_dm_conversations")
+    .select("id, user_a_id, user_b_id, last_message_at")
+    .order("last_message_at", { ascending: false })
+    .limit(50);
+  if (!rows || rows.length === 0) return [];
+
+  const otherIds = rows.map((r) => (r.user_a_id === user.id ? r.user_b_id : r.user_a_id));
+  const admin = createAdminClient();
+  const [{ data: profiles }, { data: lastMessages }] = await Promise.all([
+    admin.from("profiles").select("id, display_name, avatar_url").in("id", otherIds),
+    admin
+      .from("tank_chat_messages")
+      .select("room_id, body, created_at")
+      .in("room_id", rows.map((r) => `dm:${r.id}`))
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+  // Rows arrive newest-first, so the first hit per room_id is the preview.
+  const previewMap = new Map<string, string>();
+  for (const m of lastMessages ?? []) {
+    if (!previewMap.has(m.room_id)) previewMap.set(m.room_id, m.body);
+  }
+
+  return rows.map((r) => {
+    const otherId = r.user_a_id === user.id ? r.user_b_id : r.user_a_id;
+    const profile = profileMap.get(otherId);
+    return {
+      id: r.id,
+      otherUserId: otherId,
+      otherDisplayName: profile?.display_name || "Viewer",
+      otherAvatarUrl: profile?.avatar_url || null,
+      lastMessageAt: r.last_message_at,
+      lastMessageBody: previewMap.get(`dm:${r.id}`) ?? null,
+    };
+  });
+}
+
+export type StartDmResult = { success: boolean; conversationId?: string; error?: string };
+
+export async function startDmConversation(otherUserId: string): Promise<StartDmResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Sign in required to message another viewer." };
+  if (!otherUserId || otherUserId === user.id) {
+    return { success: false, error: "Choose another viewer to message." };
+  }
+
+  const { data, error } = await supabase.rpc("tank_get_or_create_dm", {
+    p_other_user_id: otherUserId,
+  });
+  if (error || !data) {
+    return { success: false, error: error?.message ?? "Could not start that conversation." };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return { success: true, conversationId: row.id };
+}
+
+export type TankMessengerContact = {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+};
+
+export async function searchTankViewers(query: string): Promise<TankMessengerContact[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("profiles")
+    .select("id, display_name, avatar_url")
+    .ilike("display_name", `%${trimmed}%`)
+    .neq("id", user.id)
+    .limit(10);
+
+  return (data ?? []).map((p) => ({
+    id: p.id,
+    displayName: p.display_name || "Viewer",
+    avatarUrl: p.avatar_url || null,
+  }));
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🕵️ DYNAMIC YOLO VISION SCAVENGER HUNT ACTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+export async function getActiveScavengerQuestAction(): Promise<ScavengerQuest | null> {
+  return getActiveScavengerQuest();
+}
+
+export async function triggerScavengerHuntAction(options?: {
+  roomKey?: string;
+  itemLabel?: string;
+  durationSeconds?: number;
+}): Promise<ScavengerQuest> {
+  const quest = generateScavengerQuest(options);
+
+  // Broadcast quest spawn to chat
+  try {
+    const admin = createAdminClient();
+    await admin.channel("tank:scavenger:events").send({
+      type: "broadcast",
+      event: "new_quest",
+      payload: quest,
+    });
+
+    await sendSystemConsoleAnnouncement(
+      quest.roomKey || "director",
+      `🕵️ [SCAVENGER QUEST] Spot the [${quest.item.displayName}] in ${quest.roomTitle}! Tap the item on screen for +${quest.item.rewardTokens} Tokens & +${quest.item.rewardXp} XP! (⏱️ ${quest.durationSeconds}s)`,
+      "house_event"
+    );
+  } catch (err) {
+    console.error("[ScavengerHunt] Failed to broadcast quest announcement:", err);
+  }
+
+  return quest;
+}
+
+export async function claimScavengerBountyAction(params: {
+  questId: string;
+  tapNx: number;
+  tapNy: number;
+}): Promise<{
+  success: boolean;
+  reason: string;
+  rewardTokens?: number;
+  rewardXp?: number;
+}> {
+  const profile = await getCurrentTankProfile();
+  const userId = profile?.id || "anonymous";
+  const userName = profile?.displayName || "Viewer";
+
+  const result = claimScavengerQuestTap({
+    questId: params.questId,
+    userId,
+    userName,
+    tapNx: params.tapNx,
+    tapNy: params.tapNy,
+    now: Date.now(),
+  });
+
+  if (result.success && result.quest) {
+    try {
+      const admin = createAdminClient();
+
+      // Award tokens and XP in database
+      if (profile && profile.id) {
+        await admin.rpc("increment_tank_profile_rewards", {
+          p_user_id: profile.id,
+          p_xp: result.rewardXp || 0,
+          p_tokens: result.rewardTokens || 0,
+        });
+      }
+
+      // Broadcast victory fanfare
+      await admin.channel("tank:scavenger:events").send({
+        type: "broadcast",
+        event: "quest_claimed",
+        payload: result.quest,
+      });
+
+      await sendSystemConsoleAnnouncement(
+        result.quest.roomKey || "director",
+        `🎉 [QUEST SOLVED] @${userName} found the [${result.quest.item.displayName}] in ${result.quest.roomTitle}! Awarded +${result.rewardTokens} Tokens & +${result.rewardXp} XP! 🎯`,
+        "house_event"
+      );
+    } catch (err) {
+      console.error("[ScavengerHunt] Error saving rewards / broadcasting fanfare:", err);
+    }
+  }
+
+  return {
+    success: result.success,
+    reason: result.reason,
+    rewardTokens: result.rewardTokens,
+    rewardXp: result.rewardXp,
+  };
 }

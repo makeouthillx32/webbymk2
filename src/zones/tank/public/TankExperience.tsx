@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
@@ -62,6 +70,7 @@ import { createClient } from "@/utils/supabase/client";
 import {
   useTankRealtimeChat,
   drainClientChatStorage,
+  clearTankSessionCookies,
 } from "./useTankRealtimeChat";
 import { useTankWatchTimeAccrual } from "./useTankWatchTimeAccrual";
 import { useTankSoundboardPlayer } from "./useTankSoundboardPlayer";
@@ -77,11 +86,17 @@ import {
 import { DockOverlay } from "./components/DockOverlay";
 import { InventoryOverlay } from "./components/InventoryOverlay";
 import { ClicksOverlay } from "./components/ClansOverlay";
-import { SeasonPassOverlay } from "./components/SeasonPassOverlay";
+import { HouseRosterOverlay } from "./components/HouseRosterOverlay";
+import { ScavengerQuestBanner } from "./components/ScavengerQuestBanner";
 import {
-  PollOverlay,
-  getTankPollVoterClientId,
-} from "./components/PollOverlay";
+  getActiveScavengerQuestAction,
+  claimScavengerBountyAction,
+} from "../server/actions";
+import type { ScavengerQuest } from "../server/scavengerHuntEngine";
+import { clientToNormalizedVideoCoords } from "./viewportCoordinateMapper";
+import { claimInteractiveTargetTap } from "../server/interactiveTargetActions";
+import { SeasonPassOverlay } from "./components/SeasonPassOverlay";
+import { PollOverlay } from "./components/PollOverlay";
 import { DailyClaimModal } from "./components/DailyClaimModal";
 import { PrizeMachineModal } from "./components/PrizeMachineModal";
 import { SecretCodeModal } from "./components/SecretCodeModal";
@@ -336,6 +351,7 @@ function CameraTile({
             playbackUrl={playbackUrl}
             playbackProtocol={playbackProtocol}
             online={online}
+            priority="thumbnail"
           />
         ) : (
           !online && (
@@ -514,12 +530,12 @@ export function purgeLegacyTankCookies() {
 // never sign someone out or reset unrelated preferences. Bump
 // TANK_STATE_SCHEMA_VERSION whenever a future change to what these keys hold
 // could make an old value unsafe to trust at boot.
-const TANK_STATE_SCHEMA_VERSION = "1";
+const TANK_STATE_SCHEMA_VERSION = "3";
 const LS_STATE_SCHEMA_VERSION = "tank_state_schema_version";
 
-// Every key Tank itself writes to localStorage — kept in sync with the
-// Tank-prefixed entries in safeStorage.ts's own PROTECTED_KEYS list, which is
-// already the codebase's authoritative catalog of "Tank's persisted state".
+// Local legacy keys and current Tank preferences owned by this experience.
+// Route and chat state are tab-local now, but old shared values still need a
+// one-time cleanup so they cannot influence older cached clients.
 const TANK_OWNED_STORAGE_KEYS = [
   LS_ROOM_MODE,
   LS_ROOM_SLUG,
@@ -529,6 +545,7 @@ const TANK_OWNED_STORAGE_KEYS = [
   "tank_settings_v1",
   "tank:assigned-room-key",
   "tank_local_profile",
+  "tank_voter_client_id",
 ] as const;
 
 /**
@@ -554,6 +571,7 @@ function readRoomLocation(): TankInitialLocation | null {
     if (typeof window === "undefined") return null;
 
     const path = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (path === "/") return { mode: "director" };
     if (path === "/rooms") return { mode: "grid" };
     if (path === "/rooms/director") return { mode: "director" };
     if (path.startsWith("/rooms/")) {
@@ -575,9 +593,9 @@ function readRoomLocation(): TankInitialLocation | null {
 }
 
 function persistRoomLocation(
-  _mode: ViewMode,
-  _slug: string,
-  _historyMode: "push" | "replace" = "replace",
+  mode: ViewMode,
+  slug: string,
+  historyMode: "push" | "replace" = "replace",
 ) {
   try {
     if (typeof window === "undefined") return;
@@ -587,16 +605,27 @@ function persistRoomLocation(
     // transient flag made it reappear on every room change.
     params.delete("refresh");
     const query = params.toString();
-    const nextUrl = query ? `/?${query}` : "/";
+    const pathname =
+      mode === "director"
+        ? "/"
+        : mode === "grid"
+          ? "/rooms"
+          : `/rooms/${encodeURIComponent(slug)}`;
+    const nextUrl = query ? `${pathname}?${query}` : pathname;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (currentUrl === nextUrl && !window.location.hash) return;
-    window.history.replaceState(window.history.state, "", nextUrl);
+    const updateHistory =
+      historyMode === "push"
+        ? window.history.pushState.bind(window.history)
+        : window.history.replaceState.bind(window.history);
+    updateHistory(window.history.state, "", nextUrl);
   } catch {}
 }
 
 function readPersistedRoomValue(key: string): string | null {
   try {
-    const stored = safeStorage.getItem(key);
+    if (typeof window === "undefined") return null;
+    const stored = window.sessionStorage.getItem(key);
     if (stored !== null) return stored;
   } catch {}
   return null;
@@ -604,24 +633,9 @@ function readPersistedRoomValue(key: string): string | null {
 
 function persistRoomValue(key: string, value: string) {
   try {
-    safeStorage.setItem(key, value);
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(key, value);
   } catch {}
-}
-
-function readSavedRoomMode(): ViewMode {
-  try {
-    const v = readPersistedRoomValue(LS_ROOM_MODE);
-    if (v === "director" || v === "room" || v === "grid") return v;
-  } catch {}
-  return "director";
-}
-
-function readSavedRoomSlug(): string {
-  try {
-    const v = readPersistedRoomValue(LS_ROOM_SLUG);
-    if (v) return v;
-  } catch {}
-  return DIRECTOR_ROOM.slug;
 }
 
 function readSavedChatTarget(): string {
@@ -649,8 +663,6 @@ function persistRoomState(
 ) {
   try {
     persistRoomLocation(mode, slug, historyMode);
-    persistRoomValue(LS_ROOM_MODE, mode);
-    persistRoomValue(LS_ROOM_SLUG, slug);
     persistRoomValue(LS_CHAT_TARGET, chatTarget);
     persistRoomValue(LS_ROOM_ORIGIN, origin);
   } catch {}
@@ -692,7 +704,18 @@ export function TankExperience({
   }, []);
   useEffect(() => {
     let active = true;
+    let loading = false;
+    let timer: number | null = null;
+    const schedule = () => {
+      if (!active) return;
+      timer = window.setTimeout(
+        load,
+        document.visibilityState === "hidden" ? 30_000 : 10_000,
+      );
+    };
     const load = async () => {
+      if (loading) return;
+      loading = true;
       try {
         const response = await fetch("/api/tank/cameras", {
           cache: "no-store",
@@ -702,13 +725,22 @@ export function TankExperience({
         if (active) setSnapshot(next);
       } catch {
         // keep last known snapshot rather than flashing an error state
+      } finally {
+        loading = false;
+        schedule();
       }
     };
+    const handleVisibilityChange = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+      void load();
+    };
     void load();
-    const timer = window.setInterval(load, 2500);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, []);
 
@@ -786,10 +818,9 @@ export function TankExperience({
     return Array.from(map.values());
   }, [snapshot?.rooms]);
 
-  // Direct /rooms/* requests receive their initial location from the server,
-  // keeping SSR and the first browser render identical. Bare / requests defer
-  // cookie/localStorage restoration until after mount so mobile Safari cannot
-  // turn a storage hydration mismatch into a jump back to Director.
+  // Routes are authoritative: / is Director, /rooms is the grid, and each
+  // /rooms/:slug is a room. Local storage preserves secondary preferences but
+  // never turns two browser destinations into the same page.
   const [mode, setMode] = useState<ViewMode>(initialLocation?.mode ?? "director");
   const [activeRoomSlug, setActiveRoomSlug] = useState<string>(
     initialLocation?.slug ?? DIRECTOR_ROOM.slug,
@@ -831,8 +862,8 @@ export function TankExperience({
   useEffect(() => {
     purgeIncompatibleTankState();
     const savedLocation = initialLocation ?? readRoomLocation();
-    const savedMode = savedLocation?.mode ?? readSavedRoomMode();
-    const savedSlug = savedLocation?.slug ?? readSavedRoomSlug();
+    const savedMode = savedLocation?.mode ?? "director";
+    const savedSlug = savedLocation?.slug ?? DIRECTOR_ROOM.slug;
     const savedChatTarget = readSavedChatTarget();
     const savedOrigin = readSavedRoomOrigin();
 
@@ -910,18 +941,6 @@ export function TankExperience({
       }
     } catch {}
 
-    // Auto-recover from Next.js HMR stale chunk errors on hot reload
-    const handleChunkError = (event: ErrorEvent) => {
-      if (
-        event.message?.includes("ChunkLoadError") ||
-        event.message?.includes("Loading chunk") ||
-        event.message?.includes("Failed to find Server Action")
-      ) {
-        window.location.reload();
-      }
-    };
-    window.addEventListener("error", handleChunkError);
-    return () => window.removeEventListener("error", handleChunkError);
   }, []);
 
   const setMobileChatSize = (size: "hidden" | "half" | "full") => {
@@ -1026,7 +1045,6 @@ export function TankExperience({
       try {
         const response = await fetch("/api/tank/poll/active", {
           cache: "no-store",
-          headers: { "x-tank-voter-id": getTankPollVoterClientId() },
         });
         if (!response.ok) return;
         const { poll } = (await response.json()) as {
@@ -1106,75 +1124,195 @@ export function TankExperience({
     }
   };
 
-  useEffect(() => {
-    let active = true;
+  const refreshUserAuth = useCallback(async () => {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setSignedIn(false);
+        setPlayerProfile(null);
+        setUserClan(null);
+        return;
+      }
+
+      const currentTags = Array.isArray(user.user_metadata?.tags)
+        ? (user.user_metadata.tags as string[])
+        : [];
+      const canonicalName = initialProfile?.displayName?.trim();
+      if (
+        !currentTags.includes("tank") ||
+        (canonicalName && user.user_metadata?.display_name !== canonicalName)
+      ) {
+        void recordTankAuthSignIn();
+      }
+
+      const [{ data: tankProfile }, { data: coreProfile }, { data: clanData }] =
+        await Promise.all([
+          supabase
+            .from("tank_profiles")
+            .select("*")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("profiles")
+            .select("display_name, role, avatar_url")
+            .eq("id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("tank_click_members")
+            .select("click_id, role, tank_clicks(*)")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+        ]);
+
+      let localData: {
+        displayName?: string;
+        avatarUrl?: string;
+        nameColor?: string;
+        bio?: string;
+      } = {};
+      try {
+        const cached = safeStorage.getItem("tank_local_profile");
+        if (cached) localData = JSON.parse(cached);
+      } catch {}
+
+      const userRole =
+        (coreProfile?.role as string) ||
+        (user.app_metadata?.role as string) ||
+        (user.user_metadata?.role as string) ||
+        (user.email?.toLowerCase() === "admin@unenter.live"
+          ? "admin"
+          : "member");
+
+      const resolvedName = resolveTankDisplayName({
+        localDisplayName: localData.displayName,
+        tankDisplayName: tankProfile?.display_name,
+        coreDisplayName: coreProfile?.display_name,
+        authDisplayName: user.user_metadata?.display_name,
+        providerFullName: user.user_metadata?.full_name,
+        providerUserName: user.user_metadata?.user_name,
+        email: user.email,
+        fallback: "Member",
+      });
+
+      setSignedIn(true);
+      setPlayerProfile((prev) => ({
+        id: user.id,
+        xp: tankProfile?.xp ?? prev?.xp ?? initialProfile?.xp ?? 0,
+        level: tankProfile?.level ?? prev?.level ?? initialProfile?.level ?? 1,
+        tokens: tankProfile?.tokens ?? prev?.tokens ?? initialProfile?.tokens ?? 0,
+        displayName: resolvedName,
+        avatarUrl:
+          localData.avatarUrl ||
+          tankProfile?.avatar_url ||
+          coreProfile?.avatar_url ||
+          prev?.avatarUrl ||
+          (user.user_metadata?.avatar_url as string) ||
+          "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png",
+        nameColor:
+          localData.nameColor ||
+          tankProfile?.name_color ||
+          prev?.nameColor ||
+          (user.user_metadata?.name_color as string) ||
+          "#ff3b2f",
+        bio: localData.bio || tankProfile?.bio || (user.user_metadata?.bio as string) || "",
+        role: userRole,
+        clanId: tankProfile?.clan_id ?? null,
+        clanTag: (clanData?.tank_clicks as any)?.tag ?? null,
+        profileSetupComplete: tankProfile?.profile_setup_complete ?? true,
+      }));
+
+      if (clanData?.tank_clicks) {
+        setUserClan({
+          id: clanData.click_id,
+          name: (clanData.tank_clicks as any).name,
+          tag: (clanData.tank_clicks as any).tag,
+          description: (clanData.tank_clicks as any).description,
+          role: clanData.role,
+        } as any);
+      }
+    } catch {}
+  }, [initialProfile]);
+
+  const handleSignOutInline = useCallback(async () => {
+    const currentUserId = playerProfile?.id;
+    drainClientChatStorage(currentUserId);
+    clearTankSessionCookies();
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!active) return;
-      if (user) {
-        const currentTags = Array.isArray(user.user_metadata?.tags)
-          ? user.user_metadata.tags as string[]
-          : [];
-        const canonicalName = initialProfile?.displayName?.trim();
-        if (
-          !currentTags.includes("tank") ||
-          (canonicalName && user.user_metadata?.display_name !== canonicalName)
-        ) {
-          void recordTankAuthSignIn();
+    await supabase.auth.signOut();
+    setSignedIn(false);
+    setPlayerProfile(null);
+    setUserClan(null);
+    setMobileProfileMenuOpen(false);
+
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel("tank_session_channel");
+      bc.postMessage({ type: "LOGOUT", userId: currentUserId });
+      bc.close();
+    }
+    try {
+      localStorage.setItem("tank_logout_sync", Date.now().toString());
+    } catch {}
+  }, [playerProfile?.id]);
+
+  useEffect(() => {
+    void refreshUserAuth();
+
+    const supabase = createClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (
+        event === "SIGNED_IN" ||
+        event === "USER_UPDATED" ||
+        event === "TOKEN_REFRESHED"
+      ) {
+        if (session?.user) {
+          void refreshUserAuth();
         }
-        setSignedIn(true);
-        let localData: {
-          displayName?: string;
-          avatarUrl?: string;
-          nameColor?: string;
-          bio?: string;
-        } = {};
-        try {
-          const cached = safeStorage.getItem("tank_local_profile");
-          if (cached) localData = JSON.parse(cached);
-        } catch {}
-
-        const userRole =
-          (user.app_metadata?.role as string) ||
-          (user.user_metadata?.role as string) ||
-          (user.email?.toLowerCase() === "admin@unenter.live"
-            ? "admin"
-            : "member");
-
-        setPlayerProfile((prev) => ({
-          // Carry the auth id through: this updater rebuilds the profile from
-          // scratch, and dropping the id here would re-break the "you" badge
-          // and the optimistic-send identity.
-          id: prev?.id ?? user.id,
-          xp: prev?.xp ?? 0,
-          level: prev?.level ?? 1,
-          tokens: prev?.tokens ?? 0,
-          displayName: resolveTankDisplayName({
-            localDisplayName: localData.displayName,
-            tankDisplayName: prev?.displayName,
-            authDisplayName: user.user_metadata?.display_name,
-            providerFullName: user.user_metadata?.full_name,
-            providerUserName: user.user_metadata?.user_name,
-            email: user.email,
-          }),
-          avatarUrl:
-            localData.avatarUrl ||
-            prev?.avatarUrl ||
-            (user.user_metadata?.avatar_url as string) ||
-            "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png",
-          nameColor:
-            localData.nameColor ||
-            (user.user_metadata?.name_color as string) ||
-            "#ff3b2f",
-          bio: localData.bio || (user.user_metadata?.bio as string) || "",
-          role: userRole,
-        }));
+      } else if (event === "SIGNED_OUT") {
+        drainClientChatStorage(playerProfile?.id);
+        clearTankSessionCookies();
+        setSignedIn(false);
+        setPlayerProfile(null);
+        setUserClan(null);
       }
     });
-    return () => {
-      active = false;
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel("tank_session_channel");
+      bc.onmessage = (event) => {
+        if (event.data?.type === "LOGOUT") {
+          drainClientChatStorage(event.data.userId || playerProfile?.id);
+          clearTankSessionCookies();
+          setSignedIn(false);
+          setPlayerProfile(null);
+          setUserClan(null);
+        }
+      };
+    }
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "tank_logout_sync") {
+        drainClientChatStorage(playerProfile?.id);
+        clearTankSessionCookies();
+        setSignedIn(false);
+        setPlayerProfile(null);
+        setUserClan(null);
+      }
     };
-  }, []);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      subscription.unsubscribe();
+      if (bc) bc.close();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [refreshUserAuth, playerProfile?.id]);
 
   // Global Keyboard Shortcuts: 'D' for Dock, 'I' for Inventory
   useEffect(() => {
@@ -1427,8 +1565,8 @@ export function TankExperience({
   ]);
 
   const directorCameraId =
-    directorNegotiation.selectedCameraId ||
     serverDirector.activeCameraId ||
+    directorNegotiation.selectedCameraId ||
     directorAssignedCameraId ||
     onlineCameraIds[0];
 
@@ -1436,12 +1574,45 @@ export function TankExperience({
     mode === "director"
       ? directorCameraId
       : (selectedCameraId ?? resolvedRoomFeaturedCameraId);
-  const heroOnline = heroCameraId ? isOnline(heroCameraId) : false;
   const heroLive = heroCameraId ? liveById.get(heroCameraId) : undefined;
+  const heroCameraOnline = heroCameraId ? isOnline(heroCameraId) : false;
+  const directorProgram = serverDirector.program;
+  const usingDirectorProgram =
+    mode === "director" &&
+    directorProgram?.online === true &&
+    Boolean(directorProgram.playbackUrl) &&
+    directorProgram.playbackProtocol !== "none";
+  const heroOnline = usingDirectorProgram
+    ? directorProgram?.online === true
+    : heroCameraOnline;
+  const heroPlaybackUrl = usingDirectorProgram
+    ? directorProgram?.playbackUrl ?? null
+    : heroLive?.playbackUrl ?? null;
+  const heroPlaybackProtocol = usingDirectorProgram
+    ? directorProgram?.playbackProtocol ?? "none"
+    : heroLive?.playbackProtocol ?? "none";
   const heroHasRealFeed =
-    Boolean(heroLive?.playbackUrl) &&
-    heroLive?.playbackProtocol !== "none" &&
-    heroOnline;
+    Boolean(heroPlaybackUrl) && heroPlaybackProtocol !== "none";
+  const heroPlayerStyle = useMemo<CSSProperties | undefined>(() => {
+    if (
+      mode !== "director" ||
+      usingDirectorProgram ||
+      serverDirector.mode !== "MANUAL_PILOT" ||
+      !serverDirector.ptzState
+    ) {
+      return undefined;
+    }
+    const zoom = Math.min(3, Math.max(1, serverDirector.ptzState.zoomFactor || 1));
+    const maxPanX = Math.max(0, 3840 - 3840 / zoom);
+    const maxPanY = Math.max(0, 2160 - 2160 / zoom);
+    const panX = Math.min(maxPanX, Math.max(0, serverDirector.ptzState.panOffsetX || 0));
+    const panY = Math.min(maxPanY, Math.max(0, serverDirector.ptzState.panOffsetY || 0));
+    return {
+      transformOrigin: "top left",
+      transform: `scale(${zoom}) translate(${-panX / 38.4}%, ${-panY / 21.6}%)`,
+      transition: "transform 120ms linear",
+    };
+  }, [mode, usingDirectorProgram, serverDirector.mode, serverDirector.ptzState]);
   const anyHouseCameraOnline = onlineCameraIds.length > 0;
 
   // The director has nothing to negotiate between when no house camera is
@@ -1466,20 +1637,100 @@ export function TankExperience({
 
   // Instant Keyframe-on-Demand: When active camera changes, signal the Ingest Tool for an instant IDR frame
   useEffect(() => {
-    if (!heroCameraId || !heroOnline) return;
+    if (!heroCameraId || !heroCameraOnline) return;
     void fetch(
       `/api/tank/cameras/${encodeURIComponent(heroCameraId)}/keyframe`,
       {
         method: "POST",
       },
     ).catch(() => {});
-  }, [heroCameraId, heroOnline]);
+  }, [heroCameraId, heroCameraOnline]);
 
   // Real hero-player controls — fullscreen via the actual Fullscreen API,
   // play/pause and mute via imperative calls into the underlying <video>
   // (CameraPlayer exposes both through a ref), not decorative buttons.
   const heroSectionRef = useRef<HTMLElement | null>(null);
   const heroPlayerRef = useRef<CameraPlayerHandle | null>(null);
+  const [tapParticles, setTapParticles] = useState<Array<{ id: string; x: number; y: number; text: string }>>([]);
+  const [activeScavengerQuest, setActiveScavengerQuest] = useState<ScavengerQuest | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const pollQuest = async () => {
+      try {
+        const q = await getActiveScavengerQuestAction();
+        if (mounted) setActiveScavengerQuest(q);
+      } catch {}
+    };
+    pollQuest();
+    const interval = setInterval(pollQuest, 4000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleHeroTap = async (e: React.MouseEvent<HTMLElement>) => {
+    if (!heroSectionRef.current) return;
+    const rect = heroSectionRef.current.getBoundingClientRect();
+    const { isInsideVideo, globalNx, globalNy } = clientToNormalizedVideoCoords(
+      e.clientX,
+      e.clientY,
+      rect,
+      16 / 9,
+      "cover",
+      mode === "director" ? serverDirector.ptzState : null,
+    );
+    if (!isInsideVideo) return;
+
+    const camSlug = heroLive?.slug || heroLive?.id || heroCameraId;
+    if (!camSlug) return;
+
+    const particleId = `${Date.now()}_${Math.random()}`;
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+
+    try {
+      // 1. Check Active Scavenger Quest Claim first
+      if (activeScavengerQuest && activeScavengerQuest.state === "QUEST_ACTIVE") {
+        const scavResult = await claimScavengerBountyAction({
+          questId: activeScavengerQuest.id,
+          tapNx: globalNx,
+          tapNy: globalNy,
+        });
+
+        if (scavResult.success) {
+          const text = `🎉 +${scavResult.rewardTokens} Tokens & +${scavResult.rewardXp} XP 🏆`;
+          setTapParticles((prev) => [...prev.slice(-8), { id: particleId, x: localX, y: localY, text }]);
+          applyReward(scavResult.rewardXp ?? 0, scavResult.rewardTokens ?? 0);
+          return;
+        }
+      }
+
+      const hitResult = await claimInteractiveTargetTap({
+        camSlug,
+        roomId:
+          mode === "director"
+            ? serverDirector.activeRoomKey || "director"
+            : activeRoom.id,
+        nx: globalNx,
+        ny: globalNy,
+      });
+
+      if (!hitResult.hit || !hitResult.target) return;
+      const xpAwarded = hitResult.xpAwarded ?? 0;
+      const tokensAwarded = hitResult.tokensAwarded ?? 0;
+      const text = `+${xpAwarded} XP ${hitResult.target.kind === "trash" ? "🧹" : "🎯"}`;
+      setTapParticles((prev) => [...prev.slice(-8), { id: particleId, x: localX, y: localY, text }]);
+      applyReward(xpAwarded, tokensAwarded);
+    } catch {
+      return;
+    }
+
+    setTimeout(() => {
+      setTapParticles((prev) => prev.filter((p) => p.id !== particleId));
+    }, 1200);
+  };
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [heroMuted, setHeroMuted] = useState(true);
   const [heroPaused, setHeroPaused] = useState(false);
@@ -1662,7 +1913,7 @@ export function TankExperience({
         ? "click"
         : "room";
 
-  // Persist room + chat selection so it survives page refreshes
+  // The URL persists the room; tab-local storage preserves chat context.
   useEffect(() => {
     if (!roomStateRestored) return;
     persistRoomState(
@@ -2048,12 +2299,7 @@ export function TankExperience({
                 <div className="my-1 border-t border-white/10" />
                 <button
                   type="button"
-                  onClick={async () => {
-                    drainClientChatStorage();
-                    window.location.assign(
-                      buildGlobalLogoutUrl(`${window.location.origin}/`),
-                    );
-                  }}
+                  onClick={handleSignOutInline}
                   className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-xs font-black text-white hover:bg-[#ff4d00]/20 hover:text-[#ff4d00]"
                 >
                   <LogOut className="h-4 w-4 text-[#ff4d00]" /> Log Out
@@ -2135,12 +2381,7 @@ export function TankExperience({
               }
               onOpenAppeals={() => setAppealsModalOpen(true)}
               unreadNotificationsCount={unreadNotificationCount}
-              onSignOut={async () => {
-                drainClientChatStorage();
-                const supabase = createClient();
-                await supabase.auth.signOut();
-                window.location.reload();
-              }}
+              onSignOut={handleSignOutInline}
             />
 
             <NavigationPanel onSelectOverlay={setOverlayView} />
@@ -2286,6 +2527,7 @@ export function TankExperience({
             >
               <section
                 ref={heroSectionRef}
+                onClick={handleHeroTap}
                 className={`relative aspect-video max-h-[52vh] w-full overflow-hidden rounded lg:max-h-[65vh] landscape:max-h-[calc(100dvh-2.5rem)] ${
                   heroOnline
                     ? `bg-gradient-to-br ${heroLive?.accent ?? "from-cyan-500/35 via-blue-950/60 to-slate-950"}`
@@ -2300,33 +2542,22 @@ export function TankExperience({
                 {heroOnline && (
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_30%,rgba(255,255,255,.2),transparent_16%),radial-gradient(circle_at_68%_55%,rgba(45,212,191,.22),transparent_18%),linear-gradient(110deg,transparent_30%,rgba(255,255,255,.05)_50%,transparent_70%)]" />
                 )}
-                {heroHasRealFeed && heroLive && (
+                {heroHasRealFeed && (
                   <CameraPlayer
-                    // A room switch is a source boundary, not an in-place
-                    // recovery. Reusing the same dual-buffer instance kept
-                    // the previous 4K room visible while the OBS feed warmed
-                    // behind it, so Admin looked selected without appearing
-                    // in the hero for several seconds. A camera-specific key
-                    // closes the old transports and gives the selected room a
-                    // clean, immediately truthful player lifecycle.
-                    key={heroCameraId ?? heroLive.playbackUrl}
                     ref={heroPlayerRef}
-                    playbackUrl={heroLive.playbackUrl}
-                    playbackProtocol={heroLive.playbackProtocol}
+                    playbackUrl={heroPlaybackUrl}
+                    playbackProtocol={heroPlaybackProtocol}
                     online={heroOnline}
-                    prerollLoopUrl={
-                      heroLive.recentClipUrl ?? null
-                    }
+                    prerollLoopUrl={usingDirectorProgram ? null : heroLive?.recentClipUrl ?? null}
                     muted={heroMuted}
                     volume={heroVolume}
                     className="absolute inset-0 h-full w-full object-cover"
+                    videoStyle={heroPlayerStyle}
+                    priority="hero"
                     onPlayStateChange={setHeroPaused}
                     onLiveEdgeChange={setHeroLiveEdge}
                     onStabilityChange={setHeroStability}
                     onWatching={reportWatchMission}
-                    onClick={() => {
-                      if (heroMuted) setHeroMuted(false);
-                    }}
                     onDoubleClick={handleToggleFullscreen}
                   />
                 )}
@@ -2336,6 +2567,20 @@ export function TankExperience({
                 {mode === "director" && (
                   <DirectorRoomLabel roomTitle={heroRoom?.title} />
                 )}
+
+                {/* Live Scavenger Quest HUD Banner */}
+                <ScavengerQuestBanner quest={activeScavengerQuest} />
+
+                {/* Floating Interactive Screen Tap XP Particles */}
+                {tapParticles.map((p) => (
+                  <div
+                    key={p.id}
+                    className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2 font-black font-mono text-sm text-amber-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] animate-bounce"
+                    style={{ left: p.x, top: p.y }}
+                  >
+                    {p.text}
+                  </div>
+                ))}
 
                 {/* CRT Static & Scanline Glitch Transition Sweep */}
                 <CrtTransition triggerKey={heroCameraId} />
@@ -2483,7 +2728,9 @@ export function TankExperience({
                           Engine / Protocol:
                         </span>
                         <span className="uppercase text-slate-300">
-                          {heroLive?.playbackProtocol || "HLS / WHEP"}
+                          {heroPlaybackProtocol === "none"
+                            ? "UNAVAILABLE"
+                            : heroPlaybackProtocol}
                         </span>
                       </div>
                       {/* Real, server-measured per-camera telemetry (SRT receiver
@@ -3081,14 +3328,17 @@ export function TankExperience({
               </ConsoleButton>
             </div>
 
-            {/* Row 6: Get Merch · See Contestants */}
+            {/* Row 6: Get Merch · See Contestants · House Roster */}
             <div className="flex w-full justify-center gap-2">
               <ConsoleButton
                 variant="gray"
-                href={TANK_MERCH_URL}
+                onClick={() => {
+                  setMobileDockOpen(false);
+                  setOverlayView("roster");
+                }}
                 className="flex-1 !py-2"
               >
-                🛒 Get Merch
+                🐾 House & Pets
               </ConsoleButton>
               <ConsoleButton
                 variant="gray"
@@ -3352,7 +3602,15 @@ export function TankExperience({
         initialUserId={appealsTargetUserId}
       />
 
-      {accountOpen && <AccountOverlay onClose={() => setAccountOpen(false)} />}
+      {accountOpen && (
+        <AccountOverlay
+          onClose={() => setAccountOpen(false)}
+          onAuthSuccess={async () => {
+            await refreshUserAuth();
+            setAccountOpen(false);
+          }}
+        />
+      )}
       {profileOpen && (
         <ProfileOverlay
           initialProfile={livePlayerProfile ?? playerProfile}
@@ -3388,6 +3646,15 @@ export function TankExperience({
           currentSettings={settings}
           onClose={() => setSettingsOpen(false)}
           onSettingsSaved={handleSaveSettings}
+        />
+      )}
+
+      {(overlayView === "roster" || overlayView === "pets") && (
+        <HouseRosterOverlay
+          onClose={() => setOverlayView(null)}
+          onAwardXp={(amount) => {
+            setCurrentXp((prev) => prev + amount);
+          }}
         />
       )}
 

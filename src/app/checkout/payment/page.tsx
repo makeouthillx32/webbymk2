@@ -5,14 +5,12 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
-import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ChevronLeft, Lock } from "lucide-react";
 import { safeStorage } from "@/lib/safeStorage";
-
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+import { useStripeLane } from "@/lib/stripe/useStripeLane";
 
 function PaymentForm({ clientSecret, orderId }: { clientSecret: string; orderId: string }) {
   const stripe = useStripe();
@@ -73,6 +71,7 @@ function PaymentForm({ clientSecret, orderId }: { clientSecret: string; orderId:
 }
 
 export default function CheckoutPaymentPage() {
+  const stripeLane = useStripeLane("shop");
   const router = useRouter();
   const { cart, itemCount, subtotal } = useCart();
   
@@ -196,10 +195,13 @@ export default function CheckoutPaymentPage() {
             <p className="text-muted-foreground">Complete your order securely</p>
           </div>
 
-          {clientSecret && (
-            <Elements stripe={stripePromise} options={{ clientSecret }}>
+          {clientSecret && stripeLane.stripe && (
+            <Elements stripe={stripeLane.stripe} options={{ clientSecret }}>
               <PaymentForm clientSecret={clientSecret} orderId={orderId} />
             </Elements>
+          )}
+          {clientSecret && stripeLane.error && (
+            <p className="text-sm text-destructive">{stripeLane.error}</p>
           )}
         </div>
       </div>

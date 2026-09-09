@@ -100,5 +100,6 @@ export default async function CollectionPage({ params }: { params: Promise<{ slu
   );
 }
 
-// Revalidate every 5 minutes (collections change more often than products)
-export const revalidate = 300;
+// revalidate=0: render fresh on every request — allows createServerClient() (cookies)
+// without DYNAMIC_SERVER_USAGE and without crashing build via force-dynamic + generateStaticParams.
+export const revalidate = 0;

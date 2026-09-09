@@ -52,14 +52,23 @@ let zoneUpstreams = {};
 let coreDomain    = process.env.CORE_DOMAIN ?? "unenter.live";
 let coreUpstream  = DEFAULT_UPSTREAM;
 
+/**
+ * Zones deliberately taken offline via `zone off <key> "<reason>"`, keyed
+ * the same way as zoneUpstreams (full hostname) so lookup at request time
+ * is a single consistent match. { key, reason } — key is carried through so
+ * the redirect can name the zone without re-deriving it from the hostname.
+ */
+let offlineHosts = {};
+
 function loadRoutes() {
   try {
     const raw    = fs.readFileSync(ROUTES_FILE, "utf-8");
     const config = JSON.parse(raw);
 
-    const newCoreDomain   = config.coreDomain   ?? coreDomain;
+    const newCoreDomain   = config.coreDomain    ?? coreDomain;
     const newCoreUpstream = config.coreUpstream  ?? coreUpstream;
     const zones           = config.zones         ?? {};
+    const offlineZones    = config.offlineZones  ?? {};
 
     const map = {};
     map[newCoreDomain]           = newCoreUpstream;
@@ -71,8 +80,14 @@ function loadRoutes() {
       map[`${key}.${newCoreDomain}`] = upstream;
     }
 
+    const offlineMap = {};
+    for (const [key, info] of Object.entries(offlineZones)) {
+      offlineMap[`${key}.${newCoreDomain}`] = { key, reason: info?.reason ?? "" };
+    }
+
     // Atomic swap — resolveTarget() always sees a consistent snapshot.
     zoneUpstreams = map;
+    offlineHosts  = offlineMap;
     coreDomain    = newCoreDomain;
     coreUpstream  = newCoreUpstream;
 
@@ -232,6 +247,25 @@ proxy.on("proxyRes", (proxyRes, req, res) => {
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
+/**
+ * Returns the redirect URL for a deliberately offline zone, or null.
+ *
+ * Deliberately separate from resolveTarget()'s coreUpstream fallback: a
+ * missing route from a crashed/rebuilding container should still silently
+ * fall through as it always has (that path is noisy/recoverable, not a
+ * safety concern). Only an explicit `zone off` mark redirects with a reason
+ * — see markZoneOffline() in src/ink/proxy-config.ts.
+ */
+function resolveOfflineRedirect(req) {
+  const rawHost = (req.headers["x-forwarded-host"] ?? req.headers["host"] ?? "")
+                    .split(",")[0].trim();
+  const host    = rawHost.split(":")[0].toLowerCase();
+  const info    = offlineHosts[host];
+  if (!info) return null;
+  const params = new URLSearchParams({ zone_offline: info.key, reason: info.reason });
+  return `https://${coreDomain}/?${params.toString()}`;
+}
+
 function resolveTarget(req) {
   // NPM (Nginx Proxy Manager) sits in front of this proxy and rewrites the
   // Host header to the upstream address (e.g. a LAN IP like "192.168.x.x").
@@ -253,7 +287,12 @@ function resolveTarget(req) {
   // 500. Playlists loaded and video never did, on every browser — which
   // is what made HLS look broken/unfixable and is why iOS Safari (which
   // can only use HLS here) showed a permanently black player.
-  if (host === `media.tank.${coreDomain}` || host === "media.tank.unenter.live") {
+  if (
+    host === `media.tank.${coreDomain}` ||
+    host === "media.tank.unenter.live" ||
+    host === `media.${coreDomain}` ||
+    host === "media.unenter.live"
+  ) {
     // Override User-Agent sent upstream to MediaMTX. MediaMTX contains an internal check
     // that rejects Apple/iOS User-Agents with a 400 Bad Request if cookie sessions are used.
     // Normalizing the User-Agent upstream forces MediaMTX to use standard query-param sessions (?session=...)
@@ -297,10 +336,28 @@ function handlePublicStatusRequest(req, res) {
   res.end(JSON.stringify(snapshot));
 }
 
-const server = http.createServer((req, res) => {
+// Node's default maxHeaderSize is 16KB. .unenter.live cookies are shared
+// across every *.unenter.live subdomain (many test/db instances share the
+// parent domain), so a browser that has ever visited several of them can
+// easily accumulate a Cookie header past 16KB. When that happens Node
+// resets the connection with no HTTP response at all — the client just
+// sees "server stopped responding", not a clean error. Code red 2026-08-27:
+// this is what was killing tank.unenter.live on mobile (WebKit persists
+// cookies more aggressively than desktop dev habits do); clearing cookies
+// "fixed" it only by shrinking the header back under this ceiling. Raised
+// well past any header buffer NPM/Kong already apply upstream.
+const server = http.createServer({ maxHeaderSize: 524288 }, (req, res) => {
   const pathname0 = (req.url ?? "/").split("?")[0];
   if (req.method === "GET" && pathname0 === "/__status-api/public") {
     handlePublicStatusRequest(req, res);
+    return;
+  }
+
+  const offlineRedirect = resolveOfflineRedirect(req);
+  if (offlineRedirect) {
+    console.log(`[proxy] zone offline -> redirecting ${req.url} to ${offlineRedirect}`);
+    res.writeHead(302, { Location: offlineRedirect });
+    res.end();
     return;
   }
 
@@ -325,6 +382,12 @@ const server = http.createServer((req, res) => {
 
 // WebSocket (Next.js HMR + Supabase Realtime)
 server.on("upgrade", (req, socket, head) => {
+  // No meaningful "redirect" for a WS upgrade — just refuse it cleanly for
+  // a deliberately offline zone instead of proxying to whatever's there.
+  if (resolveOfflineRedirect(req)) {
+    socket.destroy();
+    return;
+  }
   proxy.ws(req, socket, head, { target: resolveTarget(req) }, (err) => {
     if (err) {
       console.error(`[proxy] ws error ${req.url} →`, err.message);

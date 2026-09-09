@@ -1,20 +1,20 @@
 // app/api/orders/[id]/label/route.ts
 // Generates a USPS shipping label for an order.
 //
-// MOCK MODE (USPS_ENV=mock or missing credentials):
-//   - Skips USPS API entirely
-//   - Generates a realistic 4×6 PDF locally using pdf-lib
-//   - Uses real order data (to/from addresses, mail class, weight)
-//   - Stamps "SAMPLE — NOT FOR MAILING" on it
-//   - Returns a fake tracking number so the UI flow works end-to-end
-//   - Does NOT save to Supabase storage (no side effects)
-//
-// LIVE MODE (USPS_ENV=production or sandbox, credentials present):
-//   - Calls USPS Labels API (real or test environment)
-//   - Charges postage in production via EPS payment token
+// RESEARCH FULFILLMENT GATE:
+//   Before label purchase / generation:
+//   1. Payment must be confirmed (payment_status === 'paid').
+//   2. Shipping address must be complete.
+//   3. Every research order item must be allocated to a physical production batch.
+//   4. Batch must be active/released and unexpired.
+//   5. Batch must have an approved, published COA on file.
+//   6. Label creation records label_created_at, staff audit, and packaging preset,
+//      keeping "label created" strictly distinct from "shipped / handed to carrier".
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/admin';
+import { requireAdminClient } from '@/lib/require-admin';
 import { getOAuthToken, getPaymentToken } from '@/lib/usps/tokens';
 import { resolveMailClass, resolveRateIndicator } from '@/lib/usps/mailClass';
 import { generateMockLabel, generateFakeTrackingNumber } from '@/lib/usps/mockLabel';
@@ -50,20 +50,13 @@ export async function POST(
 ) {
   try {
     const supabase = await createServerClient();
-    const { id } = await params;
+    const gate = await requireAdminClient(supabase);
+    if (!gate.ok) {
+      return NextResponse.json({ error: gate.message }, { status: gate.status });
+    }
+    const admin = createAdminClient();
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-    if (profile?.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const { id } = await params;
 
     const body = await request.json() as PackageDimensions;
     const { weightLb, lengthIn, widthIn, heightIn, presetName } = body;
@@ -75,16 +68,19 @@ export async function POST(
       );
     }
 
-    const { data: order, error: orderError } = await supabase
+    const { data: order, error: orderError } = await admin
       .from('orders')
       .select(`
         id,
         order_number,
+        payment_status,
+        status,
         shipping_address,
         shipping_method_name,
         customer_first_name,
         customer_last_name,
-        email
+        email,
+        fulfillment_audit
       `)
       .eq('id', id)
       .single();
@@ -93,6 +89,18 @@ export async function POST(
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
+    // ── RESEARCH GATE 1: Payment Verification ──────────────────────
+    if (order.payment_status !== 'paid') {
+      return NextResponse.json(
+        {
+          error: `Payment not confirmed (Current status: "${order.payment_status}"). Order must be paid before purchasing a USPS postage label.`,
+          code: 'PAYMENT_REQUIRED',
+        },
+        { status: 422 }
+      );
+    }
+
+    // ── RESEARCH GATE 2: Address Validation ────────────────────────
     const addr = order.shipping_address as {
       firstName?: string; lastName?: string;
       address1?: string; address2?: string;
@@ -102,17 +110,93 @@ export async function POST(
 
     if (!addr?.address1 || !addr?.city || !addr?.state || !addr?.zip) {
       return NextResponse.json(
-        { error: 'Order is missing a complete shipping address' },
+        { error: 'Order is missing a complete shipping address (Street, City, State, ZIP required)', code: 'INVALID_ADDRESS' },
         { status: 400 }
       );
     }
 
+    // ── RESEARCH GATE 3: Batch Allocation & COA Release Checks ─────
+    const { data: orderItems, error: itemsErr } = await admin
+      .from('order_items')
+      .select(`
+        id,
+        title,
+        product_title,
+        quantity,
+        research_product_id,
+        allocated_batch_id,
+        research_batches (
+          id,
+          batch_number,
+          status,
+          expiration_date,
+          remaining_quantity
+        )
+      `)
+      .eq('order_id', id);
+
+    if (itemsErr) {
+      return NextResponse.json({ error: `Failed to check order items: ${itemsErr.message}` }, { status: 500 });
+    }
+
+    const researchItems = (orderItems ?? []).filter((i) => !!i.research_product_id);
+    for (const item of researchItems) {
+      const b = item.research_batches as any;
+      if (!item.allocated_batch_id || !b) {
+        return NextResponse.json(
+          {
+            error: `Physical batch required: Research compound "${item.product_title || item.title}" has not been allocated to a production batch.`,
+            code: 'BATCH_UNALLOCATED',
+          },
+          { status: 422 }
+        );
+      }
+
+      if (b.status !== 'active') {
+        return NextResponse.json(
+          {
+            error: `Batch ${b.batch_number} is in status "${b.status}". Only active, released batches can be fulfilled.`,
+            code: 'BATCH_NOT_RELEASED',
+          },
+          { status: 422 }
+        );
+      }
+
+      if (b.expiration_date && new Date(b.expiration_date) < new Date()) {
+        return NextResponse.json(
+          {
+            error: `Batch ${b.batch_number} expired on ${b.expiration_date}. Cannot ship expired laboratory compound.`,
+            code: 'BATCH_EXPIRED',
+          },
+          { status: 422 }
+        );
+      }
+
+      // Verify Published COA exists for this batch
+      const { count: coaCount } = await admin
+        .from('research_lab_reports')
+        .select('id', { count: 'exact', head: true })
+        .or(`batch_id.eq.${b.id},lot_number.eq.${b.batch_number}`)
+        .eq('published_status', 'published');
+
+      if (!coaCount || coaCount === 0) {
+        return NextResponse.json(
+          {
+            error: `Quality release blocked: Batch ${b.batch_number} does not have an approved, published COA on file.`,
+            code: 'COA_NOT_PUBLISHED',
+          },
+          { status: 422 }
+        );
+      }
+    }
+
     const mailClass = resolveMailClass(order.shipping_method_name);
     const mailingDate = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString();
 
     // ── MOCK MODE ──────────────────────────────────────────────────
     if (isMockMode()) {
-      console.log('[USPS Label] Mock mode — generating local PDF, no API call');
+      console.log('[USPS Label] Mock mode — generating local PDF, no postage charge');
 
       const toName = [
         addr.firstName ?? order.customer_first_name ?? '',
@@ -127,12 +211,12 @@ export async function POST(
         toCity:       addr.city,
         toState:      addr.state,
         toZip:        addr.zip.replace(/\D/g, '').slice(0, 5),
-        fromName:     process.env.USPS_FROM_FIRST_NAME ?? 'Desert',
-        fromCompany:  process.env.USPS_FROM_COMPANY ?? 'Unenter Solutions',
-        fromAddress1: process.env.USPS_FROM_STREET ?? '123 Main St',
-        fromCity:     process.env.USPS_FROM_CITY   ?? 'Your City',
+        fromName:     process.env.USPS_FROM_FIRST_NAME ?? 'Dr. Vance',
+        fromCompany:  process.env.USPS_FROM_COMPANY ?? 'Unenter Labs',
+        fromAddress1: process.env.USPS_FROM_STREET ?? '123 Analytical Way',
+        fromCity:     process.env.USPS_FROM_CITY   ?? 'Austin',
         fromState:    process.env.USPS_FROM_STATE  ?? 'TX',
-        fromZip:      process.env.USPS_FROM_ZIP    ?? '00000',
+        fromZip:      process.env.USPS_FROM_ZIP    ?? '78701',
         mailClass,
         weightLb,
         lengthIn,
@@ -143,6 +227,28 @@ export async function POST(
 
       const fakeTracking = generateFakeTrackingNumber();
       const fakeTrackingUrl = `https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum=${fakeTracking}`;
+
+      // Record label creation without prematurely marking order as fulfilled!
+      const auditEntry = {
+        timestamp: nowIso,
+        action: 'label_purchased_mock',
+        tracking_number: fakeTracking,
+        postage_cents: 0,
+        package_preset: presetName ?? 'Custom',
+        weight_oz: weightLb * 16,
+      };
+
+      await admin
+        .from('orders')
+        .update({
+          tracking_number: fakeTracking,
+          tracking_url: fakeTrackingUrl,
+          label_created_at: nowIso,
+          package_preset: presetName ?? null,
+          package_weight_oz: weightLb * 16,
+          fulfillment_audit: [...((order as any).fulfillment_audit || []), auditEntry],
+        })
+        .eq('id', id);
 
       return new NextResponse(pdfBytes, {
         status: 200,
@@ -184,7 +290,7 @@ export async function POST(
       fromAddress: {
         firstName:     process.env.USPS_FROM_FIRST_NAME ?? '',
         lastName:      process.env.USPS_FROM_LAST_NAME  ?? '',
-        firm:          process.env.USPS_FROM_COMPANY ?? 'Unenter Solutions',
+        firm:          process.env.USPS_FROM_COMPANY ?? 'Unenter Labs',
         streetAddress: process.env.USPS_FROM_STREET ?? '',
         city:          process.env.USPS_FROM_CITY   ?? '',
         state:         process.env.USPS_FROM_STATE  ?? '',
@@ -250,19 +356,33 @@ export async function POST(
       metadata?.links?.find((l: any) => l.rel?.includes('Tracking URL'))?.href
       ?? `https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum=${trackingNumber}`;
 
+    // Upload PDF to Supabase storage
+    const storagePath = `labels/${order.order_number}-${trackingNumber}.pdf`;
+    await admin.storage
+      .from('shipping-labels')
+      .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+
+    const auditEntry = {
+      timestamp: nowIso,
+      action: 'label_purchased_live',
+      tracking_number: trackingNumber,
+      postage_cents: Math.round(postage * 100),
+      package_preset: presetName ?? 'Custom',
+      weight_oz: weightLb * 16,
+    };
+
     if (trackingNumber) {
-      await supabase
+      await admin
         .from('orders')
         .update({
           tracking_number: trackingNumber,
           tracking_url: trackingUrl,
-          internal_notes: [
-            order.order_number,
-            `Label generated: ${new Date().toISOString()}`,
-            `Package: ${presetName ?? `${lengthIn}x${widthIn}x${heightIn}in ${weightLb}lb`}`,
-            `Mail class: ${mailClass}`,
-            `Postage: $${postage.toFixed(2)}`,
-          ].join(' | '),
+          label_created_at: nowIso,
+          label_pdf_path: storagePath,
+          label_postage_cents: Math.round(postage * 100),
+          package_preset: presetName ?? null,
+          package_weight_oz: weightLb * 16,
+          fulfillment_audit: [...((order as any).fulfillment_audit || []), auditEntry],
         })
         .eq('id', id);
     }
@@ -296,16 +416,13 @@ export async function GET(
 ) {
   try {
     const supabase = await createServerClient();
+    const gate = await requireAdminClient(supabase);
+    if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
+    const admin = createAdminClient();
+
     const { id } = await params;
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { data: profile } = await supabase
-      .from('profiles').select('role').eq('id', user.id).single();
-    if (profile?.role !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-    const { data: order } = await supabase
+    const { data: order } = await admin
       .from('orders')
       .select('order_number, label_pdf_path, tracking_number, tracking_url, label_postage_cents')
       .eq('id', id)
@@ -315,7 +432,7 @@ export async function GET(
       return NextResponse.json({ error: 'No stored label for this order' }, { status: 404 });
     }
 
-    const { data: fileData, error: storageError } = await supabase.storage
+    const { data: fileData, error: storageError } = await admin.storage
       .from('shipping-labels')
       .download(order.label_pdf_path);
 

@@ -16,13 +16,16 @@ import { ChromePanel } from "./ChromePanel";
 import { ConsoleButton } from "./ConsoleButton";
 import { ACTIVE_THEME } from "../../theme";
 import type { TankInventoryEntry } from "../../server/gamification";
-import { useTankItem, spinTankPrizeMachine, craftTankFusion } from "../../server/actions";
+import { useTankItem, flexTankItem, craftTankFusion } from "../../server/actions";
 import { getTankItemIcon, getTankItemEmoji, TANK_ITEM_CATALOG } from "../../tankItemCatalog";
+import { InventoryApronSnatcherCard } from "../../tavern/InventoryApronSnatcherCard";
 
 export type InventoryOverlayProps = {
   inventory?: TankInventoryEntry[];
   onClose: () => void;
   onOpenShop?: () => void;
+  onOpenPrizeMachine?: () => void;
+  onOpenBazaar?: () => void;
   targetRoomKey?: string | null;
 };
 
@@ -48,21 +51,23 @@ export const DEFAULT_AUTHENTIC_ITEMS: AuthenticInventoryItem[] = Object.values(T
   description: item.description,
 }));
 
-type SubModal = "none" | "market" | "craft" | "prize" | "slots";
+type SubModal = "none" | "market" | "craft" | "slots";
 
 export function InventoryOverlay({
   inventory = [],
   onClose,
   onOpenShop,
+  onOpenPrizeMachine,
+  onOpenBazaar,
   targetRoomKey = null,
 }: InventoryOverlayProps) {
   const [totalSlots, setTotalSlots] = useState(20);
   const [activeModal, setActiveModal] = useState<SubModal>("none");
   const [selectedItem, setSelectedItem] = useState<AuthenticInventoryItem | null>(null);
+  const [flexing, setFlexing] = useState(false);
   const [craftSlot1, setCraftSlot1] = useState<AuthenticInventoryItem | null>(null);
   const [craftSlot2, setCraftSlot2] = useState<AuthenticInventoryItem | null>(null);
-  const [prizeRolling, setPrizeRolling] = useState(false);
-  const [prizeWon, setPrizeWon] = useState<string | null>(null);
+  const [showApronSnatcherCard, setShowApronSnatcherCard] = useState(false);
 
   // Map real database items or fallback to DEFAULT_AUTHENTIC_ITEMS
   const items: AuthenticInventoryItem[] = inventory.length > 0
@@ -98,23 +103,6 @@ export function InventoryOverlay({
     : DEFAULT_AUTHENTIC_ITEMS;
 
   const emptySlotsCount = Math.max(0, totalSlots - items.length);
-
-  const handleSpinPrizeMachine = async () => {
-    if (prizeRolling) return;
-    setPrizeRolling(true);
-    setPrizeWon(null);
-    try {
-      const res = await spinTankPrizeMachine();
-      setPrizeRolling(false);
-      if (res.success && res.prize) {
-        setPrizeWon(res.prize);
-      } else {
-        alert(res.error || "Failed to spin prize machine.");
-      }
-    } catch {
-      setPrizeRolling(false);
-    }
-  };
 
   return (
     <div
@@ -177,14 +165,15 @@ export function InventoryOverlay({
                 <Hammer className="h-4 w-4" />
               </button>
 
-              {/* 4. Prize Machine (Cyan/Blue) */}
+              {/* 4. Prize Machine (Cyan/Blue) — opens the real, shared modal */}
               <button
                 type="button"
                 title="Arcade Prize Machine"
-                onClick={() => setActiveModal(activeModal === "prize" ? "none" : "prize")}
-                className={`grid h-8 w-8 place-items-center rounded bg-[#06b6d4] text-black shadow hover:brightness-110 active:scale-95 border border-black/30 ${
-                  activeModal === "prize" ? "ring-2 ring-cyan-300" : ""
-                }`}
+                onClick={() => {
+                  onOpenPrizeMachine?.();
+                  onClose();
+                }}
+                className="grid h-8 w-8 place-items-center rounded border border-black/30 bg-[#06b6d4] text-black shadow hover:brightness-110 active:scale-95"
               >
                 <Sparkles className="h-4 w-4" />
               </button>
@@ -227,10 +216,24 @@ export function InventoryOverlay({
                 Trade rare items with other viewers in real-time or sell unwanted drops for Tank tokens.
               </p>
               <div className="flex gap-2">
-                <ConsoleButton variant="orange" className="flex-1 !py-1 text-xs" onClick={() => alert("Marketplace order book opening...")}>
-                  Browse Listings
+                <ConsoleButton
+                  variant="orange"
+                  className="flex-1 !py-1 text-xs"
+                  onClick={() => {
+                    onClose();
+                    if (onOpenBazaar) onOpenBazaar();
+                  }}
+                >
+                  Open Night Bazaar
                 </ConsoleButton>
-                <ConsoleButton variant="gray" className="flex-1 !py-1 text-xs" onClick={() => alert("Select an item from inventory to list.")}>
+                <ConsoleButton
+                  variant="gray"
+                  className="flex-1 !py-1 text-xs"
+                  onClick={() => {
+                    onClose();
+                    if (onOpenBazaar) onOpenBazaar();
+                  }}
+                >
                   List Item
                 </ConsoleButton>
               </div>
@@ -289,30 +292,6 @@ export function InventoryOverlay({
                 className="w-full !py-1 text-xs"
               >
                 Craft Fusion
-              </ConsoleButton>
-            </div>
-          )}
-
-          {activeModal === "prize" && (
-            <div className="my-2 rounded-lg bg-black/80 p-3 border border-cyan-400/40 text-white animate-in fade-in text-center">
-              <span className="text-xs font-black text-cyan-400 flex items-center justify-center gap-1.5 mb-1">
-                <Sparkles className="h-4 w-4" /> Prize Machine (100 Tokens / Spin)
-              </span>
-              <p className="text-[11px] text-slate-300 mb-2">
-                Spin the arcade prize machine for legendary drops and bonus tokens.
-              </p>
-              {prizeWon && (
-                <div className="my-2 p-2 rounded bg-yellow-400/20 border border-yellow-400 text-yellow-300 font-bold text-xs">
-                  🎉 You Won: {prizeWon}!
-                </div>
-              )}
-              <ConsoleButton
-                variant="orange"
-                disabled={prizeRolling}
-                onClick={handleSpinPrizeMachine}
-                className="w-full !py-1.5 text-xs"
-              >
-                {prizeRolling ? "🎰 Rolling..." : "🎰 Spin Prize Machine"}
               </ConsoleButton>
             </div>
           )}
@@ -425,38 +404,75 @@ export function InventoryOverlay({
                   <p className="text-[10px] text-slate-400">{selectedItem.description}</p>
                 </div>
               </div>
-              <ConsoleButton
-                variant="orange"
-                onClick={async () => {
-                  const slug = selectedItem.slug || selectedItem.id;
-                  const res = selectedItem.audioEffectType === "hazard_effect"
-                    ? targetRoomKey
-                      ? await fetch("/api/items/use-hazard", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ itemSlug: slug, roomKey: targetRoomKey }),
-                        }).then(async (response) => {
-                          const payload = await response.json() as { success?: boolean; error?: string };
-                          return { success: response.ok && payload.success === true, error: payload.error };
-                        })
-                      : { success: false, error: "Open a physical room before using a room hazard." }
-                    : await useTankItem(slug);
-                  if (res.success) {
-                    setSelectedItem(null);
-                    onClose();
-                  } else {
-                    alert(res.error || `Used ${selectedItem.name}!`);
-                    setSelectedItem(null);
-                  }
-                }}
-                className="!px-3 !py-1 text-xs font-bold"
-              >
-                Use Item
-              </ConsoleButton>
+              <div className="flex items-center gap-1.5">
+                <ConsoleButton
+                  variant="gray"
+                  disabled={flexing}
+                  onClick={async () => {
+                    const slug = selectedItem.slug || selectedItem.id;
+                    setFlexing(true);
+                    const res = await flexTankItem(slug);
+                    setFlexing(false);
+                    if (res.success) {
+                      setSelectedItem(null);
+                      onClose();
+                    } else {
+                      alert(res.error || `Couldn't flex ${selectedItem.name}.`);
+                    }
+                  }}
+                  className="!px-2.5 !py-1 text-xs font-bold"
+                >
+                  <Sparkles className="h-3 w-3" /> Flex
+                </ConsoleButton>
+                <ConsoleButton
+                  variant="orange"
+                  onClick={async () => {
+                    const slug = selectedItem.slug || selectedItem.id;
+                    if (slug === "apron-snatcher") {
+                      setShowApronSnatcherCard(true);
+                      return;
+                    }
+                    const res = selectedItem.audioEffectType === "hazard_effect"
+                      ? targetRoomKey
+                        ? await fetch("/api/items/use-hazard", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ itemSlug: slug, roomKey: targetRoomKey }),
+                          }).then(async (response) => {
+                            const payload = await response.json() as { success?: boolean; error?: string };
+                            return { success: response.ok && payload.success === true, error: payload.error };
+                          })
+                        : { success: false, error: "Open a physical room before using a room hazard." }
+                      : await useTankItem(slug);
+                    if (res.success) {
+                      setSelectedItem(null);
+                      onClose();
+                    } else {
+                      alert(res.error || `Used ${selectedItem.name}!`);
+                      setSelectedItem(null);
+                    }
+                  }}
+                  className="!px-3 !py-1 text-xs font-bold"
+                >
+                  Use Item
+                </ConsoleButton>
+              </div>
             </div>
           )}
         </ChromePanel>
       </div>
+
+      {showApronSnatcherCard && selectedItem && (
+        <InventoryApronSnatcherCard
+          quantity={selectedItem.quantity}
+          onClose={() => setShowApronSnatcherCard(false)}
+          onUsed={() => {
+            setShowApronSnatcherCard(false);
+            setSelectedItem(null);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 }

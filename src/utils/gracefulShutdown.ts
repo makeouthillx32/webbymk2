@@ -35,6 +35,7 @@ export type ShutdownSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP' | 'manual'
 export type GracefulShutdownOptions = {
   finalMessage?: string
   failsafeTimeoutMs?: number
+  ignoreSigint?: boolean
 }
 
 const DEFAULT_FAILSAFE_TIMEOUT_MS = 5000
@@ -197,9 +198,11 @@ export function setupGracefulShutdown(
     cleanupTerminalModes()
   })
 
-  process.on('SIGINT', () => {
-    void gracefulShutdown(130, 'SIGINT', options)
-  })
+  if (!options.ignoreSigint) {
+    process.on('SIGINT', () => {
+      void gracefulShutdown(130, 'SIGINT', options)
+    })
+  }
 
   process.on('SIGTERM', () => {
     void gracefulShutdown(143, 'SIGTERM', options)

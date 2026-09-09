@@ -4,7 +4,7 @@
 // Multi-Protocol Engine: WebRTC (WHEP) + Native iOS WebKit HLS + HLS.js (MSE)
 // Engineered for 50,000+ congruent viewers across iOS Safari, Android, Chrome, Firefox, Electron, Smart TVs, and WebViews.
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
 import { detectNetworkProfile, getHydrationSafeNetworkProfile, subscribeToNetworkProfile, type NetworkProfile } from "./networkQuality";
 import { useStreamSlot, useConnectDelay, type StreamPriority } from "./streamAdmission";
 import { VideoErrorBoundary } from "./components/VideoErrorBoundary";
@@ -95,6 +95,7 @@ type CameraPlayerProps = {
    * arrive. See getCameraLoopUrl in server/archiveSegments.ts.
    */
   prerollLoopUrl?: string | null;
+  videoStyle?: CSSProperties;
 };
 
 const LED_RED = "#ff3b2f";
@@ -239,6 +240,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       onDoubleClick,
       showLiveBadge = false,
       prerollLoopUrl = null,
+      videoStyle,
       // Default to hero: an unmarked player is whatever the caller is showing
       // front and centre, and silently downgrading it would be worse than
       // spending a slot.
@@ -1710,6 +1712,18 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       !awaitingSlot &&
       (!online || (!hasAnyConnectedStream && connectionFailed) || !hasSource);
 
+    // Every tile — hero or thumbnail — renders the preroll loop when one is
+    // available. Was briefly restricted to hero-only (2026-09-01, see the
+    // comment below) after a HAR capture showed six simultaneous thumbnail
+    // loads starving the real live feed. Reverted 2026-09-02: that capture
+    // was against the OLD uncached, ~120s-source clips; roomLoopRefresher.ts
+    // now uploads with `cacheControl: immutable` and a content-addressed
+    // (timestamped) filename per refresh, so a repeat view of the same clip
+    // is served from cache, not re-fetched, and a fresh one is a few MB, not
+    // tens. A blank grid tile reads as "the site is broken" — worse than the
+    // bandwidth cost this now actually carries.
+    const showPrerollVideo = Boolean(prerollLoopUrl);
+
     return (
       <div
         ref={playerContainerRef}
@@ -1725,17 +1739,31 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         {/* ── Preroll Loop (z-0, underneath everything) ──
             The reason this container isn't just bg-black. Recent footage of
             this exact room, looping muted, so a connecting or reconnecting
-            player has something real behind the spinner. Both live buffers
-            render above it at z-10 and hide it the moment frames arrive, so
-            it never competes with the actual stream. */}
-        {prerollLoopUrl && (
+            player has something real behind the spinner — hero AND
+            thumbnail tiles alike, so a room grid never shows a blank tile.
+            Both live buffers render above it at z-10 and hide it the moment
+            frames arrive, so it never competes with the actual stream.
+
+            Briefly hero-only (2026-09-01→02): a HAR capture (vault/Tank/
+            har-analysis-tank-vs-twitch-vs-kick-2026-09-01.md) had caught six
+            simultaneous thumbnail loads against the OLD uncached, ~120s
+            source clips starving the real live feed ("1.4 minutes to load a
+            room"). Reverted once the real fix landed at the source:
+            roomLoopRefresher.ts now uploads each refresh with
+            `cacheControl: immutable` under a content-addressed (timestamped)
+            filename, so repeat views of the same clip are served from cache
+            and a fresh one is a few MB, not tens. Blocking thumbnails
+            outright was treating the symptom; a visibly blank grid tile is a
+            worse failure mode than the bandwidth this now actually costs. */}
+        {showPrerollVideo && (
           <video
             key={prerollLoopUrl}
             src={prerollLoopUrl}
             className={`absolute inset-0 z-0 h-full w-full object-cover transition-opacity duration-500 ${
-              // Fully visible while waiting or verifying; fades smoothly once live is stable.
-              awaitingSlot || !isLiveStable ? "opacity-100" : "opacity-0 pointer-events-none"
+              // Fully visible while waiting, verifying, or offline; fades smoothly once live is stable.
+              awaitingSlot || !isLiveStable || isOffline ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}
+            style={videoStyle}
             autoPlay
             loop
             muted
@@ -1760,6 +1788,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
           }`}
+          style={videoStyle}
           autoPlay
           muted={muted}
           playsInline
@@ -1776,6 +1805,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
           }`}
+          style={videoStyle}
           autoPlay
           muted={muted}
           playsInline
@@ -1814,14 +1844,14 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
               }
             }}
           >
-            {!prerollLoopUrl && (
+            {!showPrerollVideo && (
               <div className="absolute inset-0 bg-gradient-to-b from-[#141517] to-[#08080a]" />
             )}
           </div>
         )}
 
-        {/* Authentic Retro NO SIGNAL Screen when camera is offline or disconnected */}
-        {isOffline && (
+        {/* Authentic Retro NO SIGNAL Screen when camera is offline or disconnected AND no preroll loop is available */}
+        {isOffline && !showPrerollVideo && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-[#141517] via-[#0d0e10] to-[#080809] p-4 text-center select-none">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.7)_100%)] opacity-80" />
 

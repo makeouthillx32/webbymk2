@@ -113,7 +113,7 @@ export default function TankHomePage() {
     location: "Main program mix",
     description: anyOnline
       ? "Curated cut, live from connected house cameras."
-      : "No house cameras are connected yet.",
+      : "Director is warming up · Compiling house feeds & mounting cameras onto canvas.",
     online: anyOnline,
     degraded: false,
     bitrateKbps: anyOnline ? 9850 : 0,
@@ -150,12 +150,14 @@ export default function TankHomePage() {
         <div className="container flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span
-              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-black uppercase tracking-wider text-white shadow-sm ${anyOnline ? "bg-red-600" : "bg-slate-600"}`}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-black uppercase tracking-wider text-white shadow-sm ${
+                anyOnline ? "bg-red-600" : "bg-amber-600"
+              }`}
             >
               <span
-                className={`h-2 w-2 rounded-full bg-white ${anyOnline ? "animate-pulse" : ""}`}
+                className={`h-2 w-2 rounded-full bg-white ${anyOnline ? "animate-pulse" : "animate-ping"}`}
               />
-              {anyOnline ? "Live 24/7 House" : "House offline"}
+              {anyOnline ? "Live 24/7 House" : "Director Warming Up"}
             </span>
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">
@@ -237,13 +239,19 @@ export default function TankHomePage() {
               <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-black uppercase tracking-wider text-white shadow-md ${
-                    activeIsLive ? "bg-red-600" : "bg-slate-700"
+                    activeIsLive
+                      ? "bg-red-600"
+                      : activeFeed.isDirectorProgram
+                      ? "bg-amber-600"
+                      : "bg-slate-700"
                   }`}
                 >
-                  {activeIsLive && (
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
-                  )}
-                  {activeIsLive ? "ON AIR" : "NO SIGNAL"}
+                  <span className={`h-2 w-2 rounded-full bg-white ${activeIsLive ? "animate-pulse" : "animate-ping"}`} />
+                  {activeIsLive
+                    ? "ON AIR"
+                    : activeFeed.isDirectorProgram
+                    ? "WARMING UP"
+                    : "NO SIGNAL"}
                 </span>
 
                 <span className="rounded-md bg-black/75 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur-md border border-white/10">
@@ -269,19 +277,36 @@ export default function TankHomePage() {
                         <span className="relative inline-flex rounded-full h-3 w-3 bg-cyan-500" />
                       </span>
                     </div>
+                  ) : activeFeed.isDirectorProgram ? (
+                    <div className="relative mx-auto w-12 h-12 flex items-center justify-center">
+                      <Radio className="h-10 w-10 text-amber-400 animate-pulse" />
+                      <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500" />
+                      </span>
+                    </div>
                   ) : (
                     <CameraOff className="mx-auto h-10 w-10 opacity-60 text-slate-400" />
                   )}
-                  <h2 className="mt-3 text-lg font-bold tracking-tight">{activeFeed.name}</h2>
+                  <h2 className="mt-3 text-lg font-bold tracking-tight">
+                    {activeFeed.isDirectorProgram && !activeIsLive
+                      ? "Director is warming up..."
+                      : activeFeed.name}
+                  </h2>
                   <p className="mt-1 text-xs text-white/75 leading-relaxed">
                     {activeFeed.description}
                   </p>
-                  {activeIsLive && (
+                  {activeIsLive ? (
                     <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-0.5 text-[11px] font-bold text-emerald-300 border border-emerald-500/30">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
                       Ultra Low-Latency WebRTC Feed Active
                     </div>
-                  )}
+                  ) : activeFeed.isDirectorProgram ? (
+                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-0.5 text-[11px] font-bold text-amber-300 border border-amber-500/30">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                      Director Engine Initializing Feeds
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -315,6 +340,12 @@ export default function TankHomePage() {
                     <span className="text-emerald-400">0 (0.00%)</span>
                     <span className="text-white/60">Audio Source:</span>
                     <span className="text-white truncate">{activeFeed.audioSourceName || "Native Audio"}</span>
+                    <span className="text-white/60">Director Mode:</span>
+                    <span className="text-amber-400 font-bold truncate">
+                      {activeFeed.directorState?.mode === "MANUAL_PILOT" || activeFeed.directorState?.reason?.includes("MANUAL_PILOT")
+                        ? "MANUAL PILOT (ACTIVE LEASE)"
+                        : "AUTO_TRACKING"}
+                    </span>
                   </div>
                 </div>
               )}

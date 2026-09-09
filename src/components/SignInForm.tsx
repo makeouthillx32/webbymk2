@@ -3,6 +3,7 @@ import SignInWithGoogle from "@/components/ui/SignInWithGoogle";
 import { Mail, Lock } from "lucide-react";
 
 import { FormMessage, Message } from "@/components/form-message";
+import { ShieldTurnstileWidget } from "@/components/shield";
 
 type Props = {
   message?: Message;
@@ -97,6 +98,11 @@ export default function SignInForm({ message }: Props) {
               >
                 Forgot password?
               </Link>
+            </div>
+
+            {/* Cloudflare Turnstile Alternative: Unenter Shield Checkbox */}
+            <div className="flex justify-center my-2">
+              <ShieldTurnstileWidget />
             </div>
 
             <button

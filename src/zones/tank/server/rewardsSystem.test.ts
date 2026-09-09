@@ -1,17 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import {
-  redeemSecretCodeAction,
-  spinPrizeMachineAction,
-} from "./rewardsSystem";
+import { redeemSecretCodeAction } from "./rewardsSystem";
 
-describe("Tank Rewards, Prize Machine & Promo Codes System", () => {
-  it("spins prize machine and selects a valid weighted drop item", async () => {
-    const res = await spinPrizeMachineAction("test-user-1", true);
-    expect(res.success).toBe(true);
-    expect(res.prize).toBeDefined();
-    expect(["item", "tokens", "xp"]).toContain(res.prize!.type);
-  });
-
+// The Prize Machine spin moved to spinTankPrizeMachine in actions.ts — it's
+// session-authenticated and writes to the real database, so it isn't unit
+// tested here the way the old fake, no-auth version was; that coverage was
+// validating non-functional behavior anyway (see rewardsSystem.ts header).
+describe("Tank Rewards & Promo Codes System", () => {
   it("redeems valid launch promotional code successfully", async () => {
     const res = await redeemSecretCodeAction("LAUNCH2026", "test-user-1");
     expect(res.success).toBe(true);

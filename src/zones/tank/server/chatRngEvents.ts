@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/utils/supabase/admin";
+import { applyDirectorItemOverride } from "./directorPolicyHierarchy";
 import type { ChatMessage, ChatMessageType } from "../contracts";
 import type { ItemRarity } from "../itemRarity";
+import { TANK_ITEM_CATALOG, TANK_ITEM_ICONS, getTankItemIcon } from "../tankItemCatalog";
 
 export type ItemActionDefinition = {
   slug: string;
@@ -18,6 +20,24 @@ export type ItemActionDefinition = {
 };
 
 export const ITEM_ACTION_DEFINITIONS: Record<string, ItemActionDefinition> = {
+  "pet-whistle": {
+    slug: "pet-whistle",
+    rarity: "rare",
+    name: "Pet Whistle",
+    iconUrl: "/images/tank-items/pet-whistle.png",
+    actionText: "blows a high-frequency pet whistle! Director switches to Animals & Pets Mode for 45s! 🐾",
+    rewardXp: 50,
+    rewardTokens: 30,
+  },
+  "cat-laser": {
+    slug: "cat-laser",
+    rarity: "rare",
+    name: "Cat Laser Pointer",
+    iconUrl: "/images/tank-items/lightsaber.png",
+    actionText: "shines a dancing red laser dot across the room! Mochi & Buster are tracking it! 🔴",
+    rewardXp: 45,
+    rewardTokens: 25,
+  },
   "pumpkin": {
     slug: "pumpkin",
     rarity: "uncommon",
@@ -153,6 +173,65 @@ export const ITEM_ACTION_DEFINITIONS: Record<string, ItemActionDefinition> = {
     rewardXp: 35,
     rewardTokens: 20,
   },
+
+  // ─── Test items (2026-08-26) — one per rarity tier, for verifying the RNG
+  // action pipeline end to end. Rarity here is kept identical to
+  // tankItemCatalog.ts and the tank_inventory_items DB rows on purpose —
+  // this is exactly the kind of three-way drift flagged during the item audit.
+  "test-static-rag": {
+    slug: "test-static-rag",
+    rarity: "common",
+    name: "Static Rag",
+    iconUrl: TANK_ITEM_ICONS["test-static-rag"],
+    actionText: "wipes down the lens with a suspiciously staticky rag. Everything looks 4% dustier now.",
+    rewardXp: 8,
+    rewardTokens: 3,
+  },
+  "test-squeak-hammer": {
+    slug: "test-squeak-hammer",
+    rarity: "uncommon",
+    name: "Squeaky Toy Hammer",
+    iconUrl: TANK_ITEM_ICONS["test-squeak-hammer"],
+    actionText: "bonks the nearest camera with a squeaky toy hammer. *SQUEAK*",
+    rewardXp: 18,
+    rewardTokens: 10,
+  },
+  "test-traffic-cone": {
+    slug: "test-traffic-cone",
+    rarity: "rare",
+    name: "Neon Traffic Cone",
+    iconUrl: TANK_ITEM_ICONS["test-traffic-cone"],
+    actionText: "drops a glowing neon traffic cone in the middle of the room. Hazard acknowledged.",
+    rewardXp: 28,
+    rewardTokens: 18,
+  },
+  "test-haunted-phone": {
+    slug: "test-haunted-phone",
+    rarity: "epic",
+    name: "Haunted Rotary Phone",
+    iconUrl: TANK_ITEM_ICONS["test-haunted-phone"],
+    actionText: "picks up the haunted rotary phone. It's ringing. It was never plugged in.",
+    rewardXp: 45,
+    rewardTokens: 30,
+  },
+  "test-golden-remote": {
+    slug: "test-golden-remote",
+    rarity: "legendary",
+    name: "Golden Remote Control",
+    iconUrl: TANK_ITEM_ICONS["test-golden-remote"],
+    actionText: "clicks the Golden Remote Control at the house. Somewhere, a light flickers that shouldn't.",
+    rewardXp: 70,
+    rewardTokens: 55,
+  },
+  "test-tank-heart": {
+    slug: "test-tank-heart",
+    rarity: "mythic",
+    name: "The Tank's Beating Heart",
+    iconUrl: TANK_ITEM_ICONS["test-tank-heart"],
+    actionText: "holds up the Tank's Beating Heart. The whole house pulses once in sync.",
+    rewardXp: 120,
+    rewardTokens: 100,
+  },
 };
 
 const FLAVOR_RNG_ACTIONS = [
@@ -164,6 +243,20 @@ const FLAVOR_RNG_ACTIONS = [
   { text: "taps aggressively on the camera lens, startling everyone in frame.", xp: 3, tokens: 0 },
   { text: "chugs an energy drink in 3 seconds flat. Maximum focus unlocked.", xp: 10, tokens: 5 },
   { text: "hacks into the TouchDesigner matrix and boosts the bass frequencies.", xp: 18, tokens: 15 },
+  { text: "projectile vomits all over the place! Icky pukers!!!", xp: 10, tokens: 0 },
+  { text: "suddenly squats and... well you know.", xp: 8, tokens: 0 },
+  { text: "sneezes so hard the camera fogs up for a second.", xp: 4, tokens: 0 },
+  { text: "attempts a backflip and lands directly on their tailbone.", xp: 14, tokens: 0 },
+  { text: "eats a mystery snack found under the couch cushions. Bold strategy.", xp: 9, tokens: 5 },
+  { text: "starts talking to the smoke detector like it's an old friend.", xp: 6, tokens: 0 },
+  { text: "does the worm across the living room floor, unprompted.", xp: 16, tokens: 10 },
+  { text: "licks the doorknob for absolutely no reason.", xp: 5, tokens: 0 },
+  { text: "screams into a pillow for exactly 4 seconds. Feels better now.", xp: 7, tokens: 0 },
+  { text: "puts on sunglasses indoors and refuses to explain why.", xp: 4, tokens: 0 },
+  { text: "challenges the ceiling fan to a staring contest and loses.", xp: 6, tokens: 0 },
+  { text: "microwaves a spoon. The house alarm has some questions.", xp: 20, tokens: 0 },
+  { text: "attempts to parallel park the Roomba. Fails spectacularly.", xp: 11, tokens: 8 },
+  { text: "starts a one-person conga line through the kitchen.", xp: 9, tokens: 5 },
 ];
 
 const SLOT_SYMBOLS = ["🍒", "🍋", "💎", "🔔", "7️⃣", "⚡"];
@@ -392,11 +485,19 @@ export async function executeSlots(
   const admin = createAdminClient();
   await awardProfileRewards(admin, userId, xpReward, netTokens);
 
-  // If jackpot item dropped, insert to inventory
+  // If jackpot item dropped, insert to inventory. Falls back to a
+  // guaranteed-present item ("battery") if the rolled slug turns out to be
+  // missing from tank_inventory_items — a catalog-drift bug should never
+  // visibly cost a player an item they were just told they won; it still
+  // gets logged (inside insertItemToInventory) so staff finds out.
   let droppedDef: ItemActionDefinition | undefined;
   if (droppedItemSlug && ITEM_ACTION_DEFINITIONS[droppedItemSlug]) {
     droppedDef = ITEM_ACTION_DEFINITIONS[droppedItemSlug];
-    await insertItemToInventory(admin, userId, droppedDef.slug);
+    const grant = await insertItemToInventory(admin, userId, droppedDef.slug);
+    if (!grant.success && droppedDef.slug !== "battery") {
+      droppedDef = ITEM_ACTION_DEFINITIONS["battery"];
+      await insertItemToInventory(admin, userId, droppedDef.slug);
+    }
   }
 
   const reelsText = `[ ${reel1} | ${reel2} | ${reel3} ]`;
@@ -500,10 +601,21 @@ export async function executeCrateUnbox(
     xp = 10;
   }
 
-  const def = ITEM_ACTION_DEFINITIONS[itemSlug];
+  let def = ITEM_ACTION_DEFINITIONS[itemSlug];
   const admin = createAdminClient();
   await awardProfileRewards(admin, userId, xp, 0);
-  await insertItemToInventory(admin, userId, def.slug);
+
+  // Falls back to a guaranteed-present item ("battery") if the rolled slug
+  // is missing from tank_inventory_items — confirmed live 2026-08-31 that
+  // "first-aid-kit" (this crate's "rare" tier, 30% of all rolls) had no row
+  // at all, so this was silently costing players the item they were just
+  // told they'd won. Still logged (inside insertItemToInventory) so staff
+  // finds out; the player never sees a broken roll.
+  let grant = await insertItemToInventory(admin, userId, def.slug);
+  if (!grant.success && def.slug !== "battery") {
+    def = ITEM_ACTION_DEFINITIONS["battery"];
+    grant = await insertItemToInventory(admin, userId, def.slug);
+  }
 
   const fullText = `📦 UNBOX! ${userName} opened a Mystery Crate and unboxed [${rarity.toUpperCase()}] ${def.name}! (+${xp} XP)`;
 
@@ -557,6 +669,26 @@ export async function executeItemUsage(
 
     await awardProfileRewards(admin, userId, itemDef.rewardXp, itemDef.rewardTokens);
 
+    // Apply Director Item Overrides
+    if (itemDef.slug === "pet-whistle" || itemDef.slug === "cat-laser") {
+      applyDirectorItemOverride({
+        itemSlug: itemDef.slug,
+        itemName: itemDef.name,
+        targetMode: "animals",
+        triggeredBy: userName,
+        durationSeconds: 45,
+      });
+    } else if (itemDef.slug === "launch-keys") {
+      applyDirectorItemOverride({
+        itemSlug: itemDef.slug,
+        itemName: itemDef.name,
+        targetMode: "group",
+        targetRoomKey: roomId,
+        triggeredBy: userName,
+        durationSeconds: 45,
+      });
+    }
+
     const fullText = `${userName} ${itemDef.actionText}`;
     return await saveAndBroadcast(admin, roomId, userId, userName, fullText, "item_use", {
       itemSlug: itemDef.slug,
@@ -566,6 +698,115 @@ export async function executeItemUsage(
     });
   } catch {
     return null;
+  }
+}
+
+// Rarity-tiered "holding up the trophy fish" flavor text, generic over item
+// name rather than hand-written per-slug — ITEM_ACTION_DEFINITIONS only
+// covers items with a "use" effect, but any owned item (including pure
+// collectibles like Deed to the Tank) can be flexed, so this has to work for
+// every entry in TANK_ITEM_CATALOG without per-item authoring.
+const FLEX_FLAVOR_BY_RARITY: Record<ItemRarity, string[]> = {
+  common: [
+    "holds up their {name} for a quick look.",
+    "shows off their {name} to the room.",
+  ],
+  uncommon: [
+    "shows off their {name} — not bad!",
+    "flashes their {name} for the chat.",
+  ],
+  rare: [
+    "flourishes their {name} (🧪 RARE) for everyone to admire!",
+    "holds up their {name} (🧪 RARE) — a solid pull!",
+  ],
+  epic: [
+    "raises their {name} (💎 EPIC) high — the room gasps!",
+    "shows off their {name} (💎 EPIC) with a proud grin!",
+  ],
+  legendary: [
+    "holds up their {name} (✨ LEGENDARY) — the room falls silent in awe!",
+    "unveils their {name} (✨ LEGENDARY), catching the studio lights perfectly!",
+  ],
+  mythic: [
+    "unveils their {name} (🏆 MYTHIC) — a holy light bathes the chat!",
+    "raises their {name} (🏆 MYTHIC) skyward — chat is speechless!",
+  ],
+};
+
+function getFlexFlavorText(itemName: string, rarity: ItemRarity): string {
+  const options = FLEX_FLAVOR_BY_RARITY[rarity] ?? FLEX_FLAVOR_BY_RARITY.common;
+  const pick = options[Math.floor(Math.random() * options.length)];
+  return pick.replace("{name}", itemName);
+}
+
+const FLEX_COOLDOWN_MS = 30_000;
+const FLEX_COOLDOWN_SETTING_KEY = "tank_flex_cooldowns";
+
+/**
+ * Shows off an owned item in chat without consuming it — the inventory
+ * "Trophy Catch" flex. No inventory mutation, no XP/token reward; just a
+ * console broadcast plus a per-user cooldown so it can't be spammed.
+ */
+export async function executeItemFlex(
+  userId: string,
+  userName: string,
+  roomId: string,
+  itemSlug: string,
+): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
+  const admin = createAdminClient();
+  const item = TANK_ITEM_CATALOG[itemSlug];
+  if (!item) return { success: false, error: "Unknown item." };
+
+  try {
+    const itemId = await resolveItemId(admin, itemSlug);
+    if (!itemId) return { success: false, error: "Unknown item." };
+
+    const { data: owned } = await admin
+      .from("tank_player_inventory")
+      .select("quantity")
+      .eq("user_id", userId)
+      .eq("item_id", itemId)
+      .maybeSingle();
+    if (!owned || owned.quantity < 1) {
+      return { success: false, error: "You don't own this item." };
+    }
+
+    // Per-user flex cooldown, stored the same way clan subclass/rank prefs
+    // are (clanSystem.ts) — a JSON map on one tank_platform_settings row.
+    // Read-modify-write on a shared row can race under concurrent flexes;
+    // acceptable here since a lost cooldown update only costs a few seconds
+    // of spam protection, not real value like tokens or inventory.
+    const { data: cooldownSetting } = await admin
+      .from("tank_platform_settings")
+      .select("value")
+      .eq("key", FLEX_COOLDOWN_SETTING_KEY)
+      .maybeSingle();
+    const cooldownMap: Record<string, number> = cooldownSetting?.value ?? {};
+    const now = Date.now();
+    const lastFlex = cooldownMap[userId] ?? 0;
+    if (now - lastFlex < FLEX_COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((FLEX_COOLDOWN_MS - (now - lastFlex)) / 1000);
+      return { success: false, error: `You can flex again in ${waitSeconds}s.` };
+    }
+
+    const fullText = `${userName} ${getFlexFlavorText(item.name, item.rarity)}`;
+    const message = await saveAndBroadcast(admin, roomId, userId, userName, fullText, "item_flex", {
+      itemSlug: item.slug,
+      itemName: item.name,
+      itemIconUrl: getTankItemIcon(item.slug),
+      itemRarity: item.rarity,
+    });
+    if (!message) return { success: false, error: "Failed to showcase item." };
+
+    cooldownMap[userId] = now;
+    await admin.from("tank_platform_settings").upsert(
+      { key: FLEX_COOLDOWN_SETTING_KEY, value: cooldownMap, updated_at: new Date().toISOString() },
+      { onConflict: "key" },
+    );
+
+    return { success: true, message };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Failed to showcase item." };
   }
 }
 
@@ -623,28 +864,46 @@ async function resolveItemId(admin: any, itemSlug: string): Promise<string | nul
   return data?.id ?? null;
 }
 
-async function insertItemToInventory(admin: any, userId: string, itemSlug: string) {
+// Thin wrapper over the centralized tank_grant_inventory_item RPC (Tavern
+// Phase 0) — locks the row and enforces max_stack, which this function's own
+// previous plain select-then-upsert body never did (a real lost-update race
+// under concurrent grants, and no stack cap of any kind). Kept as the same
+// exported name/signature every existing caller (slots win, crate unbox,
+// drops) already uses, so nothing upstream needed to change.
+/**
+ * Grants an item via the centralized tank_grant_inventory_item RPC (Tavern
+ * Phase 0) and reports whether it actually landed.
+ *
+ * Used to be `try { await admin.rpc(...) } catch {}` with the result
+ * completely discarded — but the RPC returns `{success:false, error:...}`
+ * as a normal (non-throwing) response when the item slug doesn't exist in
+ * tank_inventory_items, so a missing catalog row never threw and never got
+ * caught; it just silently failed to grant while callers went on to
+ * broadcast a success message anyway. Confirmed live 2026-08-31:
+ * "first-aid-kit" (the /unbox "rare" tier, 30% of all rolls) had no row at
+ * all. Same pattern already used against this RPC in dropCampaigns.ts.
+ */
+export async function insertItemToInventory(
+  admin: any,
+  userId: string,
+  itemSlug: string,
+): Promise<{ success: boolean; error?: string }> {
   try {
-    const itemId = await resolveItemId(admin, itemSlug);
-    if (!itemId) return;
-
-    const { data: existing } = await admin
-      .from("tank_player_inventory")
-      .select("quantity")
-      .eq("user_id", userId)
-      .eq("item_id", itemId)
-      .maybeSingle();
-
-    const qty = (existing?.quantity ?? 0) + 1;
-    await admin.from("tank_player_inventory").upsert(
-      {
-        user_id: userId,
-        item_id: itemId,
-        quantity: qty,
-      },
-      { onConflict: "user_id,item_id" },
-    );
-  } catch {}
+    const { data, error } = await admin.rpc("tank_grant_inventory_item", {
+      p_user_id: userId,
+      p_item_slug: itemSlug,
+      p_quantity: 1,
+      p_source: "chat_event",
+    });
+    if (error || !data?.success) {
+      console.error("[ChatRngEvents] insertItemToInventory failed:", { userId, itemSlug, error, data });
+      return { success: false, error: data?.error || error?.message };
+    }
+    return { success: true };
+  } catch (err) {
+    console.error("[ChatRngEvents] insertItemToInventory threw:", { userId, itemSlug, err });
+    return { success: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
 }
 
 async function saveAndBroadcast(
@@ -678,7 +937,10 @@ async function saveAndBroadcast(
       .select("id, created_at")
       .single();
 
-    if (error || !msgData) return null;
+    if (error || !msgData) {
+      console.error("[ChatRngEvents] saveAndBroadcast insert failed:", { roomId, userId, messageType, error });
+      return null;
+    }
 
     const chatMsg: ChatMessage = {
       id: msgData.id,
@@ -705,7 +967,12 @@ async function saveAndBroadcast(
     });
 
     return chatMsg;
-  } catch {
+  } catch (err) {
+    // Every RNG command (/roll, /unbox, /flip, /slots, /roulette, /me, ...)
+    // funnels through this on its way to actually posting — a swallowed
+    // error here was invisible regardless of any fix at the individual
+    // command's call site. Confirmed live 2026-08-31.
+    console.error("[ChatRngEvents] saveAndBroadcast failed:", { roomId, userId, messageType, err });
     return null;
   }
 }

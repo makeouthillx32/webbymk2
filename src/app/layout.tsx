@@ -16,6 +16,7 @@ import ChunkReloader from "@/components/system/ChunkReloader";
 import { ZoneProvider } from "@/components/providers/ZoneProvider";
 import { getZoneContext } from "@/lib/zoneContext";
 import MovedHereToast from "@/components/system/MovedHereToast";
+import ZoneOfflineToast from "@/components/system/ZoneOfflineToast";
 import { generateSiteMetadata } from "@/lib/zoneMetadata";
 
 // Load the default theme's fonts and expose them ONLY as --font-* fallbacks.
@@ -82,6 +83,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <Providers>
           <ZoneProvider value={zoneCtx}>
             <MovedHereToast />
+            <ZoneOfflineToast />
             <ClientLayout locale={locale}>{children}</ClientLayout>
           </ZoneProvider>
         </Providers>

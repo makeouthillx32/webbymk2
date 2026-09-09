@@ -24,9 +24,16 @@ const PROTECTED_KEYS = new Set([
   "tank_settings_v1",
   "tank:assigned-room-key",
   "tank_local_profile",
+  "tank_viewer_key",
+  "tank_user_notifications",
 ]);
 
 const EVICTION_CANDIDATE_PATTERNS = [
+  // useTankRealtimeChat.ts's actual current cache key prefix — the pattern
+  // below it (tank_session_chat_) was already here but doesn't match
+  // anything the code writes today, so quota-exceeded eviction could never
+  // find these as candidates even when they were the reason quota was hit.
+  /^tank_chat_storage_/i,
   /^tank_session_chat_/i,
   /^tank_chat_draft/i,
   /^chat_history_/i,

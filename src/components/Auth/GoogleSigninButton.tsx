@@ -4,6 +4,10 @@ import { useSupabaseClient } from "@supabase/auth-helpers-react";
 import type { Provider } from "@supabase/supabase-js";
 import { buildOAuthCallbackUrl, safePostAuthRedirect } from "@/lib/authRedirect";
 import { CORE_DOMAIN } from "@/lib/multiZone";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 type OAuthButton = {
   provider: Provider; // "google" | "apple" | "facebook" etc.
@@ -31,6 +35,7 @@ export default function SignInWithProviders() {
   const supabase = useSupabaseClient();
 
   const signIn = async (provider: Provider) => {
+    markAuthNavigationIntent();
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -39,6 +44,7 @@ export default function SignInWithProviders() {
     });
 
     if (error) {
+      clearAuthNavigationIntent();
       console.error(`${provider} sign-in error:`, error.message);
       alert(`${provider} sign-in failed – see console for details.`);
     }

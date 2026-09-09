@@ -62,6 +62,12 @@ export function deriveRooms(
 
     if (visibilityPolicy === "live-only" && !anyOnline) continue;
 
+    // Admin kill-switch (tank_rooms.is_offline). Full omission, not a
+    // rendered "offline" state — nothing about this room, including its
+    // camera URLs, leaves the server while it's off. See
+    // cameraRegistryDb.ts's setRoomOffline/setAllRoomsOffline.
+    if (curated?.isOffline) continue;
+
     const sorted = [...groupCameras].sort((a, b) => a.priority - b.priority);
     const featured = sorted.find((camera) => camera.presence === "online" || camera.presence === "degraded")
       ?? sorted[0];

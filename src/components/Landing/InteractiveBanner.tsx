@@ -5,14 +5,40 @@ import { OrbitControls, useGLTF, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import { cn } from "@/utils/cn";
 import Loading from "../Layouts/overlays/Loading";
+import { LANDING_ASSETS } from "@/lib/siteAssets";
+
+/**
+ * Fallback asset URLs. These point at Supabase storage, NOT at /public — the
+ * source files were removed from the repo on 2026-09-05 (12.9 MB that used to
+ * ship inside every zone image), so there is no local copy any more.
+ *
+ * A site_assets row overrides these; they are what renders if the registry is
+ * empty or unreachable. See src/lib/siteAssets.ts.
+ */
+export const DEFAULT_BACKDROP_SRC = LANDING_ASSETS.bannerBackdropWebm;
+export const DEFAULT_MODEL_SRC = LANDING_ASSETS.bannerModelGlb;
+
+export type InteractiveBannerProps = {
+  /** Starry backdrop loop. Registry key: `banner.backdrop.webm`. */
+  backdropSrc?: string;
+  /** glTF model shown in the 3D scene. Registry key: `banner.model.glb`. */
+  modelSrc?: string;
+};
 
 /**
  * InteractiveBanner:
  * ------------------
  * The main exported component that contains a starry video background,
  * a clickable overlay, and a 3D scene with your glTF model.
+ *
+ * Both heavy assets are now injectable so a server component can hand it
+ * hot-swappable URLs from the site_assets registry instead of the bundled
+ * copies. Props are optional — omitting them preserves the original behaviour.
  */
-export default function InteractiveBanner() {
+export default function InteractiveBanner({
+  backdropSrc = DEFAULT_BACKDROP_SRC,
+  modelSrc = DEFAULT_MODEL_SRC,
+}: InteractiveBannerProps = {}) {
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
 
   return (
@@ -26,7 +52,7 @@ export default function InteractiveBanner() {
         {/* Video Background */}
         <video
           className="absolute inset-0 w-full h-full object-cover"
-          src="/images/starry-background4K_1.webm"
+          src={backdropSrc}
           autoPlay
           loop
           muted
@@ -58,7 +84,7 @@ export default function InteractiveBanner() {
         )}
 
         {/* 3D Scene */}
-        <ThreeFiber />
+        <ThreeFiber modelSrc={modelSrc} />
 
         {/* Controls */}
         <Controls handleOverlayClick={setIsOverlayVisible} />
@@ -80,7 +106,7 @@ export default function InteractiveBanner() {
  * Sets up the 3D scene, including your model, rotating box, 
  * environment lighting, and the ParticleSystem.
  */
-function ThreeFiber() {
+function ThreeFiber({ modelSrc = DEFAULT_MODEL_SRC }: { modelSrc?: string }) {
   return (
     <Canvas>
       {/* Lights */}
@@ -98,7 +124,7 @@ function ThreeFiber() {
       <Environment preset="city" />
 
       {/* 3D Model */}
-      <UnenterModel />
+      <UnenterModel modelSrc={modelSrc} />
 
       {/* Optional Rotating Box */}
       <Box position={[5, 0, 0]} />
@@ -149,8 +175,8 @@ function Box(props: any) {
  * Loads the unenter.glb model and applies a metallic material. 
  * Also scales the model down on mobile screens.
  */
-function UnenterModel() {
-  const { scene } = useGLTF("./models/unenter.glb");
+function UnenterModel({ modelSrc = DEFAULT_MODEL_SRC }: { modelSrc?: string }) {
+  const { scene } = useGLTF(modelSrc);
   const [modelScale, setModelScale] = useState<[number, number, number]>([1, 1, 1]);
 
   useEffect(() => {

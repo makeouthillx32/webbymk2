@@ -5,12 +5,17 @@ import { LogOut, Shield, User, X, KeyRound, UserPlus, AlertCircle, CheckCircle2,
 import { createClient } from "@/utils/supabase/client";
 import { ChromePanel } from "./components/ChromePanel";
 import { ConsoleButton } from "./components/ConsoleButton";
-import { drainClientChatStorage } from "./useTankRealtimeChat";
+import { drainClientChatStorage, clearTankSessionCookies } from "./useTankRealtimeChat";
 import { recordTankAuthSignIn } from "../server/actions";
 import { registerTankUser, resendTankVerification, checkEmailVerified } from "../server/authActions";
 import { ACTIVE_THEME } from "../theme";
 import { buildGlobalLogoutUrl, buildOAuthStartUrl } from "@/lib/authRedirect";
 import { resolveTankDisplayName } from "../identity";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
+import ShieldTurnstileWidget from "@/components/shield/ShieldTurnstileWidget";
 
 const LED_GREEN = "#39ff6a";
 const LED_RED = "#ff3b2f";
@@ -49,12 +54,19 @@ function FacebookIcon({ className = "h-4 w-4" }: { className?: string }) {
   );
 }
 
-export function AccountOverlay({ onClose }: { onClose: () => void }) {
+export function AccountOverlay({
+  onClose,
+  onAuthSuccess,
+}: {
+  onClose: () => void;
+  onAuthSuccess?: () => void;
+}) {
   const [status, setStatus] = useState<"loading" | "signed-in" | "signed-out">("loading");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [tags, setTags] = useState<string[]>([]);
+  const [humanVerified, setHumanVerified] = useState(false);
 
   // Auth form states
   const [tab, setTab] = useState<AuthTab>("signin");
@@ -113,27 +125,48 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
     const completeVerificationLogin = async () => {
       if (!active || isVerifiedLive) return;
       setIsVerifiedLive(true);
-      setSuccessMsg("Account verified! Logging you in...");
+      setSuccessMsg("Account verified! Activating console...");
 
       try {
         if (password) {
+          markAuthNavigationIntent();
           const { data, error: signErr } = await supabase.auth.signInWithPassword({
             email: cleanEmail,
             password,
           });
           if (!signErr && data.user) {
             await recordTankAuthSignIn();
-            setTimeout(() => {
-              window.location.reload();
-            }, 800);
+            clearAuthNavigationIntent();
+            if (onAuthSuccess) {
+              onAuthSuccess();
+            } else {
+              onClose();
+            }
             return;
           }
+          clearAuthNavigationIntent();
         }
-      } catch {}
+      } catch {
+        clearAuthNavigationIntent();
+      }
 
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user) {
+        await recordTankAuthSignIn();
+        clearAuthNavigationIntent();
+        if (onAuthSuccess) {
+          onAuthSuccess();
+        } else {
+          onClose();
+        }
+        return;
+      }
+
+      if (onAuthSuccess) {
+        onAuthSuccess();
+      } else {
+        onClose();
+      }
     };
 
     // 1. Supabase Realtime channel broadcast listener
@@ -158,13 +191,14 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, [tab, email, password, isVerifiedLive]);
+  }, [tab, email, password, isVerifiedLive, onAuthSuccess, onClose]);
 
   const handleOAuthSignIn = (provider: "google" | "facebook") => {
     setBusy(true);
     setError(null);
     setSuccessMsg(null);
     try {
+      markAuthNavigationIntent();
       const returnTarget = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`;
       const startUrl = buildOAuthStartUrl({
         currentOrigin: window.location.origin,
@@ -173,6 +207,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
       });
       window.location.assign(startUrl);
     } catch (err) {
+      clearAuthNavigationIntent();
       setBusy(false);
       setError(err instanceof Error ? err.message : "Failed to initiate provider sign in.");
     }
@@ -184,18 +219,24 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
       setError("Email and password are required.");
       return;
     }
+    if (!humanVerified) {
+      setError("Please complete human verification to continue.");
+      return;
+    }
 
     setBusy(true);
     setError(null);
     setSuccessMsg(null);
 
     const supabase = createClient();
+    markAuthNavigationIntent();
     const { data, error: authErr } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
 
     if (authErr) {
+      clearAuthNavigationIntent();
       setBusy(false);
       const isUnconfirmed =
         authErr.message?.toLowerCase().includes("email not confirmed") ||
@@ -218,6 +259,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
     }
 
     if (!data?.user) {
+      clearAuthNavigationIntent();
       setBusy(false);
       setError("Failed to sign in. Please verify your credentials.");
       return;
@@ -227,6 +269,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
     const isEmailConfirmed = Boolean(data.user.email_confirmed_at || data.user.confirmed_at);
     const provider = data.user.app_metadata?.provider || "email";
     if (!isEmailConfirmed && provider === "email") {
+      clearAuthNavigationIntent();
       void resendTankVerification({
         email: email.trim(),
         origin: typeof window !== "undefined" ? window.location.origin : "https://tank.unenter.live",
@@ -239,12 +282,15 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
 
     // Record Tank authentication tag & initialize profile
     await recordTankAuthSignIn();
+    clearAuthNavigationIntent();
 
     setBusy(false);
-    setSuccessMsg("Signed in successfully! Loading console...");
-    setTimeout(() => {
-      window.location.reload();
-    }, 600);
+    setSuccessMsg("Signed in successfully!");
+    if (onAuthSuccess) {
+      onAuthSuccess();
+    } else {
+      onClose();
+    }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -255,6 +301,10 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
     }
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
+      return;
+    }
+    if (!humanVerified) {
+      setError("Please complete human verification to continue.");
       return;
     }
 
@@ -276,10 +326,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
       return;
     }
 
-    // Already an unenter member — from the shop, labs, anywhere. Promotion
-    // gave them their Tank rows but NOT a session, so reloading here would
-    // just bounce them back signed-out. Send them to sign-in with the email
-    // already filled, and say plainly why they are not being asked to verify.
+    // Already an unenter member — from the shop, labs, anywhere.
     if (res.alreadyMember) {
       setTab("signin");
       setPassword("");
@@ -293,10 +340,12 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
       setTab("verify");
       setSuccessMsg(`Verification email dispatched to ${email.trim()}! Please verify to chat.`);
     } else {
-      setSuccessMsg("Account created! Loading console...");
-      setTimeout(() => {
-        window.location.reload();
-      }, 600);
+      setSuccessMsg("Account created!");
+      if (onAuthSuccess) {
+        onAuthSuccess();
+      } else {
+        onClose();
+      }
     }
   };
 
@@ -344,8 +393,24 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
 
   const handleSignOut = async () => {
     setBusy(true);
-    drainClientChatStorage();
-    window.location.assign(buildGlobalLogoutUrl(`${window.location.origin}/`));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    drainClientChatStorage(user?.id);
+    clearTankSessionCookies();
+    await supabase.auth.signOut();
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel("tank_session_channel");
+      bc.postMessage({ type: "LOGOUT", userId: user?.id });
+      bc.close();
+    }
+    try {
+      localStorage.setItem("tank_logout_sync", Date.now().toString());
+    } catch {}
+    setBusy(false);
+    setStatus("signed-out");
+    if (onAuthSuccess) {
+      onAuthSuccess();
+    }
   };
 
   return (
@@ -435,7 +500,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                 <div className="flex border-b border-black/40 pb-1 gap-1">
                   <button
                     type="button"
-                    onClick={() => { setTab("signin"); setError(null); setSuccessMsg(null); }}
+                    onClick={() => { setTab("signin"); setError(null); setSuccessMsg(null); setHumanVerified(false); }}
                     className={`flex-1 rounded-t py-1.5 text-[10px] font-black uppercase tracking-wider transition-colors ${
                       tab === "signin" ? "bg-black/25 text-[#241f14]" : "text-[#5a5442] hover:text-[#241f14]"
                     }`}
@@ -444,7 +509,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setTab("signup"); setError(null); setSuccessMsg(null); }}
+                    onClick={() => { setTab("signup"); setError(null); setSuccessMsg(null); setHumanVerified(false); }}
                     className={`flex-1 rounded-t py-1.5 text-[10px] font-black uppercase tracking-wider transition-colors ${
                       tab === "signup" ? "bg-black/25 text-[#241f14]" : "text-[#5a5442] hover:text-[#241f14]"
                     }`}
@@ -572,7 +637,15 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                         className="w-full rounded border border-black/50 bg-black/90 px-3 py-2 text-xs text-emerald-400 placeholder:text-slate-600 outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.8)]"
                       />
                     </div>
-                    <ConsoleButton type="submit" variant="orange" className="w-full !py-2.5 mt-2" disabled={busy}>
+                    {/* Human Verification Check */}
+                    <div className="flex justify-center pt-1 pb-1">
+                      <ShieldTurnstileWidget
+                        key="shield-signin"
+                        onSuccess={() => setHumanVerified(true)}
+                        className="w-full justify-center"
+                      />
+                    </div>
+                    <ConsoleButton type="submit" variant="orange" className="w-full !py-2.5 mt-2" disabled={busy || !humanVerified}>
                       <KeyRound className="h-3.5 w-3.5" />
                       {busy ? "Authenticating..." : "Sign In to Tank"}
                     </ConsoleButton>
@@ -635,7 +708,15 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                         />
                       </div>
                     </div>
-                    <ConsoleButton type="submit" variant="orange" className="w-full !py-2.5 mt-2" disabled={busy}>
+                    {/* Human Verification Check */}
+                    <div className="flex justify-center pt-1 pb-1">
+                      <ShieldTurnstileWidget
+                        key="shield-signup"
+                        onSuccess={() => setHumanVerified(true)}
+                        className="w-full justify-center"
+                      />
+                    </div>
+                    <ConsoleButton type="submit" variant="orange" className="w-full !py-2.5 mt-2" disabled={busy || !humanVerified}>
                       <UserPlus className="h-3.5 w-3.5" />
                       {busy ? "Registering..." : "Create Tank Account"}
                     </ConsoleButton>
@@ -690,7 +771,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                             Email Verified!
                           </h3>
                           <p className="text-xs text-[#5a5442] font-semibold">
-                            Logging you in and activating chat...
+                            Activating your console and chat...
                           </p>
                         </>
                       ) : (
@@ -730,6 +811,7 @@ export function AccountOverlay({ onClose }: { onClose: () => void }) {
                             setTab("signin");
                             setError(null);
                             setSuccessMsg(null);
+                            setHumanVerified(false);
                           }}
                           className="flex items-center justify-center gap-1.5 w-full text-center text-xs font-bold text-[#4c4630] hover:text-[#241f14] py-1 transition"
                         >

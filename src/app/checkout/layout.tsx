@@ -1,3 +1,10 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Checkout | Unenter Solutions",
+  description: "Complete your purchase securely.",
+};
+
 // Force all checkout pages to be dynamically rendered.
 // They depend on cart context and user session — never statically prerenderable.
 export const dynamic = "force-dynamic";

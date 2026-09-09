@@ -19,6 +19,7 @@
 //   GET  /proxy/status      → self-reported proxy / NPM containers
 //   GET  /docker/dashboard  → aggregated dashboard (Portainer-style)
 //   POST /stacks/deploy     → docker compose up -d  { name, yaml }
+//   POST /zones/deploy      → manifest-driven zone deployment with preflight & verification
 //   POST /self-update       → rolling self-replacement via updater container { ref }
 //   *    /docker/*          → transparent Docker socket proxy
 //
@@ -36,12 +37,12 @@ const fs            = require("fs");
 const os            = require("os");
 const path          = require("path");
 const { spawn }     = require("child_process");
-const { webcrypto } = require("crypto");
-const subtle        = webcrypto.subtle;
+const crypto        = require("crypto");
+const subtle        = crypto.webcrypto.subtle;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const AGENT_VERSION = "1.2.0";
+const AGENT_VERSION = "1.3.2";
 const UPDATER_IMAGE = "ghcr.io/makeouthillx32/unaxis-updater:v0";
 
 const AGENT_PORT    = parseInt(process.env.AGENT_PORT    ?? "8888", 10);
@@ -849,6 +850,226 @@ const agentServer = http.createServer((req, res) => {
       return;
     }
 
+    // ── POST /zones/deploy  { zone, name, image, port, internalPort, domain, env, preflight } ──
+    if (req.method === "POST" && url === "/zones/deploy") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", async () => {
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON body" }));
+          return;
+        }
+
+        const { zone, name, image, port, internalPort = 3000, domain, env, preflight, registry_auth } = payload || {};
+        if (!name || !image || !port) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "name, image, and port are required" }));
+          return;
+        }
+
+        // 1. Preflight Health Probe
+        if (preflight && preflight.supabase_health_url) {
+          log.inf("zone deploy: checking supabase preflight", { zone: zone || name, url: preflight.supabase_health_url });
+          try {
+            const probeRes = await fetch(preflight.supabase_health_url, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (!probeRes.ok) {
+              log.err("zone deploy: supabase preflight failed", { status: probeRes.status });
+              res.writeHead(502, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({
+                ok: false,
+                step: "preflight",
+                error: `Preflight failed: Supabase health URL returned HTTP ${probeRes.status}`,
+              }));
+              return;
+            }
+            log.inf("zone deploy: supabase preflight OK ✓", { zone: zone || name });
+          } catch (err) {
+            log.err("zone deploy: supabase preflight unreachable", { error: err.message });
+            res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              ok: false,
+              step: "preflight",
+              error: `Preflight failed: Supabase health URL unreachable (${err.message})`,
+            }));
+            return;
+          }
+        }
+
+        // 2. Setup isolated dir & write .env with 0600
+        const zoneKey = String(zone || name).replace(/[^a-zA-Z0-9_\-]/g, "");
+        const dir = path.join(os.tmpdir(), "unaxis-zones", zoneKey);
+        const composeFile = path.join(dir, "docker-compose.yml");
+        const envFile = path.join(dir, ".env");
+        fs.mkdirSync(dir, { recursive: true });
+
+        const dockerEnv = { ...process.env, DOCKER_HOST: `unix://${DOCKER_SOCKET}` };
+        if (registry_auth) {
+          const dockerDir = path.join(dir, ".docker");
+          fs.mkdirSync(dockerDir, { recursive: true });
+          const configJson = { auths: { "ghcr.io": { auth: registry_auth } } };
+          fs.writeFileSync(path.join(dockerDir, "config.json"), JSON.stringify(configJson), { encoding: "utf-8", mode: 0o600 });
+          dockerEnv.DOCKER_CONFIG = dockerDir;
+        }
+
+        const envLines = [];
+        if (env && typeof env === "object") {
+          for (const [k, v] of Object.entries(env)) {
+            if (k && v !== undefined && v !== null) {
+              const cleanVal = String(v).replace(/\r?\n/g, "");
+              envLines.push(`${k}=${cleanVal}`);
+            }
+          }
+        }
+        const envContent = envLines.join("\n") + "\n";
+        fs.writeFileSync(envFile, envContent, { encoding: "utf-8", mode: 0o600 });
+
+        const composeYaml = `services:
+  ${zoneKey}:
+    image: ${image}
+    container_name: ${name}
+    restart: unless-stopped
+    ports:
+      - "${port}:${internalPort}"
+    env_file:
+      - .env
+`;
+        fs.writeFileSync(composeFile, composeYaml, "utf-8");
+
+        const checksum = crypto.createHash("sha256").update(composeYaml + "\n" + envContent).digest("hex");
+        log.inf("zone deploy: prepared configuration", { zone: zoneKey, name, port, checksum: checksum.slice(0, 12) });
+
+        // Redaction helper
+        const redact = (txt) => {
+          let s = String(txt || "");
+          if (registry_auth) {
+            s = s.split(registry_auth).join("[REDACTED]");
+          }
+          if (env && typeof env === "object") {
+            for (const [k, v] of Object.entries(env)) {
+              if (!v || typeof v !== "string" || v.length < 4) continue;
+              const upper = k.toUpperCase();
+              if (upper.includes("KEY") || upper.includes("SECRET") || upper.includes("PASS") || upper.includes("TOKEN") || upper.includes("AUTH") || upper.includes("CREDENTIAL")) {
+                s = s.split(v).join("[REDACTED]");
+              }
+            }
+          }
+          return s;
+        };
+
+        const logs = [];
+        const runCmd = (args) => new Promise((resolve) => {
+          const p = spawn("docker", args, { env: dockerEnv });
+          p.stdout.on("data", (d) => logs.push(d.toString()));
+          p.stderr.on("data", (d) => logs.push(d.toString()));
+          p.on("close", (code) => resolve(code ?? 1));
+          p.on("error", (err) => {
+            logs.push(`spawn error: ${err.message}\n`);
+            resolve(1);
+          });
+        });
+
+        // 3. Pull image
+        log.inf("zone deploy: pulling image", { image });
+        const pullCode = await runCmd(["compose", "-f", composeFile, "-p", String(name), "pull"]);
+        if (pullCode !== 0) {
+          log.err("zone deploy: image pull failed", { code: pullCode });
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, step: "pull", code: pullCode, logs: redact(logs.join("")) }));
+          return;
+        }
+
+        // 4. Start container
+        log.inf("zone deploy: starting container", { name });
+        const upCode = await runCmd(["compose", "-f", composeFile, "-p", String(name), "up", "-d", "--force-recreate", "--remove-orphans"]);
+        if (upCode !== 0) {
+          log.err("zone deploy: compose up failed", { code: upCode });
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, step: "up", code: upCode, logs: redact(logs.join("")) }));
+          return;
+        }
+
+        // 4b. Reconcile inlined build-time Supabase URLs for multi-host deployments
+        const targetSupabase = (env && (env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL)) || "";
+        if (targetSupabase && !targetSupabase.includes("kong:8000")) {
+          try {
+            log.inf("zone deploy: reconciling inlined supabase endpoints", { name, target: targetSupabase });
+            await runCmd([
+              "exec",
+              "-u", "0",
+              String(name),
+              "sh", "-c",
+              `find /app/.next/server -type f -name '*.js' -exec sed -i 's|http://kong:8000|${targetSupabase}|g' {} + 2>/dev/null || true`
+            ]);
+            await runCmd(["restart", String(name)]);
+          } catch (patchErr) {
+            log.warn("zone deploy: inlined endpoint reconciliation non-fatal warning", { error: patchErr.message });
+          }
+        }
+
+        // 5. Post-deploy Local Verification Gate
+        log.inf("zone deploy: verifying local HTTP responsiveness", { port });
+        const deadline = Date.now() + 20_000;
+        let verified = false;
+        let lastStatus = 0;
+        let lastErr = "";
+
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 1500));
+          for (const h of ["127.0.0.1", "172.17.0.1", "host.docker.internal"]) {
+            try {
+              const probe = await fetch(`http://${h}:${port}/`, {
+                method: "GET",
+                signal: AbortSignal.timeout(2000),
+                headers: {
+                  "Host": domain || `${zoneKey}.unenter.live`,
+                  "User-Agent": "unaxis-agent-health-gate",
+                },
+              });
+              lastStatus = probe.status;
+              if (lastStatus > 0) {
+                verified = true;
+                break;
+              }
+            } catch (err) {
+              lastErr = err.message;
+            }
+          }
+          if (verified) break;
+        }
+
+        if (!verified) {
+          log.err("zone deploy: container failed local HTTP health verification", { error: lastErr });
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            ok: false,
+            step: "verify",
+            error: `Container started but failed local HTTP check on port ${port}: ${lastErr || "timeout"}`,
+            logs: redact(logs.join("")),
+          }));
+          return;
+        }
+
+        log.inf("zone deploy: deployment verified successfully ✓", { name, port, status: lastStatus });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true,
+          zone: zoneKey,
+          name,
+          port,
+          checksum,
+          verified: true,
+          httpStatus: lastStatus,
+          logs: redact(logs.join("")),
+        }));
+      });
+      return;
+    }
+
     // ── POST /self-update  { ref }  ────────────────────────────────────────
     //
     // Bootstrap-safe self-replacement via a dedicated updater container.
@@ -1038,7 +1259,7 @@ const agentServer = http.createServer((req, res) => {
     res.writeHead(404);
     res.end(JSON.stringify({
       error:   "Not found",
-      routes:  ["GET /health", "GET /db/status", "GET /zones/status", "GET /proxy/status", "GET /docker/dashboard", "POST /stacks/deploy", "POST /self-update", "* /docker/*"],
+      routes:  ["GET /health", "GET /db/status", "GET /zones/status", "GET /proxy/status", "GET /docker/dashboard", "POST /stacks/deploy", "POST /zones/deploy", "POST /self-update", "* /docker/*"],
       version: AGENT_VERSION,
     }));
   }).catch((err) => {

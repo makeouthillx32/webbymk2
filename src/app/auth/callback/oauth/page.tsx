@@ -7,6 +7,10 @@ import { getCookie, removeCookie } from "@/lib/cookieUtils";
 import { isLastPageExcluded } from "@/lib/protectedRoutes";
 import { safePostAuthRedirect } from "@/lib/authRedirect";
 import { CORE_DOMAIN } from "@/lib/multiZone";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 export default function OAuthCallback() {
   const supabase = useSupabaseClient();
@@ -60,8 +64,10 @@ export default function OAuthCallback() {
       // session was never actually established client-side.
       const code = urlParams.get("code");
       if (code) {
+        markAuthNavigationIntent();
         const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
         if (exchangeError) {
+          clearAuthNavigationIntent();
           console.error("OAuth code exchange failed:", exchangeError.message);
           finishRedirect();
           return;

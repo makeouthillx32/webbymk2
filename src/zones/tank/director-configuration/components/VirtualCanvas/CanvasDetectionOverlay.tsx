@@ -31,6 +31,7 @@ import type { OverlayVisibility } from "../../overlayRegistry";
 type CanvasDetectionOverlayProps = {
   atlasLayout: DynamicAtlasLayout;
   inputs: CameraTelemetryInput[];
+  filters?: import("../../../server/directorVirtualAtlas").DetectionCategoryFilters;
   overlays?: Partial<OverlayVisibility>;
   members?: HouseMember[];
   visible: boolean;
@@ -42,6 +43,7 @@ type CanvasBox = {
   label: string;
   depthZone?: "foreground" | "midground" | "background";
   confidence?: number;
+  targetName?: string;
   /** Fractions of the WHOLE canvas, not the tile. */
   nx: number;
   ny: number;
@@ -52,7 +54,7 @@ type CanvasBox = {
 /** Tile-local 0-1 box -> canvas-wide 0-1 box, via the tile's real pixel bounds. */
 function toCanvasSpace(
   tile: CameraTileBounds,
-  box: { nx: number; ny: number; nw: number; nh: number; label: string; depthZone?: string; confidence?: number },
+  box: { nx: number; ny: number; nw: number; nh: number; label: string; depthZone?: string; confidence?: number; targetName?: string },
   canvasWidth: number,
   canvasHeight: number,
 ): CanvasBox {
@@ -64,6 +66,7 @@ function toCanvasSpace(
     label: box.label,
     depthZone: box.depthZone as CanvasBox["depthZone"],
     confidence: box.confidence,
+    targetName: box.targetName,
     nx: (tile.xMin + box.nx * tileW) / canvasWidth,
     ny: (tile.yMin + box.ny * tileH) / canvasHeight,
     nw: (box.nw * tileW) / canvasWidth,
@@ -74,11 +77,23 @@ function toCanvasSpace(
 export function CanvasDetectionOverlay({
   atlasLayout,
   inputs,
+  filters,
   overlays,
   members = [],
   visible,
 }: CanvasDetectionOverlayProps) {
-  const show = (id: keyof OverlayVisibility, fallback = true) => overlays?.[id] ?? fallback;
+  const isEnabled = (cat: string, fallback = true) => {
+    if (filters) {
+      if (cat === "person" || cat === "people" || cat === "guest" || cat === "member") {
+        return filters.people;
+      }
+      if (cat === "trash") return filters.trash;
+      if (cat === "clutter") return filters.clutter;
+      if (cat === "pets" || cat === "dog" || cat === "cat") return filters.pets ?? true;
+      if (cat === "audio") return filters.audio;
+    }
+    return overlays?.[cat as keyof OverlayVisibility] ?? fallback;
+  };
 
   const { boxes, cardFor } = useMemo(() => {
     if (!visible) return { boxes: [] as CanvasBox[], cardFor: null as CanvasBox | null };
@@ -95,9 +110,11 @@ export function CanvasDetectionOverlay({
 
       for (const box of telemetry.boundingBoxes) {
         const label = (box.label || "").toLowerCase();
-        if (label === "person" && !show("person")) continue;
-        if ((label === "trash" || label.includes("trash")) && !show("trash", true)) continue;
-        if (label === "clutter" && !show("clutter", true)) continue;
+        if (label === "person" && !isEnabled("person")) continue;
+        if (label === "dog" && !isEnabled("dog")) continue;
+        if (label === "cat" && !isEnabled("cat")) continue;
+        if ((label === "trash" || label.includes("trash")) && !isEnabled("trash", true)) continue;
+        if (label === "clutter" && !isEnabled("clutter", true)) continue;
 
         const canvasBox = toCanvasSpace(tile, box, atlasLayout.canvasWidth, atlasLayout.canvasHeight);
         allBoxes.push(canvasBox);
@@ -114,7 +131,7 @@ export function CanvasDetectionOverlay({
     }
 
     return { boxes: allBoxes, cardFor: primary, primaryTelemetry } as any;
-  }, [visible, atlasLayout, inputs, overlays]);
+  }, [visible, atlasLayout, inputs, filters, overlays]);
 
   if (!visible || boxes.length === 0) return null;
 
@@ -129,13 +146,23 @@ export function CanvasDetectionOverlay({
     const identity = classifySubject(primaryTelemetry);
     const label = subjectLabel(identity, members, primaryTelemetry.targetMemberDetected);
     const showIdentity =
-      identity === "guest" ? show("guest") : identity === "house_member" ? show("member") : true;
+      identity === "guest" ? isEnabled("guest") : identity === "house_member" ? isEnabled("member") : true;
     memberLabel = showIdentity ? label : null;
 
     identityRows = [
       { label: "STATUS", value: showIdentity ? label : "PERSON", emphasis: identity === "guest" },
       { label: "ROOM", value: (atlasLayout.tiles.find((t) => t.cameraId === cardFor.cameraId)?.cameraName ?? "").toUpperCase() },
-      ...(show("audio") ? [{ label: "AUDIO", value: `${Math.round(primaryTelemetry.audioPeak)}%` }] : []),
+      // Identity-match confidence, separate from detection confidence (that
+      // lives on the box label itself) — standard in face-ID/re-id systems
+      // to show both. Real, not fabricated: currently 0% for every actual
+      // detection because no real face-matching exists yet (see the
+      // face-embedding conversation) — the simulator's flat 0.9 is the only
+      // thing that currently populates this, and it's honest for that to
+      // read as near-100% since that IS what the simulator claims.
+      ...(identity === "house_member"
+        ? [{ label: "MATCH", value: `${Math.round((primaryTelemetry.targetMemberConfidence ?? 0) * 100)}%` }]
+        : []),
+      ...(isEnabled("audio") ? [{ label: "AUDIO", value: `${Math.round(primaryTelemetry.audioPeak)}%` }] : []),
     ];
   }
 
@@ -150,6 +177,7 @@ export function CanvasDetectionOverlay({
     label: b.label,
     depthZone: b.depthZone,
     confidence: b.confidence,
+    targetName: b.targetName,
   }));
 
   return (
@@ -158,7 +186,7 @@ export function CanvasDetectionOverlay({
         boxes={layerBoxes}
         memberLabel={memberLabel}
         memberConfidence={primaryTelemetry?.targetMemberConfidence ?? 0}
-        showGroundContact={show("feet", false)}
+        showGroundContact={isEnabled("feet", false)}
       />
       {cardFor && identityRows.length > 0 && (
         <SubjectTelemetryCard

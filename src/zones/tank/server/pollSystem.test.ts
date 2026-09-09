@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
   projectPollForViewer,
-  sanitizeAnonymousPollClientId,
   type ActivePoll,
 } from "./pollContract";
 
@@ -14,7 +13,7 @@ const POLL: ActivePoll = {
   ],
   totalVotes: 1,
   votedUserIds: {
-    anon_c_browser_123: 0,
+    "guest_123e4567-e89b-42d3-a456-426614174000": 0,
     "11111111-1111-4111-8111-111111111111": 0,
   },
   createdAt: 1,
@@ -25,16 +24,11 @@ const POLL: ActivePoll = {
 };
 
 describe("Tank public poll contract", () => {
-  it("accepts only stable anonymous browser identifiers", () => {
-    expect(sanitizeAnonymousPollClientId("c_browser_123")).toBe(
-      "c_browser_123",
-    );
-    expect(sanitizeAnonymousPollClientId("guest")).toBeNull();
-    expect(sanitizeAnonymousPollClientId("../../bad")).toBeNull();
-  });
-
   it("returns only the requesting viewer's selection", () => {
-    const view = projectPollForViewer(POLL, "anon_c_browser_123");
+    const view = projectPollForViewer(
+      POLL,
+      "guest_123e4567-e89b-42d3-a456-426614174000",
+    );
     expect(view.viewerVote).toBe(0);
     expect("votedUserIds" in view).toBe(false);
   });

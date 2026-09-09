@@ -1,20 +1,13 @@
-// Z:\code\FEver-main\src\app\[locale]\calendar\page.tsx
+// src/app/contact/page.tsx
+import type { Metadata } from "next";
+import ContactPage from "@/zones/labs/contact/ContactPage";
 
-import { getCalendarData } from "@/data/calendarData";  // Fetch calendar data
-import Breadcrumb from "@/components/Common/Breadcrumb";
-import Calendar from "@/components/Common/Calendar";  // Client-side Calendar component
+export const metadata: Metadata = {
+  title: "Contact Support & Inquiries | Unenter Labs",
+  description:
+    "Get in touch with Unenter Labs customer care, order support, analytical batch verification, and Blurton Livestock & Rescue inquiries.",
+};
 
-export default async function CalendarPage() {
-  // Fetch localized data (title, description)
-  const { title, paragraph } = await getCalendarData();
-
-  return (
-    <div className="min-h-screen flex flex-col">
-      {/* Breadcrumb Component */}
-      <Breadcrumb pageName={title} description={paragraph} />
-
-      {/* Only pass non-color data */}
-      <Calendar />
-    </div>
-  );
+export default function ContactPageRoute() {
+  return <ContactPage />;
 }

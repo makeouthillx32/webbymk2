@@ -9,6 +9,8 @@ import { createServerClient } from "@/utils/supabase/server";
 import { requireResearcherRole } from "@/lib/research/requireResearcherRole";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
+import { verifyShippingRateQuote } from "@/lib/shippingQuote";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +23,7 @@ export async function POST(request: NextRequest) {
     // can't even JSON.parse() ("Unexpected end of JSON input"), instead of
     // the graceful JSON error this route already returns for every other
     // failure mode. Found via E2E checkout test, 2026-08-06.
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    const { stripe } = createCommerceStripe("labs");
     const supabase = await createServerClient();
     const body = await request.json();
 
@@ -118,8 +120,21 @@ export async function POST(request: NextRequest) {
     const isUSPSRate = shipping_rate_id.startsWith("usps-");
 
     if (isUSPSRate) {
-      shipping_cents = shipping_rate_data?.price_cents ?? 0;
-      shipping_method_name = shipping_rate_data?.name ?? "Standard Shipping";
+      const quote = verifyShippingRateQuote({
+        token: shipping_rate_data?.quote_token,
+        lane: "labs",
+        cartId: cart_id,
+        subtotalCents: subtotal_cents,
+        rateId: shipping_rate_id,
+      });
+      if (!quote) {
+        return NextResponse.json(
+          { error: "Shipping quote is invalid or expired. Please choose shipping again." },
+          { status: 400 },
+        );
+      }
+      shipping_cents = quote.priceCents;
+      shipping_method_name = quote.name;
     } else {
       const { data: shippingRate, error: shippingError } = await supabase
         .from("shipping_rates")
@@ -276,6 +291,7 @@ export async function POST(request: NextRequest) {
       const updatedPI = await stripe.paymentIntents.update(existing.stripe_payment_intent_id, {
         amount: total_cents,
         metadata: {
+          payment_lane: "labs",
           order_id: existing.id,
           order_number: existing.order_number,
           auth_user_id: authUserId,
@@ -369,7 +385,7 @@ export async function POST(request: NextRequest) {
       if (orderError?.code === "23505") {
         const { data: winner } = await supabase
           .from("orders")
-          .select("id, order_number, stripe_payment_intent_id")
+          .select("id, order_number, stripe_payment_intent_id, total_cents, discount_reservation_id")
           .eq("cart_id", cart_id)
           .eq("order_source", "research")
           .eq("payment_status", "pending")
@@ -410,6 +426,7 @@ export async function POST(request: NextRequest) {
         currency: "usd",
         automatic_payment_methods: { enabled: true },
         metadata: {
+          payment_lane: "labs",
           order_id: order.id,
           order_number: order.order_number,
           auth_user_id: authUserId,
@@ -418,7 +435,7 @@ export async function POST(request: NextRequest) {
         description: `Order ${order.order_number}`,
         shipping: shippingForStripe,
       },
-      { idempotencyKey: `pi-create-${order.id}` }
+      { idempotencyKey: `labs-pi-create-${order.id}` }
     );
 
     await supabase

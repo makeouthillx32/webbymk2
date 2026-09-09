@@ -120,6 +120,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     "cas_number",
     "purity_percent",
     "research_use_only",
+    // Grouping axes. Both were bulk-derived from the title by regex, so they
+    // MUST be correctable by hand — a compound that guessed wrong otherwise
+    // sits in the wrong card forever.
+    "compound",
+    "form",
   ]);
   const update: Record<string, any> = {};
   for (const [k, v] of Object.entries(body ?? {})) {

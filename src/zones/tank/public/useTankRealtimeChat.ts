@@ -2,38 +2,131 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { safeStorage } from "@/lib/safeStorage";
 import type { ChatMessage } from "../contracts";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const MAX_CHAT_DOM_MESSAGES = 150; // Performance cap to maintain high framerates
 
-function getStorageKey(roomId: string) {
-  return `tank_chat_storage_${roomId}`;
+// Root cause of the "iOS Safari / Brave stuck loading forever until you
+// clear site data" incident (vault/Core/tank-ios-safari-persisted-site-data-
+// forever-load.md): this cache used to write one full raw localStorage entry
+// PER ROOM EVER VISITED, with no cap on the number of rooms and no routing
+// through safeStorage's quota-exceeded handling. A visitor who'd clicked
+// through Director + every room over a session accumulated that many
+// uncapped ~150-message JSON blobs. Safari's per-origin localStorage quota is
+// tight and shared across the whole origin — once full, writes made by code
+// that ISN'T defensively wrapped (Supabase's own auth SDK session persistence
+// among them) start throwing, and that's what actually bricked the app. Every
+// deploy forces a hard reload for everyone at once (new JS hash = no cached
+// bundle to fall back to), which is why this reliably showed up right after
+// pushing a build instead of trickling in randomly.
+//
+// Fixed two ways: (1) route through safeStorage so a quota failure here is
+// the same handled/evicting path as everywhere else instead of a bespoke
+// silent catch, and (2) cap how many rooms' worth of history are kept at
+// all — LRU-evict the oldest room's cache once the count exceeds the cap,
+// so total footprint no longer grows with "how many rooms has this browser
+// ever opened."
+const MAX_CACHED_ROOMS = 6;
+const ROOM_CACHE_INDEX_KEY = "tank_chat_storage_index";
+
+function getStorageKey(roomId: string, userId?: string | null) {
+  if (userId) {
+    return `tank_chat_storage_user_${userId}_${roomId}`;
+  }
+  return `tank_chat_storage_guest_${roomId}`;
 }
 
-export function drainClientChatStorage() {
+function readRoomCacheIndex(): string[] {
+  try {
+    const raw = safeStorage.getItem(ROOM_CACHE_INDEX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// Moves storageKey to the front of the index, evicting oldest room caches if over limit
+function touchRoomCacheIndex(storageKey: string) {
+  try {
+    const index = readRoomCacheIndex().filter((id) => id !== storageKey);
+    index.unshift(storageKey);
+    const evicted = index.splice(MAX_CACHED_ROOMS);
+    for (const staleKey of evicted) {
+      safeStorage.removeItem(staleKey);
+    }
+    safeStorage.setItem(ROOM_CACHE_INDEX_KEY, JSON.stringify(index));
+  } catch {}
+}
+
+export function clearTankSessionCookies() {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  const cookiesToClear = [
+    "tank_participant_v1",
+    "tank_voter_client_id",
+    "userRole",
+    "userRoleUserId",
+    "userDisplayName",
+    "userPermissions",
+    "rememberMe",
+    "lastPage",
+  ];
+  const host = window.location.hostname;
+  const domains = [undefined, host, `.${host}`, ".unenter.live", "unenter.live"];
+  const paths = ["/", "/rooms", ""];
+
+  for (const name of cookiesToClear) {
+    for (const domain of domains) {
+      for (const path of paths) {
+        const domainPart = domain ? `; domain=${domain}` : "";
+        const pathPart = path ? `; path=${path}` : "; path=/";
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT${pathPart}${domainPart}; SameSite=Lax`;
+      }
+    }
+  }
+}
+
+export function drainClientChatStorage(userId?: string | null) {
   if (typeof window === "undefined") return;
   try {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (
-        k &&
-        (k.startsWith("tank_chat_storage_") ||
-          k.startsWith("tank_session_chat_"))
-      ) {
-        keysToRemove.push(k);
+      if (!k) continue;
+      if (userId) {
+        if (
+          k.startsWith(`tank_chat_storage_user_${userId}_`) ||
+          k.startsWith(`tank_session_chat_${userId}_`)
+        ) {
+          keysToRemove.push(k);
+        }
+      } else {
+        if (
+          k.startsWith("tank_chat_storage_user_") ||
+          k.startsWith("tank_session_chat_") ||
+          k.startsWith("tank_chat_storage_")
+        ) {
+          keysToRemove.push(k);
+        }
       }
     }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    keysToRemove.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    });
     sessionStorage.clear();
+    clearTankSessionCookies();
   } catch {}
 }
 
-function loadClientStorageMessages(roomId: string): ChatMessage[] | null {
+function loadClientStorageMessages(roomId: string, userId?: string | null): ChatMessage[] | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(getStorageKey(roomId));
+    const key = getStorageKey(roomId, userId);
+    const raw = safeStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : null;
@@ -42,11 +135,13 @@ function loadClientStorageMessages(roomId: string): ChatMessage[] | null {
   }
 }
 
-function saveClientStorageMessages(roomId: string, messages: ChatMessage[]) {
+function saveClientStorageMessages(roomId: string, messages: ChatMessage[], userId?: string | null) {
   if (typeof window === "undefined") return;
   try {
     const slice = messages.slice(-MAX_CHAT_DOM_MESSAGES);
-    localStorage.setItem(getStorageKey(roomId), JSON.stringify(slice));
+    const key = getStorageKey(roomId, userId);
+    safeStorage.setItem(key, JSON.stringify(slice));
+    touchRoomCacheIndex(key);
   } catch {}
 }
 
@@ -107,6 +202,7 @@ export function useTankRealtimeChat(
   // this initializer made Safari render cached chat while the server rendered
   // the empty state, causing React to discard and rebuild the whole Tank tree
   // during refresh.
+  const currentUserId = identity?.userId ?? null;
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,16 +211,18 @@ export function useTankRealtimeChat(
   // Sync messages to local client storage as new messages stream in
   useEffect(() => {
     if (messages.length > 0 && roomId) {
-      saveClientStorageMessages(roomId, messages);
+      saveClientStorageMessages(roomId, messages, currentUserId);
     }
-  }, [messages, roomId]);
+  }, [messages, roomId, currentUserId]);
 
-  // When room changes or on reload: load cached client messages and fetch recent history
+  // When room changes or user identity changes or on reload: load cached messages and fetch recent history
   useEffect(() => {
     if (!roomId) return;
-    const cached = loadClientStorageMessages(roomId);
+    const cached = loadClientStorageMessages(roomId, currentUserId);
     if (cached && cached.length > 0) {
       setMessages(cached);
+    } else {
+      setMessages(EMPTY_MESSAGES);
     }
 
     let active = true;
@@ -134,7 +232,7 @@ export function useTankRealtimeChat(
         if (active) {
           setMessages((current) => {
             const next = mergeHistory(current, history);
-            saveClientStorageMessages(roomId, next);
+            saveClientStorageMessages(roomId, next, currentUserId);
             return next;
           });
         }
@@ -147,33 +245,62 @@ export function useTankRealtimeChat(
     return () => {
       active = false;
     };
-  }, [roomId]);
+  }, [roomId, currentUserId]);
 
-  // Drain client storage if auth state changes to SIGNED_OUT
+  // Drain client storage if auth state changes to SIGNED_OUT, and sync logout across tabs
   useEffect(() => {
+    const handleLogout = (targetUserId?: string | null) => {
+      drainClientChatStorage(targetUserId || currentUserId);
+      setMessages(EMPTY_MESSAGES);
+      // Fetch fresh public room history for guest
+      void fetchChatHistory(roomId)
+        .then((history) => {
+          setMessages(history);
+        })
+        .catch(() => {});
+    };
+
     const supabase = createClient();
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
-        drainClientChatStorage();
-        setMessages(EMPTY_MESSAGES);
+        handleLogout();
       }
     });
 
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel("tank_session_channel");
+      bc.onmessage = (event) => {
+        if (event.data?.type === "LOGOUT") {
+          handleLogout(event.data.userId);
+        }
+      };
+    }
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "tank_logout_sync") {
+        handleLogout();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
     return () => {
       subscription.unsubscribe();
+      if (bc) bc.close();
+      window.removeEventListener("storage", onStorage);
     };
-  }, []);
+  }, [roomId, currentUserId]);
 
   // Realtime Supabase broadcast listener with live message dispatching
   useEffect(() => {
     if (!roomId) return;
     const supabase = createClient();
 
-    if (roomId.startsWith("click:")) {
+    if (roomId.startsWith("click:") || roomId.startsWith("dm:")) {
       const channel = supabase
-        .channel(`tank-click-chat-${roomId.slice(6)}`)
+        .channel(`tank-scoped-chat-${roomId}`)
         .on(
           "postgres_changes",
           {

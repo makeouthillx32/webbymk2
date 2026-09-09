@@ -5,8 +5,11 @@ import { useState } from "react";
 import SectionTitle from "../Common/SectionTitle";
 
 import ModalVideo from "react-modal-video";
+import { LANDING_ASSETS } from "@/lib/siteAssets";
 
-const Video = () => {
+/** `videoUrl` lets a server parent inject a registry-resolved URL;
+ *  the default is the known storage URL (no local copy exists any more). */
+const Video = ({ videoUrl = LANDING_ASSETS.heroVideoMp4 }: { videoUrl?: string } = {}) => {
   const [isOpen, setOpen] = useState(false);
 
   return (
@@ -53,7 +56,7 @@ const Video = () => {
 
       <ModalVideo
         channel={"custom"}
-        url={"/video/hero-video.mp4"}
+        url={videoUrl}
         isOpen={isOpen}
         onClose={() => setOpen(false)}
       />

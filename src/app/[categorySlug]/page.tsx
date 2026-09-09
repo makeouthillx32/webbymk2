@@ -22,9 +22,15 @@ import {
   getResearchProductSections,
   type ResearchProductSection,
 } from "@/lib/research/queries";
-import ResearchCatalogClient from "@/components/research/ResearchCatalogClient";
-import ResearchProductDetailClient from "@/components/research/ResearchProductDetailClient";
+import dynamic from "next/dynamic";
 import { ClientInlineStaticPage } from "@/components/shop/_components/ClientInlineStaticPage";
+
+const ResearchCatalogClient = dynamic(
+  () => import("@/components/research/ResearchCatalogClient"),
+);
+const ResearchProductDetailClient = dynamic(
+  () => import("@/components/research/ResearchProductDetailClient"),
+);
 
 import { getPrimaryImageUrl, getResearchProductOgImage } from "@/lib/images";
 
@@ -460,5 +466,8 @@ export default async function CategorySlugPage({
   );
 }
 
-// Revalidate every 5 minutes (same as collections)
-export const revalidate = 300;
+// revalidate=0 tells Next.js "never cache — render fresh on every request".
+// This allows createServerClient() (cookie-reading) without the DYNAMIC_SERVER_USAGE
+// crash that `revalidate=300` caused. Pre-rendered slugs from generateStaticParams()
+// are still built at deploy time; unknown slugs render on-demand via dynamicParams=true.
+export const revalidate = 0;

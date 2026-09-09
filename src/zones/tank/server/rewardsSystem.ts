@@ -1,72 +1,13 @@
 /**
- * Tank Platform Daily Rewards, Prize Machine & Promo Code System
+ * Tank Platform Daily Rewards & Promo Code System
+ *
+ * The Prize Machine used to live here as a fully client-displayed spin with
+ * no database writes at all — no auth check, no token deduction, no
+ * inventory row, and a drop table referencing items ("Night Vision Goggles")
+ * that never existed in tank_inventory_items. It's been replaced by the real,
+ * DB-backed spinTankPrizeMachine in actions.ts, which is the one both
+ * PrizeMachineModal and InventoryOverlay call now.
  */
-
-export type PrizeWheelItem = {
-  id: string;
-  name: string;
-  type: "item" | "tokens" | "xp";
-  amount?: number;
-  itemSlug?: string;
-  icon: string;
-  rarity: "common" | "rare" | "epic" | "legendary";
-  weight: number;
-};
-
-export const PRIZE_WHEEL_DROPS: PrizeWheelItem[] = [
-  {
-    id: "drop_lightsaber",
-    name: "Staff Lightsaber",
-    type: "item",
-    itemSlug: "lightsaber",
-    icon: "🗡️",
-    rarity: "legendary",
-    weight: 5,
-  },
-  {
-    id: "drop_nvg",
-    name: "Night Vision Goggles",
-    type: "item",
-    itemSlug: "nvg",
-    icon: "🥽",
-    rarity: "rare",
-    weight: 15,
-  },
-  {
-    id: "drop_tokens_50",
-    name: "50 Tokens Stash",
-    type: "tokens",
-    amount: 50,
-    icon: "🪙",
-    rarity: "rare",
-    weight: 25,
-  },
-  {
-    id: "drop_xp_150",
-    name: "150 XP Surge",
-    type: "xp",
-    amount: 150,
-    icon: "⚡",
-    rarity: "common",
-    weight: 35,
-  },
-  {
-    id: "drop_tokens_15",
-    name: "15 Pocket Tokens",
-    type: "tokens",
-    amount: 15,
-    icon: "🪙",
-    rarity: "common",
-    weight: 20,
-  },
-];
-
-export type SpinResult = {
-  success: boolean;
-  prize?: PrizeWheelItem;
-  tokensCost?: number;
-  error?: string;
-};
 
 export type CodeRedemptionResult = {
   success: boolean;
@@ -90,31 +31,6 @@ const PROMO_CODES: Record<
 
 // In-memory tracking for fallback / local development sessions
 const claimedCodesMemory = new Set<string>();
-/**
- * Rolls RNG Prize Wheel with weighted drop table.
- */
-export async function spinPrizeMachineAction(
-  userId = "viewer-self",
-  isFreeSpin = false,
-): Promise<SpinResult> {
-  const totalWeight = PRIZE_WHEEL_DROPS.reduce((sum, item) => sum + item.weight, 0);
-  let random = Math.random() * totalWeight;
-
-  let selectedPrize: PrizeWheelItem = PRIZE_WHEEL_DROPS[0];
-  for (const item of PRIZE_WHEEL_DROPS) {
-    if (random < item.weight) {
-      selectedPrize = item;
-      break;
-    }
-    random -= item.weight;
-  }
-
-  return {
-    success: true,
-    prize: selectedPrize,
-    tokensCost: isFreeSpin ? 0 : 20,
-  };
-}
 
 /**
  * Validates and redeems a promotional or streamer secret event code.

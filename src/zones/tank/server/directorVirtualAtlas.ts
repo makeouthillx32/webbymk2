@@ -15,6 +15,8 @@ export type SubjectMode =
   | "face"
   | "motion"
   | "crowd"
+  | "group"
+  | "animals"
   | "chaos"
   | "manual"
   | "rotation";
@@ -31,6 +33,7 @@ export type DetectionCategoryFilters = {
   easterEgg: boolean;
   waldo: boolean;
   people: boolean;
+  pets: boolean;
   audio: boolean;
   feet: boolean;
 };
@@ -41,6 +44,7 @@ export const DEFAULT_DETECTION_FILTERS: DetectionCategoryFilters = {
   easterEgg: true,
   waldo: true,
   people: true,
+  pets: true,
   audio: true,
   feet: false,
 };
@@ -65,6 +69,27 @@ export type CameraTileBounds = {
   yMax: number; // e.g. 2160, 4320
   proxyXMin: number; // 0, 640, 1280
   proxyYMin: number; // 0, 360
+};
+
+export type NormalizedBoundingBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type CameraDetectionBox = {
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+  label: string;
+  depthZone?: DepthZone;
+  confidence?: number;
+  isMovement?: boolean;
+  velocity?: number;
+  targetName?: string;
+  category?: "people" | "pets" | "trash" | "clutter" | "waldo" | "unknown";
 };
 
 export type GridDimensions = {
@@ -320,6 +345,7 @@ export type RoomLightingTelemetry = {
 export type CameraTelemetryInput = {
   cameraId: string;
   peopleCount: number;
+  animalCount?: number;
   visibleFeetCount: number;
   feetConfidence: number;
   faceCount: number;
@@ -335,14 +361,7 @@ export type CameraTelemetryInput = {
   depthScalingFactor?: number; // 0.35 (Far) to 1.00 (Near)
   // Room Light Perception & IR Night Vision
   lighting?: RoomLightingTelemetry;
-  boundingBoxes?: Array<{
-    nx: number;
-    ny: number;
-    nw: number;
-    nh: number;
-    label: string;
-    depthZone?: DepthZone;
-  }>;
+  boundingBoxes?: CameraDetectionBox[];
 };
 
 /**
@@ -484,8 +503,8 @@ export function calculateCameraScore(
       breakdown.person = personBonus;
       break;
     }
+    case "group":
     case "crowd": {
-      // Prioritizes the biggest group of people in a scene!
       // Quadratic group density reward: 1 person = 15 pts, 2 people = 75 pts, 3 people = 135 pts, 4 people = 200 pts
       const count = telemetry.peopleCount;
       const groupScore = count >= 2 ? Math.round(Math.pow(count, 1.6) * 32) : count * 15;
@@ -493,6 +512,30 @@ export function calculateCameraScore(
       const audioScore = Math.round(telemetry.audioPeak * 0.2);
       score = groupScore + motionScore + audioScore;
       breakdown.group = groupScore;
+      breakdown.motion = motionScore;
+      breakdown.audio = audioScore;
+      break;
+    }
+    case "animals": {
+      // Animal & Pet Tracking Mode (Cuts to room with most dogs & cats)
+      const animalBoxes = (telemetry.boundingBoxes ?? []).filter(
+        (b) =>
+          b.label === "dog" ||
+          b.label === "cat" ||
+          b.label === "pet" ||
+          b.label === "animal" ||
+          b.category === "pets" ||
+          b.label === "Buster" ||
+          b.label === "Kona" ||
+          b.label === "Mochi" ||
+          b.label === "Shadow",
+      );
+      const count = Math.max(telemetry.animalCount ?? 0, animalBoxes.length);
+      const animalScore = count >= 2 ? Math.round(Math.pow(count, 1.8) * 35) : count * 35;
+      const motionScore = Math.round(telemetry.motionScore * 20);
+      const audioScore = Math.round(telemetry.audioPeak * 0.15);
+      score = animalScore + motionScore + audioScore;
+      breakdown.animals = animalScore;
       breakdown.motion = motionScore;
       breakdown.audio = audioScore;
       break;
@@ -628,14 +671,15 @@ export function evaluateDirectorStep(
   // challenger/idle logic below entirely; scores above are still computed
   // so the UI's breakdown panel has something real to show, they just
   // don't drive the cut decision in this mode.
-  if (currentState.subjectMode === "rotation" && currentState.rotationCameraIds.length > 0) {
-    const list = currentState.rotationCameraIds;
+  const rotationCameraIds = currentState.rotationCameraIds || [];
+  if (currentState.subjectMode === "rotation" && rotationCameraIds.length > 0) {
+    const list = rotationCameraIds;
     const slotStartedAt = newRotationSlotStartedAt ?? now;
     const slotElapsed = now - slotStartedAt;
 
     if (newRotationSlotStartedAt === null) {
       newRotationSlotStartedAt = now;
-    } else if (slotElapsed >= currentState.rotationIntervalMs) {
+    } else if (slotElapsed >= (currentState.rotationIntervalMs || 170000)) {
       newRotationIndex = (newRotationIndex + 1) % list.length;
       newRotationSlotStartedAt = now;
     }
@@ -669,16 +713,16 @@ export function evaluateDirectorStep(
       motionCurve: currentState.motionCurve,
       viewportX: finalX,
       viewportY: finalY,
-      viewportWidth: 3840,
-      viewportHeight: 2160,
-      zoomFactor: 1,
+      viewportWidth: Math.round(3840 / (currentState.zoomFactor || 1)),
+      viewportHeight: Math.round(2160 / (currentState.zoomFactor || 1)),
+      zoomFactor: currentState.zoomFactor || 1,
       currentScore: currentTileScore,
       shotStartedAt: newShotStartedAt,
       challengerId: null,
       challengerSince: null,
       scores,
-      rotationCameraIds: currentState.rotationCameraIds,
-      rotationIntervalMs: currentState.rotationIntervalMs,
+      rotationCameraIds: currentState.rotationCameraIds || [],
+      rotationIntervalMs: currentState.rotationIntervalMs || 170000,
       rotationIndex: newRotationIndex,
       rotationSlotStartedAt: newRotationSlotStartedAt,
     };
@@ -757,16 +801,16 @@ export function evaluateDirectorStep(
     motionCurve: currentState.motionCurve,
     viewportX: finalX,
     viewportY: finalY,
-    viewportWidth: targetW,
-    viewportHeight: targetH,
-    zoomFactor: 1,
+    viewportWidth: Math.round(targetW / (currentState.zoomFactor || 1)),
+    viewportHeight: Math.round(targetH / (currentState.zoomFactor || 1)),
+    zoomFactor: currentState.zoomFactor || 1,
     currentScore: currentTileScore,
     shotStartedAt: newShotStartedAt,
     challengerId,
     challengerSince,
     scores,
-    rotationCameraIds: currentState.rotationCameraIds,
-    rotationIntervalMs: currentState.rotationIntervalMs,
+    rotationCameraIds: currentState.rotationCameraIds || [],
+    rotationIntervalMs: currentState.rotationIntervalMs || 170000,
     rotationIndex: newRotationIndex,
     rotationSlotStartedAt: newRotationSlotStartedAt,
   };

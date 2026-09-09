@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { obsRoomPreviewMediaPath } from "../mediaPlayback";
+import { DIRECTOR_PROGRAM_SLUG, obsRoomPreviewMediaPath } from "../mediaPlayback";
 import { mediaMtxHeaders, provisionObsWhepSibling, teardownObsWhepSibling } from "./mediaGateway";
 
 // Tank-issued OBS ingest rooms.
@@ -243,6 +243,19 @@ export async function authorizePublish(
 
   const slug = input.path.slice(OBS_PATH_PREFIX.length + 1);
   if (!slug || !input.password) return { allowed: false, reason: "missing credentials" };
+
+  // The Director program is infrastructure, not a user-owned OBS room. It has
+  // one server-only key and deliberately never appears in tank_obs_rooms or in
+  // the public room directory. OBS publishes the /obs/director browser source
+  // here continuously while Director state changes the pixels inside it.
+  if (slug === DIRECTOR_PROGRAM_SLUG) {
+    const expected = process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+    if (!expected) return { allowed: false, reason: "director program is not configured" };
+    if (input.user !== DIRECTOR_PROGRAM_SLUG || !secretsMatch(input.password, expected)) {
+      return { allowed: false, reason: "bad director program credentials" };
+    }
+    return { allowed: true, reason: "director program" };
+  }
 
   const admin = createAdminClient();
   const { data: room } = await admin

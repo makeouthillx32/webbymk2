@@ -208,6 +208,12 @@ if (args[0] === 'version') {
   const IS_LAN_LOCAL = (() => {
     if (!CONTROL_NODE_IP) return true
     try {
+      const fs = require('fs') as typeof import('fs')
+      if (fs.existsSync('/proc/version') && fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft')) {
+        return true
+      }
+    } catch {}
+    try {
       const os = require('os') as typeof import('os')
       return Object.values(os.networkInterfaces()).flat().some(i => i?.address === CONTROL_NODE_IP)
     } catch { return false }
@@ -632,6 +638,43 @@ if (args[0] === 'update') {
   process.exit(0)
 }
 
+// ── attach subcommand ────────────────────────────────────────────────────────
+if (args[0] === 'attach') {
+  if (process.platform === 'win32') {
+    process.stderr.write('  attach is only supported on Linux/WSL environments with tmux.\n')
+    process.exit(1)
+  }
+  const { spawnSync } = await import('child_process')
+  const hasSession = spawnSync('tmux', ['has-session', '-t', 'unaxis'], { stdio: 'ignore' })
+  if (hasSession.status !== 0) {
+    process.stderr.write('  ✗ No active UNAXIS session found.\n')
+    process.stderr.write('  Start one with: unaxis  or  bun run tui:dev\n')
+    process.exit(1)
+  }
+  process.stdout.write('  ● Attaching to running UNAXIS session…\n')
+  if (process.env.TMUX) {
+    spawnSync('tmux', ['switch-client', '-t', 'unaxis'], { stdio: 'inherit' })
+  } else {
+    spawnSync('tmux', ['attach-session', '-t', 'unaxis'], { stdio: 'inherit' })
+  }
+  process.exit(0)
+}
+
+// ── stop subcommand ──────────────────────────────────────────────────────────
+if (args[0] === 'stop') {
+  const { spawnSync } = await import('child_process')
+  if (process.platform !== 'win32') {
+    const hasSession = spawnSync('tmux', ['has-session', '-t', 'unaxis'], { stdio: 'ignore' })
+    if (hasSession.status === 0) {
+      spawnSync('tmux', ['kill-session', '-t', 'unaxis'], { stdio: 'ignore' })
+      process.stdout.write('  ✓ UNAXIS session stopped.\n')
+      process.exit(0)
+    }
+  }
+  process.stdout.write('  (no active UNAXIS session)\n')
+  process.exit(0)
+}
+
 // ── <slug> <command…> — project-scoped IPC routing ───────────────────────────
 // All TUI commands are namespaced under the project slug:
 //   unaxis unenter status
@@ -643,7 +686,7 @@ if (args[0] === 'update') {
 
 const GLOBAL_SUBCOMMANDS = new Set([
   'project', 'connect', 'disconnect', 'events', 'config', 'credentials', 'creds', 'version',
-  'snapshot-view', 'snap-view', 'update',
+  'snapshot-view', 'snap-view', 'update', 'attach', 'stop',
 ])
 
 if (args.length >= 1 && args[0] && !args[0].startsWith('-') && !GLOBAL_SUBCOMMANDS.has(args[0])) {
@@ -853,6 +896,70 @@ if (args[0] === 'push') {
 
 // ── Early .env load before any bundled TUI modules can initialize ─────────────
 ensureRuntimeEnv(true)
+
+// ── Interactive TUI launch ───────────────────────────────────────────────────
+// If no arguments were passed, launch the TUI.
+// In Linux/WSL, check if an existing attachable tmux session ('unaxis') is active.
+// If active, attach to it immediately instead of spawning duplicate processes.
+if (args.length === 0 && process.platform !== 'win32' && !process.env.TMUX && process.env.UNAXIS_IN_TMUX !== '1' && process.env.UNAXIS_NO_TMUX !== '1' && process.env.UNAXIS_DEV !== 'true') {
+  const { spawnSync } = await import('child_process')
+  const whichTmux = spawnSync('which', ['tmux'], { stdio: 'ignore' })
+  if (whichTmux.status === 0) {
+    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+    let hasSession = false
+    const checkSession = spawnSync('tmux', ['has-session', '-t', 'unaxis'], { stdio: 'ignore' })
+    if (checkSession.status === 0) {
+      // Validate that the session is actually alive and not a dead pane
+      const checkDead = spawnSync('tmux', ['list-panes', '-t', 'unaxis', '-F', '#{pane_dead} #{pane_pid}'], { encoding: 'utf8' })
+      if (checkDead.status === 0 && checkDead.stdout.trim()) {
+        const lines = checkDead.stdout.trim().split('\n')
+        hasSession = lines.some((line) => {
+          const [dead, pidStr] = line.trim().split(/\s+/)
+          const pid = parseInt(pidStr ?? '0', 10)
+          if (dead === '1' || pid <= 0) return false
+          try { process.kill(pid, 0); return true } catch { return false }
+        })
+      }
+      if (!hasSession) {
+        // Clean up zombie session immediately
+        spawnSync('tmux', ['kill-session', '-t', 'unaxis'], { stdio: 'ignore' })
+      }
+    }
+
+    if (hasSession) {
+      if (isInteractive) {
+        process.stdout.write('  ● Attaching to running UNAXIS prod session…\n')
+        const attach = spawnSync('tmux', ['attach-session', '-t', 'unaxis'], { stdio: 'inherit' })
+        process.exit(attach.status ?? 0)
+      } else {
+        process.stdout.write('  ● UNAXIS session is already active in background.\n')
+        process.exit(0)
+      }
+    } else {
+      // Start a managed session and attach
+      const selfScript = process.argv[1] || 'unaxis'
+      spawnSync('tmux', [
+        'new-session', '-d', '-s', 'unaxis',
+        '-e', 'UNAXIS_IN_TMUX=1',
+        `${process.execPath} ${selfScript}`
+      ], {
+        env: { ...process.env, UNAXIS_IN_TMUX: '1' },
+        stdio: 'ignore'
+      })
+      spawnSync('tmux', ['set-option', '-t', 'unaxis', 'status', 'off'], { stdio: 'ignore' })
+      spawnSync('tmux', ['set-option', '-t', 'unaxis', 'mouse', 'on'], { stdio: 'ignore' })
+      spawnSync('tmux', ['set-option', '-t', 'unaxis', 'window-size', 'latest'], { stdio: 'ignore' })
+      spawnSync('tmux', ['set-option', '-t', 'unaxis', 'remain-on-exit', 'off'], { stdio: 'ignore' })
+      if (isInteractive) {
+        const attach = spawnSync('tmux', ['attach-session', '-t', 'unaxis'], { stdio: 'inherit' })
+        process.exit(attach.status ?? 0)
+      } else {
+        process.stdout.write('  ✓ Started UNAXIS in background tmux session.\n')
+        process.exit(0)
+      }
+    }
+  }
+}
 
 // Boot TUI
 // Dynamic import: Ink/React/yoga-wasm-web only initialize when this line

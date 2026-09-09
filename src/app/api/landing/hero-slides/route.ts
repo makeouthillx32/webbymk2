@@ -48,6 +48,7 @@ export async function GET() {
         "mobile_alt_text",
         "mobile_width",
         "mobile_height",
+        "target_device",
 
         // CTA / overlay fields you already store
         "pill_text",
@@ -61,6 +62,17 @@ export async function GET() {
         "text_alignment",
         "text_color",
         "overlay_opacity",
+        // Overlay controls (2026-09-05). Omitting these from the SELECT would
+        // let saves succeed but reopening a slide would show the defaults —
+        // the editor would silently "lose" every setting on reload.
+        "show_overlay",
+        "cta_alignment",
+        "cta_underline",
+        "cta_style",
+        "overlay_position",
+        "overlay_pad_x",
+        "overlay_pad_y",
+        "text_color_token",
 
         // tech
         "width",

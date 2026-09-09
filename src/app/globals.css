@@ -249,3 +249,86 @@ select:focus {
   box-shadow: 0 -1px 0 rgba(0,0,0,.04), 0 2px 4px rgba(0,0,0,.25);
   cursor: not-allowed;
 }
+
+/* ── Sleek Theme Scrollbars (eliminates default OS / Windows 95 scrollbars) ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 9999px;
+  transition: background-color 0.15s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.6);
+}
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+
+/* ── Custom Scrollbar Utilities ────────────────────────────── */
+@layer utilities {
+  /* Completely hide scrollbars while maintaining full touch / mouse scroll */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+
+  /* Ultra-sleek themed capsule scrollbar for horizontal strips and cards */
+  .sleek-scrollbar::-webkit-scrollbar,
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+    height: 4px;
+  }
+  .sleek-scrollbar::-webkit-scrollbar-track,
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.2);
+    border-radius: 9999px;
+  }
+  .sleek-scrollbar::-webkit-scrollbar-thumb,
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.4);
+    border-radius: 9999px;
+    transition: background-color 0.15s ease;
+  }
+  .sleek-scrollbar::-webkit-scrollbar-thumb:hover,
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+  }
+  .sleek-scrollbar::-webkit-scrollbar-button,
+  .custom-scrollbar::-webkit-scrollbar-button {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .sleek-scrollbar,
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.4) transparent;
+  }
+
+  /* Hide Next.js dev indicator so it doesn't obstruct live UI or screenshots */
+  nextjs-portal,
+  #__next-build-watcher {
+    display: none !important;
+  }
+}

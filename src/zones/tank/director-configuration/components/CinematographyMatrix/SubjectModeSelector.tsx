@@ -9,7 +9,13 @@ type SubjectModeSelectorProps = {
   onSelectMode: (mode: SubjectMode) => void;
 };
 
-const MODES: Array<{ id: SubjectMode; label: string; icon: React.ElementType; badge: string; desc: string }> = [
+const MODES: Array<{
+  id: SubjectMode;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge: string;
+  desc: string;
+}> = [
   {
     id: "speaker",
     label: "Audio Detection",
@@ -18,11 +24,18 @@ const MODES: Array<{ id: SubjectMode; label: string; icon: React.ElementType; ba
     desc: "Auto-delegates to highest sound / audio peak",
   },
   {
-    id: "crowd",
-    label: "Group / Crowd Mode",
+    id: "group",
+    label: "Group Auto-PTZ",
     icon: Users,
-    badge: "BIGGEST GROUP",
-    desc: "Finds and snaps to the biggest group of people",
+    badge: "AI CLUSTER",
+    desc: "Tight AI PTZ crop enclosing the entire group with breathing bobbing",
+  },
+  {
+    id: "animals",
+    label: "Animals & Pets",
+    icon: Flame,
+    badge: "PET TRACKER",
+    desc: "Frames dogs & cats (Buster, Kona, Mochi, Shadow) and pet clusters",
   },
   {
     id: "face",

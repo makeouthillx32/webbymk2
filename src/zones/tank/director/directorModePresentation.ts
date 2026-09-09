@@ -36,6 +36,11 @@ export const DIRECTOR_MODE_PRESENTATION: Record<ServerDirectorMode, DirectorMode
     text: "text-[#ff4d00]",
     dot: "bg-[#ff4d00] shadow-[0_0_8px_#ff4d00]",
   },
+  MANUAL_PILOT: {
+    label: "MANUAL PILOT",
+    text: "text-emerald-400",
+    dot: "bg-emerald-400 shadow-[0_0_8px_#34d399]",
+  },
 };
 
 const UNKNOWN_DIRECTOR_MODE: DirectorModePresentation = {

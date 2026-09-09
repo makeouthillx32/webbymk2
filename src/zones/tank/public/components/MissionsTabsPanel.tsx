@@ -34,6 +34,13 @@ export type MissionsTabsPanelProps = {
   missions: TankMission[];
   messages: ChatMessage[];
   onCompleteMission?: (id: string) => void;
+  /**
+   * Logs is a staff-only dispatch view (see
+   * vault/Core/tank-desktop-viewer-ux-audit-2026-08-27.md) — it duplicates
+   * live chat and its unread-looking count was the dominant sidebar signal
+   * for ordinary viewers. Missions and Poll stay visible to everyone.
+   */
+  isStaff?: boolean;
 };
 
 // Helper: map mission title / category to a gamified icon
@@ -60,6 +67,7 @@ export function MissionsTabsPanel({
   missions = [],
   messages = [],
   onCompleteMission,
+  isStaff = false,
 }: MissionsTabsPanelProps) {
   // Live daily countdown timer (resets at midnight UTC)
   const [timeLeft, setTimeLeft] = useState("02:14:38");
@@ -68,18 +76,7 @@ export function MissionsTabsPanel({
   const [activePoll, setActivePoll] = useState<PollView | null>(null);
   const [votingIndex, setVotingIndex] = useState<number | null>(null);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
-
-  const getVoterClientId = () => {
-    if (typeof window === "undefined") return "anon_guest";
-    let id = localStorage.getItem("tank_voter_client_id");
-    if (!id) {
-      id = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      try {
-        localStorage.setItem("tank_voter_client_id", id);
-      } catch {}
-    }
-    return id;
-  };
+  const [pollError, setPollError] = useState<string | null>(null);
 
   useEffect(() => {
     const updateCountdown = () => {
@@ -104,10 +101,7 @@ export function MissionsTabsPanel({
   useEffect(() => {
     const fetchPoll = async () => {
       try {
-        const clientId = getVoterClientId();
-        const res = await fetch("/api/tank/poll/active", {
-          headers: { "x-tank-voter-id": clientId },
-        });
+        const res = await fetch("/api/tank/poll/active");
         const { poll } = (await res.json()) as { poll: PollView | null };
         setActivePoll(poll);
         if (poll) {
@@ -122,23 +116,31 @@ export function MissionsTabsPanel({
   }, []);
 
   const handleVote = async (index: number) => {
-    if (!activePoll || votingIndex !== null) return;
+    if (!activePoll || votingIndex !== null || selectedOption !== null) return;
     setVotingIndex(index);
-    setSelectedOption(index);
+    setPollError(null);
     try {
-      const clientId = getVoterClientId();
       const res = await votePollAction({
         pollId: activePoll.id,
         optionIndex: index,
-        anonymousClientId: clientId,
       });
       if (res.success && res.poll) {
         setActivePoll(res.poll);
+        setSelectedOption(res.poll.viewerVote ?? index);
+      } else if (res.error) {
+        setPollError(res.error);
       }
     } finally {
       setVotingIndex(null);
     }
   };
+
+  // Guards a stale/leftover "logs" tab selection (e.g. a role change mid-
+  // session) from landing on a blank panel now that the tab button itself
+  // is hidden for non-staff.
+  useEffect(() => {
+    if (sidebarTab === "logs" && !isStaff) onTabChange("missions");
+  }, [sidebarTab, isStaff, onTabChange]);
 
   const completedCount = missions.filter((m) => m.completedAt).length;
 
@@ -152,14 +154,16 @@ export function MissionsTabsPanel({
       <div 
         className="flex items-center gap-1.5 border-b-2 border-black/90 bg-[#252830] px-3 pt-2 pb-1.5 shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)]"
         style={{
-          backgroundImage: "url(https://db.unenter.live/storage/v1/object/public/site-assets/tank-theme/fishtank-arcade/images/metal-small-comp.webp)",
+          backgroundImage: `url(${ACTIVE_THEME.images.metalTexture})`,
           backgroundRepeat: "repeat",
         }}
       >
         {(
           [
             { id: "missions" as const, label: "Missions", count: missions.length },
-            { id: "logs" as const, label: "Logs", count: messages.length ? Math.min(messages.length, 99) : null },
+            ...(isStaff
+              ? [{ id: "logs" as const, label: "Logs", count: messages.length ? Math.min(messages.length, 99) : null }]
+              : []),
             { id: "poll" as const, label: "Poll", count: activePoll ? 1 : null },
           ] as const
         ).map((tab) => {
@@ -199,9 +203,10 @@ export function MissionsTabsPanel({
       <div
         className="relative flex flex-1 flex-col overflow-hidden p-3 text-slate-200"
         style={{
+          // Flat solid cavity, matching every sibling panel's inner content
+          // area (InventoryOverlay, ChatConsolePanel, etc. — none of them
+          // tile a pattern image here, this one used to be the outlier).
           backgroundColor: "#111317",
-          backgroundImage: "url(https://db.unenter.live/storage/v1/object/public/tank-assets/patterns/asfalt-dark.png)",
-          backgroundRepeat: "repeat",
           boxShadow: "inset 0 4px 14px rgba(0,0,0,0.9), inset 0 -2px 6px rgba(0,0,0,0.8)",
         }}
       >
@@ -347,8 +352,8 @@ export function MissionsTabsPanel({
           </div>
         )}
 
-        {/* ──────────────── TAB: LOGS ──────────────── */}
-        {sidebarTab === "logs" && (
+        {/* ──────────────── TAB: LOGS (staff only) ──────────────── */}
+        {sidebarTab === "logs" && isStaff && (
           <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
             <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-1.5">
               <span
@@ -436,7 +441,7 @@ export function MissionsTabsPanel({
                         <button
                           key={opt.id || idx}
                           type="button"
-                          disabled={votingIndex !== null}
+                          disabled={votingIndex !== null || selectedOption !== null}
                           onClick={() => handleVote(idx)}
                           className={`group relative w-full text-left rounded border p-2 shadow transition-all select-none active:scale-[0.99] ${
                             isSelected
@@ -477,6 +482,12 @@ export function MissionsTabsPanel({
                       );
                     })}
                   </div>
+
+                  {pollError && (
+                    <p className="mt-2 rounded border border-red-500/40 bg-red-950/40 px-2 py-1.5 text-[9px] font-bold text-red-300">
+                      {pollError}
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-3 rounded border border-black/80 bg-black/70 p-2 text-center text-[9px] font-bold text-slate-400">

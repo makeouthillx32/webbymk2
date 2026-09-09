@@ -20,7 +20,49 @@ export type HouseMember = {
   displayName: string;
   /** Label the detector emits when it matches this person's enrolment. */
   detectorLabel: string;
+  role?: string;
+  avatarUrl?: string;
+  icon?: string;
+  bio?: string;
+  favoriteRoom?: string;
+  badge?: string;
 };
+
+export const DEFAULT_HOUSE_MEMBERS: HouseMember[] = [
+  {
+    id: "tyler",
+    displayName: "Tyler",
+    detectorLabel: "tyler",
+    role: "Lead Engineer & Producer",
+    avatarUrl: "/avatars/vance.png",
+    icon: "⚡",
+    bio: "Main operator of the Tank infrastructure. Usually found tuning cameras or coding in the control room.",
+    favoriteRoom: "control-room",
+    badge: "PRODUCER",
+  },
+  {
+    id: "joe",
+    displayName: "Joe",
+    detectorLabel: "joe",
+    role: "Resident Host & Chaos Instigator",
+    avatarUrl: "/avatars/jon.png",
+    icon: "🔥",
+    bio: "Brings the high-energy banter, games, and late-night challenges across the living room.",
+    favoriteRoom: "living-room",
+    badge: "HOUSE HOST",
+  },
+  {
+    id: "malia",
+    displayName: "Malia",
+    detectorLabel: "malia",
+    role: "Resident Chef & Creative Director",
+    avatarUrl: "/avatars/josie.png",
+    icon: "✨",
+    bio: "Head chef of the kitchen, keeps the pets well-fed and runs culinary streams.",
+    favoriteRoom: "kitchen",
+    badge: "CHEF & CREATIVE",
+  },
+];
 
 /**
  * Confidence below which a match is not trusted.

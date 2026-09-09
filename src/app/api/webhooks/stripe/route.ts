@@ -2,14 +2,19 @@
 import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { constructCommerceWebhookEvent } from "@/lib/stripe/commerce";
 import { sendNotification } from "@/lib/notifications";
 import { sendOrderConfirmationEmail } from "@/lib/mail/sendOrderConfirmation";
+import { beginPaymentAudit, finishPaymentAudit } from "@/lib/stripe/paymentAudit";
+import {
+  recordChargeFinancials,
+  recordPaymentIntentFinancials,
+  recordRefundFinancials,
+} from "@/lib/stripe/financialLedger";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
   try {
     const body = await request.text();
     const signature = request.headers.get('stripe-signature');
@@ -23,8 +28,13 @@ export async function POST(request: NextRequest) {
 
     // Verify webhook signature
     let event: Stripe.Event;
+    let stripe: Stripe;
+    let mode: "test" | "live";
     try {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+      const verified = constructCommerceWebhookEvent(body, signature);
+      event = verified.event;
+      stripe = verified.stripe;
+      mode = verified.mode;
     } catch (err: any) {
       console.error('Webhook signature verification failed:', err.message);
       return NextResponse.json(
@@ -35,12 +45,15 @@ export async function POST(request: NextRequest) {
 
     // Create Supabase client (service role for webhook operations)
     const supabase = createAdminClient();
+    const audit = await beginPaymentAudit(supabase, event, mode);
 
-    // Handle different event types
-    switch (event.type) {
+    try {
+      // Handle different event types
+      switch (event.type) {
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         await handlePaymentSucceeded(supabase, stripe, paymentIntent);
+        await recordPaymentIntentFinancials(supabase, stripe, paymentIntent, mode);
         break;
       }
 
@@ -59,17 +72,24 @@ export async function POST(request: NextRequest) {
       case 'charge.succeeded': {
         const charge = event.data.object as Stripe.Charge;
         await handleChargeSucceeded(supabase, charge);
+        await recordChargeFinancials(supabase, stripe, charge.id, mode);
         break;
       }
 
       case 'charge.refunded': {
         const charge = event.data.object as Stripe.Charge;
         await handleChargeRefunded(supabase, charge);
+        await recordRefundFinancials(supabase, stripe, charge, mode);
         break;
       }
 
-      default:
-        console.log(`Unhandled event type: ${event.type}`);
+        default:
+          console.log(`Unhandled event type: ${event.type}`);
+      }
+      await finishPaymentAudit(supabase, audit);
+    } catch (handlerError) {
+      await finishPaymentAudit(supabase, audit, handlerError);
+      throw handlerError;
     }
 
     return NextResponse.json({ received: true });
@@ -296,17 +316,15 @@ async function handleTankPurchaseSucceeded(supabase: any, paymentIntent: Stripe.
       };
       const grant = TOKEN_AMOUNTS[productKey] ?? 0;
       if (grant > 0) {
-        const { data: profile } = await supabase
-          .from('tank_profiles')
-          .select('tokens')
-          .eq('user_id', userId)
-          .maybeSingle();
-        await supabase
-          .from('tank_profiles')
-          .upsert(
-            { user_id: userId, tokens: (profile?.tokens ?? 0) + grant, updated_at: new Date().toISOString() },
-            { onConflict: 'user_id' },
-          );
+        const { error: tokenError } = await supabase
+          .from('tank_token_transactions')
+          .upsert({
+            user_id: userId,
+            amount: grant,
+            reason: `stripe_purchase:${productKey}`,
+            purchase_id: purchaseId,
+          }, { onConflict: 'purchase_id', ignoreDuplicates: true });
+        if (tokenError) throw tokenError;
         console.log(`[Tank Store] Granted ${grant} tokens to ${userId} (purchase ${purchaseId})`);
       }
     } else if (productKey === 'season_pass') {
@@ -333,6 +351,16 @@ async function handlePaymentFailed(
   supabase: any,
   paymentIntent: Stripe.PaymentIntent
 ) {
+  if (paymentIntent.metadata.tank_purchase_id) {
+    const { error } = await supabase
+      .from('tank_purchases')
+      .update({ status: 'failed', updated_at: new Date().toISOString() })
+      .eq('id', paymentIntent.metadata.tank_purchase_id)
+      .eq('status', 'pending');
+    if (error) console.error('[Tank Store] Failed to mark purchase failed:', error);
+    return;
+  }
+
   const orderId = paymentIntent.metadata.order_id;
 
   if (!orderId) {

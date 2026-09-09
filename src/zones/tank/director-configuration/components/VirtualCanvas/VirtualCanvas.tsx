@@ -12,6 +12,7 @@ import type { DiscoveredCamera } from "../../../contracts";
 import { CameraPlayer } from "../../../public/CameraPlayer";
 import { HoverViewportReticle } from "./HoverViewportReticle";
 import { CanvasDetectionOverlay } from "./CanvasDetectionOverlay";
+import { CLASS_COLORS } from "../../detectionTheme";
 
 type VirtualCanvasProps = {
   atlasLayout: DynamicAtlasLayout;
@@ -22,6 +23,7 @@ type VirtualCanvasProps = {
   filters?: DetectionCategoryFilters;
   overlayVisibility?: Partial<import("../../overlayRegistry").OverlayVisibility>;
   members?: import("../../../server/houseMembers").HouseMember[];
+  ptzState?: import("../NavigationController").VirtualPtzState;
   onSelectCamera: (cameraId: string, slug: string, xMin: number, yMin: number) => void;
   onAdjustFeet: (cameraId: string, delta: number) => void;
   onAdjustAudio: (cameraId: string, delta: number) => void;
@@ -36,13 +38,45 @@ export function VirtualCanvas({
   filters,
   overlayVisibility,
   members,
+  ptzState,
   onSelectCamera,
   onAdjustFeet,
   onAdjustAudio,
 }: VirtualCanvasProps) {
+  // Reachable now that DirectorWorkspace filters realCameras to online/
+  // degraded only — every camera could legitimately be offline at once.
+  if (atlasLayout.tiles.length === 0) {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs font-black uppercase tracking-wider text-[#241f14] flex items-center gap-1.5">
+          <Video className="h-4 w-4 text-orange-600" />
+          Real Footage Virtual Matrix
+        </p>
+        <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-[#241f14]/30 bg-black/5 text-sm font-bold text-[#4c4630]">
+          No cameras are currently live — the matrix reappears the moment a room comes back online.
+        </div>
+      </div>
+    );
+  }
+
   const currentActiveTile =
     atlasLayout.tiles.find((t) => t.cameraId === directorState.activeCameraId) ||
-    atlasLayout.tiles[0];
+    atlasLayout.tiles[0] || {
+      cameraId: directorState.activeCameraId || "cam-default",
+      cameraName: "Main Feed",
+      slug: "main",
+      col: 0,
+      row: 0,
+      xMin: 0,
+      yMin: 0,
+      xMax: 3840,
+      yMax: 2160,
+      kind: "ipcam" as const,
+      nativeResolution: { width: 3840, height: 2160 },
+      unitSlot: { uX: 0, uY: 0, unitsWide: 4, unitsHigh: 4 },
+      proxyXMin: 0,
+      proxyYMin: 0,
+    };
 
   const gridColsClass =
     atlasLayout.grid.cols === 1
@@ -67,6 +101,18 @@ export function VirtualCanvas({
         </span>
       </div>
 
+      {/* Class-color legend — standard in every real detection tool
+          (Roboflow, CVAT, Ultralytics' own viewers all ship one): the box
+          colors carry no meaning unless the operator can look them up. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-[#4c4630]">
+        {Object.values(CLASS_COLORS).map((c) => (
+          <span key={c.label} className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm" style={{ background: c.border }} />
+            {c.label}
+          </span>
+        ))}
+      </div>
+
       {/* Grid Matrix Container — the video wall.
           gap-0 and sharp corners on every layer (tile, video box) are load-bearing:
           the footage from adjacent cameras must butt up into one seamless block,
@@ -79,7 +125,7 @@ export function VirtualCanvas({
         {atlasLayout.tiles.map((tile) => {
           const inp = inputs.find((i) => i.cameraId === tile.cameraId);
           const liveCam = liveById.get(tile.cameraId);
-          const online = liveCam?.presence === "online" || liveCam?.presence === "degraded" || liveCam?.playbackStatus === "ready";
+          const online = liveCam?.presence === "online" || liveCam?.presence === "degraded";
           const isLead = directorState.activeCameraId === tile.cameraId;
           const isChallenger = directorState.challengerId === tile.cameraId;
           const calcScore =
@@ -97,39 +143,34 @@ export function VirtualCanvas({
                   : "hover:ring-1 hover:ring-inset hover:ring-orange-500/50"
               }`}
             >
-              {/* Real Video Footage — fills the tile edge to edge, no rounding, no margin */}
+              {/* Real Video Footage (Full Canvas View) */}
               <CameraPlayer
                 online={online}
                 playbackUrl={liveCam?.playbackUrl ?? null}
-                playbackProtocol={liveCam?.playbackProtocol ?? "whep"}
-                cameraLabel={tile.cameraName}
-                showStats={false}
+                playbackProtocol={liveCam?.playbackProtocol ?? "none"}
                 priority={isLead ? "hero" : "thumbnail"}
               />
 
-              {/* Glowing Hover Viewport Reticle */}
-              <HoverViewportReticle tile={tile} isLead={isLead} />
-
-              {/* Tile Header — floats over the footage instead of pushing it down */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent px-2 py-1.5">
-                <div>
-                  <p className="flex items-center gap-1.5 text-xs font-black text-white">
-                    {tile.cameraName}
-                    {isLead && (
-                      <span className="rounded bg-orange-500 px-1.5 py-0.2 text-[8px] font-black text-black">
-                        PROGRAM LIVE ★
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-[9px] font-mono text-slate-300">
-                    [{tile.xMin}, {tile.yMin}] &rarr; [{tile.xMax}, {tile.yMax}] · {tile.kind.toUpperCase()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-black font-mono text-emerald-400">
-                    {calcScore} pts
+              {/* Tile ID tag — a corner label, not a header bar. Went smaller
+                  a second time tonight: the first pass (a full-width
+                  gradient strip with name + points) was still reading as
+                  "this screen tells you room names" when the actual point
+                  of this screen is the detection overlay. No background
+                  strip anymore, no full tile width claimed — just a small
+                  tag tucked in the corner, text-shadow instead of a filled
+                  bar so it doesn't compete with tracking boxes drawn on top
+                  of it. Score dropped from its own always-visible slot to a
+                  parenthetical on the SAME tag — it's diagnostic for
+                  whoever's tuning the scorer, not something every viewer
+                  needs a dedicated corner of the tile for. */}
+              <div className="pointer-events-none absolute left-1 top-1 z-10 flex items-center gap-1 text-[9px] font-bold text-white/80 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
+                <span>{tile.cameraName}</span>
+                {isLead && (
+                  <span className="rounded bg-orange-500/90 px-1 py-0 text-[7px] font-black text-black">
+                    LIVE
                   </span>
-                </div>
+                )}
+                <span className="font-mono text-white/50">({calcScore})</span>
               </div>
             </div>
           );
@@ -144,10 +185,67 @@ export function VirtualCanvas({
         <CanvasDetectionOverlay
           atlasLayout={atlasLayout}
           inputs={inputs}
+          filters={filters}
           overlays={overlayVisibility}
           members={members}
           visible={showDetectionBoxes}
         />
+
+        {/* ── OBS-STYLE MOVE TRANSITION MATRIX RETICLE ──
+            Glides smoothly across room tiles and coordinates on the video wall */}
+        {(() => {
+          const colWidthPct = 100 / atlasLayout.grid.cols;
+          const rowHeightPct = 100 / atlasLayout.grid.rows;
+          const activeCol = currentActiveTile.col;
+          const activeRow = currentActiveTile.row;
+
+          const zoom = ptzState?.zoomFactor && ptzState.zoomFactor > 1 ? ptzState.zoomFactor : 1;
+          const panX = ptzState?.panOffsetX ?? 0;
+          const panY = ptzState?.panOffsetY ?? 0;
+
+          const widthPct = colWidthPct / zoom;
+          const heightPct = rowHeightPct / zoom;
+          const leftPct = activeCol * colWidthPct + (panX / 3840) * colWidthPct;
+          const topPct = activeRow * rowHeightPct + (panY / 2160) * rowHeightPct;
+
+          const currentX = currentActiveTile.xMin + panX;
+          const currentY = currentActiveTile.yMin + panY;
+          const currentW = Math.round(3840 / zoom);
+          const currentH = Math.round(2160 / zoom);
+
+          return (
+            <div
+              className="pointer-events-none absolute z-30 border-2 border-orange-500 bg-orange-500/15 shadow-[0_0_24px_rgba(249,115,22,0.6)] flex flex-col justify-between p-1.5"
+              style={{
+                width: `${widthPct}%`,
+                height: `${heightPct}%`,
+                left: `${leftPct}%`,
+                top: `${topPct}%`,
+                transition: "all 400ms cubic-bezier(0.22, 1, 0.36, 1)",
+                willChange: "left, top, width, height",
+              }}
+            >
+              {/* Top Banner Tag */}
+              <div className="flex items-center justify-between text-[7px] md:text-[8px] font-black uppercase text-orange-400 bg-black/90 px-1.5 py-0.5 rounded border border-orange-500/50 shadow">
+                <span className="flex items-center gap-1 font-mono">
+                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500 animate-pulse" />
+                  {currentActiveTile.cameraName} {zoom > 1 ? `(${zoom.toFixed(2)}x PTZ)` : ""}
+                </span>
+                <span className="font-mono text-emerald-400">PROGRAM ON AIR</span>
+              </div>
+
+              {/* Bottom Coordinates & Effective Resolution */}
+              <div className="flex items-center justify-between text-[7px] md:text-[8px] font-mono text-orange-300 bg-black/90 px-1.5 py-0.5 rounded border border-orange-500/50 shadow">
+                <span>
+                  Pos: [{currentX}, {currentY}]
+                </span>
+                <span className={zoom > 1 ? "text-cyan-300 font-bold" : "text-slate-300"}>
+                  {currentW}×{currentH}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

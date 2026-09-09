@@ -60,6 +60,9 @@ export function OrdersManager({ initialOrders }: OrdersManagerProps) {
     } else if (order.label_pdf_path) {
       // Label already paid for — open detail dialog to reprint
       setEditingOrder(order);
+    } else if (order.is_research || order.items?.some((i) => !!i.research_product_id)) {
+      // Research order — must satisfy research preflight & batch allocation in dialog
+      setEditingOrder(order);
     } else {
       // No label yet — open PackagePicker to generate
       setLabelOrder(order);

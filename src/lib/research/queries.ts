@@ -6,6 +6,8 @@
 // without duplicating these large embedded selects.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getResearchProductMoleculeXml } from "@/data/research-product-molecules";
+import { parseDrawioMolecule } from "@/components/research/molecule-drawio";
 
 const sortByPos = (a: any, b: any) => (a.position ?? 0) - (b.position ?? 0);
 
@@ -149,6 +151,7 @@ export async function getResearchProductBySlug(supabase: SupabaseClient, slug: s
     research_use_only: (product as any).research_use_only ?? null,
     coa_url: (product as any).coa_url ?? null,
     form_factor: (product as any).form_factor ?? null,
+    molecule_drawing: parseDrawioMolecule(getResearchProductMoleculeXml(product.slug)),
     images: ((product as any).research_product_images || []).slice().sort(
       (a: any, b: any) => (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0),
     ),

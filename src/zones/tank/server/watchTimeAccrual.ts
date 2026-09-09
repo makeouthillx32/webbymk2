@@ -22,6 +22,7 @@ import {
   getXpFloorForLevel,
   getXpCeilForLevel,
 } from "../xpLevels";
+import { accrueDropProgress } from "./dropCampaigns";
 
 export {
   getLevelForXp as calculateLevelFromXp,
@@ -128,6 +129,11 @@ export async function recordWatchHeartbeat(
         }
       }
     } catch {}
+
+    // 4. Bump progress on any active Drop campaigns (global, or targeted at
+    // this room). roomId was accepted by this function long before Drops
+    // existed but never used for anything — this is the first consumer.
+    void accrueDropProgress(user.id, roomId, safeSeconds);
 
     return {
       success: true,

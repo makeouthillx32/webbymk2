@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 
   // ─── From address (from env) ──────────────────────────────────
   const fromName    = [process.env.USPS_FROM_FIRST_NAME, process.env.USPS_FROM_LAST_NAME].filter(Boolean).join(' ')
-                      || 'Kaitlyn Byrd';
+                      || 'Tyler Burns';
   const fromCompany = process.env.USPS_FROM_COMPANY ?? 'Unenter Solutions';
   const fromStreet  = process.env.USPS_FROM_STREET  ?? '232 SAHARA DR';
   const fromCity    = process.env.USPS_FROM_CITY    ?? 'Ridgecrest';

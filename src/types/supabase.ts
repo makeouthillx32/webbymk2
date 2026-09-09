@@ -7,23 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  app_auth: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      [_ in never]: never
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -40,31 +23,6 @@ export type Database = {
           extensions?: Json
         }
         Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-  pgbouncer: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      get_auth: {
-        Args: {
-          p_usename: string
-        }
-        Returns: {
-          username: string
-          password: string
-        }[]
       }
     }
     Enums: {
@@ -1223,6 +1181,39 @@ export type Database = {
         }
         Relationships: []
       }
+      clickup_user_mapping: {
+        Row: {
+          clickup_email: string | null
+          clickup_user_id: string
+          clickup_username: string | null
+          created_at: string
+          id: string
+          system_user_email: string | null
+          system_user_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          clickup_email?: string | null
+          clickup_user_id: string
+          clickup_username?: string | null
+          created_at?: string
+          id?: string
+          system_user_email?: string | null
+          system_user_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          clickup_email?: string | null
+          clickup_user_id?: string
+          clickup_username?: string | null
+          created_at?: string
+          id?: string
+          system_user_email?: string | null
+          system_user_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       coach_daily_reports_backup: {
         Row: {
           activity_type: string | null
@@ -1781,46 +1772,6 @@ export type Database = {
           week_of_year?: number
         }
         Relationships: []
-      }
-      discount_reservations: {
-        Row: {
-          confirmed_at: string | null
-          customer_key: string | null
-          discount_id: string
-          expires_at: string
-          held_at: string
-          id: string
-          released_at: string | null
-          status: string
-        }
-        Insert: {
-          confirmed_at?: string | null
-          customer_key?: string | null
-          discount_id: string
-          expires_at: string
-          held_at?: string
-          id?: string
-          released_at?: string | null
-          status?: string
-        }
-        Update: {
-          confirmed_at?: string | null
-          customer_key?: string | null
-          discount_id?: string
-          expires_at?: string
-          held_at?: string
-          id?: string
-          released_at?: string | null
-          status?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "discount_reservations_discount_id_fkey"
-            columns: ["discount_id"]
-            referencedRelation: "discounts"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       discounts: {
         Row: {
@@ -3411,7 +3362,6 @@ export type Database = {
           customer_user_agent: string | null
           delivered_at: string | null
           discount_cents: number
-          discount_reservation_id: string | null
           email: string | null
           guest_email: string | null
           guest_key: string | null
@@ -3486,7 +3436,6 @@ export type Database = {
           customer_user_agent?: string | null
           delivered_at?: string | null
           discount_cents?: number
-          discount_reservation_id?: string | null
           email?: string | null
           guest_email?: string | null
           guest_key?: string | null
@@ -3561,7 +3510,6 @@ export type Database = {
           customer_user_agent?: string | null
           delivered_at?: string | null
           discount_cents?: number
-          discount_reservation_id?: string | null
           email?: string | null
           guest_email?: string | null
           guest_key?: string | null
@@ -3629,12 +3577,6 @@ export type Database = {
             foreignKeyName: "orders_customer_id_fkey"
             columns: ["customer_id"]
             referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "orders_discount_reservation_id_fkey"
-            columns: ["discount_reservation_id"]
-            referencedRelation: "discount_reservations"
             referencedColumns: ["id"]
           },
           {
@@ -3839,6 +3781,115 @@ export type Database = {
             referencedColumns: ["slug"]
           },
         ]
+      }
+      peptide_request_status_log: {
+        Row: {
+          changed_by: string | null
+          created_at: string
+          id: string
+          new_status: string
+          notes: string | null
+          old_status: string | null
+          request_id: string
+          source: string
+        }
+        Insert: {
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          new_status: string
+          notes?: string | null
+          old_status?: string | null
+          request_id: string
+          source?: string
+        }
+        Update: {
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          new_status?: string
+          notes?: string | null
+          old_status?: string | null
+          request_id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "peptide_request_status_log_request_id_fkey"
+            columns: ["request_id"]
+            referencedRelation: "peptide_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      peptide_requests: {
+        Row: {
+          cas_number: string | null
+          clickup_task_id: string | null
+          clickup_task_url: string | null
+          compound_name: string
+          created_at: string
+          id: string
+          intended_use: string | null
+          molecular_formula: string | null
+          molecular_weight: number | null
+          notes: string | null
+          previous_status: string | null
+          purity_requirement: string | null
+          quantity_requested: string | null
+          requester_company: string | null
+          requester_email: string
+          requester_name: string
+          senaite_analysis_service_id: string | null
+          status: string
+          updated_at: string
+          woocommerce_coupon_code: string | null
+        }
+        Insert: {
+          cas_number?: string | null
+          clickup_task_id?: string | null
+          clickup_task_url?: string | null
+          compound_name: string
+          created_at?: string
+          id?: string
+          intended_use?: string | null
+          molecular_formula?: string | null
+          molecular_weight?: number | null
+          notes?: string | null
+          previous_status?: string | null
+          purity_requirement?: string | null
+          quantity_requested?: string | null
+          requester_company?: string | null
+          requester_email: string
+          requester_name: string
+          senaite_analysis_service_id?: string | null
+          status?: string
+          updated_at?: string
+          woocommerce_coupon_code?: string | null
+        }
+        Update: {
+          cas_number?: string | null
+          clickup_task_id?: string | null
+          clickup_task_url?: string | null
+          compound_name?: string
+          created_at?: string
+          id?: string
+          intended_use?: string | null
+          molecular_formula?: string | null
+          molecular_weight?: number | null
+          notes?: string | null
+          previous_status?: string | null
+          purity_requirement?: string | null
+          quantity_requested?: string | null
+          requester_company?: string | null
+          requester_email?: string
+          requester_name?: string
+          senaite_analysis_service_id?: string | null
+          status?: string
+          updated_at?: string
+          woocommerce_coupon_code?: string | null
+        }
+        Relationships: []
       }
       product_categories: {
         Row: {
@@ -4296,8 +4347,10 @@ export type Database = {
       }
       profiles: {
         Row: {
+          auth_provider: string | null
           auth_user_id: string | null
           avatar_url: string | null
+          clearance_level: number | null
           created_at: string | null
           delete_reason: string | null
           deleted_at: string | null
@@ -4312,13 +4365,17 @@ export type Database = {
           last_name: string | null
           last_seen_at: string | null
           region: string | null
+          research_terms_accepted_at: string | null
           role: string | null
           terms_accepted_at: string | null
           updated_at: string
+          verified_via: string | null
         }
         Insert: {
+          auth_provider?: string | null
           auth_user_id?: string | null
           avatar_url?: string | null
+          clearance_level?: number | null
           created_at?: string | null
           delete_reason?: string | null
           deleted_at?: string | null
@@ -4333,13 +4390,17 @@ export type Database = {
           last_name?: string | null
           last_seen_at?: string | null
           region?: string | null
+          research_terms_accepted_at?: string | null
           role?: string | null
           terms_accepted_at?: string | null
           updated_at?: string
+          verified_via?: string | null
         }
         Update: {
+          auth_provider?: string | null
           auth_user_id?: string | null
           avatar_url?: string | null
+          clearance_level?: number | null
           created_at?: string | null
           delete_reason?: string | null
           deleted_at?: string | null
@@ -4354,9 +4415,11 @@ export type Database = {
           last_name?: string | null
           last_seen_at?: string | null
           region?: string | null
+          research_terms_accepted_at?: string | null
           role?: string | null
           terms_accepted_at?: string | null
           updated_at?: string
+          verified_via?: string | null
         }
         Relationships: []
       }
@@ -6215,6 +6278,69 @@ export type Database = {
         }
         Relationships: []
       }
+      tank_archive_segments: {
+        Row: {
+          camera_id: string
+          codec: string
+          cold_path: string | null
+          converted_at: string | null
+          created_at: string
+          drained_at: string | null
+          duration_seconds: number
+          file_size_bytes: number
+          id: string
+          metadata: Json
+          recorded_date: string
+          room_slug: string
+          season_slug: string
+          segment_end: string | null
+          segment_start: string
+          storage_bucket: string
+          storage_path: string | null
+          tier: string
+        }
+        Insert: {
+          camera_id: string
+          codec?: string
+          cold_path?: string | null
+          converted_at?: string | null
+          created_at?: string
+          drained_at?: string | null
+          duration_seconds?: number
+          file_size_bytes?: number
+          id?: string
+          metadata?: Json
+          recorded_date?: string
+          room_slug?: string
+          season_slug?: string
+          segment_end?: string | null
+          segment_start: string
+          storage_bucket?: string
+          storage_path?: string | null
+          tier?: string
+        }
+        Update: {
+          camera_id?: string
+          codec?: string
+          cold_path?: string | null
+          converted_at?: string | null
+          created_at?: string
+          drained_at?: string | null
+          duration_seconds?: number
+          file_size_bytes?: number
+          id?: string
+          metadata?: Json
+          recorded_date?: string
+          room_slug?: string
+          season_slug?: string
+          segment_end?: string | null
+          segment_start?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          tier?: string
+        }
+        Relationships: []
+      }
       tank_archives: {
         Row: {
           aired_at: string | null
@@ -6281,60 +6407,184 @@ export type Database = {
         }
         Relationships: []
       }
-      tank_audio_requests: {
+      tank_audio_redemptions: {
         Row: {
-          cost: number
           created_at: string
           id: string
+          inventory_item_id: string | null
+          quantity: number
+          redemption_kind: string
+          refund_reason: string | null
+          refunded_at: string | null
+          request_id: string
+          token_amount: number
+          token_transaction_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          inventory_item_id?: string | null
+          quantity?: number
+          redemption_kind: string
+          refund_reason?: string | null
+          refunded_at?: string | null
+          request_id: string
+          token_amount?: number
+          token_transaction_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          inventory_item_id?: string | null
+          quantity?: number
+          redemption_kind?: string
+          refund_reason?: string | null
+          refunded_at?: string | null
+          request_id?: string
+          token_amount?: number
+          token_transaction_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_audio_redemptions_inventory_item_id_fkey"
+            columns: ["inventory_item_id"]
+            referencedRelation: "tank_inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_audio_redemptions_request_id_fkey"
+            columns: ["request_id"]
+            referencedRelation: "tank_audio_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_audio_redemptions_token_transaction_id_fkey"
+            columns: ["token_transaction_id"]
+            referencedRelation: "tank_token_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_audio_requests: {
+        Row: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
           kind: string
+          max_attempts: number
           message: string | null
           moderated_at: string | null
           moderated_by: string | null
+          payload: Json
+          priority: number
           refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
           status: string
           target_room_key: string | null
           target_type: string
           token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
           user_id: string
           voice_or_sound_key: string
         }
         Insert: {
-          cost: number
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          cost?: number
           created_at?: string
+          error_message?: string | null
+          failed_at?: string | null
+          generated_audio_content_type?: string | null
+          generated_audio_duration_ms?: number | null
+          generated_audio_path?: string | null
           id?: string
+          inventory_item_id?: string | null
           kind: string
+          max_attempts?: number
           message?: string | null
           moderated_at?: string | null
           moderated_by?: string | null
+          payload?: Json
+          priority?: number
           refund_transaction_id?: string | null
+          sfx_id?: string | null
+          started_at?: string | null
           status?: string
           target_room_key?: string | null
           target_type?: string
           token_transaction_id?: string | null
+          tts_provider?: string | null
+          updated_at?: string
           user_id: string
           voice_or_sound_key: string
         }
         Update: {
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
           cost?: number
           created_at?: string
+          error_message?: string | null
+          failed_at?: string | null
+          generated_audio_content_type?: string | null
+          generated_audio_duration_ms?: number | null
+          generated_audio_path?: string | null
           id?: string
+          inventory_item_id?: string | null
           kind?: string
+          max_attempts?: number
           message?: string | null
           moderated_at?: string | null
           moderated_by?: string | null
+          payload?: Json
+          priority?: number
           refund_transaction_id?: string | null
+          sfx_id?: string | null
+          started_at?: string | null
           status?: string
           target_room_key?: string | null
           target_type?: string
           token_transaction_id?: string | null
+          tts_provider?: string | null
+          updated_at?: string
           user_id?: string
           voice_or_sound_key?: string
         }
         Relationships: [
           {
+            foreignKeyName: "tank_audio_requests_inventory_item_id_fkey"
+            columns: ["inventory_item_id"]
+            referencedRelation: "tank_inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "tank_audio_requests_refund_transaction_id_fkey"
             columns: ["refund_transaction_id"]
             referencedRelation: "tank_token_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_audio_requests_sfx_id_fkey"
+            columns: ["sfx_id"]
+            referencedRelation: "tank_sfx_library"
             referencedColumns: ["id"]
           },
           {
@@ -6363,6 +6613,7 @@ export type Database = {
           online: boolean
           room_scope: string
           sample_rate_hz: number | null
+          stream_url: string | null
           tags: string[]
           updated_at: string
         }
@@ -6377,6 +6628,7 @@ export type Database = {
           online?: boolean
           room_scope?: string
           sample_rate_hz?: number | null
+          stream_url?: string | null
           tags?: string[]
           updated_at?: string
         }
@@ -6391,7 +6643,50 @@ export type Database = {
           online?: boolean
           room_scope?: string
           sample_rate_hz?: number | null
+          stream_url?: string | null
           tags?: string[]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_camera_clips: {
+        Row: {
+          camera_id: string
+          captured_at: string | null
+          duration_seconds: number | null
+          generation: number
+          last_attempt_at: string
+          last_attempt_status: string
+          last_error_code: string | null
+          size_bytes: number | null
+          source_stable_at: string | null
+          storage_path: string | null
+          updated_at: string
+        }
+        Insert: {
+          camera_id: string
+          captured_at?: string | null
+          duration_seconds?: number | null
+          generation?: number
+          last_attempt_at?: string
+          last_attempt_status?: string
+          last_error_code?: string | null
+          size_bytes?: number | null
+          source_stable_at?: string | null
+          storage_path?: string | null
+          updated_at?: string
+        }
+        Update: {
+          camera_id?: string
+          captured_at?: string | null
+          duration_seconds?: number | null
+          generation?: number
+          last_attempt_at?: string
+          last_attempt_status?: string
+          last_error_code?: string | null
+          size_bytes?: number | null
+          source_stable_at?: string | null
+          storage_path?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -6492,6 +6787,105 @@ export type Database = {
         }
         Relationships: []
       }
+      tank_channels: {
+        Row: {
+          bio: string | null
+          category: string
+          created_at: string
+          followers: number
+          handle: string
+          id: string
+          live: boolean
+          name: string
+          owner_id: string | null
+          slug: string
+          updated_at: string
+          verified: boolean
+        }
+        Insert: {
+          bio?: string | null
+          category?: string
+          created_at?: string
+          followers?: number
+          handle: string
+          id: string
+          live?: boolean
+          name: string
+          owner_id?: string | null
+          slug: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Update: {
+          bio?: string | null
+          category?: string
+          created_at?: string
+          followers?: number
+          handle?: string
+          id?: string
+          live?: boolean
+          name?: string
+          owner_id?: string | null
+          slug?: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Relationships: []
+      }
+      tank_chat_attachments: {
+        Row: {
+          content_type: string
+          created_at: string
+          expires_at: string
+          file_path: string
+          file_size_bytes: number
+          id: number
+          purged_at: string | null
+          status: string
+          uploader_id: string | null
+        }
+        Insert: {
+          content_type?: string
+          created_at?: string
+          expires_at?: string
+          file_path: string
+          file_size_bytes?: number
+          id?: number
+          purged_at?: string | null
+          status?: string
+          uploader_id?: string | null
+        }
+        Update: {
+          content_type?: string
+          created_at?: string
+          expires_at?: string
+          file_path?: string
+          file_size_bytes?: number
+          id?: number
+          purged_at?: string | null
+          status?: string
+          uploader_id?: string | null
+        }
+        Relationships: []
+      }
+      tank_chat_member_state: {
+        Row: {
+          last_message_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          last_message_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          last_message_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tank_chat_messages: {
         Row: {
           body: string
@@ -6500,6 +6894,7 @@ export type Database = {
           created_at: string
           deleted_at: string | null
           deleted_by: string | null
+          dm_id: string | null
           edited_at: string | null
           id: string
           item_slug: string | null
@@ -6519,6 +6914,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           deleted_by?: string | null
+          dm_id?: string | null
           edited_at?: string | null
           id?: string
           item_slug?: string | null
@@ -6538,6 +6934,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           deleted_by?: string | null
+          dm_id?: string | null
           edited_at?: string | null
           id?: string
           item_slug?: string | null
@@ -6554,28 +6951,74 @@ export type Database = {
           {
             foreignKeyName: "tank_chat_messages_click_id_fkey"
             columns: ["click_id"]
-            isOneToOne: false
             referencedRelation: "tank_clicks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_chat_messages_dm_id_fkey"
+            columns: ["dm_id"]
+            referencedRelation: "tank_dm_conversations"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "tank_chat_messages_reply_to_message_id_fkey"
             columns: ["reply_to_message_id"]
-            isOneToOne: false
             referencedRelation: "tank_chat_messages"
             referencedColumns: ["id"]
           },
         ]
       }
       tank_chat_reactions: {
-        Row: { created_at: string; message_id: string; reaction: string; user_id: string }
-        Insert: { created_at?: string; message_id: string; reaction: string; user_id: string }
-        Update: { created_at?: string; message_id?: string; reaction?: string; user_id?: string }
+        Row: {
+          created_at: string
+          message_id: string
+          reaction: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          message_id: string
+          reaction: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          message_id?: string
+          reaction?: string
+          user_id?: string
+        }
         Relationships: [
           {
             foreignKeyName: "tank_chat_reactions_message_id_fkey"
             columns: ["message_id"]
-            isOneToOne: false
+            referencedRelation: "tank_chat_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_chat_read_state: {
+        Row: {
+          last_read_at: string
+          last_read_message_id: string | null
+          room_id: string
+          user_id: string
+        }
+        Insert: {
+          last_read_at?: string
+          last_read_message_id?: string | null
+          room_id: string
+          user_id: string
+        }
+        Update: {
+          last_read_at?: string
+          last_read_message_id?: string | null
+          room_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_chat_read_state_last_read_message_id_fkey"
+            columns: ["last_read_message_id"]
             referencedRelation: "tank_chat_messages"
             referencedColumns: ["id"]
           },
@@ -6636,6 +7079,188 @@ export type Database = {
         }
         Relationships: []
       }
+      tank_daily_claims: {
+        Row: {
+          claimed_at: string
+          id: number
+          streak_tick: number
+          tokens_awarded: number
+          total_claims: number
+          user_id: string
+          xp_awarded: number
+        }
+        Insert: {
+          claimed_at?: string
+          id?: never
+          streak_tick: number
+          tokens_awarded?: number
+          total_claims: number
+          user_id: string
+          xp_awarded?: number
+        }
+        Update: {
+          claimed_at?: string
+          id?: never
+          streak_tick?: number
+          tokens_awarded?: number
+          total_claims?: number
+          user_id?: string
+          xp_awarded?: number
+        }
+        Relationships: []
+      }
+      tank_dm_conversations: {
+        Row: {
+          created_at: string
+          id: string
+          last_message_at: string
+          user_a_id: string
+          user_b_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_message_at?: string
+          user_a_id: string
+          user_b_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_message_at?: string
+          user_a_id?: string
+          user_b_id?: string
+        }
+        Relationships: []
+      }
+      tank_drop_campaigns: {
+        Row: {
+          created_at: string
+          description: string | null
+          ends_at: string | null
+          id: string
+          is_active: boolean
+          key: string | null
+          room_key: string | null
+          starts_at: string | null
+          tiers: Json
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          ends_at?: string | null
+          id?: string
+          is_active?: boolean
+          key?: string | null
+          room_key?: string | null
+          starts_at?: string | null
+          tiers?: Json
+          title: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          ends_at?: string | null
+          id?: string
+          is_active?: boolean
+          key?: string | null
+          room_key?: string | null
+          starts_at?: string | null
+          tiers?: Json
+          title?: string
+        }
+        Relationships: []
+      }
+      tank_drop_progress: {
+        Row: {
+          campaign_id: string
+          claimed_tiers: Json
+          seconds_watched: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          campaign_id: string
+          claimed_tiers?: Json
+          seconds_watched?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          campaign_id?: string
+          claimed_tiers?: Json
+          seconds_watched?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_drop_progress_campaign_id_fkey"
+            columns: ["campaign_id"]
+            referencedRelation: "tank_drop_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_house_events: {
+        Row: {
+          attempts: number
+          body: string
+          created_at: string
+          created_by: string | null
+          event_type: string
+          execute_at: string
+          id: string
+          idempotency_key: string | null
+          last_error: string | null
+          payload: Json
+          published_message_id: string | null
+          room_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          body: string
+          created_at?: string
+          created_by?: string | null
+          event_type: string
+          execute_at?: string
+          id?: string
+          idempotency_key?: string | null
+          last_error?: string | null
+          payload?: Json
+          published_message_id?: string | null
+          room_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          execute_at?: string
+          id?: string
+          idempotency_key?: string | null
+          last_error?: string | null
+          payload?: Json
+          published_message_id?: string | null
+          room_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_house_events_published_message_id_fkey"
+            columns: ["published_message_id"]
+            referencedRelation: "tank_chat_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tank_ingest_events: {
         Row: {
           camera_id: string
@@ -6669,36 +7294,103 @@ export type Database = {
       }
       tank_inventory_items: {
         Row: {
+          audio_effect_payload: Json
+          audio_effect_type: string | null
           created_at: string
           description: string | null
+          effect_payload: Json
+          effect_type: string | null
           icon_url: string | null
           id: string
           is_active: boolean
+          is_consumable: boolean
+          max_stack: number | null
           name: string
           rarity: string
           slug: string
         }
         Insert: {
+          audio_effect_payload?: Json
+          audio_effect_type?: string | null
           created_at?: string
           description?: string | null
+          effect_payload?: Json
+          effect_type?: string | null
           icon_url?: string | null
           id?: string
           is_active?: boolean
+          is_consumable?: boolean
+          max_stack?: number | null
           name: string
           rarity?: string
           slug: string
         }
         Update: {
+          audio_effect_payload?: Json
+          audio_effect_type?: string | null
           created_at?: string
           description?: string | null
+          effect_payload?: Json
+          effect_type?: string | null
           icon_url?: string | null
           id?: string
           is_active?: boolean
+          is_consumable?: boolean
+          max_stack?: number | null
           name?: string
           rarity?: string
           slug?: string
         }
         Relationships: []
+      }
+      tank_market_listings: {
+        Row: {
+          buyout_price: number | null
+          created_at: string
+          current_bid: number | null
+          expires_at: string
+          highest_bidder_user_id: string | null
+          id: string
+          item_id: string
+          quantity: number
+          seller_user_id: string
+          start_bid: number
+          status: string
+        }
+        Insert: {
+          buyout_price?: number | null
+          created_at?: string
+          current_bid?: number | null
+          expires_at: string
+          highest_bidder_user_id?: string | null
+          id?: string
+          item_id: string
+          quantity?: number
+          seller_user_id: string
+          start_bid?: number
+          status?: string
+        }
+        Update: {
+          buyout_price?: number | null
+          created_at?: string
+          current_bid?: number | null
+          expires_at?: string
+          highest_bidder_user_id?: string | null
+          id?: string
+          item_id?: string
+          quantity?: number
+          seller_user_id?: string
+          start_bid?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_market_listings_item_id_fkey"
+            columns: ["item_id"]
+            referencedRelation: "tank_inventory_items"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tank_mission_progress: {
         Row: {
@@ -6730,10 +7422,12 @@ export type Database = {
       }
       tank_missions: {
         Row: {
+          category: string | null
           created_at: string
           description: string | null
           id: string
           is_active: boolean
+          key: string | null
           reward_tokens: number
           reward_xp: number
           season_id: string | null
@@ -6742,10 +7436,12 @@ export type Database = {
           title: string
         }
         Insert: {
+          category?: string | null
           created_at?: string
           description?: string | null
           id?: string
           is_active?: boolean
+          key?: string | null
           reward_tokens?: number
           reward_xp?: number
           season_id?: string | null
@@ -6754,10 +7450,12 @@ export type Database = {
           title: string
         }
         Update: {
+          category?: string | null
           created_at?: string
           description?: string | null
           id?: string
           is_active?: boolean
+          key?: string | null
           reward_tokens?: number
           reward_xp?: number
           season_id?: string | null
@@ -6770,6 +7468,121 @@ export type Database = {
             foreignKeyName: "tank_missions_season_id_fkey"
             columns: ["season_id"]
             referencedRelation: "tank_seasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_obs_rooms: {
+        Row: {
+          created_at: string
+          id: string
+          is_live: boolean
+          last_publish_ip: string | null
+          last_signal_at: string | null
+          owner_user_id: string
+          slug: string
+          stream_key: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_live?: boolean
+          last_publish_ip?: string | null
+          last_signal_at?: string | null
+          owner_user_id: string
+          slug: string
+          stream_key: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_live?: boolean
+          last_publish_ip?: string | null
+          last_signal_at?: string | null
+          owner_user_id?: string
+          slug?: string
+          stream_key?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_overlay_scenes: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          display_seconds: number
+          id: string
+          name: string
+          slug: string
+          sound_key: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          display_seconds?: number
+          id?: string
+          name: string
+          slug: string
+          sound_key?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          display_seconds?: number
+          id?: string
+          name?: string
+          slug?: string
+          sound_key?: string | null
+        }
+        Relationships: []
+      }
+      tank_overlay_triggers: {
+        Row: {
+          action_key: string | null
+          created_at: string
+          cron_expression: string | null
+          cron_job_name: string | null
+          enabled: boolean
+          id: string
+          last_fired_at: string | null
+          message: string
+          scene_id: string
+          trigger_type: string
+        }
+        Insert: {
+          action_key?: string | null
+          created_at?: string
+          cron_expression?: string | null
+          cron_job_name?: string | null
+          enabled?: boolean
+          id?: string
+          last_fired_at?: string | null
+          message: string
+          scene_id: string
+          trigger_type: string
+        }
+        Update: {
+          action_key?: string | null
+          created_at?: string
+          cron_expression?: string | null
+          cron_job_name?: string | null
+          enabled?: boolean
+          id?: string
+          last_fired_at?: string | null
+          message?: string
+          scene_id?: string
+          trigger_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_overlay_triggers_scene_id_fkey"
+            columns: ["scene_id"]
+            referencedRelation: "tank_overlay_scenes"
             referencedColumns: ["id"]
           },
         ]
@@ -6820,113 +7633,236 @@ export type Database = {
           },
         ]
       }
-      tank_daily_claims: {
-        Row: {
-          claimed_at: string
-          id: number
-          streak_tick: number
-          tokens_awarded: number
-          total_claims: number
-          user_id: string
-          xp_awarded: number
-        }
-        Insert: {
-          claimed_at?: string
-          id?: never
-          streak_tick: number
-          tokens_awarded?: number
-          total_claims: number
-          user_id: string
-          xp_awarded?: number
-        }
-        Update: {
-          claimed_at?: string
-          id?: never
-          streak_tick?: number
-          tokens_awarded?: number
-          total_claims?: number
-          user_id?: string
-          xp_awarded?: number
-        }
-        Relationships: []
-      }
       tank_profiles: {
         Row: {
+          auth_provider: string | null
+          avatar_url: string | null
           created_at: string
           daily_claim_count: number
           daily_streak: number
           display_name: string | null
+          display_name_confirmed_at: string | null
+          email_verified: boolean | null
+          free_rename_used_at: string | null
           last_daily_claim_at: string | null
           level: number
           longest_daily_streak: number
           tokens: number
           updated_at: string
           user_id: string
+          verified_via: string | null
           xp: number
         }
         Insert: {
+          auth_provider?: string | null
+          avatar_url?: string | null
           created_at?: string
           daily_claim_count?: number
           daily_streak?: number
           display_name?: string | null
+          display_name_confirmed_at?: string | null
+          email_verified?: boolean | null
+          free_rename_used_at?: string | null
           last_daily_claim_at?: string | null
           level?: number
           longest_daily_streak?: number
           tokens?: number
           updated_at?: string
           user_id: string
+          verified_via?: string | null
           xp?: number
         }
         Update: {
+          auth_provider?: string | null
+          avatar_url?: string | null
           created_at?: string
           daily_claim_count?: number
           daily_streak?: number
           display_name?: string | null
+          display_name_confirmed_at?: string | null
+          email_verified?: boolean | null
+          free_rename_used_at?: string | null
           last_daily_claim_at?: string | null
           level?: number
           longest_daily_streak?: number
           tokens?: number
           updated_at?: string
           user_id?: string
+          verified_via?: string | null
           xp?: number
         }
         Relationships: []
       }
+      tank_reward_events: {
+        Row: {
+          base_amount: number
+          click_bonus_applied: boolean
+          created_at: string
+          currency: string
+          final_amount: number
+          id: string
+          idempotency_key: string
+          shift_id: string | null
+          source: string
+          source_id: string | null
+          token_transaction_id: string | null
+          user_id: string
+        }
+        Insert: {
+          base_amount: number
+          click_bonus_applied?: boolean
+          created_at?: string
+          currency: string
+          final_amount: number
+          id?: string
+          idempotency_key: string
+          shift_id?: string | null
+          source: string
+          source_id?: string | null
+          token_transaction_id?: string | null
+          user_id: string
+        }
+        Update: {
+          base_amount?: number
+          click_bonus_applied?: boolean
+          created_at?: string
+          currency?: string
+          final_amount?: number
+          id?: string
+          idempotency_key?: string
+          shift_id?: string | null
+          source?: string
+          source_id?: string | null
+          token_transaction_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_reward_events_token_transaction_id_fkey"
+            columns: ["token_transaction_id"]
+            referencedRelation: "tank_token_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_room_audio_effects: {
+        Row: {
+          created_at: string
+          effect_config: Json
+          effect_key: string
+          expires_at: string
+          id: string
+          request_id: string
+          revoked_at: string | null
+          room_key: string
+          starts_at: string
+        }
+        Insert: {
+          created_at?: string
+          effect_config?: Json
+          effect_key: string
+          expires_at: string
+          id?: string
+          request_id: string
+          revoked_at?: string | null
+          room_key: string
+          starts_at?: string
+        }
+        Update: {
+          created_at?: string
+          effect_config?: Json
+          effect_key?: string
+          expires_at?: string
+          id?: string
+          request_id?: string
+          revoked_at?: string | null
+          room_key?: string
+          starts_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_room_audio_effects_request_id_fkey"
+            columns: ["request_id"]
+            referencedRelation: "tank_audio_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_room_audio_effects_room_key_fkey"
+            columns: ["room_key"]
+            referencedRelation: "tank_rooms"
+            referencedColumns: ["room_key"]
+          },
+        ]
+      }
       tank_rooms: {
         Row: {
+          audio_input_source_id: string | null
           audio_output_config: Json
           audio_output_kind: string
+          camera_ids: string[]
+          channel_id: string | null
+          created_at: string
           description: string | null
           eyebrow: string | null
+          featured_camera_id: string | null
+          id: string
+          live: boolean
           room_key: string
+          slug: string
           tags: string[]
-          title: string | null
+          title: string
           updated_at: string
+          viewers: number
           visibility_policy: string | null
         }
         Insert: {
+          audio_input_source_id?: string | null
           audio_output_config?: Json
           audio_output_kind?: string
+          camera_ids?: string[]
+          channel_id?: string | null
+          created_at?: string
           description?: string | null
           eyebrow?: string | null
+          featured_camera_id?: string | null
+          id: string
+          live?: boolean
           room_key: string
+          slug: string
           tags?: string[]
-          title?: string | null
+          title: string
           updated_at?: string
+          viewers?: number
           visibility_policy?: string | null
         }
         Update: {
+          audio_input_source_id?: string | null
           audio_output_config?: Json
           audio_output_kind?: string
+          camera_ids?: string[]
+          channel_id?: string | null
+          created_at?: string
           description?: string | null
           eyebrow?: string | null
+          featured_camera_id?: string | null
+          id?: string
+          live?: boolean
           room_key?: string
+          slug?: string
           tags?: string[]
-          title?: string | null
+          title?: string
           updated_at?: string
+          viewers?: number
           visibility_policy?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "tank_rooms_channel_id_fkey"
+            columns: ["channel_id"]
+            referencedRelation: "tank_channels"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tank_season_progress: {
         Row: {
@@ -6983,6 +7919,436 @@ export type Database = {
           name?: string
           number?: number
           starts_at?: string
+        }
+        Relationships: []
+      }
+      tank_sfx_library: {
+        Row: {
+          category: string
+          created_at: string
+          default_volume: number
+          duration_ms: number | null
+          file_url: string
+          id: string
+          is_active: boolean
+          is_premium: boolean
+          name: string
+          required_item_slug: string | null
+          sound_key: string
+          tavern_enabled: boolean
+          token_cost: number
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          default_volume?: number
+          duration_ms?: number | null
+          file_url: string
+          id?: string
+          is_active?: boolean
+          is_premium?: boolean
+          name: string
+          required_item_slug?: string | null
+          sound_key: string
+          tavern_enabled?: boolean
+          token_cost?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          default_volume?: number
+          duration_ms?: number | null
+          file_url?: string
+          id?: string
+          is_active?: boolean
+          is_premium?: boolean
+          name?: string
+          required_item_slug?: string | null
+          sound_key?: string
+          tavern_enabled?: boolean
+          token_cost?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_tavern_chit_templates: {
+        Row: {
+          created_at: string
+          dialogue: string
+          id: string
+          is_active: boolean
+          payload: Json
+          tip_tokens: number
+          trouble_type: string | null
+          weight: number
+        }
+        Insert: {
+          created_at?: string
+          dialogue: string
+          id?: string
+          is_active?: boolean
+          payload?: Json
+          tip_tokens?: number
+          trouble_type?: string | null
+          weight?: number
+        }
+        Update: {
+          created_at?: string
+          dialogue?: string
+          id?: string
+          is_active?: boolean
+          payload?: Json
+          tip_tokens?: number
+          trouble_type?: string | null
+          weight?: number
+        }
+        Relationships: []
+      }
+      tank_tavern_chits: {
+        Row: {
+          created_at: string
+          created_by_tick: boolean
+          deadline_at: string
+          dialogue_snapshot: string
+          id: string
+          idempotency_key: string | null
+          outcome: string
+          payload_snapshot: Json
+          resolved_at: string | null
+          resolved_by: string | null
+          shift_id: string
+          template_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_tick?: boolean
+          deadline_at: string
+          dialogue_snapshot: string
+          id?: string
+          idempotency_key?: string | null
+          outcome?: string
+          payload_snapshot: Json
+          resolved_at?: string | null
+          resolved_by?: string | null
+          shift_id: string
+          template_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_tick?: boolean
+          deadline_at?: string
+          dialogue_snapshot?: string
+          id?: string
+          idempotency_key?: string | null
+          outcome?: string
+          payload_snapshot?: Json
+          resolved_at?: string | null
+          resolved_by?: string | null
+          shift_id?: string
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_tavern_chits_shift_id_fkey"
+            columns: ["shift_id"]
+            referencedRelation: "tank_tavern_shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_tavern_chits_template_id_fkey"
+            columns: ["template_id"]
+            referencedRelation: "tank_tavern_chit_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_tavern_config: {
+        Row: {
+          chit_expiry_sec: number
+          chit_interval_max_sec: number
+          chit_interval_min_sec: number
+          click_bonus_pct: number
+          id: string
+          max_pending_chits: number
+          mutiny_threshold_pct: number
+          mutiny_vote_sec: number
+          sfx_allowance_per_shift: number
+          sfx_cooldown_sec: number
+          shift_minutes: number
+          takeover_shield_sec: number
+          updated_at: string
+        }
+        Insert: {
+          chit_expiry_sec?: number
+          chit_interval_max_sec?: number
+          chit_interval_min_sec?: number
+          click_bonus_pct?: number
+          id?: string
+          max_pending_chits?: number
+          mutiny_threshold_pct?: number
+          mutiny_vote_sec?: number
+          sfx_allowance_per_shift?: number
+          sfx_cooldown_sec?: number
+          shift_minutes?: number
+          takeover_shield_sec?: number
+          updated_at?: string
+        }
+        Update: {
+          chit_expiry_sec?: number
+          chit_interval_max_sec?: number
+          chit_interval_min_sec?: number
+          click_bonus_pct?: number
+          id?: string
+          max_pending_chits?: number
+          mutiny_threshold_pct?: number
+          mutiny_vote_sec?: number
+          sfx_allowance_per_shift?: number
+          sfx_cooldown_sec?: number
+          shift_minutes?: number
+          takeover_shield_sec?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_tavern_mutinies: {
+        Row: {
+          defend_count: number | null
+          eligible_count: number | null
+          id: string
+          initiator_click_id: string
+          initiator_id: string
+          overturn_count: number | null
+          shift_id: string
+          started_at: string
+          status: string
+          vote_deadline_at: string
+        }
+        Insert: {
+          defend_count?: number | null
+          eligible_count?: number | null
+          id?: string
+          initiator_click_id: string
+          initiator_id: string
+          overturn_count?: number | null
+          shift_id: string
+          started_at?: string
+          status?: string
+          vote_deadline_at: string
+        }
+        Update: {
+          defend_count?: number | null
+          eligible_count?: number | null
+          id?: string
+          initiator_click_id?: string
+          initiator_id?: string
+          overturn_count?: number | null
+          shift_id?: string
+          started_at?: string
+          status?: string
+          vote_deadline_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_tavern_mutinies_initiator_click_id_fkey"
+            columns: ["initiator_click_id"]
+            referencedRelation: "tank_clicks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_tavern_mutinies_shift_id_fkey"
+            columns: ["shift_id"]
+            referencedRelation: "tank_tavern_shifts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_tavern_mutiny_votes: {
+        Row: {
+          choice: string
+          mutiny_id: string
+          user_id: string
+          voted_at: string
+        }
+        Insert: {
+          choice: string
+          mutiny_id: string
+          user_id: string
+          voted_at?: string
+        }
+        Update: {
+          choice?: string
+          mutiny_id?: string
+          user_id?: string
+          voted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_tavern_mutiny_votes_mutiny_id_fkey"
+            columns: ["mutiny_id"]
+            referencedRelation: "tank_tavern_mutinies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_tavern_queue: {
+        Row: {
+          id: string
+          joined_at: string
+          position: number
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string
+          position: number
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string
+          position?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      tank_tavern_shifts: {
+        Row: {
+          bartender_click_id: string | null
+          bartender_click_joined_at: string | null
+          bartender_id: string
+          chaos: number
+          click_bonus_applies: boolean
+          created_at: string
+          deadline_at: string
+          end_reason: string | null
+          id: string
+          last_active_at: string
+          predecessor_shift_id: string | null
+          sfx_allowance_remaining: number
+          sfx_last_used_at: string | null
+          started_at: string
+          status: string
+          takeover_idempotency_key: string | null
+          takeover_item_id: string | null
+          takeover_shielded_until: string | null
+          takeover_thief_id: string | null
+          tips_tokens: number
+        }
+        Insert: {
+          bartender_click_id?: string | null
+          bartender_click_joined_at?: string | null
+          bartender_id: string
+          chaos?: number
+          click_bonus_applies?: boolean
+          created_at?: string
+          deadline_at: string
+          end_reason?: string | null
+          id?: string
+          last_active_at?: string
+          predecessor_shift_id?: string | null
+          sfx_allowance_remaining?: number
+          sfx_last_used_at?: string | null
+          started_at?: string
+          status?: string
+          takeover_idempotency_key?: string | null
+          takeover_item_id?: string | null
+          takeover_shielded_until?: string | null
+          takeover_thief_id?: string | null
+          tips_tokens?: number
+        }
+        Update: {
+          bartender_click_id?: string | null
+          bartender_click_joined_at?: string | null
+          bartender_id?: string
+          chaos?: number
+          click_bonus_applies?: boolean
+          created_at?: string
+          deadline_at?: string
+          end_reason?: string | null
+          id?: string
+          last_active_at?: string
+          predecessor_shift_id?: string | null
+          sfx_allowance_remaining?: number
+          sfx_last_used_at?: string | null
+          started_at?: string
+          status?: string
+          takeover_idempotency_key?: string | null
+          takeover_item_id?: string | null
+          takeover_shielded_until?: string | null
+          takeover_thief_id?: string | null
+          tips_tokens?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tank_tavern_shifts_bartender_click_id_fkey"
+            columns: ["bartender_click_id"]
+            referencedRelation: "tank_clicks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_tavern_shifts_predecessor_shift_id_fkey"
+            columns: ["predecessor_shift_id"]
+            referencedRelation: "tank_tavern_shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tank_tavern_shifts_takeover_item_id_fkey"
+            columns: ["takeover_item_id"]
+            referencedRelation: "tank_inventory_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tank_telemetry_events: {
+        Row: {
+          bitrate_kbps: number | null
+          camera_id: string
+          client_network_type: string | null
+          created_at: string
+          fps: number | null
+          id: string
+          latency_ms: number | null
+          packet_loss_rate: number | null
+          protocol: string
+          room_id: string | null
+          session_id: string | null
+          stall_count: number | null
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          bitrate_kbps?: number | null
+          camera_id: string
+          client_network_type?: string | null
+          created_at?: string
+          fps?: number | null
+          id?: string
+          latency_ms?: number | null
+          packet_loss_rate?: number | null
+          protocol: string
+          room_id?: string | null
+          session_id?: string | null
+          stall_count?: number | null
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          bitrate_kbps?: number | null
+          camera_id?: string
+          client_network_type?: string | null
+          created_at?: string
+          fps?: number | null
+          id?: string
+          latency_ms?: number | null
+          packet_loss_rate?: number | null
+          protocol?: string
+          room_id?: string | null
+          session_id?: string | null
+          stall_count?: number | null
+          user_agent?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -7074,6 +8440,87 @@ export type Database = {
           id?: string
           reason?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      tank_tts_cache: {
+        Row: {
+          byte_size: number | null
+          cache_key: string
+          content_type: string
+          created_at: string
+          duration_ms: number | null
+          last_used_at: string
+          model_key: string | null
+          provider: string
+          storage_path: string
+          voice_key: string
+        }
+        Insert: {
+          byte_size?: number | null
+          cache_key: string
+          content_type: string
+          created_at?: string
+          duration_ms?: number | null
+          last_used_at?: string
+          model_key?: string | null
+          provider: string
+          storage_path: string
+          voice_key: string
+        }
+        Update: {
+          byte_size?: number | null
+          cache_key?: string
+          content_type?: string
+          created_at?: string
+          duration_ms?: number | null
+          last_used_at?: string
+          model_key?: string | null
+          provider?: string
+          storage_path?: string
+          voice_key?: string
+        }
+        Relationships: []
+      }
+      tank_viewer_sessions: {
+        Row: {
+          anon_name: string
+          client_kind: string
+          connection_type: string
+          first_seen_at: string
+          id: string
+          ip_group_label: string | null
+          ip_hash: string | null
+          last_seen_at: string
+          room_slug: string
+          user_id: string | null
+          viewer_key: string
+        }
+        Insert: {
+          anon_name: string
+          client_kind?: string
+          connection_type?: string
+          first_seen_at?: string
+          id?: string
+          ip_group_label?: string | null
+          ip_hash?: string | null
+          last_seen_at?: string
+          room_slug?: string
+          user_id?: string | null
+          viewer_key: string
+        }
+        Update: {
+          anon_name?: string
+          client_kind?: string
+          connection_type?: string
+          first_seen_at?: string
+          id?: string
+          ip_group_label?: string | null
+          ip_hash?: string | null
+          last_seen_at?: string
+          room_slug?: string
+          user_id?: string | null
+          viewer_key?: string
         }
         Relationships: []
       }
@@ -7759,6 +9206,23 @@ export type Database = {
         }
         Relationships: []
       }
+      tank_archive_days: {
+        Row: {
+          cold_segments: number | null
+          first_segment_at: string | null
+          hot_segments: number | null
+          is_complete: boolean | null
+          is_streamable: boolean | null
+          last_segment_at: string | null
+          recorded_date: string | null
+          room_slug: string | null
+          season_slug: string | null
+          segment_count: number | null
+          total_bytes: number | null
+          total_seconds: number | null
+        }
+        Relationships: []
+      }
       tank_leaderboard: {
         Row: {
           clan_id: string | null
@@ -7822,33 +9286,6 @@ export type Database = {
       }
     }
     Functions: {
-      tank_claim_daily_streak: {
-        Args: { p_user_id: string }
-        Returns: Json
-      }
-      tank_insert_chat_message: {
-        Args: {
-          p_body: string
-          p_client_nonce?: string | null
-          p_reply_to_message_id?: string | null
-          p_room_id: string
-          p_user_id: string
-          p_user_name: string
-          p_user_role: string
-        }
-        Returns: Database["public"]["Tables"]["tank_chat_messages"]["Row"]
-      }
-      tank_human_presence_snapshot: {
-        Args: { p_ttl_seconds?: number }
-        Returns: {
-          anonymous: number
-          automated: number
-          members: number
-          on_cellular: number
-          online: number
-          shared_connections: number
-        }[]
-      }
       add_admin_note: {
         Args: {
           admin_id_param: string
@@ -7969,12 +9406,6 @@ export type Database = {
       clear_user_conversations: {
         Args: {
           p_user_id: string
-        }
-        Returns: undefined
-      }
-      confirm_discount_reservation: {
-        Args: {
-          p_reservation_id: string
         }
         Returns: undefined
       }
@@ -8387,12 +9818,6 @@ export type Database = {
         }
         Returns: undefined
       }
-      release_discount_reservation: {
-        Args: {
-          p_reservation_id: string
-        }
-        Returns: undefined
-      }
       remove_specialization: {
         Args: {
           target_user_id: string
@@ -8415,14 +9840,6 @@ export type Database = {
           resolved_by: string | null
           status: string
         }
-      }
-      reserve_discount_use: {
-        Args: {
-          p_discount_id: string
-          p_customer_key?: string
-          p_hold_minutes?: number
-        }
-        Returns: string
       }
       resolve_creator_cashout: {
         Args: {
@@ -8569,6 +9986,126 @@ export type Database = {
           updated_at: string
         }[]
       }
+      tank_apply_balance_delta: {
+        Args: {
+          p_user_id: string
+          p_xp_delta?: number
+          p_token_delta?: number
+        }
+        Returns: {
+          new_xp: number
+          new_tokens: number
+          new_level: number
+          old_level: number
+          applied: boolean
+        }[]
+      }
+      tank_bid_market_listing: {
+        Args: {
+          p_bidder_user_id: string
+          p_listing_id: string
+          p_bid_amount: number
+        }
+        Returns: Json
+      }
+      tank_buyout_market_listing: {
+        Args: {
+          p_buyer_user_id: string
+          p_listing_id: string
+        }
+        Returns: Json
+      }
+      tank_cast_poll_vote: {
+        Args: {
+          p_poll_id: string
+          p_voter_key: string
+          p_option_index: number
+        }
+        Returns: Json
+      }
+      tank_claim_audio_request: {
+        Args: {
+          p_worker_id: string
+          p_room_keys?: string[]
+        }
+        Returns: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
+          kind: string
+          max_attempts: number
+          message: string | null
+          moderated_at: string | null
+          moderated_by: string | null
+          payload: Json
+          priority: number
+          refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
+          status: string
+          target_room_key: string | null
+          target_type: string
+          token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
+          user_id: string
+          voice_or_sound_key: string
+        }[]
+      }
+      tank_claim_daily_streak: {
+        Args: {
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      tank_complete_client_audio_request: {
+        Args: {
+          p_request_id: string
+        }
+        Returns: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
+          kind: string
+          max_attempts: number
+          message: string | null
+          moderated_at: string | null
+          moderated_by: string | null
+          payload: Json
+          priority: number
+          refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
+          status: string
+          target_room_key: string | null
+          target_type: string
+          token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
+          user_id: string
+          voice_or_sound_key: string
+        }
+      }
       tank_complete_mission: {
         Args: {
           p_user_id: string
@@ -8576,11 +10113,331 @@ export type Database = {
         }
         Returns: Json
       }
+      tank_create_market_listing: {
+        Args: {
+          p_user_id: string
+          p_item_slug: string
+          p_quantity?: number
+          p_start_bid?: number
+          p_buyout_price?: number
+          p_duration_hours?: number
+        }
+        Returns: Json
+      }
+      tank_enqueue_audio_request: {
+        Args: {
+          p_user_id: string
+          p_kind: string
+          p_message: string
+          p_voice_or_sound_key: string
+          p_target_type: string
+          p_target_room_key: string
+          p_cost: number
+          p_priority?: number
+          p_payload?: Json
+          p_inventory_item_slug?: string
+          p_sfx_id?: string
+        }
+        Returns: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
+          kind: string
+          max_attempts: number
+          message: string | null
+          moderated_at: string | null
+          moderated_by: string | null
+          payload: Json
+          priority: number
+          refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
+          status: string
+          target_room_key: string | null
+          target_type: string
+          token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
+          user_id: string
+          voice_or_sound_key: string
+        }
+      }
+      tank_finish_audio_request: {
+        Args: {
+          p_request_id: string
+          p_worker_id: string
+          p_success: boolean
+          p_error_message?: string
+          p_generated_audio_path?: string
+          p_generated_audio_content_type?: string
+          p_generated_audio_duration_ms?: number
+          p_tts_provider?: string
+        }
+        Returns: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
+          kind: string
+          max_attempts: number
+          message: string | null
+          moderated_at: string | null
+          moderated_by: string | null
+          payload: Json
+          priority: number
+          refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
+          status: string
+          target_room_key: string | null
+          target_type: string
+          token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
+          user_id: string
+          voice_or_sound_key: string
+        }
+      }
+      tank_get_or_create_dm: {
+        Args: {
+          p_other_user_id: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          last_message_at: string
+          user_a_id: string
+          user_b_id: string
+        }
+      }
+      tank_grant_inventory_item: {
+        Args: {
+          p_user_id: string
+          p_item_slug: string
+          p_quantity?: number
+          p_source?: string
+          p_source_id?: string
+          p_idempotency_key?: string
+        }
+        Returns: Json
+      }
+      tank_grant_reward: {
+        Args: {
+          p_user_id: string
+          p_base_amount: number
+          p_currency: string
+          p_source: string
+          p_source_id?: string
+          p_shift_id?: string
+          p_idempotency_key?: string
+        }
+        Returns: Json
+      }
+      tank_human_presence_snapshot: {
+        Args: {
+          p_ttl_seconds?: number
+        }
+        Returns: {
+          online: number
+          members: number
+          anonymous: number
+          automated: number
+          on_cellular: number
+          shared_connections: number
+        }[]
+      }
+      tank_insert_chat_message: {
+        Args: {
+          p_user_id: string
+          p_room_id: string
+          p_user_name: string
+          p_user_role: string
+          p_body: string
+          p_client_nonce?: string
+          p_reply_to_message_id?: string
+        }
+        Returns: {
+          body: string
+          click_id: string | null
+          client_nonce: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          dm_id: string | null
+          edited_at: string | null
+          id: string
+          item_slug: string | null
+          message_type: string | null
+          metadata: Json | null
+          reply_to_message_id: string | null
+          reply_to_user_id: string | null
+          room_id: string
+          user_id: string | null
+          user_name: string
+          user_role: string
+        }
+      }
+      tank_join_tavern_queue: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       tank_level_for_xp: {
         Args: {
           xp_value: number
         }
         Returns: number
+      }
+      tank_lookup_auth_user: {
+        Args: {
+          p_email: string
+        }
+        Returns: {
+          user_id: string
+          is_confirmed: boolean
+          provider: string
+          created_at: string
+        }[]
+      }
+      tank_moderate_audio_request: {
+        Args: {
+          p_request_id: string
+          p_moderator_id: string
+          p_decision: string
+        }
+        Returns: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          cost: number
+          created_at: string
+          error_message: string | null
+          failed_at: string | null
+          generated_audio_content_type: string | null
+          generated_audio_duration_ms: number | null
+          generated_audio_path: string | null
+          id: string
+          inventory_item_id: string | null
+          kind: string
+          max_attempts: number
+          message: string | null
+          moderated_at: string | null
+          moderated_by: string | null
+          payload: Json
+          priority: number
+          refund_transaction_id: string | null
+          sfx_id: string | null
+          started_at: string | null
+          status: string
+          target_room_key: string | null
+          target_type: string
+          token_transaction_id: string | null
+          tts_provider: string | null
+          updated_at: string
+          user_id: string
+          voice_or_sound_key: string
+        }
+      }
+      tank_presence_snapshot: {
+        Args: {
+          p_ttl_seconds?: number
+        }
+        Returns: {
+          online: number
+          members: number
+          anonymous: number
+          bots: number
+          on_cellular: number
+          shared_connections: number
+        }[]
+      }
+      tank_record_mission_progress: {
+        Args: {
+          p_user_id: string
+          p_mission_key: string
+          p_increment?: number
+        }
+        Returns: Json
+      }
+      tank_requeue_stale_audio_requests: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
+      tank_resolve_tavern_chit: {
+        Args: {
+          p_chit_id: string
+          p_response_key: string
+        }
+        Returns: Json
+      }
+      tank_run_overlay_cron_trigger: {
+        Args: {
+          p_trigger_id: string
+        }
+        Returns: undefined
+      }
+      tank_schedule_overlay_trigger: {
+        Args: {
+          p_trigger_id: string
+          p_cron_expr: string
+        }
+        Returns: string
+      }
+      tank_set_display_name: {
+        Args: {
+          p_user_id: string
+          p_display_name: string
+        }
+        Returns: {
+          display_name: string
+          change_kind: string
+          setup_complete: boolean
+          free_rename_available: boolean
+          rename_ticket_quantity: number
+        }[]
+      }
+      tank_start_tavern_mutiny: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      tank_unschedule_overlay_trigger: {
+        Args: {
+          p_job_name: string
+        }
+        Returns: undefined
+      }
+      tank_use_apron_snatcher: {
+        Args: {
+          p_idempotency_key: string
+        }
+        Returns: Json
+      }
+      tank_use_inventory_item: {
+        Args: {
+          p_user_id: string
+          p_item_slug: string
+          p_room_id?: string
+        }
+        Returns: Json
       }
       track_shared_cart_view: {
         Args: {
@@ -8665,559 +10522,6 @@ export type Database = {
         | "unknown"
         | "stale"
       zone_visibility: "private" | "unlisted" | "public"
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-  storage: {
-    Tables: {
-      buckets: {
-        Row: {
-          allowed_mime_types: string[] | null
-          avif_autodetection: boolean | null
-          created_at: string | null
-          file_size_limit: number | null
-          id: string
-          name: string
-          owner: string | null
-          owner_id: string | null
-          public: boolean | null
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string | null
-        }
-        Insert: {
-          allowed_mime_types?: string[] | null
-          avif_autodetection?: boolean | null
-          created_at?: string | null
-          file_size_limit?: number | null
-          id: string
-          name: string
-          owner?: string | null
-          owner_id?: string | null
-          public?: boolean | null
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string | null
-        }
-        Update: {
-          allowed_mime_types?: string[] | null
-          avif_autodetection?: boolean | null
-          created_at?: string | null
-          file_size_limit?: number | null
-          id?: string
-          name?: string
-          owner?: string | null
-          owner_id?: string | null
-          public?: boolean | null
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      buckets_analytics: {
-        Row: {
-          created_at: string
-          deleted_at: string | null
-          format: string
-          id: string
-          name: string
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          deleted_at?: string | null
-          format?: string
-          id?: string
-          name: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          deleted_at?: string | null
-          format?: string
-          id?: string
-          name?: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      buckets_vectors: {
-        Row: {
-          created_at: string
-          id: string
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          id: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      iceberg_namespaces: {
-        Row: {
-          bucket_name: string
-          catalog_id: string
-          created_at: string
-          id: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }
-        Insert: {
-          bucket_name: string
-          catalog_id: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          name: string
-          updated_at?: string
-        }
-        Update: {
-          bucket_name?: string
-          catalog_id?: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          name?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "iceberg_namespaces_catalog_id_fkey"
-            columns: ["catalog_id"]
-            referencedRelation: "buckets_analytics"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      iceberg_tables: {
-        Row: {
-          bucket_name: string
-          catalog_id: string
-          created_at: string
-          id: string
-          location: string
-          name: string
-          namespace_id: string
-          remote_table_id: string | null
-          shard_id: string | null
-          shard_key: string | null
-          updated_at: string
-        }
-        Insert: {
-          bucket_name: string
-          catalog_id: string
-          created_at?: string
-          id?: string
-          location: string
-          name: string
-          namespace_id: string
-          remote_table_id?: string | null
-          shard_id?: string | null
-          shard_key?: string | null
-          updated_at?: string
-        }
-        Update: {
-          bucket_name?: string
-          catalog_id?: string
-          created_at?: string
-          id?: string
-          location?: string
-          name?: string
-          namespace_id?: string
-          remote_table_id?: string | null
-          shard_id?: string | null
-          shard_key?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "iceberg_tables_catalog_id_fkey"
-            columns: ["catalog_id"]
-            referencedRelation: "buckets_analytics"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "iceberg_tables_namespace_id_fkey"
-            columns: ["namespace_id"]
-            referencedRelation: "iceberg_namespaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      migrations: {
-        Row: {
-          executed_at: string | null
-          hash: string
-          id: number
-          name: string
-        }
-        Insert: {
-          executed_at?: string | null
-          hash: string
-          id: number
-          name: string
-        }
-        Update: {
-          executed_at?: string | null
-          hash?: string
-          id?: number
-          name?: string
-        }
-        Relationships: []
-      }
-      objects: {
-        Row: {
-          bucket_id: string | null
-          created_at: string | null
-          id: string
-          last_accessed_at: string | null
-          metadata: Json | null
-          name: string | null
-          owner: string | null
-          owner_id: string | null
-          path_tokens: string[] | null
-          updated_at: string | null
-          user_metadata: Json | null
-          version: string | null
-        }
-        Insert: {
-          bucket_id?: string | null
-          created_at?: string | null
-          id?: string
-          last_accessed_at?: string | null
-          metadata?: Json | null
-          name?: string | null
-          owner?: string | null
-          owner_id?: string | null
-          path_tokens?: string[] | null
-          updated_at?: string | null
-          user_metadata?: Json | null
-          version?: string | null
-        }
-        Update: {
-          bucket_id?: string | null
-          created_at?: string | null
-          id?: string
-          last_accessed_at?: string | null
-          metadata?: Json | null
-          name?: string | null
-          owner?: string | null
-          owner_id?: string | null
-          path_tokens?: string[] | null
-          updated_at?: string | null
-          user_metadata?: Json | null
-          version?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "objects_bucketId_fkey"
-            columns: ["bucket_id"]
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      s3_multipart_uploads: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          id: string
-          in_progress_size: number
-          key: string
-          owner_id: string | null
-          upload_signature: string
-          user_metadata: Json | null
-          version: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          id: string
-          in_progress_size?: number
-          key: string
-          owner_id?: string | null
-          upload_signature: string
-          user_metadata?: Json | null
-          version: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          id?: string
-          in_progress_size?: number
-          key?: string
-          owner_id?: string | null
-          upload_signature?: string
-          user_metadata?: Json | null
-          version?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "s3_multipart_uploads_bucket_id_fkey"
-            columns: ["bucket_id"]
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      s3_multipart_uploads_parts: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          etag: string
-          id: string
-          key: string
-          owner_id: string | null
-          part_number: number
-          size: number
-          upload_id: string
-          version: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          etag: string
-          id?: string
-          key: string
-          owner_id?: string | null
-          part_number: number
-          size?: number
-          upload_id: string
-          version: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          etag?: string
-          id?: string
-          key?: string
-          owner_id?: string | null
-          part_number?: number
-          size?: number
-          upload_id?: string
-          version?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "s3_multipart_uploads_parts_bucket_id_fkey"
-            columns: ["bucket_id"]
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "s3_multipart_uploads_parts_upload_id_fkey"
-            columns: ["upload_id"]
-            referencedRelation: "s3_multipart_uploads"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      vector_indexes: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          data_type: string
-          dimension: number
-          distance_metric: string
-          id: string
-          metadata_configuration: Json | null
-          name: string
-          updated_at: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          data_type: string
-          dimension: number
-          distance_metric: string
-          id?: string
-          metadata_configuration?: Json | null
-          name: string
-          updated_at?: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          data_type?: string
-          dimension?: number
-          distance_metric?: string
-          id?: string
-          metadata_configuration?: Json | null
-          name?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vector_indexes_bucket_id_fkey"
-            columns: ["bucket_id"]
-            referencedRelation: "buckets_vectors"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      can_insert_object: {
-        Args: {
-          bucketid: string
-          name: string
-          owner: string
-          metadata: Json
-        }
-        Returns: undefined
-      }
-      extension: {
-        Args: {
-          name: string
-        }
-        Returns: string
-      }
-      filename: {
-        Args: {
-          name: string
-        }
-        Returns: string
-      }
-      foldername: {
-        Args: {
-          name: string
-        }
-        Returns: string[]
-      }
-      get_common_prefix: {
-        Args: {
-          p_key: string
-          p_prefix: string
-          p_delimiter: string
-        }
-        Returns: string
-      }
-      get_size_by_bucket: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          size: number
-          bucket_id: string
-        }[]
-      }
-      list_multipart_uploads_with_delimiter: {
-        Args: {
-          bucket_id: string
-          prefix_param: string
-          delimiter_param: string
-          max_keys?: number
-          next_key_token?: string
-          next_upload_token?: string
-        }
-        Returns: {
-          key: string
-          id: string
-          created_at: string
-        }[]
-      }
-      list_objects_with_delimiter: {
-        Args: {
-          _bucket_id: string
-          prefix_param: string
-          delimiter_param: string
-          max_keys?: number
-          start_after?: string
-          next_token?: string
-          sort_order?: string
-        }
-        Returns: {
-          name: string
-          id: string
-          metadata: Json
-          updated_at: string
-          created_at: string
-          last_accessed_at: string
-        }[]
-      }
-      operation: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      search: {
-        Args: {
-          prefix: string
-          bucketname: string
-          limits?: number
-          levels?: number
-          offsets?: number
-          search?: string
-          sortcolumn?: string
-          sortorder?: string
-        }
-        Returns: {
-          name: string
-          id: string
-          updated_at: string
-          created_at: string
-          last_accessed_at: string
-          metadata: Json
-        }[]
-      }
-      search_by_timestamp: {
-        Args: {
-          p_prefix: string
-          p_bucket_id: string
-          p_limit: number
-          p_level: number
-          p_start_after: string
-          p_sort_order: string
-          p_sort_column: string
-          p_sort_column_after: string
-        }
-        Returns: {
-          key: string
-          name: string
-          id: string
-          updated_at: string
-          created_at: string
-          last_accessed_at: string
-          metadata: Json
-        }[]
-      }
-      search_v2: {
-        Args: {
-          prefix: string
-          bucket_name: string
-          limits?: number
-          levels?: number
-          start_after?: string
-          sort_order?: string
-          sort_column?: string
-          sort_column_after?: string
-        }
-        Returns: {
-          key: string
-          name: string
-          id: string
-          updated_at: string
-          created_at: string
-          last_accessed_at: string
-          metadata: Json
-        }[]
-      }
-    }
-    Enums: {
-      buckettype: "STANDARD" | "ANALYTICS" | "VECTOR"
     }
     CompositeTypes: {
       [_ in never]: never

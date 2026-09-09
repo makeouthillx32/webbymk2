@@ -1,0 +1,367 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unenter Edge Shield Privacy Policy - Bot Challenge &amp; Threat Mitigation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+            line-height: 1.7;
+        }
+        .legal-header {
+            width: 100%;
+            height: 32vh;
+            min-height: 220px;
+            background: linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid hsl(var(--border) / 0.6);
+            position: relative;
+            overflow: hidden;
+        }
+        .legal-header::before {
+            content: "";
+            position: absolute;
+            width: 320px;
+            height: 320px;
+            background: radial-gradient(circle, hsl(var(--primary) / 0.15) 0%, transparent 70%);
+            top: -50px;
+            right: 10%;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        .header-content {
+            max-width: 860px;
+            width: 90%;
+            margin: 0 auto;
+            text-align: left;
+        }
+        .eyebrow {
+            font-size: 0.8125rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: hsl(var(--primary));
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .eyebrow::before {
+            content: "";
+            display: inline-block;
+            width: 16px;
+            height: 2px;
+            background-color: hsl(var(--primary));
+        }
+        h1 {
+            font-size: clamp(2rem, 4vw, 2.75rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
+            color: hsl(var(--foreground));
+            margin-bottom: 0.75rem;
+        }
+        .meta-tagline {
+            font-size: 0.9375rem;
+            color: hsl(var(--muted-foreground));
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .legal-container {
+            max-width: 860px;
+            width: 90%;
+            margin: 3.5rem auto 6rem auto;
+        }
+        .section-card {
+            background-color: hsl(var(--card));
+            border: 1px solid hsl(var(--border) / 0.7);
+            border-radius: 12px;
+            padding: 2.25rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+        }
+        h2 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: hsl(var(--foreground));
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        h2::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 18px;
+            background-color: hsl(var(--primary));
+            border-radius: 3px;
+        }
+        p {
+            font-size: 0.975rem;
+            color: hsl(var(--muted-foreground));
+            margin-bottom: 1.25rem;
+        }
+        p:last-child {
+            margin-bottom: 0;
+        }
+        strong {
+            color: hsl(var(--foreground));
+            font-weight: 600;
+        }
+        .highlight-box {
+            background-color: hsl(var(--muted) / 0.5);
+            border-left: 4px solid hsl(var(--primary));
+            padding: 1.25rem 1.5rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1.5rem 0;
+        }
+        .highlight-box p {
+            color: hsl(var(--foreground));
+            font-size: 0.9375rem;
+            margin: 0;
+        }
+        .challenge-flow {
+            list-style: none;
+            counter-reset: challenge-step;
+            margin: 1.5rem 0;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .challenge-flow li {
+            counter-increment: challenge-step;
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            background-color: hsl(var(--background));
+            border: 1px solid hsl(var(--border) / 0.6);
+            border-radius: 8px;
+            padding: 1.25rem;
+        }
+        .step-num {
+            width: 32px;
+            height: 32px;
+            background-color: hsl(var(--primary) / 0.15);
+            color: hsl(var(--primary));
+            font-weight: 700;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .step-body h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: hsl(var(--foreground));
+            margin-bottom: 0.35rem;
+        }
+        .step-body p {
+            margin-bottom: 0;
+            font-size: 0.9rem;
+        }
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.25rem;
+            margin-top: 1.5rem;
+        }
+        .data-card {
+            background-color: hsl(var(--background));
+            border: 1px solid hsl(var(--border) / 0.6);
+            border-radius: 8px;
+            padding: 1.25rem;
+        }
+        .data-card h4 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: hsl(var(--foreground));
+            margin-bottom: 0.5rem;
+        }
+        .data-card p {
+            font-size: 0.85rem;
+            margin-bottom: 0;
+        }
+        .shield-badge-row {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin: 1.25rem 0;
+        }
+        .shield-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0.35rem 0.75rem;
+            background: hsl(var(--primary) / 0.1);
+            color: hsl(var(--primary));
+            border: 1px solid hsl(var(--primary) / 0.3);
+            border-radius: 9999px;
+            font-size: 0.775rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .shield-badge::before {
+            content: "✓";
+            font-weight: bold;
+        }
+        .contact-box {
+            text-align: center;
+            background-color: hsl(var(--card));
+            border: 1px solid hsl(var(--border) / 0.7);
+            border-radius: 12px;
+            padding: 2.5rem;
+        }
+        .contact-box a {
+            color: hsl(var(--primary));
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .contact-box a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="legal-header">
+        <div class="header-content">
+            <div class="eyebrow">Security &amp; Edge Protection</div>
+            <h1>Unenter Edge Shield Privacy Policy</h1>
+            <div class="meta-tagline">
+                <span><strong>Effective Date:</strong> September 4, 2026</span>
+                <span><strong>Applies To:</strong> Unenter Edge Shield (UES) &amp; Bot Challenge</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="legal-container">
+        <section class="section-card">
+            <h2>1. What Is Unenter Edge Shield?</h2>
+            <p>
+                <strong>Unenter Edge Shield (UES)</strong> is our proprietary edge defense and bot verification infrastructure. Operating across unenter.live and our distributed zones (including Shop, Tank, Docs, Blog, and API gateways), Edge Shield evaluates incoming network requests to distinguish legitimate human visitors from automated botnets, scraping clusters, credential-stuffing engines, and distributed denial-of-service (DDoS) threats.
+            </p>
+            <div class="shield-badge-row">
+                <span class="shield-badge">Zero Ad Tracking</span>
+                <span class="shield-badge">No Biometrics</span>
+                <span class="shield-badge">Client-Side Proof-of-Work</span>
+                <span class="shield-badge">RAM-Only Telemetry</span>
+            </div>
+            <div class="highlight-box">
+                <p>
+                    <strong>Our Core Privacy Commitment:</strong> Unlike conventional commercial ad-tech CAPTCHAs, Unenter Edge Shield never tracks your identity across disparate websites, never profiles your personal habits for advertising, and never sells or licenses verification data to third parties.
+                </p>
+            </div>
+        </section>
+
+        <section class="section-card">
+            <h2>2. How the Bot Challenge Works</h2>
+            <p>
+                When our edge nodes detect suspicious traffic anomalies (such as high request velocity, anomalous TLS fingerprints, or missing browser features), an interactive or transparent verification challenge is rendered before granting access:
+            </p>
+
+            <ul class="challenge-flow">
+                <li>
+                    <div class="step-num">1</div>
+                    <div class="step-body">
+                        <h3>Telemetry &amp; Header Evaluation</h3>
+                        <p>Our edge proxy analyzes request metadata including IP address, HTTP headers, User-Agent, and TLS cipher negotiation (JA3/JA4) to calculate a threat confidence score.</p>
+                    </div>
+                </li>
+                <li>
+                    <div class="step-num">2</div>
+                    <div class="step-body">
+                        <h3>Client-Side Proof-of-Work (PoW)</h3>
+                        <p>Your browser executes a rapid, sandboxed mathematical computation (e.g., finding a SHA-256 hash collision with a targeted difficulty prefix via the native WebCrypto API). This computational cost effectively halts mass automated attacks without impacting human battery or CPU performance.</p>
+                    </div>
+                </li>
+                <li>
+                    <div class="step-num">3</div>
+                    <div class="step-body">
+                        <h3>Browser Environment Sanity Check</h3>
+                        <p>The challenge verifies standard browser rendering properties (e.g. WebGL canvas context, audio context support, screen metrics, and navigator properties) to detect headless automation tools such as Puppeteer, Selenium, or automated curl bots.</p>
+                    </div>
+                </li>
+                <li>
+                    <div class="step-num">4</div>
+                    <div class="step-body">
+                        <h3>Cryptographic Clearance Issuance</h3>
+                        <p>Once the mathematical solution is validated by our edge, an encrypted, signed clearance token is issued to your session cookie, allowing seamless uninterrupted browsing.</p>
+                    </div>
+                </li>
+            </ul>
+        </section>
+
+        <section class="section-card">
+            <h2>3. Information Evaluated &amp; Stored</h2>
+            <p>We believe in strict data minimization. During the challenge execution, the following data points are evaluated:</p>
+
+            <div class="data-grid">
+                <div class="data-card">
+                    <h4>Network Metadata</h4>
+                    <p>IP address, autonomous system number (ASN), geographic country code, and TLS handshake parameters.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Device Environment</h4>
+                    <p>Screen resolution, device pixel ratio, color depth, browser engine capabilities, and time zone offset.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Interaction Nonces</h4>
+                    <p>Challenge start time, completion duration, and the cryptographic proof-of-work output string.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Clearance Cookie</h4>
+                    <p>The encrypted <code>__unt_clearance</code> cookie, containing a signed HMAC timestamp valid for up to 24 hours.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-card">
+            <h2>4. What We NEVER Collect or Monitor</h2>
+            <p>To ensure total transparency, Unenter Edge Shield explicitly does <strong>NOT</strong>:</p>
+            <ul style="margin-left: 1.5rem; margin-bottom: 1.25rem; color: hsl(var(--muted-foreground)); font-size: 0.95rem;">
+                <li style="margin-bottom: 0.5rem;"><strong style="color: hsl(var(--foreground));">No Cross-Site Profiling:</strong> We do not track what you do on other domains, apps, or services.</li>
+                <li style="margin-bottom: 0.5rem;"><strong style="color: hsl(var(--foreground));">No Personal Identity Extraction:</strong> We do not read cookies or storage from other sites, names, social profiles, or financial credentials.</li>
+                <li style="margin-bottom: 0.5rem;"><strong style="color: hsl(var(--foreground));">No Biometric Recording:</strong> We do not track facial geometry, retinal data, voice prints, or continuous mouse/keystroke dynamics across pages.</li>
+                <li><strong style="color: hsl(var(--foreground));">No Ad Brokering:</strong> No challenge data is sent to advertising networks or external data brokers.</li>
+            </ul>
+        </section>
+
+        <section class="section-card">
+            <h2>5. Data Retention &amp; Edge Purging</h2>
+            <p>
+                <strong>In-Memory Processing:</strong> Challenge solutions and behavioral telemetry are evaluated in volatile edge memory (RAM) and are not written to persistent disk storage during normal verification.
+            </p>
+            <p>
+                <strong>Security Incident Buffering:</strong> When an active volumetric DDoS or intrusion attack is detected, aggregated threat telemetry (IP ranges, attack vectors, and hit frequency) is preserved in transient ring buffers for a maximum of <strong>72 hours</strong> to configure firewall blocklists, after which it is permanently purged.
+            </p>
+            <p>
+                <strong>Clearance Expiration:</strong> The <code>__unt_clearance</code> cookie expires automatically after <strong>24 hours</strong>, or immediately if you clear your browser session cookies.
+            </p>
+        </section>
+
+        <section class="section-card">
+            <h2>6. Legal Basis for Processing (GDPR / CCPA)</h2>
+            <p>
+                Under European Union General Data Protection Regulation (GDPR Article 6(1)(f)) and international data protection laws, processing security telemetry is conducted under the <strong>legitimate interest</strong> of preventing fraud, combating cybersecurity threats, and ensuring platform availability for all users.
+            </p>
+        </section>
+
+        <div class="contact-box">
+            <h3>Questions Regarding Edge Security?</h3>
+            <p style="margin-top: 0.5rem;">For inquiries regarding our edge architecture or to report security vulnerabilities, contact <a href="mailto:security@unenter.live">security@unenter.live</a>.</p>
+        </div>
+    </main>
+</body>
+</html>

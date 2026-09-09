@@ -119,7 +119,12 @@ export function useViewerPresence(roomSlug: string) {
     const supabase = createClient();
     const presenceChannel = supabase
       .channel("tank:presence")
-      .on("broadcast", { event: "presence" }, ({ payload }) => {
+      // Must match viewerPresence.ts's httpSend event name exactly. Not named
+      // "presence" — realtime:v2.25.50 crashes handle_out/3 on that literal
+      // event name regardless of payload shape (colliding with its own
+      // broken native Presence support), which was taking sibling channels
+      // (including chat) down with it. Confirmed live 2026-09-01.
+      .on("broadcast", { event: "presence_update" }, ({ payload }) => {
         if (!cancelled && payload && typeof payload.online === "number") {
           setPresence(payload as ViewerPresence);
         }

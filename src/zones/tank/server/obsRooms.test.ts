@@ -47,6 +47,32 @@ describe("OBS ingest path namespace", () => {
     });
     expect(result.allowed).toBe(true);
   });
+
+  test("reserves obs/director for the server programme key", async () => {
+    const previous = process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+    process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY = "programme-test-key";
+    try {
+      const accepted = await authorizePublish({
+        path: "obs/director",
+        user: "director",
+        password: "programme-test-key",
+        ip: "192.168.50.204",
+        action: "publish",
+      });
+      const rejected = await authorizePublish({
+        path: "obs/director",
+        user: "director",
+        password: "wrong-key",
+        ip: "192.168.50.204",
+        action: "publish",
+      });
+      expect(accepted.allowed).toBe(true);
+      expect(rejected.allowed).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+      else process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY = previous;
+    }
+  });
 });
 
 describe("OBS room readiness reconciliation", () => {

@@ -1,0 +1,351 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Data Deletion Policy - Unenter</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+            line-height: 1.7;
+        }
+        .legal-header {
+            width: 100%;
+            height: 32vh;
+            min-height: 220px;
+            background: linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid hsl(var(--border) / 0.6);
+            position: relative;
+            overflow: hidden;
+        }
+        .legal-header::before {
+            content: "";
+            position: absolute;
+            width: 320px;
+            height: 320px;
+            background: radial-gradient(circle, hsl(var(--primary) / 0.15) 0%, transparent 70%);
+            top: -50px;
+            right: 10%;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        .header-content {
+            max-width: 860px;
+            width: 90%;
+            margin: 0 auto;
+            text-align: left;
+        }
+        .eyebrow {
+            font-size: 0.8125rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: hsl(var(--primary));
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .eyebrow::before {
+            content: "";
+            display: inline-block;
+            width: 16px;
+            height: 2px;
+            background: hsl(var(--primary));
+        }
+        h1 {
+            font-size: clamp(2rem, 5vw, 3.25rem);
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+            color: hsl(var(--foreground));
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            font-size: 1.0625rem;
+            color: hsl(var(--muted-foreground));
+            max-width: 60ch;
+        }
+        main {
+            max-width: 860px;
+            width: 90%;
+            margin: 3rem auto 6rem;
+            position: relative;
+            z-index: 5;
+        }
+        .meta-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+            padding: 1rem 1.25rem;
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            border-radius: min(var(--radius, 8px), 8px);
+            font-size: 0.875rem;
+            color: hsl(var(--muted-foreground));
+            margin-bottom: 2.5rem;
+        }
+        .meta-item strong {
+            color: hsl(var(--foreground));
+        }
+        .section-card {
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border) / 0.8);
+            border-radius: min(var(--radius, 8px), 8px);
+            padding: clamp(1.5rem, 3vw, 2.25rem);
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow-sm, 0 1px 2px 0 rgb(0 0 0 / 0.05));
+        }
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: hsl(var(--foreground));
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+        }
+        p {
+            color: hsl(var(--foreground) / 0.9);
+            margin-bottom: 1.25rem;
+            font-size: 1rem;
+        }
+        .steps-list {
+            list-style: none;
+            counter-reset: step-counter;
+            margin: 1.5rem 0;
+            display: grid;
+            gap: 1rem;
+        }
+        .step-item {
+            counter-increment: step-counter;
+            display: grid;
+            grid-template-columns: 36px 1fr;
+            gap: 1rem;
+            align-items: flex-start;
+            padding: 1rem;
+            background: hsl(var(--background));
+            border: 1px solid hsl(var(--border) / 0.6);
+            border-radius: min(var(--radius, 8px), 8px);
+        }
+        .step-badge {
+            width: 36px;
+            height: 36px;
+            background: hsl(var(--primary));
+            color: hsl(var(--primary-foreground));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9375rem;
+        }
+        .step-text h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: hsl(var(--foreground));
+        }
+        .step-text p {
+            margin: 0;
+            font-size: 0.9375rem;
+            color: hsl(var(--muted-foreground));
+        }
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        .data-card {
+            padding: 1rem 1.25rem;
+            background: hsl(var(--background));
+            border: 1px solid hsl(var(--border));
+            border-radius: min(var(--radius, 8px), 8px);
+        }
+        .data-card h4 {
+            font-size: 0.9375rem;
+            font-weight: 700;
+            color: hsl(var(--foreground));
+            margin-bottom: 0.35rem;
+        }
+        .data-card p {
+            font-size: 0.875rem;
+            color: hsl(var(--muted-foreground));
+            margin: 0;
+        }
+        .notice-box {
+            border-left: 4px solid hsl(var(--primary));
+            background: hsl(var(--primary) / 0.08);
+            padding: 1.25rem;
+            border-radius: 0 min(var(--radius, 8px), 8px) min(var(--radius, 8px), 8px) 0;
+            margin: 1.5rem 0;
+        }
+        .notice-box p {
+            margin: 0;
+            font-size: 0.9375rem;
+            color: hsl(var(--foreground));
+        }
+        .contact-box {
+            background: linear-gradient(to right, hsl(var(--card)), hsl(var(--background)));
+            border: 1px solid hsl(var(--primary) / 0.4);
+            border-radius: min(var(--radius, 8px), 8px);
+            padding: 1.5rem;
+            margin-top: 2rem;
+            text-align: center;
+        }
+        .contact-box a {
+            color: hsl(var(--primary));
+            font-weight: 700;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="legal-header">
+        <div class="header-content">
+            <div class="eyebrow">Compliance &amp; Data Rights</div>
+            <h1>Facebook Data Deletion Policy</h1>
+            <p class="subtitle">Instructions and procedures for deleting your personal data associated with Facebook Login on Unenter.</p>
+        </div>
+    </header>
+
+    <main>
+        <div class="meta-bar">
+            <div class="meta-item"><strong>Platform:</strong> Unenter Solutions (unenter.live)</div>
+            <div class="meta-item"><strong>Effective Date:</strong> September 4, 2026</div>
+            <div class="meta-item"><strong>Policy Status:</strong> Active &amp; Meta Compliant</div>
+        </div>
+
+        <section class="section-card">
+            <h2>1. Overview &amp; Compliance Mandate</h2>
+            <p>
+                Unenter (<strong>unenter.live</strong>) supports Facebook Login to provide visitors with a seamless, secure authentication experience across our products, live streams, and community features.
+            </p>
+            <p>
+                In strict compliance with <strong>Meta's Platform Terms (Section 4.f: Data Deletion)</strong> and global privacy frameworks (including GDPR, CCPA, and CPRA), we uphold your absolute right to request the complete, irreversible deletion of all personal data, identifiers, and activity history collected through your Facebook authorization.
+            </p>
+            <div class="notice-box">
+                <p>
+                    <strong>Automatic Sync:</strong> When you remove Unenter from your Facebook Authorized Apps, our systems receive Meta's Data Deletion Callback and automatically disassociate your account credentials.
+                </p>
+            </div>
+        </section>
+
+        <section class="section-card">
+            <h2>2. Method 1: Self-Service Removal via Facebook</h2>
+            <p>You can revoke access and trigger automatic data deletion directly from your Facebook account settings:</p>
+            
+            <ol class="steps-list">
+                <li class="step-item">
+                    <div class="step-badge">1</div>
+                    <div class="step-text">
+                        <h3>Access Facebook Settings</h3>
+                        <p>Log in to your Facebook profile on web or mobile. Go to <strong>Settings &amp; Privacy</strong> &rarr; <strong>Settings</strong>.</p>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-badge">2</div>
+                    <div class="step-text">
+                        <h3>Open Apps &amp; Websites</h3>
+                        <p>In the left sidebar or settings menu, select <strong>Apps and Websites</strong> to view all services connected to your profile.</p>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-badge">3</div>
+                    <div class="step-text">
+                        <h3>Locate Unenter</h3>
+                        <p>Search for or find <strong>Unenter</strong> in the list of active applications and click <strong>View and Edit</strong> or <strong>Remove</strong>.</p>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-badge">4</div>
+                    <div class="step-text">
+                        <h3>Confirm Deletion</h3>
+                        <p>Click <strong>Remove</strong>. You may also check the box to request deletion of all interactions or permissions granted to Unenter.</p>
+                    </div>
+                </li>
+            </ol>
+        </section>
+
+        <section class="section-card">
+            <h2>3. Method 2: Direct Purge Request</h2>
+            <p>
+                If you no longer have access to your Facebook profile, or wish to immediately accelerate the permanent purge of all associated records across our databases, submit a direct deletion request:
+            </p>
+            <ol class="steps-list">
+                <li class="step-item">
+                    <div class="step-badge">A</div>
+                    <div class="step-text">
+                        <h3>Email Our Privacy Team</h3>
+                        <p>Send an email to <strong>privacy@unenter.live</strong> or <strong>support@unenter.live</strong> with the subject line <code>Facebook Data Deletion Request</code>.</p>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-badge">B</div>
+                    <div class="step-text">
+                        <h3>Provide Your Identifiers</h3>
+                        <p>Include the primary email address registered with your account or your Facebook User ID (found in Facebook Apps settings under Unenter).</p>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-badge">C</div>
+                    <div class="step-text">
+                        <h3>Direct Dashboard Request</h3>
+                        <p>Alternatively, sign in to <a href="https://unenter.live/dashboard" style="color: hsl(var(--primary));">unenter.live/dashboard</a> and navigate to <strong>Account Settings &rarr; Privacy &rarr; Delete Account Data</strong>.</p>
+                    </div>
+                </li>
+            </ol>
+        </section>
+
+        <section class="section-card">
+            <h2>4. What Data Is Permanently Deleted</h2>
+            <p>Upon receiving an authorized deletion request or Meta callback, our data management pipeline permanently purges:</p>
+            
+            <div class="data-grid">
+                <div class="data-card">
+                    <h4>Facebook Identity Records</h4>
+                    <p>Your unique Facebook App-Scoped User ID (ASUID), OAuth tokens, and authorization metadata.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Profile Information</h4>
+                    <p>Your full name, registered email address, profile avatar link, and biographical info.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Session &amp; Auth Tokens</h4>
+                    <p>All active authentication sessions, browser cookies, refresh tokens, and device identifiers.</p>
+                </div>
+                <div class="data-card">
+                    <h4>Activity &amp; Interaction Logs</h4>
+                    <p>Livestream chat history, comments, voting records, and community telemetry.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="section-card">
+            <h2>5. Processing Timeline &amp; Confirmation</h2>
+            <p>
+                <strong>Immediate Acknowledgment:</strong> Requests submitted via email or callback are registered within <strong>24–48 hours</strong>, generating a tracking confirmation code.
+            </p>
+            <p>
+                <strong>Complete Purge:</strong> All records are permanently and unrecoverably removed from our production databases, caches, and storage tiers within <strong>30 calendar days</strong>.
+            </p>
+            <p>
+                <strong>Statutory Exceptions:</strong> Financial records, invoice numbers, and order receipts (if you made a purchase on Shop) are retained strictly as required by applicable tax, commercial, and financial record-keeping laws.
+            </p>
+        </section>
+
+        <div class="contact-box">
+            <h3>Questions or Status Checks?</h3>
+            <p style="margin-top: 0.5rem;">Our security and privacy officer is available directly at <a href="mailto:privacy@unenter.live">privacy@unenter.live</a>.</p>
+        </div>
+    </main>
+</body>
+</html>

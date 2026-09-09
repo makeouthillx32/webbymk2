@@ -17,7 +17,7 @@ import {
   Ruler,
 } from "lucide-react";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
-import { supabasePublicUrlFromImage } from "@/lib/images";
+import { supabasePublicUrlFromImage, supabaseTransformedUrlFromImage } from "@/lib/images";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -154,7 +154,15 @@ function Accordion({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ProductDetailClient({ product }: ProductDetailClientProps) {
-  const [selectedOptions, setSelectedOptions] = useState<Record<string, any>>({});
+  const initialOptions = useMemo(() => {
+    if (!product.variants || product.variants.length === 0) return {};
+    const firstInStock =
+      product.variants.find((v) => v.inventory_quantity > 0 || v.allow_backorder) ||
+      product.variants[0];
+    return firstInStock?.options || {};
+  }, [product.variants]);
+
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, any>>(initialOptions);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
   const [sizeGuideImageIndex, setSizeGuideImageIndex] = useState(0);
@@ -167,7 +175,21 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
   // DO NOT use NEXT_PUBLIC_SUPABASE_URL here — in Docker that resolves to the
   // internal kong hostname which is not in remotePatterns and causes a 500.
   const getImageUrl = (image: ProductImage) =>
-    supabasePublicUrlFromImage(image) ?? "";
+    supabaseTransformedUrlFromImage(image, { width: 1200, quality: 82 }) ??
+    supabasePublicUrlFromImage(image) ??
+    "";
+
+  const getThumbnailUrl = (image: ProductImage) =>
+    supabaseTransformedUrlFromImage(image, { width: 240, quality: 75 }) ??
+    supabasePublicUrlFromImage(image) ??
+    "";
+
+  const shouldBypassNextOpt = (url: string) =>
+    Boolean(
+      url &&
+        (url.includes("/storage/v1/render/image/") ||
+          url.toLowerCase().includes(".avif")),
+    );
 
   // ── Split images: gallery vs size-guide ───────────────────────────────────
   const { galleryImages, sizeGuideImages } = useMemo(() => {
@@ -306,15 +328,15 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
       <button
         key={displayValue}
         onClick={() => handleOptionSelect(optionName, optionValue)}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-sm transition-colors ${
+        className={`inline-flex items-center justify-center min-w-[3rem] h-10 px-3.5 py-2 rounded-xl text-sm font-medium transition-all duration-200 shadow-sm ${
           isSelected
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input hover:border-primary"
+            ? "bg-primary text-primary-foreground border-2 border-primary font-semibold scale-[1.02] shadow-sm"
+            : "bg-card/70 border border-border/80 hover:border-primary hover:bg-muted/50 text-foreground"
         }`}
       >
         {isColor && (
           <span
-            className="inline-block w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm"
+            className="inline-block w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm mr-1.5"
             style={{ backgroundColor: optionValue.hex }}
           />
         )}
@@ -354,33 +376,39 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
         <div className="space-y-4">
 
           {/* Main Image */}
-          <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
+          <div className="relative aspect-square bg-muted/40 rounded-2xl overflow-hidden border border-border/60 shadow-sm">
             {galleryImages.length > 0 ? (
               <>
-                <Image
-                  src={getImageUrl(galleryImages[safeImageIndex])}
-                  alt={galleryImages[safeImageIndex].alt_text || product.title}
-                  fill
-                  className="object-cover"
-                  priority
-                />
+                {(() => {
+                  const currentImgUrl = getImageUrl(galleryImages[safeImageIndex]);
+                  return (
+                    <Image
+                      src={currentImgUrl}
+                      alt={galleryImages[safeImageIndex].alt_text || product.title}
+                      fill
+                      className="object-cover"
+                      priority
+                      unoptimized={shouldBypassNextOpt(currentImgUrl)}
+                    />
+                  );
+                })()}
 
                 {/* Prev / Next */}
                 {galleryImages.length > 1 && (
                   <>
                     <button
                       onClick={previousImage}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background rounded-full p-2 transition-colors shadow"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background backdrop-blur-sm rounded-full p-2.5 transition-all shadow-md hover:scale-110"
                       aria-label="Previous image"
                     >
-                      <ChevronLeft className="w-5 h-5" />
+                      <ChevronLeft className="w-5 h-5 text-foreground" />
                     </button>
                     <button
                       onClick={nextImage}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background rounded-full p-2 transition-colors shadow"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background backdrop-blur-sm rounded-full p-2.5 transition-all shadow-md hover:scale-110"
                       aria-label="Next image"
                     >
-                      <ChevronRight className="w-5 h-5" />
+                      <ChevronRight className="w-5 h-5 text-foreground" />
                     </button>
                   </>
                 )}
@@ -388,7 +416,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
                 {/* Badge */}
                 {product.badge && (
                   <div className="absolute top-3 left-3">
-                    <Badge className="bg-primary text-primary-foreground">
+                    <Badge className="bg-primary text-primary-foreground font-semibold px-3 py-1 rounded-full shadow-sm">
                       {product.badge}
                     </Badge>
                   </div>
@@ -403,25 +431,29 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
 
           {/* Thumbnails (gallery images only — SG excluded) */}
           {galleryImages.length > 1 && (
-            <div className="grid grid-cols-6 gap-2">
-              {galleryImages.map((image, index) => (
-                <button
-                  key={image.id}
-                  onClick={() => setSelectedImageIndex(index)}
-                  className={`aspect-square relative rounded-lg overflow-hidden border-2 transition-colors ${
-                    index === safeImageIndex
-                      ? "border-primary"
-                      : "border-transparent hover:border-muted-foreground"
-                  }`}
-                >
-                  <Image
-                    src={getImageUrl(image)}
-                    alt={image.alt_text || `${product.title} – view ${index + 1}`}
-                    fill
-                    className="object-cover"
-                  />
-                </button>
-              ))}
+            <div className="flex items-center gap-3 overflow-x-auto py-1">
+              {galleryImages.map((image, index) => {
+                const thumbUrl = getThumbnailUrl(image);
+                return (
+                  <button
+                    key={image.id}
+                    onClick={() => setSelectedImageIndex(index)}
+                    className={`relative w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 rounded-xl overflow-hidden border-2 transition-all duration-200 ${
+                      index === safeImageIndex
+                        ? "border-primary shadow-md scale-105"
+                        : "border-border/70 hover:border-muted-foreground/60 opacity-80 hover:opacity-100"
+                    }`}
+                  >
+                    <Image
+                      src={thumbUrl}
+                      alt={image.alt_text || `${product.title} – view ${index + 1}`}
+                      fill
+                      className="object-cover"
+                      unoptimized={shouldBypassNextOpt(thumbUrl)}
+                    />
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -508,38 +540,48 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
                 <div className="border-t px-4 py-4 space-y-3 bg-muted/20">
                   {/* Size guide image viewer */}
                   <div className="relative aspect-[4/3] rounded-md overflow-hidden bg-muted">
-                    <Image
-                      src={getImageUrl(sizeGuideImages[sizeGuideImageIndex])}
-                      alt={
-                        sizeGuideImages[sizeGuideImageIndex].alt_text ||
-                        "Size guide"
-                      }
-                      fill
-                      className="object-contain"
-                    />
+                    {(() => {
+                      const sgUrl = getImageUrl(sizeGuideImages[sizeGuideImageIndex]);
+                      return (
+                        <Image
+                          src={sgUrl}
+                          alt={
+                            sizeGuideImages[sizeGuideImageIndex].alt_text ||
+                            "Size guide"
+                          }
+                          fill
+                          className="object-contain"
+                          unoptimized={shouldBypassNextOpt(sgUrl)}
+                        />
+                      );
+                    })()}
                   </div>
 
                   {/* Thumbnails if multiple SG images */}
                   {sizeGuideImages.length > 1 && (
                     <div className="flex gap-2 flex-wrap">
-                      {sizeGuideImages.map((img, idx) => (
-                        <button
-                          key={img.id}
-                          onClick={() => setSizeGuideImageIndex(idx)}
-                          className={`relative w-14 h-14 rounded border-2 overflow-hidden transition-colors ${
-                            idx === sizeGuideImageIndex
-                              ? "border-primary"
-                              : "border-transparent hover:border-muted-foreground"
-                          }`}
-                        >
-                          <Image
-                            src={getImageUrl(img)}
-                            alt={img.alt_text || `Size guide ${idx + 1}`}
-                            fill
-                            className="object-cover"
-                          />
-                        </button>
-                      ))}
+                      {sizeGuideImages.map((img, idx) => {
+                        const sgThumbUrl = getThumbnailUrl(img);
+                        return (
+                          <button
+                            key={img.id}
+                            onClick={() => setSizeGuideImageIndex(idx)}
+                            className={`relative w-14 h-14 rounded border-2 overflow-hidden transition-colors ${
+                              idx === sizeGuideImageIndex
+                                ? "border-primary"
+                                : "border-transparent hover:border-muted-foreground"
+                            }`}
+                          >
+                            <Image
+                              src={sgThumbUrl}
+                              alt={img.alt_text || `Size guide ${idx + 1}`}
+                              fill
+                              className="object-cover"
+                              unoptimized={shouldBypassNextOpt(sgThumbUrl)}
+                            />
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -567,23 +609,29 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
           )}
 
           {/* 6 · Add to Cart */}
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
             <Button
               size="lg"
-              className="flex-1"
+              className="flex-1 h-12 rounded-xl text-base font-semibold shadow-sm hover:shadow transition-all"
               onClick={handleAddToCart}
               disabled={!inStock || isAddingToCart}
             >
               <ShoppingCart className="w-5 h-5 mr-2" />
               {isAddingToCart ? "Adding…" : "Add to Cart"}
             </Button>
-            <Button size="lg" variant="outline" aria-label="Wishlist">
+            <Button
+              size="lg"
+              variant="outline"
+              aria-label="Wishlist"
+              className="h-12 w-12 rounded-xl p-0 border-border/80 hover:bg-muted/60"
+            >
               <Heart className="w-5 h-5" />
             </Button>
             <Button
               size="lg"
               variant="outline"
               aria-label="Share"
+              className="h-12 w-12 rounded-xl p-0 border-border/80 hover:bg-muted/60"
               onClick={async () => {
                 const url = window.location.href;
                 if (navigator.share) {

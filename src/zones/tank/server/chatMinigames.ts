@@ -54,6 +54,11 @@ let activeMinigame: ActiveMinigame | null = null;
 let activeMultiplier: ActiveMultiplierEvent | null = null;
 let lastPeriodicTriggerTime = Date.now();
 
+// House Trivia is off until the format gets overhauled — current
+// question/answer round isn't the shape we want in chat. Scavenger and
+// multiplier events are unaffected. Flip back to true once redesigned.
+const HOUSE_TRIVIA_ENABLED = false;
+
 // ─── TRIVIA & SCAVENGER DATA CATALOG ────────────────────────────────────────
 
 // Anti-repeat history queue to guarantee questions never repeat in the same session/day
@@ -447,6 +452,8 @@ export function getActiveMultiplier(): number {
  * Triggers a House Trivia Question round in chat with guaranteed anti-repeat rotation
  */
 export async function triggerHouseTriviaRound(roomId = "director"): Promise<ChatMessage | null> {
+  if (!HOUSE_TRIVIA_ENABLED) return null;
+
   // Find all question indices that haven't been recently used
   let availableIndices = TRIVIA_QUESTIONS.map((_, idx) => idx).filter(
     (idx) => !recentTriviaIndices.includes(idx),
@@ -655,7 +662,7 @@ export async function triggerPeriodicChatEvents(roomId = "director"): Promise<{ 
   lastPeriodicTriggerTime = now;
   const roll = Math.random();
 
-  if (roll < 0.45) {
+  if (HOUSE_TRIVIA_ENABLED && roll < 0.45) {
     await triggerHouseTriviaRound(roomId);
     return { triggered: true, eventType: "trivia" };
   } else if (roll < 0.80) {

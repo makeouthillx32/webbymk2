@@ -346,6 +346,10 @@ export const requestResearcherAccessAction = async (formData: FormData) => {
       .maybeSingle();
 
     if (profile && RESEARCHER_ROLES.includes(profile.role as (typeof RESEARCHER_ROLES)[number])) {
+      await supabase
+        .from("profiles")
+        .update({ research_terms_accepted_at: new Date().toISOString() })
+        .eq("id", user.id);
       return redirect("/products?upgraded=true");
     }
 

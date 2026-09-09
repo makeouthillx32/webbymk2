@@ -1,9 +1,18 @@
-import type { CameraPlayback } from "./contracts";
+﻿import type { CameraPlayback } from "./contracts";
 
 export type PublicMediaConfig = {
   whepBaseUrl?: string;
   hlsBaseUrl?: string;
 };
+
+/**
+ * Reserved OBS publish used as Tank's single, stable public programme output.
+ *
+ * The compositor at /obs/director changes the pixels inside this stream. Public
+ * viewers stay attached to this path instead of opening a new camera transport
+ * on every Director cut.
+ */
+export const DIRECTOR_PROGRAM_SLUG = "director";
 
 function safePathSegment(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
@@ -80,7 +89,7 @@ export function getLoopObjectUrl(storagePath: string): string | null {
     process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     "https://db.unenter.live";
-  if (!/^cameras\/[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\/[0-9]+[.]mp4$/.test(storagePath)) {
+  if (!/^cameras\/[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\/[0-9]{6,20}\.mp4$/.test(storagePath)) {
     return null;
   }
   return `${base.replace(/\/$/, "")}/storage/v1/object/public/${LOOP_BUCKET}/${storagePath}`;
@@ -173,33 +182,6 @@ export function buildObsRoomPreview(
   return buildWhepOnlyPlayback(obsRoomPreviewMediaPath(slug), online, config);
 }
 
-/**
- * Same construction, for a room fed by an OBS/RTMP publish rather than a
- * house camera.
- *
- * Every house camera gets a dedicated ffmpeg process (provisionMediaMtxCamera
- * in server/mediaGateway.ts) that transcodes audio to Opus for WHEP and AAC
- * for HLS — that's what makes WebRTC playback possible at all, since Opus is
- * the only audio codec WebRTC actually supports. An OBS room used to have no
- * such process: MediaMTX served whatever OBS itself published (H.264 + AAC,
- * copied through untouched), and WHEP against that path negotiated and even
- * reached pc.connectionState=connected, but never decoded a frame — confirmed
- * live 2026-08-21, reproduced 3 times in a row. That forced every OBS room
- * onto HLS, whose segment-based delivery costs several seconds of latency no
- * matter how aggressively it's tuned — exactly the "so so so long" latency
- * reported live 2026-08-23 while testing an OBS/RTMP room.
- *
- * The fix (server/obsRooms.ts's setObsRoomSignal, on the room going live)
- * provisions an obs/<slug>-whep sibling the same way a camera's -hls sibling
- * exists: one ffmpeg pulling the now-live raw path over local RTSP,
- * republishing audio-only-transcoded Opus with video copied straight
- * through. Note the polarity is the OPPOSITE of a camera's: OBS's raw base
- * path IS the HLS-ready (AAC) content — OBS is the one actually publishing
- * it, nothing can transcode in place on a path someone else is actively
- * publishing to — so hlsUrl stays on the bare path and whepUrl points at the
- * new sibling. CameraPlayer's deriveHlsUrl special-cases the -whep suffix to
- * account for this reversed polarity; see that function's comment.
- */
 export function buildObsRoomPlayback(
   slug: string,
   online: boolean,
@@ -218,6 +200,13 @@ export function buildObsRoomPlayback(
   };
 }
 
+export function buildDirectorProgramPlayback(
+  online: boolean,
+  config: PublicMediaConfig,
+): CameraPlayback {
+  return buildObsRoomPlayback(DIRECTOR_PROGRAM_SLUG, online, config);
+}
+
 function buildPlaybackFor(
   path: string,
   hlsPath: string,
@@ -226,7 +215,6 @@ function buildPlaybackFor(
 ): CameraPlayback {
   const webrtcPageUrl = publicMediaUrl(config.whepBaseUrl, path, "");
   const whepUrl = publicMediaUrl(config.whepBaseUrl, path, "whep");
-  // Deliberately the AAC sibling path, not `path` — see cameraHlsMediaPath.
   const hlsUrl = publicMediaUrl(config.hlsBaseUrl, hlsPath, "index.m3u8");
 
   return {

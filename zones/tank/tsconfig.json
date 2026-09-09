@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": true,
+    "incremental": true,
+    "module": "esnext",
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      // Bare-metal dev only (`next dev` run directly from this folder,
+      // not inside the Docker build). The Docker build achieves the same
+      // "@/ resolves to shared root src/" result by physically copying
+      // root src/ into the image and overlaying this zone's own
+      // src/app/ on top (see ../Dockerfile's "HOW THE OVERLAY WORKS").
+      // Pointing @/* straight at the real root src/ is the no-copy
+      // equivalent — same resolution, zero file duplication, so a live
+      // edit to shared code shows up immediately with no rebuild step.
+      "@/*": ["../../src/*"]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

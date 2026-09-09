@@ -199,6 +199,7 @@ export type TankSfxLibraryEntry = {
   soundKey: string;
   name: string;
   fileUrl: string;
+  iconUrl: string | null;
   category: string;
   defaultVolume: number;
   durationMs: number | null;
@@ -280,6 +281,7 @@ export type ChatMessageType =
   | "text"
   | "action"
   | "item_use"
+  | "item_flex"
   | "rng_drop"
   | "level_up"
   | "dice_roll"
@@ -306,6 +308,7 @@ export type ChatMessageType =
 export const CONSOLE_MESSAGE_TYPES = [
   "action",
   "item_use",
+  "item_flex",
   "rng_drop",
   "level_up",
   "dice_roll",
@@ -328,6 +331,14 @@ export function isConsoleMessageType(type?: string | null): boolean {
 }
 
 export type ChatRank = "Newbie" | "Regular" | "VIP" | "Legend";
+
+export type ChatSearchResult = {
+  id: string;
+  user: string;
+  body: string;
+  createdAt: string;
+  messageType?: ChatMessageType;
+};
 
 export type ChatMessage = {
   id: string;
@@ -402,6 +413,8 @@ export type AdminSection =
   | "channels"
   | "chat"
   | "economy"
+  | "drops"
+  | "tavern"
   | "webhooks"
   | "users"
   | "system";

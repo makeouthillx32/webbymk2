@@ -51,6 +51,53 @@ services:
     plugins:
       - name: cors
 
+  # Image transform responses are fully determined by the URL (object path +
+  # width/quality/resize params), but Storage API always sends
+  # `Cache-Control: no-cache` on this specific endpoint regardless of the
+  # underlying object's own cache-control metadata — confirmed live
+  # 2026-09-04: the same image transformed identically 4 times in 20 minutes
+  # on shop, 1.4-1.8s every time; the same class of request on labs' larger
+  # research-image originals took 8.4-8.5s EVERY time. imgproxy does full
+  # work from scratch on every single view, for every visitor, forever. A
+  # product/category grid firing 6-8 of these at once queues behind the slow
+  # ones and times out client-side — that's the actual cause behind
+  # shop/labs showing broken image tiles while a single product page (one
+  # request, no contention) always worked.
+  #
+  # A SEPARATE service (not a route nested under storage-v1) on purpose,
+  # mirroring realtime-v1-rest vs realtime-v1 below: strip_path only ever
+  # removes the matched route prefix, so a route matching the longer
+  # /storage/v1/render/image/ path would strip that whole thing and forward
+  # just ".../public/..." upstream — missing the "render/image/" segment
+  # Storage API needs to know this is a transform, not a plain object read.
+  # First attempt at this (same commit) 404'd for exactly that reason before
+  # being caught and fixed live. Baking "render/image/" into THIS service's
+  # own url compensates, so the upstream path comes out identical to what
+  # the general storage-v1-all route already produces correctly.
+  - name: storage-v1-render-image-cached
+    url: http://storage:5000/render/image/
+    routes:
+      - name: storage-v1-render-image-cached-route
+        strip_path: true
+        paths:
+          - /storage/v1/render/image/
+    plugins:
+      - name: cors
+      - name: proxy-cache
+        config:
+          content_type:
+            - image/webp
+            - image/png
+            - image/jpeg
+            - image/avif
+          cache_ttl: 3600
+          # Storage API's own no-cache header must NOT be honored here —
+          # that header is exactly the bug being worked around. false means
+          # Kong caches purely on this plugin's own cache_ttl, ignoring what
+          # the upstream response's Cache-Control says.
+          cache_control: false
+          strategy: memory
+
   - name: storage-v1
     url: http://storage:5000/
     routes:

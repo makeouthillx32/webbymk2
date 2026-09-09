@@ -1,7 +1,11 @@
 "use server";
 
+import { cookies } from "next/headers";
+import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { sendTankVerifyEmail } from "@/lib/mail/sendTankVerify";
+import { TANK_PARTICIPANT_COOKIE } from "./participantIdentity";
+import { CORE_DOMAIN } from "@/lib/multiZone";
 
 export type SignUpResult = {
   success: boolean;
@@ -301,5 +305,36 @@ export async function broadcastVerificationSuccess(email: string, userId: string
     });
   } catch (err) {
     console.warn("[TankAuth] Broadcast error:", err);
+  }
+}
+
+/**
+ * Server-side logout for Tank: revokes session, expires participant cookies
+ * so that logging out completely wipes participant identity and server session.
+ */
+export async function logoutTankUserAction(): Promise<{ success: boolean }> {
+  try {
+    const supabase = await createClient();
+    await supabase.auth.signOut();
+    const cookieStore = await cookies();
+    const isProd = process.env.NODE_ENV === "production";
+    const domains = [undefined, isProd ? `.${CORE_DOMAIN}` : undefined];
+    for (const domain of domains) {
+      cookieStore.set(TANK_PARTICIPANT_COOKIE, "", {
+        path: "/",
+        maxAge: 0,
+        expires: new Date(0),
+        domain,
+      });
+      cookieStore.set("tank_voter_client_id", "", {
+        path: "/",
+        maxAge: 0,
+        expires: new Date(0),
+        domain,
+      });
+    }
+    return { success: true };
+  } catch {
+    return { success: false };
   }
 }

@@ -133,3 +133,13 @@ vault/
 supabase/claude_desktop_config.json
 claude_desktop_config.json
 proxy-config/status-history.json
+.claude/skills/open-knowledge/
+.cursor/skills/open-knowledge/
+.codex/skills/open-knowledge/
+.github/skills/open-knowledge/
+.opencode/skills/open-knowledge/
+.pi/skills/open-knowledge/
+
+# Accidental Windows `> NUL` redirect output — a reserved device name that
+# git cannot mmap ("fatal: mmap failed"), which aborts `git add -A` entirely.
+NUL

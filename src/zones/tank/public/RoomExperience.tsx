@@ -28,6 +28,10 @@ import type {
 import { CameraDirectoryClient } from "./CameraDirectoryClient";
 import { useTankRealtimeChat } from "./useTankRealtimeChat";
 import { TankChatBody } from "./TankChatEmoji";
+import { CameraPlayer } from "./CameraPlayer";
+import { clientToNormalizedVideoCoords } from "./viewportCoordinateMapper";
+import { HouseRosterOverlay } from "./components/HouseRosterOverlay";
+import { claimInteractiveTargetTap } from "../server/interactiveTargetActions";
 
 export function RoomExperience({
   room,
@@ -41,6 +45,45 @@ export function RoomExperience({
   const [selectedId, setSelectedId] = useState(room.featuredCameraId);
   const [following, setFollowing] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [isRosterOpen, setIsRosterOpen] = useState(false);
+  const [tapParticles, setTapParticles] = useState<Array<{ id: string; x: number; y: number; text: string }>>([]);
+  const sectionRef = React.useRef<HTMLElement | null>(null);
+
+  const handleRoomTap = async (e: React.MouseEvent<HTMLElement>) => {
+    if (!sectionRef.current) return;
+    const rect = sectionRef.current.getBoundingClientRect();
+    const { isInsideVideo, globalNx, globalNy } = clientToNormalizedVideoCoords(
+      e.clientX,
+      e.clientY,
+      rect,
+      16 / 9,
+      "cover",
+    );
+    if (!isInsideVideo) return;
+
+    const particleId = `${Date.now()}_${Math.random()}`;
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+
+    try {
+      const hitResult = await claimInteractiveTargetTap({
+        camSlug: selected.slug,
+        roomId: room.slug,
+        nx: globalNx,
+        ny: globalNy,
+      });
+
+      if (!hitResult.hit || !hitResult.target) return;
+      const text = `+${hitResult.xpAwarded ?? 0} XP ${hitResult.target.kind === "trash" ? "🧹" : "🎯"}`;
+      setTapParticles((prev) => [...prev.slice(-8), { id: particleId, x: localX, y: localY, text }]);
+    } catch {
+      return;
+    }
+
+    setTimeout(() => {
+      setTapParticles((prev) => prev.filter((p) => p.id !== particleId));
+    }, 1200);
+  };
   const isDirector = room.slug === "director";
 
   // Live overlay: the room/camera cards below are static identity only —
@@ -108,13 +151,34 @@ export function RoomExperience({
     <div className="grid min-h-[calc(100vh-4rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="min-w-0">
         <section
-          className={`relative aspect-video max-h-[74vh] w-full overflow-hidden ${
+          ref={sectionRef as any}
+          onClick={handleRoomTap}
+          className={`relative aspect-video max-h-[74vh] w-full overflow-hidden cursor-pointer ${
             heroLive
               ? "bg-gradient-to-br from-cyan-500/35 via-blue-950/60 to-slate-950"
               : "bg-slate-950"
           }`}
-          aria-label={`${isDirector ? "Director program" : selected.name} video placeholder`}
+          aria-label={`${isDirector ? "Director program" : selected.name} video player`}
         >
+          {heroLive && selected?.playbackUrl && (
+            <CameraPlayer
+              playbackUrl={selected.playbackUrl}
+              playbackProtocol={selected.playbackProtocol || "webrtc"}
+              online={heroLive}
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          )}
+
+          {/* Floating Tap Particles */}
+          {tapParticles.map((p) => (
+            <div
+              key={p.id}
+              className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2 font-black font-mono text-sm text-amber-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] animate-bounce"
+              style={{ left: p.x, top: p.y }}
+            >
+              {p.text}
+            </div>
+          ))}
           {heroLive && (
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_30%,rgba(255,255,255,.2),transparent_16%),radial-gradient(circle_at_68%_55%,rgba(45,212,191,.22),transparent_18%),linear-gradient(110deg,transparent_30%,rgba(255,255,255,.05)_50%,transparent_70%)]" />
           )}
@@ -194,6 +258,13 @@ export function RoomExperience({
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRosterOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-950/40 px-3.5 py-2 text-xs font-black uppercase tracking-wider text-amber-300 hover:bg-amber-900/60 transition shadow"
+                >
+                  🐾 House & Pets
+                </button>
                 <button
                   onClick={() => setFollowing((value) => !value)}
                   className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold ${following ? "bg-muted text-foreground" : "bg-primary text-primary-foreground"}`}
@@ -451,6 +522,9 @@ export function RoomExperience({
           </div>
         </form>
       </aside>
+      {isRosterOpen && (
+        <HouseRosterOverlay onClose={() => setIsRosterOpen(false)} />
+      )}
     </div>
   );
 }

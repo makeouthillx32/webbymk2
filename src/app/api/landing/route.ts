@@ -7,7 +7,7 @@ function jsonError(status: number, code: string, message: string, details?: any)
 
 export async function GET() {
   try {
-    const supabase = createServerClient();
+    const supabase = await createServerClient();
 
     // 1) shop id
     const { data: shop, error: shopErr } = await supabase

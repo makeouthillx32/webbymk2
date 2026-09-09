@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -55,6 +55,8 @@ import {
   Sparkle,
   Smartphone,
   MonitorPlay,
+  Heart,
+  Power,
 } from "lucide-react";
 import { ACTIVE_THEME } from "../theme";
 import { ChromePanel } from "../public/components/ChromePanel";
@@ -70,7 +72,18 @@ import { UserDirectoryPanel } from "./UserDirectoryPanel";
 import { EconomyDeckPanel } from "./EconomyDeckPanel";
 import { ChannelsDeckPanel } from "./ChannelsDeckPanel";
 import { WebhooksDeckPanel } from "./WebhooksDeckPanel";
-import { Dices, Webhook, RadioTower, Settings, ExternalLink } from "lucide-react";
+import {
+  Overview as OverviewSwitcher,
+  Sources as SourcesPanel,
+  SystemPanel,
+} from "../admin/AdminConsole";
+import { DropsAdminPanel } from "../admin/DropsAdminPanel";
+import { TavernAdminPanel } from "../admin/TavernAdminPanel";
+import { SoundboardAdminPanel } from "../admin/SoundboardAdminPanel";
+import { TrashAdminPanel } from "../admin/TrashAdminPanel";
+import { PetsAdminPanel } from "../admin/PetsAdminPanel";
+import { ScavengerAdminPanel } from "../admin/ScavengerAdminPanel";
+import { Dices, Webhook, RadioTower, Settings, ExternalLink, Gift, Beer, Settings2, Antenna } from "lucide-react";
 import { listPendingAudioRequests, moderateAudioRequest } from "../server/audioRequests";
 import type { AutomodConfig, BannedUserEntry } from "../server/chatModerationDb";
 import {
@@ -79,7 +92,7 @@ import {
   getActivePoll,
 } from "../server/pollSystem";
 import type { ActivePoll } from "../server/pollContract";
-import type { TankAudioRequest, TankSfxLibraryEntry } from "../contracts";
+import type { TankAudioRequest, TankSfxLibraryEntry, TankCamera } from "../contracts";
 import {
   broadcastConsoleMessage,
   setDirectorModeAction,
@@ -89,6 +102,7 @@ import {
   takeDirectorLiveAction,
   listHouseRoomsAction,
   updateHouseRoomAction,
+  setAllHouseRoomsOfflineAction,
   setMasterVolumeAction,
   type HouseRoomData,
 } from "../server/actions";
@@ -102,6 +116,14 @@ export type HouseConsoleProps = {
 
 export type OperatorDeck =
   | "house"
+  | "switcher"
+  | "sources"
+  | "drops"
+  | "tavern"
+  | "soundboard"
+  | "trash"
+  | "scavenger"
+  | "pets"
   | "director"
   | "rooms"
   | "moderation"
@@ -109,7 +131,8 @@ export type OperatorDeck =
   | "economy"
   | "users"
   | "channels"
-  | "webhooks";
+  | "webhooks"
+  | "system";
 
 type HouseAlertMode = "normal" | "lockdown" | "challenge" | "quiet";
 type HouseLightMode = "daylight" | "cinema" | "strobe" | "red_alert";
@@ -133,13 +156,22 @@ const DIRECTOR_QUICK_MODES: {
     activeBorder: "border-cyan-500 bg-cyan-950/40 text-cyan-200",
   },
   {
-    id: "crowd",
-    title: "GROUP & CROWD ENERGY",
-    badge: "DENSITY AI",
+    id: "group",
+    title: "GROUP AUTO-PTZ CLUSTER",
+    badge: "AI CROWD",
     icon: "👥",
-    desc: "Prioritizes rooms with the highest viewer count and physical person clusters.",
+    desc: "Cuts to room with most people and frames group with dynamic lens calibration bobbing.",
     glow: "rgba(168, 85, 247, 0.25)",
     activeBorder: "border-purple-500 bg-purple-950/40 text-purple-200",
+  },
+  {
+    id: "animals",
+    title: "PET & ANIMAL TRACKER",
+    badge: "PET AI",
+    icon: "🐾",
+    desc: "Cuts to dogs & cats (Buster, Kona, Mochi, Shadow) and applies tight pet PTZ framing.",
+    glow: "rgba(245, 158, 11, 0.25)",
+    activeBorder: "border-amber-500 bg-amber-950/40 text-amber-200",
   },
   {
     id: "feet",
@@ -199,6 +231,14 @@ const DIRECTOR_QUICK_MODES: {
 
 const OPERATOR_DECK_IDS: OperatorDeck[] = [
   "house",
+  "switcher",
+  "sources",
+  "drops",
+  "tavern",
+  "soundboard",
+  "trash",
+  "scavenger",
+  "pets",
   "director",
   "rooms",
   "moderation",
@@ -207,6 +247,7 @@ const OPERATOR_DECK_IDS: OperatorDeck[] = [
   "users",
   "channels",
   "webhooks",
+  "system",
 ];
 
 function isOperatorDeck(value: string | null): value is OperatorDeck {
@@ -488,6 +529,44 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
     );
     await setMasterVolumeAction(masterVolume, next);
     addLog(`${next ? "MASTER MUTED ALL ROOMS" : "MASTER UNMUTED ALL ROOMS"}`, "HOUSE AUDIO");
+  };
+
+  // Per-room kill-switch. See tank_rooms.is_offline / roomProjection.ts —
+  // this fully omits the room from every public response, not a client-side
+  // hide.
+  const handleToggleRoomOffline = async (roomId: string, currentOffline: boolean) => {
+    const nextOffline = !currentOffline;
+    setHouseRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, is_offline: nextOffline } : r)));
+    const result = await updateHouseRoomAction(roomId, { isOffline: nextOffline });
+    if (!result.success) {
+      // Roll back the optimistic flip — the operator needs to see this failed,
+      // not believe a room went dark when it didn't.
+      setHouseRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, is_offline: currentOffline } : r)));
+      addLog(`✗ FAILED TO ${nextOffline ? "DISABLE" : "RESTORE"} ROOM [${roomId.toUpperCase()}]: ${result.error ?? "unknown error"}`, "ROOM CONTROL");
+      return;
+    }
+    addLog(`ROOM ${nextOffline ? "TAKEN OFFLINE" : "RESTORED"} [${roomId.toUpperCase()}]`, "ROOM CONTROL");
+  };
+
+  // "ALL ROOMS OFF"/"ALL ROOMS ON" panic button — deliberately a separate,
+  // confirm-gated action rather than looping handleToggleRoomOffline per
+  // room: one request, one atomic-feeling action, and the confirm() below
+  // is the one deliberate speed bump on the one genuinely destructive
+  // control in this deck.
+  const [togglingAllRooms, setTogglingAllRooms] = useState(false);
+  const handleToggleAllRoomsOffline = async (nextOffline: boolean) => {
+    if (nextOffline && !window.confirm("Take ALL rooms offline right now? Every camera/room disappears from the public site immediately.")) {
+      return;
+    }
+    setTogglingAllRooms(true);
+    const result = await setAllHouseRoomsOfflineAction(nextOffline);
+    if (result.success) {
+      setHouseRooms((prev) => prev.map((r) => ({ ...r, is_offline: nextOffline })));
+      addLog(`${nextOffline ? "ALL ROOMS TAKEN OFFLINE" : "ALL ROOMS RESTORED"} (${result.count ?? 0} rooms)`, "ROOM CONTROL");
+    } else {
+      addLog(`✗ FAILED TO ${nextOffline ? "DISABLE" : "RESTORE"} ALL ROOMS: ${result.error ?? "unknown error"}`, "ROOM CONTROL");
+    }
+    setTogglingAllRooms(false);
   };
 
   // Fetch live chat moderation config & banned users
@@ -785,6 +864,50 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
   // Dedicated monitor preview camera
   const primaryCam = cameras[0];
   const primaryCamOnline = primaryCam ? isOnline(primaryCam.id) : false;
+  const [scene, setScene] = useState("LIVE");
+  const [locked, setLocked] = useState(true);
+  const legacyAdminSources = useMemo<TankCamera[]>(
+    () =>
+      cameras.map((camera) => ({
+        id: camera.id,
+        slug: camera.slug,
+        name: camera.name,
+        location: camera.roomScope || camera.location,
+        description: camera.description,
+        health:
+          camera.presence === "online"
+            ? "live"
+            : camera.presence === "degraded"
+              ? "degraded"
+              : "offline",
+        bitrateKbps: camera.bitrateKbps,
+        latencyMs: camera.latencyMs,
+        viewers: 0,
+        priority: camera.priority,
+        enabled: camera.enabled,
+        isPublic: camera.publicVisible,
+        delivery:
+          camera.playbackProtocol === "whep"
+            ? "webrtc"
+            : camera.playbackProtocol === "hls"
+              ? "hls"
+              : "coming-soon",
+        accent: camera.accent,
+        audioSourceId: camera.audioSourceId,
+        audioSourceName: camera.audioSourceName,
+      })),
+    [cameras],
+  );
+  const [adminSources, setAdminSources] = useState<TankCamera[]>(legacyAdminSources);
+
+  useEffect(() => {
+    setAdminSources(legacyAdminSources);
+  }, [legacyAdminSources]);
+
+  const updateSource = (id: string, patch: Partial<TankCamera>) =>
+    setAdminSources((items) =>
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
 
   const DECKS: { id: OperatorDeck; label: string; icon: React.ReactNode; badge?: string | number }[] = [
     { id: "house", label: "House & Show", icon: <Home className="h-4 w-4" /> },
@@ -794,23 +917,22 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
       icon: <Target className="h-4 w-4" />,
       badge: attentionLock.active ? "LOCKED" : currentDirectorMode.toUpperCase(),
     },
-    {
-      id: "rooms",
-      label: "Room Control",
-      icon: <Sliders className="h-4 w-4" />,
-      badge: `${houseRooms.length} Rooms`,
-    },
-    {
-      id: "moderation",
-      label: "Chat & Moderation",
-      icon: <Shield className="h-4 w-4" />,
-      badge: pendingAudioRequests.length > 0 ? pendingAudioRequests.length : undefined,
-    },
+    { id: "switcher", label: "Switcher", icon: <Video className="h-4 w-4" />, badge: "MASTER" },
+    { id: "sources", label: "Ingest & Keys", icon: <Antenna className="h-4 w-4" />, badge: "SRT/RTMP" },
+    { id: "drops", label: "Drops", icon: <Gift className="h-4 w-4" />, badge: "REWARDS" },
+    { id: "tavern", label: "Tavern", icon: <Beer className="h-4 w-4" />, badge: "CHAOS" },
+    { id: "soundboard", label: "Soundboard", icon: <Volume2 className="h-4 w-4" />, badge: `${houseSfx.length}` },
+    { id: "trash", label: "Trash & Bounties", icon: <Trash2 className="h-4 w-4" />, badge: "NEW" },
+    { id: "scavenger", label: "Scavenger Hunts", icon: <Target className="h-4 w-4" />, badge: "AI YOLO" },
+    { id: "pets", label: "House Pets", icon: <Heart className="h-4 w-4" />, badge: "4 ENROLLED" },
+    { id: "rooms", label: "Room Control", icon: <Sliders className="h-4 w-4" />, badge: `${houseRooms.length} Rooms` },
+    { id: "moderation", label: "Chat & Moderation", icon: <Shield className="h-4 w-4" />, badge: pendingAudioRequests.length > 0 ? pendingAudioRequests.length : undefined },
     { id: "overlays", label: "Overlays & Triggers", icon: <Layers className="h-4 w-4" /> },
     { id: "economy", label: "Economy & RNG", icon: <Dices className="h-4 w-4" /> },
     { id: "users", label: "Users & Levels", icon: <Users className="h-4 w-4" /> },
     { id: "channels", label: "Channels", icon: <RadioTower className="h-4 w-4" /> },
     { id: "webhooks", label: "Webhooks", icon: <Webhook className="h-4 w-4" /> },
+    { id: "system", label: "System Health", icon: <Settings2 className="h-4 w-4" /> },
   ];
 
   return (
@@ -857,12 +979,28 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
 
           <div className="flex items-center gap-2">
             <Link
+              href="/admin/Director"
+              target="_blank"
+              className="flex items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-300 transition hover:bg-cyan-900/60 hover:text-white shadow"
+            >
+              <Video className="h-3.5 w-3.5 text-cyan-400" />
+              Director Console
+            </Link>
+            <Link
+              href="/admin"
+              target="_blank"
+              className="flex items-center gap-1.5 rounded border border-purple-500/40 bg-purple-950/40 px-3 py-1.5 text-xs font-bold text-purple-300 transition hover:bg-purple-900/60 hover:text-white shadow"
+            >
+              <Shield className="h-3.5 w-3.5 text-purple-400" />
+              Admin Portal
+            </Link>
+            <Link
               href="/obs"
               target="_blank"
               className="flex items-center gap-1.5 rounded border border-orange-500/40 bg-orange-950/40 px-3 py-1.5 text-xs font-bold text-orange-300 transition hover:bg-orange-900/60 hover:text-white"
             >
               <Tv className="h-3.5 w-3.5 text-orange-400" />
-              OBS Browser Source
+              OBS Source
             </Link>
             <Link
               href="/"
@@ -1252,11 +1390,22 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
                       type="button"
                       disabled={audioDispatchBusy}
                       onClick={() => void handleTriggerSfx(sfx)}
-                      className="flex items-center gap-2 rounded border border-black/20 bg-white/60 p-2.5 text-left shadow-sm transition hover:border-orange-500 hover:bg-white active:scale-95 disabled:opacity-50"
+                      className="flex items-center gap-2.5 rounded border border-black/20 bg-white/60 p-2.5 text-left shadow-sm transition hover:border-orange-500 hover:bg-white active:scale-95 disabled:opacity-50"
                     >
-                      <span className="text-xl">🔊</span>
-                      <div>
-                        <p className="text-xs font-black uppercase text-[#241f14]">{sfx.name}</p>
+                      {sfx.iconUrl ? (
+                        <img
+                          src={sfx.iconUrl}
+                          alt={sfx.name}
+                          className="h-7 w-7 shrink-0 rounded object-contain"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <span className="text-xl">🔊</span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-black uppercase text-[#241f14]">{sfx.name}</p>
                         <p className="text-[9px] font-bold text-[#888]">{sfx.category}</p>
                       </div>
                     </button>
@@ -1875,6 +2024,33 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
                     </div>
                   </div>
 
+                  {/* Panic button — takes every room off the public site at
+                      once. Confirm-gated in handleToggleAllRoomsOffline;
+                      restoring is a single click, no confirm, since that
+                      direction is never the destructive one. */}
+                  <div className="flex items-center justify-between gap-3 rounded border-2 border-red-600/50 bg-red-950/20 p-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wider text-red-400">
+                        Emergency Room Control
+                      </p>
+                      <p className="text-[10px] font-bold text-red-300/80">
+                        Pulls every room off the public site instantly — cameras, chat context, everything. Toggle back on any time.
+                      </p>
+                    </div>
+                    <ConsoleButton
+                      variant="red"
+                      onClick={() => handleToggleAllRoomsOffline(!houseRooms.every((r) => r.is_offline))}
+                      disabled={togglingAllRooms || houseRooms.length === 0}
+                      className="!py-2 !px-4 !text-xs font-black shrink-0"
+                    >
+                      {togglingAllRooms
+                        ? "WORKING…"
+                        : houseRooms.every((r) => r.is_offline)
+                          ? "TURN ALL ROOMS ON"
+                          : "ALL ROOMS OFF"}
+                    </ConsoleButton>
+                  </div>
+
                   {/* Master Volume Slider */}
                   <div className="flex items-center gap-4 rounded border border-black/20 bg-white/50 p-3">
                     <div className="flex items-center gap-2">
@@ -1929,12 +2105,24 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
                           <div className="flex items-center gap-1.5">
                             <span
                               className={`rounded px-1.5 py-0.5 text-[8px] font-black uppercase flex items-center gap-1 ${
-                                online ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" : "bg-slate-500/20 text-slate-600"
+                                room.is_offline
+                                  ? "bg-red-500/20 text-red-500 border border-red-500/30"
+                                  : online
+                                    ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30"
+                                    : "bg-slate-500/20 text-slate-600"
                               }`}
                             >
-                              <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-emerald-600 animate-pulse" : "bg-slate-500"}`} />
-                              {online ? "LIVE" : "STANDBY"}
+                              <span className={`h-1.5 w-1.5 rounded-full ${room.is_offline ? "bg-red-500" : online ? "bg-emerald-600 animate-pulse" : "bg-slate-500"}`} />
+                              {room.is_offline ? "OFFLINE" : online ? "LIVE" : "STANDBY"}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleRoomOffline(room.id, room.is_offline)}
+                              className={`rounded p-1 ${room.is_offline ? "bg-emerald-600/80 hover:bg-emerald-600 text-white" : "bg-black/10 hover:bg-red-500/30 text-[#241f14]"}`}
+                              title={room.is_offline ? "Bring room back online" : "Take room offline"}
+                            >
+                              <Power className="h-3.5 w-3.5" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => (isEditing ? setEditingRoomId(null) : handleStartEditRoom(room))}
@@ -2397,6 +2585,93 @@ export function HouseConsole({ operatorName, operatorRole }: HouseConsoleProps) 
               DECK 9: 🪝 WEBHOOKS
              ════════════════════════════════════════════════════════════════ */}
           {activeDeck === "webhooks" && <WebhooksDeckPanel />}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK 10: 🎬 PRODUCTION SWITCHER
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "switcher" && (
+            <div className="space-y-4">
+              <OverviewSwitcher
+                sources={adminSources}
+                scene={scene}
+                setScene={setScene}
+                locked={locked}
+                setLocked={setLocked}
+              />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK 11: 📡 INGEST & STREAM KEYS
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "sources" && (
+            <div className="space-y-4">
+              <SourcesPanel sources={adminSources} updateSource={updateSource} />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK 12: 🎁 DROPS CAMPAIGNS
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "drops" && (
+            <div className="space-y-4">
+              <DropsAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK 13: 🍺 TANK TAVERN & CHAOS ENGINE
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "tavern" && (
+            <div className="space-y-4">
+              <TavernAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK: 🔊 SOUNDBOARD LIBRARY — upload/preview/delete
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "soundboard" && (
+            <div className="space-y-4">
+              <SoundboardAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK: 🗑️ TRASH & SCAVENGER BOUNTIES CRUD MANAGER
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "trash" && (
+            <div className="space-y-4">
+              <TrashAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK: 🕵️ YOLO VISION SCAVENGER HUNT DECK
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "scavenger" && (
+            <div className="space-y-4">
+              <ScavengerAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK: 🐾 HOUSE PETS & ANIMAL ROSTER
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "pets" && (
+            <div className="space-y-4">
+              <PetsAdminPanel />
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              DECK 14: ⚙️ SYSTEM HEALTH & MEDIA GATEWAY
+             ════════════════════════════════════════════════════════════════ */}
+          {activeDeck === "system" && (
+            <div className="space-y-4">
+              <SystemPanel />
+            </div>
+          )}
         </div>
 
         {/* ── RIGHT: Mini-Monitor & Command Dispatch Audit Log (4 Cols) ── */}

@@ -11,6 +11,8 @@ const APP_AUTH_COOKIE_NAMES = [
   "userPermissions",
   "rememberMe",
   "lastPage",
+  "tank_participant_v1",
+  "tank_voter_client_id",
 ];
 
 function cookieNamesToExpire(request: NextRequest) {

@@ -87,15 +87,14 @@ export const populateUserCookies = async (userId: string, remember = false) => {
       store.set("userDisplayName", profileData.display_name, cookieOptions);
     }
 
-    const rolePermissions = await supabase.rpc("get_role_permissions", {
-      user_role_type: role,
-    });
-
-    if (!rolePermissions.error && rolePermissions.data) {
-      const permissionsData = { timestamp: Date.now(), permissions: rolePermissions.data, role };
-      store.set("userPermissions", JSON.stringify(permissionsData), {
-        ...cookieOptions,
-        maxAge: 5 * 60,
+    // Purge legacy userPermissions cookie to eliminate header bloat (HTTP 431)
+    store.set("userPermissions", "", { path: "/", maxAge: 0, expires: new Date(0) });
+    if (SHARED_COOKIE_DOMAIN) {
+      store.set("userPermissions", "", {
+        path: "/",
+        domain: SHARED_COOKIE_DOMAIN,
+        maxAge: 0,
+        expires: new Date(0),
       });
     }
 

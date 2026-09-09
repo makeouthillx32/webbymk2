@@ -4,6 +4,10 @@ import React, { useEffect, useState } from "react";
 import { CheckCircle2, AlertCircle, Loader2, Sparkles, MessageSquare, ArrowRight } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { recordTankAuthSignIn } from "../server/actions";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 export function TankVerifyPage() {
   const [status, setStatus] = useState<"verifying" | "success" | "error">("verifying");
@@ -39,6 +43,7 @@ export function TankVerifyPage() {
           const type = searchParams.get("type");
 
           if (code) {
+            markAuthNavigationIntent();
             const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
             if (exchangeErr) throw exchangeErr;
             await recordTankAuthSignIn();
@@ -47,6 +52,7 @@ export function TankVerifyPage() {
           }
 
           if (tokenHash && type) {
+            markAuthNavigationIntent();
             const { error: otpErr } = await supabase.auth.verifyOtp({
               token_hash: tokenHash,
               type: type as any,
@@ -84,6 +90,7 @@ export function TankVerifyPage() {
           }
         }
       } catch (err) {
+        clearAuthNavigationIntent();
         if (active) {
           setStatus("error");
           setErrorMessage(err instanceof Error ? err.message : "Failed to verify account.");

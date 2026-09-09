@@ -199,6 +199,10 @@ export function OrderGrid({ orders, selectedIds, onSelectChange, onRowClick, onF
 
   const handleFulfillClick = async (e: React.MouseEvent, order: AdminOrder) => {
     e.stopPropagation();
+    if (order.is_research || order.items?.some((i) => !!i.research_product_id)) {
+      onRowClick(order);
+      return;
+    }
     setFulfilling(order.id);
     try {
       await onFulfill(order);

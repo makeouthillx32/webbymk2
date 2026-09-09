@@ -68,7 +68,7 @@ services:
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
-      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction,proxy-cache
       KONG_LOG_LEVEL: warn
       # GoTrue can return large auth response headers when a user's JWT carries
       # non-trivial metadata. Kong's default one-page Nginx proxy header buffer
@@ -177,6 +177,18 @@ services:
       PGRST_JWT_SECRET: ${JWT_SECRET}
       PGRST_DB_USE_LEGACY_GUCS: "false"
       PGRST_LOG_LEVEL: warn
+      # Never explicitly set before 2026-09-04 — PostgREST was silently
+      # running on its built-in default (10 connections) the whole time.
+      # Confirmed live: repeated PGRST003 "Timed out acquiring connection
+      # from connection pool" errors (Tank's camera-clip-metadata lookups,
+      # and very likely the "/slots" chat command's 500s reported the same
+      # night) while Postgres itself had 56 of 100 connection slots free —
+      # PostgREST was capping itself well below what the DB can actually
+      # serve, not the DB being under real pressure. 30 leaves Kong and
+      # every other consumer of the DB's 100-connection ceiling comfortable
+      # room; raise further only if `pg_stat_activity` shows real headroom
+      # being used, not just because a burst of errors reappears.
+      PGRST_DB_POOL: "30"
     depends_on:
       db:
         condition: service_healthy

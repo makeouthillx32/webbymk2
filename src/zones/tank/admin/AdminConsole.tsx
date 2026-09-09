@@ -44,6 +44,8 @@ import {
   BarChart3,
   X,
   Plus,
+  Gift,
+  Beer,
 } from "lucide-react";
 import type { AdminSection, StreamHealth, TankCamera } from "../contracts";
 import { cameras as initialCameras, channels } from "../fixtures";
@@ -71,11 +73,15 @@ import {
 } from "../server/pollSystem";
 import type { ActivePoll } from "../server/pollContract";
 import { DirectorWorkspace } from "../director-configuration/components/DirectorWorkspace/DirectorWorkspace";
+import { DropsAdminPanel } from "./DropsAdminPanel";
+import { TavernAdminPanel } from "./TavernAdminPanel";
 
 const nav: { section: AdminSection; label: string; icon: typeof Activity }[] = [
   { section: "overview", label: "Overview", icon: LayoutDashboard },
   { section: "chat", label: "Chat & Moderation", icon: MessageSquare },
   { section: "economy", label: "Economy & RNG", icon: Dices },
+  { section: "drops", label: "Drops", icon: Gift },
+  { section: "tavern", label: "Tavern", icon: Beer },
   { section: "users", label: "Users & Levels", icon: Users },
   { section: "director", label: "Director", icon: Video },
   { section: "sources", label: "Sources", icon: Antenna },
@@ -92,7 +98,7 @@ function tone(health: StreamHealth) {
       : "bg-slate-500";
 }
 
-function Panel({
+export function Panel({
   title,
   description,
   action,
@@ -119,135 +125,10 @@ function Panel({
   );
 }
 
-export default function AdminConsole({
-  section: initialSection,
-  operatorName,
-}: {
-  section: AdminSection;
-  operatorName: string;
-}) {
-  const [currentSection, setCurrentSection] = useState<AdminSection>(initialSection || "overview");
-  const [sources, setSources] = useState<TankCamera[]>(initialCameras);
-  const [scene, setScene] = useState("LIVE");
-  const [paused, setPaused] = useState(false);
-  const [locked, setLocked] = useState(true);
-
-  const updateSource = (id: string, patch: Partial<TankCamera>) =>
-    setSources((items) =>
-      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-
-  const sectionLabel =
-    nav.find((item) => item.section === currentSection)?.label ?? "Backstage";
-
+export default function AdminConsole() {
   return (
-    <main className="min-h-screen min-h-[100dvh] bg-muted/20 text-foreground">
-      {/* ═══════════ TOP COMMAND SWITCHER ═══════════ */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="flex h-16 items-center justify-between px-6">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              className="flex items-center gap-2 font-black tracking-wider text-primary"
-            >
-              <Shield className="h-5 w-5" />
-              <span>TANK MANAGEMENT</span>
-            </Link>
-            <span className="text-muted-foreground/40">/</span>
-            <span className="text-sm font-semibold text-muted-foreground">
-              {sectionLabel}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Quick Cross-Deck Links */}
-            <Link
-              href="/house"
-              className="flex items-center gap-1.5 rounded-xl border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-xs font-bold text-orange-400 hover:bg-orange-500/20 transition"
-              title="Live House Director Command Console"
-            >
-              <Home className="h-3.5 w-3.5" />
-              <span>House Deck (/house)</span>
-            </Link>
-
-            <Link
-              href="/obs"
-              target="_blank"
-              className="flex items-center gap-1.5 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-bold hover:bg-muted transition"
-              title="Clean OBS Ingest Output"
-            >
-              <Tv className="h-3.5 w-3.5 text-cyan-400" />
-              <span>OBS Feed (/obs)</span>
-            </Link>
-
-            <Link
-              href="/"
-              className="flex items-center gap-1.5 rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-bold hover:bg-muted transition"
-            >
-              <ExternalLink className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Live Site</span>
-            </Link>
-
-            <div className="ml-2 flex items-center gap-2 border-l border-border pl-4">
-              <span className="text-xs text-muted-foreground">Operator:</span>
-              <strong className="text-xs font-bold text-primary">
-                {operatorName}
-              </strong>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[240px_1fr]">
-        {/* ═══════════ SIDEBAR NAVIGATION ═══════════ */}
-        <aside className="border-r border-border bg-card p-4">
-          <nav className="space-y-1">
-            {nav.map((item) => {
-              const Icon = item.icon;
-              const active = currentSection === item.section;
-              return (
-                <button
-                  key={item.section}
-                  onClick={() => setCurrentSection(item.section)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-
-        {/* ═══════════ MAIN CONTENT AREA ═══════════ */}
-        <div className="p-6 space-y-6">
-          {currentSection === "overview" && (
-            <Overview sources={sources} scene={scene} setScene={setScene} locked={locked} setLocked={setLocked} />
-          )}
-
-          {currentSection === "chat" && <LiveChatModerationDesk operatorName={operatorName} />}
-
-          {currentSection === "economy" && <LiveEconomyDesk />}
-
-          {currentSection === "users" && <LiveUsersDesk />}
-
-          {currentSection === "director" && <DirectorWorkspace />}
-
-          {currentSection === "sources" && (
-            <Sources sources={sources} updateSource={updateSource} />
-          )}
-
-          {currentSection === "channels" && <Channels />}
-
-          {currentSection === "webhooks" && <Webhooks />}
-
-          {currentSection === "system" && <SystemPanel />}
-        </div>
-      </div>
+    <main className="min-h-screen min-h-[100dvh] bg-[#0c0d10] p-2 md:p-4 text-slate-100">
+      <DirectorWorkspace />
     </main>
   );
 }
@@ -255,7 +136,7 @@ export default function AdminConsole({
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. LIVE CHAT MODERATION & BAN AUDIT DESK
 // ═══════════════════════════════════════════════════════════════════════════════
-function LiveChatModerationDesk({ operatorName }: { operatorName: string }) {
+export function LiveChatModerationDesk({ operatorName }: { operatorName: string }) {
   const [data, setData] = useState<AdminChatDeskData | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -517,7 +398,7 @@ function LiveChatModerationDesk({ operatorName }: { operatorName: string }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // 2. LIVE ECONOMY & RNG DESK
 // ═══════════════════════════════════════════════════════════════════════════════
-function LiveEconomyDesk() {
+export function LiveEconomyDesk() {
   const [events, setEvents] = useState<RngLiveEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -652,7 +533,7 @@ function LiveEconomyDesk() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // 3. LIVE USERS & PROGRESSION DESK
 // ═══════════════════════════════════════════════════════════════════════════════
-function LiveUsersDesk() {
+export function LiveUsersDesk() {
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [modifyingId, setModifyingId] = useState<string | null>(null);
@@ -772,7 +653,7 @@ function LiveUsersDesk() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // 4. OVERVIEW / DIRECTOR / SOURCES / CHANNELS / SYSTEM PANELS
 // ═══════════════════════════════════════════════════════════════════════════════
-function Overview({
+export function Overview({
   sources,
   scene,
   setScene,
@@ -950,7 +831,6 @@ function Director({
       targetId,
       targetLabel,
       durationMinutes,
-      lockedBy: "Admin Operator",
       multiCameraMode: multiCamMode,
     });
   };
@@ -1015,7 +895,7 @@ function Director({
               <button
                 type="button"
                 disabled={attentionLoading}
-                onClick={() => releaseAttention("Manual Staff Release")}
+                onClick={() => releaseAttention()}
                 className="rounded-xl bg-destructive hover:bg-destructive/90 px-4 py-2 text-xs font-black uppercase text-destructive-foreground transition"
               >
                 Release Focus
@@ -1092,7 +972,7 @@ function Director({
                 ) : (
                   sources.map((cam) => (
                     <option key={cam.id} value={cam.id}>
-                      {cam.name} ({cam.roomId})
+                      {cam.name} ({cam.location})
                     </option>
                   ))
                 )}
@@ -1145,6 +1025,7 @@ function AdminPollsDesk() {
   const [qInput, setQInput] = useState("");
   const [optsInput, setOptsInput] = useState<string[]>(["", ""]);
   const [durInput, setDurInput] = useState<number | "indefinite">(5);
+  const [voterEligibility, setVoterEligibility] = useState<"everyone" | "members">("everyone");
   const [busy, setBusy] = useState(false);
 
   const loadPoll = async () => {
@@ -1167,6 +1048,7 @@ function AdminPollsDesk() {
       question: qInput,
       options: optsInput,
       durationMinutes: durInput,
+      voterEligibility,
     });
     if (res.success && res.poll) {
       setAdminPoll(res.poll);
@@ -1246,7 +1128,7 @@ function AdminPollsDesk() {
           </span>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-5">
           <div className="sm:col-span-2">
             <label className="text-[11px] font-black uppercase text-muted-foreground block mb-1">
               Poll Question
@@ -1278,6 +1160,20 @@ function AdminPollsDesk() {
               <option value="10">⏱️ 10 Minutes</option>
               <option value="30">⏱️ 30 Minutes</option>
               <option value="indefinite">🔒 Indefinite (Staff Closes)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-black uppercase text-muted-foreground block mb-1">
+              Voters
+            </label>
+            <select
+              value={voterEligibility}
+              onChange={(e) => setVoterEligibility(e.target.value === "members" ? "members" : "everyone")}
+              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-bold text-foreground focus:outline-none"
+            >
+              <option value="everyone">Everyone</option>
+              <option value="members">Verified members only</option>
             </select>
           </div>
 
@@ -1337,7 +1233,7 @@ function AdminPollsDesk() {
   );
 }
 
-function Sources({
+export function Sources({
   sources,
   updateSource,
 }: {
@@ -1418,17 +1314,17 @@ function Sources({
   );
 }
 
-function Channels() {
+export function Channels() {
   return (
     <Panel
-      title="Channels and rooms"
-      description="Stable identities now; creator ownership can attach later."
+      title="Multi-channel broadcast distribution"
+      description="Each channel maintains its own independent audio-matrix and viewer-chat bridge."
     >
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         {channels.map((channel) => (
           <article
             key={channel.id}
-            className="rounded-xl border border-border p-4"
+            className="flex flex-col justify-between rounded-xl border border-border bg-muted/30 p-4"
           >
             <div className="flex justify-between">
               <div>
@@ -1455,7 +1351,7 @@ function Channels() {
   );
 }
 
-function Webhooks() {
+export function Webhooks() {
   return (
     <Panel
       title="Event webhooks"
@@ -1505,7 +1401,7 @@ function Webhooks() {
   );
 }
 
-function SystemPanel() {
+export function SystemPanel() {
   return (
     <div className="grid gap-6 sm:grid-cols-2">
       <Panel title="Storage Buckets">

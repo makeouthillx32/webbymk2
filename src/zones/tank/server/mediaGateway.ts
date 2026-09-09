@@ -32,6 +32,16 @@ export function getPublicCameraPreview(cameraId: string, online: boolean) {
   });
 }
 
+export function getMediaMtxApiBaseUrl(): string | undefined {
+  const envUrl = process.env.MEDIAMTX_API_URL;
+  if (!envUrl) return undefined;
+  const isBareMetal = process.env.NODE_ENV === "development" && !process.env.DOCKER_CONTAINER;
+  if (isBareMetal && (envUrl.includes("unt_mediamtx") || envUrl.includes("mediamtx:"))) {
+    return "http://127.0.0.1:9997";
+  }
+  return envUrl;
+}
+
 export { buildPublicCameraPlayback, cameraMediaPath, cameraHlsMediaPath } from "../mediaPlayback";
 
 // Every camera the SRT Receiver Manager runs — SRTLA, direct SRT, or an
@@ -286,7 +296,7 @@ export function buildPreviewSiblingCommand(sourcePath: string, previewPath: stri
 }
 
 export async function teardownCameraPreview(cameraId: string): Promise<void> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return;
   let apiUrl: URL;
   try {
@@ -345,7 +355,7 @@ export async function provisionMediaMtxCamera(
 ): Promise<MediaGatewayProvisionResult> {
   const path = cameraMediaPath(cameraId);
   const playback = getPublicCameraPlayback(cameraId, true);
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
 
   if (!apiBase || !sourceUrl) {
     return {
@@ -557,7 +567,7 @@ export async function provisionMediaMtxCamera(
  * this ffmpeg needs to have something to pull.
  */
 export async function provisionObsWhepSibling(slug: string): Promise<{ ok: boolean; error?: string }> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return { ok: false, error: "MEDIAMTX_API_URL is not configured." };
   let apiUrl: URL;
   try {
@@ -629,7 +639,7 @@ export function buildObsWhepSiblingCommand(rawPath: string, whepPath: string): s
 
 /** Stands the WHEP sibling down when a room goes offline, so its ffmpeg stops error-looping against a dead source instead of being left to retry forever. */
 export async function teardownObsWhepSibling(slug: string): Promise<void> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return;
   let apiUrl: URL;
   try {

@@ -1,16 +1,11 @@
+// src/app/contact/layout.tsx
 import { Metadata } from "next";
 
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}): Promise<Metadata> {
-  return {
-    title: `calendar | unenter.live` ,
-    description: "" ,
-  };
-}
+export const metadata: Metadata = {
+  title: "Contact Support | Unenter Labs",
+  description: "Customer care and laboratory research inquiries.",
+};
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default function ContactLayout({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }

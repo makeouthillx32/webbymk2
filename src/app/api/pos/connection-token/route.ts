@@ -6,16 +6,20 @@
 // Protected by the dashboard layout — no additional auth check needed.
 
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
+import { requireAdmin } from "@/lib/require-admin";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
   try {
+    const guard = await requireAdmin();
+    if ("error" in guard) return guard.error;
+
     // Same class of bug found and fixed across the checkout routes via E2E
     // test, 2026-08-06: constructing Stripe outside try/catch means a
     // missing STRIPE_SECRET_KEY throws uncaught instead of returning JSON.
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    const { stripe } = createCommerceStripe("pos");
     const token = await stripe.terminal.connectionTokens.create();
     return NextResponse.json({ secret: token.secret });
   } catch (err: any) {

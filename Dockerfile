@@ -13,7 +13,17 @@ FROM oven/bun:1.3.14 AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+
+# Root configs — used directly, avoiding repo-wide cache invalidation
+COPY package.json next.config.js tsconfig.json tailwind.config.ts postcss.config.js ./
+COPY middleware.ts next-env.d.ts* ./
+
+# Full core — all shared components, utils, lib, styles, and app pages
+COPY src/ ./src/
+COPY public/ ./public/
+
+ARG NEXT_BUILD_CPUS=4
+ENV NEXT_BUILD_CPUS=$NEXT_BUILD_CPUS
 
 # All NEXT_PUBLIC vars must be declared as ARGs to be baked into the build
 ARG NEXT_PUBLIC_SUPABASE_URL

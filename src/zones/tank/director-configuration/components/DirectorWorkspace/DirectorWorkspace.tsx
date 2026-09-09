@@ -32,6 +32,7 @@ import {
   type CameraTelemetryInput,
   type DetectionCategoryFilters,
   DEFAULT_DETECTION_FILTERS,
+  DEFAULT_CAMERA_TILES,
 } from "../../../server/directorVirtualAtlas";
 import { useTankCameras } from "../../../public/useTankCameras";
 import { cameras as fixtureCameras } from "../../../fixtures";
@@ -47,7 +48,12 @@ const HOUSE_MEMBERS: HouseMember[] = [
   { id: "member_02", displayName: "Housemate 2", detectorLabel: "member_02" },
   { id: "member_03", displayName: "Housemate 3", detectorLabel: "member_03" },
 ];
-import { DirectionalSnappingPad, JoystickTelemetry } from "../NavigationController";
+import {
+  DirectionalSnappingPad,
+  JoystickTelemetry,
+  ManualPtzController,
+  type VirtualPtzState,
+} from "../NavigationController";
 import {
   SubjectModeSelector,
   FramingModeSelector,
@@ -56,6 +62,23 @@ import {
 import { TouchDesignerBridge } from "../TouchDesignerBridge";
 import { LiveProgramMonitor } from "../LiveProgramMonitor";
 import { PeopleDetectionEngine, type DetectionCameraInput } from "../PeopleDetectionEngine";
+import {
+  stepFocusEngine,
+  DEFAULT_FOCUS_ENGINE_STATE,
+  type FocusEngineState,
+  type FocusSubject,
+} from "../../../director/focusEngine";
+import {
+  stepGroupFramingEngine,
+  DEFAULT_GROUP_FRAMING_STATE,
+  type GroupFramingState,
+  type GroupMemberBox,
+} from "../../../director/groupFramingEngine";
+import {
+  stepAnimalFramingEngine,
+  DEFAULT_ANIMAL_FRAMING_STATE,
+  type AnimalFramingState,
+} from "../../../director/animalFramingEngine";
 
 export function DirectorWorkspace() {
   const { snapshot, liveById, isOnline } = useTankCameras();
@@ -68,6 +91,17 @@ export function DirectorWorkspace() {
   const [detectionFilters, setDetectionFilters] = useState<DetectionCategoryFilters>(DEFAULT_DETECTION_FILTERS);
   const [gamepadConnected, setGamepadConnected] = useState<boolean>(false);
   const [autoSimulateAudio, setAutoSimulateAudio] = useState<boolean>(true);
+  const [aiFocusEnabled, setAiFocusEnabled] = useState<boolean>(true);
+  const [focusState, setFocusState] = useState<FocusEngineState>(DEFAULT_FOCUS_ENGINE_STATE);
+  const [groupFramingState, setGroupFramingState] = useState<GroupFramingState>(DEFAULT_GROUP_FRAMING_STATE);
+  const [animalFramingState, setAnimalFramingState] = useState<AnimalFramingState>(DEFAULT_ANIMAL_FRAMING_STATE);
+  const [manualPtzState, setManualPtzState] = useState<VirtualPtzState>({
+    zoomFactor: 1,
+    panOffsetX: 0,
+    panOffsetY: 0,
+    zoomSpeed: 5,
+    speedMode: "fine",
+  });
 
   // Extract REAL cameras from live platform snapshot or real fixtures
   const realCameras = useMemo(() => {
@@ -379,18 +413,8 @@ export function DirectorWorkspace() {
   const currentActiveTile = useMemo(() => {
     return (
       atlasLayout.tiles.find((t) => t.cameraId === directorState.activeCameraId) ||
-      atlasLayout.tiles[0] || {
-        cameraId: defaultActiveId,
-        cameraName: "Main Feed",
-        slug: defaultActiveSlug,
-        kind: "ipcam",
-        row: 0,
-        col: 0,
-        xMin: 0,
-        yMin: 0,
-        xMax: 3840,
-        yMax: 2160,
-      }
+      atlasLayout.tiles[0] ||
+      DEFAULT_CAMERA_TILES[0]
     );
   }, [atlasLayout, directorState.activeCameraId, defaultActiveId, defaultActiveSlug]);
 
@@ -559,7 +583,153 @@ export function DirectorWorkspace() {
     return () => cancelAnimationFrame(animationFrameId);
   }, [handleSnapDirection, gamepadConnected]);
 
-  const handleAdjustFeet = (camId: string, delta: number) => {
+  // ═══════════ AUTONOMOUS AI PTZ ANIMAL & PET FRAMING ENGINE ═══════════
+  useEffect(() => {
+    if (subjectMode !== "animals") return;
+
+    const interval = setInterval(() => {
+      const activeCamId = directorState.activeCameraId;
+      const activeInput = mergedTelemetry.find((i) => i.cameraId === activeCamId);
+
+      const rawBoxes = (activeInput?.boundingBoxes ?? []).map((b) => ({
+        nx: b.nx,
+        ny: b.ny,
+        nw: b.nw,
+        nh: b.nh,
+        label: b.label,
+        confidence: b.confidence,
+      }));
+
+      setAnimalFramingState((prev) => stepAnimalFramingEngine(prev, rawBoxes, Date.now(), 0.08));
+    }, 80);
+
+    return () => clearInterval(interval);
+  }, [subjectMode, directorState.activeCameraId, mergedTelemetry]);
+
+    // ═══════════ AUTONOMOUS AI PTZ GROUP FRAMING ENGINE ═══════════
+  useEffect(() => {
+    if (subjectMode !== "group") return;
+
+    const interval = setInterval(() => {
+      const activeCamId = directorState.activeCameraId;
+      const activeInput = mergedTelemetry.find((i) => i.cameraId === activeCamId);
+
+      const personBoxes: GroupMemberBox[] = (activeInput?.boundingBoxes ?? [])
+        .filter((b) => !b.label || b.label === "person" || b.label === "Person")
+        .map((b) => ({
+          nx: b.nx,
+          ny: b.ny,
+          nw: b.nw,
+          nh: b.nh,
+          label: b.label,
+        }));
+
+      setGroupFramingState((prev) => stepGroupFramingEngine(prev, personBoxes, Date.now(), 0.08));
+    }, 80);
+
+    return () => clearInterval(interval);
+  }, [subjectMode, directorState.activeCameraId, mergedTelemetry]);
+
+    // ═══════════ AUTONOMOUS AI FOCUS (ZOOM-INSPECT-MEMORIZE-RESTORE) ═══════════
+  useEffect(() => {
+    if (!aiFocusEnabled || subjectMode === "manual") return;
+
+    const interval = setInterval(() => {
+      const activeCamId = directorState.activeCameraId;
+      const activeInput = mergedTelemetry.find((i) => i.cameraId === activeCamId);
+
+      const subjects: FocusSubject[] = (activeInput?.boundingBoxes ?? []).map((b, idx) => ({
+        id: `${activeCamId}-box-${idx}`,
+        cameraId: activeCamId,
+        label: b.label,
+        confidence: b.confidence ?? 0.75,
+        box: { x: b.nx, y: b.ny, width: b.nw, height: b.nh },
+        isMovement: Boolean(b.isMovement),
+        velocity: b.velocity ?? 0,
+        identifiedName: b.targetName,
+      }));
+
+      setFocusState((prev) => stepFocusEngine(prev, subjects, Date.now()));
+    }, 80);
+
+    return () => clearInterval(interval);
+  }, [aiFocusEnabled, subjectMode, directorState.activeCameraId, mergedTelemetry]);
+
+  // Active virtual PTZ state derived from Group Mode or Focus Mode
+  const activePtzState = useMemo(() => {
+    if (subjectMode === "manual") {
+      return manualPtzState;
+    }
+    if (focusState.phase !== "IDLE_WIDE") {
+      return focusState.currentPtz;
+    }
+    if (subjectMode === "group" && groupFramingState.calibrationPhase !== "WIDE") {
+      return groupFramingState.currentPtz;
+    }
+    if (subjectMode === "animals" && animalFramingState.calibrationPhase !== "WIDE") {
+      return animalFramingState.currentPtz;
+    }
+    return undefined;
+  }, [focusState, subjectMode, groupFramingState, animalFramingState, manualPtzState]);
+
+  const pilotIdRef = useRef<string | null>(null);
+  const manualPilotPayloadRef = useRef({
+    activeCameraId: directorState.activeCameraId,
+    activeRoomKey: activeLiveCam?.roomScope || currentActiveTile.slug || "director",
+    ptzState: manualPtzState,
+  });
+  manualPilotPayloadRef.current = {
+    activeCameraId: directorState.activeCameraId,
+    activeRoomKey: activeLiveCam?.roomScope || currentActiveTile.slug || "director",
+    ptzState: manualPtzState,
+  };
+
+  // Manual Pilot is a short server lease, not browser-local UI state. Keep it
+  // alive only while the operator is in manual mode; the server Director and
+  // OBS compositor then consume the same camera/PTZ decision for every viewer.
+  useEffect(() => {
+    if (subjectMode !== "manual" || !manualPilotPayloadRef.current.activeCameraId) return;
+
+    pilotIdRef.current ??=
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `director-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const pilotId = pilotIdRef.current;
+    let active = true;
+
+    const syncPilot = async (action: "claim" | "release") => {
+      const payload = manualPilotPayloadRef.current;
+      try {
+        await fetch("/api/tank/director/pilot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            pilotId,
+            connectionType: "browser_web",
+            activeCameraId: payload.activeCameraId,
+            activeRoomKey: payload.activeRoomKey,
+            ptzState: payload.ptzState,
+          }),
+          keepalive: action === "release",
+        });
+      } catch {
+        // The next heartbeat retries; lease expiry safely returns to auto mode.
+      }
+    };
+
+    void syncPilot("claim");
+    const heartbeat = window.setInterval(() => {
+      if (active) void syncPilot("claim");
+    }, 1_000);
+    return () => {
+      active = false;
+      window.clearInterval(heartbeat);
+      void syncPilot("release");
+    };
+  }, [subjectMode]);
+
+    const handleAdjustFeet = (camId: string, delta: number) => {
     setInputs((prev) => {
       return prev.map((inp) => {
         if (inp.cameraId !== camId) return inp;
@@ -652,6 +822,28 @@ export function DirectorWorkspace() {
           <ArrowLeft className="h-4 w-4" /> Return to House Console
         </Link>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAiFocusEnabled((v) => !v)}
+            className={`rounded px-2.5 py-1 text-[10px] font-black uppercase tracking-wide transition ${
+              aiFocusEnabled
+                ? focusState.phase !== "IDLE_WIDE"
+                  ? "bg-cyan-400 text-black animate-pulse shadow-[0_0_10px_rgba(34,211,238,0.5)]"
+                  : "bg-cyan-500/20 text-cyan-900 border border-cyan-500/40"
+                : "bg-black/10 text-[#241f14] hover:bg-black/20"
+            }`}
+            title="Autonomous AI Focus: Zooms in to inspect and memorize ambiguous subjects when settled"
+          >
+            {aiFocusEnabled
+              ? focusState.phase !== "IDLE_WIDE"
+                ? `⚡ Focus: ${focusState.phase} (${focusState.resolvedIdentity ?? focusState.activeSubject?.label ?? "Subject"} ${(focusState.inspectedConfidence * 100).toFixed(0)}%)`
+                : subjectMode === "animals"
+                ? `🐾 Animal Mode: ${animalFramingState.calibrationPhase} (${animalFramingState.animalCount} Pets @ ${animalFramingState.currentPtz.zoomFactor.toFixed(1)}x)`
+                : subjectMode === "group"
+                ? `👥 Group Framing: ${groupFramingState.calibrationPhase} (${groupFramingState.memberCount} People @ ${groupFramingState.currentPtz.zoomFactor.toFixed(1)}x)`
+                : "● AI Focus Ready"
+              : "○ AI Focus Off"}
+          </button>
           <button
             type="button"
             onClick={() => setRealDetectionEnabled((v) => !v)}
@@ -797,8 +989,16 @@ export function DirectorWorkspace() {
             </div>
 
             {/* Right: Snapping D-Pad Control Pod (4 Cols) */}
-            <div className="lg:col-span-4">
+            <div className="space-y-3 lg:col-span-4">
               <DirectionalSnappingPad onSnap={handleSnapDirection} />
+              {subjectMode === "manual" && (
+                <ManualPtzController
+                  activeCameraName={activeLiveCam?.name || currentActiveTile.cameraName}
+                  activeRoomKey={activeLiveCam?.roomScope || currentActiveTile.slug}
+                  ptzState={manualPtzState}
+                  onPtzChange={setManualPtzState}
+                />
+              )}
             </div>
           </div>
 
@@ -822,6 +1022,7 @@ export function DirectorWorkspace() {
                       easterEgg: false,
                       waldo: false,
                       people: false,
+                      pets: false,
                       audio: false,
                       feet: false,
                     })
@@ -844,6 +1045,7 @@ export function DirectorWorkspace() {
                       easterEgg: false,
                       waldo: false,
                       people: false,
+                      pets: false,
                       audio: false,
                       feet: false,
                     })
@@ -866,6 +1068,7 @@ export function DirectorWorkspace() {
                       easterEgg: true,
                       waldo: true,
                       people: true,
+                      pets: true,
                       audio: true,
                       feet: true,
                     })
@@ -884,6 +1087,7 @@ export function DirectorWorkspace() {
                       easterEgg: false,
                       waldo: false,
                       people: false,
+                      pets: false,
                       audio: false,
                       feet: false,
                     })
@@ -991,6 +1195,7 @@ export function DirectorWorkspace() {
               filters={detectionFilters}
               overlayVisibility={overlayVisibility}
               members={HOUSE_MEMBERS}
+              ptzState={activePtzState}
               onSelectCamera={handleSelectCamera}
               onAdjustFeet={handleAdjustFeet}
               onAdjustAudio={handleAdjustAudio}
@@ -1098,6 +1303,7 @@ export function DirectorWorkspace() {
                 directorState={directorState}
                 activeTile={currentActiveTile}
                 activeLiveCam={activeLiveCam}
+                ptzState={activePtzState}
               />
               <TouchDesignerBridge />
             </div>

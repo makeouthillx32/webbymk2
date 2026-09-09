@@ -4,6 +4,10 @@ import React, { useEffect, useState } from "react";
 import { CheckCircle2, AlertCircle, Loader2, Sparkles, XCircle } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { broadcastVerificationSuccess } from "@/zones/tank/server/authActions";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 export default function AuthVerifyPage() {
   const [status, setStatus] = useState<"verifying" | "success" | "error">("verifying");
@@ -24,6 +28,7 @@ export default function AuthVerifyPage() {
 
           // 1. Code Exchange
           if (code) {
+            markAuthNavigationIntent();
             const { data, error } = await supabase.auth.exchangeCodeForSession(code);
             if (error) throw error;
             if (data.user?.email && data.user.id) {
@@ -35,6 +40,7 @@ export default function AuthVerifyPage() {
 
           // 2. OTP Verification
           if (tokenHash && type) {
+            markAuthNavigationIntent();
             const { data, error } = await supabase.auth.verifyOtp({
               token_hash: tokenHash,
               type: type as any,
@@ -60,6 +66,7 @@ export default function AuthVerifyPage() {
           }
         }
       } catch (err) {
+        clearAuthNavigationIntent();
         if (active) {
           setStatus("error");
           setErrorMessage(err instanceof Error ? err.message : "Verification failed.");

@@ -117,6 +117,12 @@ export function supabaseTransformedUrlFromImage(
   if (!img?.bucket_name || !img?.object_path) return null;
   if (!STORAGE_BASE) return null;
 
+  // AVIF files: imgproxy in Supabase storage corrupts certain AVIF color profiles into rainbow static.
+  // Raw AVIFs are already ultra-compact (often 5-15 KB), so return the direct public URL.
+  if (img.object_path.toLowerCase().endsWith(".avif")) {
+    return supabasePublicUrlFromImage(img);
+  }
+
   const bucket = img.bucket_name.replace(/^\/+|\/+$/g, "");
   const objectPath = img.object_path.replace(/^\/+/, "");
   const encodedObjectPath = encodeObjectPath(objectPath);
@@ -165,7 +171,10 @@ export function pickPrimaryImage(images?: DbImage[] | null): DbImage | null {
  * - Use this URL directly in <Image src={...} /> or <img src={...} />.
  * - Next.js will optimize automatically when you use <Image />.
  */
-export function getPrimaryImageUrl(images?: DbImage[] | null): string | null {
+export function getPrimaryImageUrl(
+  images?: DbImage[] | null,
+  opts?: { width?: number; quality?: number },
+): string | null {
   const img = pickPrimaryImage(images);
   // Transformed by default. These sources average ~2.9 MB (see
   // supabaseTransformedUrlFromImage) and this is the hot path every product
@@ -173,7 +182,7 @@ export function getPrimaryImageUrl(images?: DbImage[] | null): string | null {
   // actually fills users' device storage. Callers needing the untouched
   // original (downloads, print, OG cards that bypass the transform) should
   // call supabasePublicUrlFromImage directly.
-  return supabaseTransformedUrlFromImage(img) ?? supabasePublicUrlFromImage(img) ?? null;
+  return supabaseTransformedUrlFromImage(img, opts) ?? supabasePublicUrlFromImage(img) ?? null;
 }
 
 /**

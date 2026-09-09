@@ -12,28 +12,17 @@ export type PollOverlayProps = {
   onVoteRecorded?: () => void;
 };
 
-export function getTankPollVoterClientId() {
-  if (typeof window === "undefined") return "anon_guest";
-  let id = localStorage.getItem("tank_voter_client_id");
-  if (!id) {
-    id = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    try { localStorage.setItem("tank_voter_client_id", id); } catch {}
-  }
-  return id;
-}
-
 export function PollOverlay({ onClose, onVoteRecorded }: PollOverlayProps) {
   const [activePoll, setActivePoll] = useState<PollView | null>(null);
   const [loading, setLoading] = useState(true);
   const [votingIndex, setVotingIndex] = useState<number | null>(null);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [voteError, setVoteError] = useState<string | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
 
   const fetchPoll = async () => {
     try {
-      const res = await fetch("/api/tank/poll/active", {
-        headers: { "x-tank-voter-id": getTankPollVoterClientId() },
-      });
+      const res = await fetch("/api/tank/poll/active");
       const { poll } = (await res.json()) as { poll: PollView | null };
       setActivePoll(poll);
       setSelectedOption(poll?.viewerVote ?? null);
@@ -66,15 +55,17 @@ export function PollOverlay({ onClose, onVoteRecorded }: PollOverlayProps) {
   const handleVote = async (index: number) => {
     if (!activePoll || votingIndex !== null || selectedOption !== null) return;
     setVotingIndex(index);
+    setVoteError(null);
     const result = await votePollAction({
       pollId: activePoll.id,
       optionIndex: index,
-      anonymousClientId: getTankPollVoterClientId(),
     });
     if (result.success && result.poll) {
       setActivePoll(result.poll);
       setSelectedOption(result.poll.viewerVote ?? index);
       onVoteRecorded?.();
+    } else if (result.error) {
+      setVoteError(result.error);
     }
     setVotingIndex(null);
   };
@@ -103,7 +94,9 @@ export function PollOverlay({ onClose, onVoteRecorded }: PollOverlayProps) {
                   House Poll Console
                 </p>
                 <p className="font-mono text-[8px] font-bold uppercase tracking-wider text-[#5b5547]">
-                  Guest voting online · one selection
+                  {activePoll?.voterEligibility === "members"
+                    ? "Verified members · one selection"
+                    : "Guest voting online · one selection"}
                 </p>
               </div>
             </div>
@@ -183,6 +176,12 @@ export function PollOverlay({ onClose, onVoteRecorded }: PollOverlayProps) {
                     );
                   })}
                 </div>
+
+                {voteError && (
+                  <p className="rounded-sm border border-red-500/40 bg-red-950/40 px-3 py-2 font-mono text-[9px] font-bold text-red-300">
+                    {voteError}
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between border-t border-[#2c332d] pt-2 font-mono text-[8px] font-black uppercase tracking-wider text-[#8b948c]">
                   <span>Guests enabled</span>

@@ -39,12 +39,25 @@ export async function getLiveCameraConfigs(): Promise<SrtManagerCameraConfig[]> 
 }
 
 /**
- * Captures a fresh 2-minute (120s) clip directly from a camera's live SRT stream
- * and overwrites its singular loop file in Supabase Storage.
+ * Captures a fresh clip directly from a camera's live SRT stream and
+ * overwrites its singular loop file in Supabase Storage.
+ *
+ * Was 120s by default. The player renders this with the native `loop`
+ * attribute (CameraPlayer.tsx) — it was already repeating regardless of
+ * source length, so 120s only meant a ~10x larger file for the exact same
+ * visual result a much shorter clip gives. Confirmed live via a real HAR
+ * capture 2026-09-01 (vault/Tank/har-analysis-tank-vs-twitch-vs-kick-
+ * 2026-09-01.md): this clip, served from an uncached Supabase Storage
+ * origin, was taking 25-50 seconds to download and was the dominant cause
+ * of "1.4 minutes to load a room" — six of these loading at once (one per
+ * grid tile) starved the actual live stream of bandwidth. That fan-out is
+ * fixed separately (CameraPlayer.tsx now only requests this for the hero
+ * player, not thumbnails) — this shrinks the file itself, which helps the
+ * one remaining real caller and every future one.
  */
 export async function refreshCameraLoop(
   cam: SrtManagerCameraConfig,
-  durationSeconds: number = 120
+  durationSeconds: number = 15
 ): Promise<RoomLoopRefreshResult> {
   const admin = createAdminClient();
   const streamId = `play/stream/${cam.streamUser}?srtauth=${cam.streamKey}`;
@@ -76,13 +89,24 @@ export async function refreshCameraLoop(
       };
     }
 
-    // Overwrite the single file in tank-loops
+    // Overwrite the single file in tank-loops.
+    //
+    // cacheControl was never set before, so no downstream cache (browser or
+    // any proxy layer in front of db.unenter.live) had a reason to hold onto
+    // this after the first fetch — every repeat view re-paid the full
+    // download cost. 300s balances that against the file being periodically
+    // overwritten with fresher footage: long enough that a single viewing
+    // session doesn't re-fetch it, short enough that "recent footage" stays
+    // honest. Doesn't fix first-view latency (that's origin throughput, see
+    // the har-analysis vault note's CDN recommendation — an infra change,
+    // not made here) but removes the cost entirely for repeat views.
     const storagePath = `cameras/${cam.id}.mp4`;
     const { error: uploadErr } = await admin.storage
       .from(LOOP_BUCKET)
       .upload(storagePath, fileBytes, {
         contentType: "video/mp4",
         upsert: true,
+        cacheControl: "300",
       });
 
     if (uploadErr) {
@@ -118,10 +142,10 @@ export async function refreshCameraLoop(
 }
 
 /**
- * Refreshes 2-minute clips across all enabled online house cameras.
+ * Refreshes loop clips across all enabled online house cameras.
  */
 export async function refreshAllRoomLoops(
-  durationSeconds: number = 120
+  durationSeconds: number = 15
 ): Promise<RoomLoopRefreshResult[]> {
   const configs = await getLiveCameraConfigs();
   const results: RoomLoopRefreshResult[] = [];

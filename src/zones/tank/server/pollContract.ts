@@ -15,18 +15,14 @@ export type ActivePoll = {
   durationMinutes: number | "indefinite";
   createdBy: string;
   active: boolean;
+  /** Defaults to everyone for polls created before participation controls. */
+  voterEligibility?: "everyone" | "members";
 };
 
 export type PollView = Omit<ActivePoll, "votedUserIds"> & {
   /** The requesting viewer's selection. Other voter identifiers stay private. */
   viewerVote?: number | null;
 };
-
-export function sanitizeAnonymousPollClientId(value?: string): string | null {
-  if (!value) return null;
-  const cleaned = value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48);
-  return /^c_[a-zA-Z0-9]+_[a-zA-Z0-9]+$/.test(cleaned) ? cleaned : null;
-}
 
 export function projectPollForViewer(
   poll: ActivePoll,

@@ -18,40 +18,47 @@ interface PackagePreset {
   description: string;
 }
 
-// ── Default presets (hardcoded until package_presets table is built) ──
-// These will be replaced by a Supabase fetch in a future task.
+// ── Default presets (aligned with package_presets database table) ──
 const DEFAULT_PRESETS: PackagePreset[] = [
   {
-    name: 'Poly Mailer — Small',
-    description: 'T-shirts, cardigans, soft items',
-    weightLb: 0.5,
-    lengthIn: 10,
-    widthIn: 13,
-    heightIn: 1,
-  },
-  {
-    name: 'Poly Mailer — Large',
-    description: 'Bulkier clothing, multiple items',
-    weightLb: 1.0,
-    lengthIn: 14.5,
-    widthIn: 19,
-    heightIn: 1,
-  },
-  {
-    name: 'Small Box',
-    description: 'Accessories, jewelry, small gifts',
-    weightLb: 0.75,
+    name: 'Insulated Cold-Chain Shipper (Foam + Gel Pack)',
+    description: 'Insulated EPS shipper with frozen refrigerant pack for temperature-sensitive compounds (4-8°C)',
+    weightLb: 0.88,
     lengthIn: 8,
     widthIn: 6,
-    heightIn: 4,
+    heightIn: 6,
   },
   {
-    name: 'Medium Box',
-    description: 'Boots, shoes',
-    weightLb: 3.0,
-    lengthIn: 14,
+    name: 'Padded Cryo/Vial Bubble Mailer (1-4 Vials)',
+    description: 'Tear-resistant bubble envelope with vial foam insert for small ambient specimens',
+    weightLb: 0.19,
+    lengthIn: 7,
+    widthIn: 9,
+    heightIn: 1.5,
+  },
+  {
+    name: 'Rigid Multi-Vial Laboratory Box (5-10 Vials)',
+    description: 'Crush-resistant 200# corrugated box with segmented vial partition',
+    weightLb: 0.38,
+    lengthIn: 7,
+    widthIn: 5,
+    heightIn: 3,
+  },
+  {
+    name: 'Bulk Laboratory Carton (10-30 Vials)',
+    description: 'Medium shipping carton with double-wall interior cushioning for larger orders',
+    weightLb: 0.75,
+    lengthIn: 10,
+    widthIn: 8,
+    heightIn: 5,
+  },
+  {
+    name: 'Ambient Glassware / Reagent Shipper',
+    description: 'Heavy protective corrugated box with cellular suspension pack for delicate glass',
+    weightLb: 1.25,
+    lengthIn: 12,
     widthIn: 10,
-    heightIn: 6,
+    heightIn: 8,
   },
 ];
 

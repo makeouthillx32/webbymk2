@@ -56,6 +56,18 @@ function deployCmd(port: number): string {
   );
 }
 
+function deployCmdMac(port: number): string {
+  return (
+    `docker run -d \\\n` +
+    `  --name unaxis_agent \\\n` +
+    `  --restart unless-stopped \\\n` +
+    `  -p ${port}:8888 \\\n` +
+    `  -v /var/run/docker.sock:/var/run/docker.sock \\\n` +
+    `  -v unaxis_agent_data:/data \\\n` +
+    `  ${AGENT_FULL}`
+  );
+}
+
 function deployCmdWindows(port: number): string {
   return (
     `docker run -d \`\n` +
@@ -186,7 +198,7 @@ function DeployStep({
 }) {
   const [pingState,  setPingState]  = useState<PingState>("idle");
   const [pingDetail, setPingDetail] = useState<string>("");
-  const [showWin,    setShowWin]    = useState(false);
+  const [platform,   setPlatform]   = useState<"mac" | "linux" | "windows">("mac");
 
   const handlePing = useCallback(async () => {
     setPingState("pinging");
@@ -212,11 +224,23 @@ function DeployStep({
     if (pingState === "pinging") return;
     if (key.escape || input === "q") { onBack();     return; }
     if (input === "p")               { handlePing(); return; }
-    if (input === "w")               { setShowWin((v) => !v); return; }
+    if (input === "m")               { setPlatform("mac"); return; }
+    if (input === "l")               { setPlatform("linux"); return; }
+    if (input === "w")               { setPlatform("windows"); return; }
+    if (key.tab) {
+      setPlatform((p) => (p === "mac" ? "linux" : p === "linux" ? "windows" : "mac"));
+      return;
+    }
     if (key.return)                  { onSave();     return; }
   });
 
-  const cmdLines = (showWin ? deployCmdWindows(port) : deployCmd(port)).split("\n");
+  const cmdLines = (
+    platform === "mac"
+      ? deployCmdMac(port)
+      : platform === "windows"
+      ? deployCmdWindows(port)
+      : deployCmd(port)
+  ).split("\n");
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -224,6 +248,7 @@ function DeployStep({
         <Text bold color="cyan">New Environment</Text>
         <Text dimColor>step 2 of 2 — deploy agent on</Text>
         <Text bold color="white">{name}</Text>
+        <Text dimColor>(Project: unenter.live)</Text>
       </Box>
       <Divider />
 
@@ -231,12 +256,22 @@ function DeployStep({
       <Box paddingX={2} flexDirection="column" gap={0}>
         <Box gap={2} marginBottom={0}>
           <Text color="yellow" bold>Run on {name}:</Text>
-          <Text dimColor>[w] show {showWin ? "Linux" : "Windows"} command</Text>
+          <Box gap={1}>
+            <Text color={platform === "mac" ? "green" : "gray"} bold={platform === "mac"}>
+              {platform === "mac" ? "[★ Mac (macOS)]" : "[m] Mac"}
+            </Text>
+            <Text color={platform === "linux" ? "cyan" : "gray"} bold={platform === "linux"}>
+              {platform === "linux" ? "[★ Linux]" : "[l] Linux"}
+            </Text>
+            <Text color={platform === "windows" ? "blue" : "gray"} bold={platform === "windows"}>
+              {platform === "windows" ? "[★ Windows]" : "[w] Windows"}
+            </Text>
+          </Box>
         </Box>
         <Box
           flexDirection="column"
           borderStyle="round"
-          borderColor="gray"
+          borderColor={platform === "mac" ? "green" : platform === "windows" ? "blue" : "cyan"}
           paddingX={1}
           marginTop={0}
         >
@@ -280,7 +315,7 @@ function DeployStep({
       <Divider />
       <Box paddingX={2} gap={3}>
         <Text dimColor>[p] ping</Text>
-        <Text dimColor>[w] toggle OS</Text>
+        <Text dimColor>[Tab/m/l/w] select OS</Text>
         <Text color={pingState === "success" ? "green" : "cyan"} bold>[Enter] save</Text>
         <Text dimColor>[Esc] back</Text>
       </Box>

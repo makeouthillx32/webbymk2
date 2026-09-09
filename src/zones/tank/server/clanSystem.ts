@@ -304,7 +304,7 @@ export async function getCurrentUserClanState(): Promise<UserClanMembershipState
 
 /**
  * Creates a brand new Click.
- * Requires: Season Pass OR Iceberg Level 4+ and 100 Tokens.
+ * Requires: Season Pass OR Iceberg Level 4+ and 50 Tokens.
  */
 export async function createClanAction(params: {
   name: string;
@@ -324,8 +324,8 @@ export async function createClanAction(params: {
   if (name.length < 3 || name.length > 24) {
     return { success: false, error: "Click name must be between 3 and 24 characters." };
   }
-  if (rawTag.length < 2 || rawTag.length > 5) {
-    return { success: false, error: "Click tag must be between 2 and 5 alphanumeric characters." };
+  if (rawTag.length < 2 || rawTag.length > 7) {
+    return { success: false, error: "Click tag must be between 2 and 7 alphanumeric characters." };
   }
 
   const adminSupabase = createAdminClient();
@@ -348,16 +348,16 @@ export async function createClanAction(params: {
     };
   }
 
-  if (userTokens < 100 && !hasSeasonPass) {
-    return { success: false, error: "Creating a Click costs 100 tokens (or active Season Pass)." };
+  if (userTokens < 50 && !hasSeasonPass) {
+    return { success: false, error: "Creating a Click costs 50 tokens (or active Season Pass)." };
   }
 
   try {
     // 2. Deduct tokens if not pass holder
-    if (!hasSeasonPass && userTokens >= 100) {
+    if (!hasSeasonPass && userTokens >= 50) {
       await adminSupabase
         .from("tank_user_experience")
-        .update({ tokens_balance: userTokens - 100 })
+        .update({ tokens_balance: userTokens - 50 })
         .eq("user_id", user.id);
     }
 

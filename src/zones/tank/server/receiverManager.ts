@@ -42,12 +42,11 @@ import { attachRecentCameraClips } from "./cameraClipMetadata";
 // host.docker.internal, not the host's raw LAN IP — Docker Desktop
 // guarantees this path from inside a container; a container reaching the
 // host's own LAN-bound IP directly is a separate, unreliable hairpin path
-// (broke repeatedly on 2026-08-15 after a Docker Desktop crash/restart
-// cycle, independent of SRT_MANAGER_INTERNAL_URL being set). The manager
-// itself now also runs natively on the host (not in Docker) for the same
-// class of reason — see Z:\server\srt_receiver\readme.md.
+const isBareMetalDev =
+  process.env.NODE_ENV === "development" && !process.env.DOCKER_CONTAINER;
 const managerBaseUrl =
-  process.env.SRT_MANAGER_INTERNAL_URL ?? "http://host.docker.internal:5050";
+  process.env.SRT_MANAGER_INTERNAL_URL ??
+  (isBareMetalDev ? "http://127.0.0.1:5050" : "http://host.docker.internal:5050");
 
 // MediaMTX (unt_mediamtx) is always a Docker container pulling SRT from the
 // receiver manager's per-camera "video out" port, which lives on the host
@@ -62,6 +61,8 @@ const managerBaseUrl =
 // never the manager-reported lanHost.
 const mediaGatewaySrtHost =
   process.env.SRT_MANAGER_MEDIA_HOST ?? "host.docker.internal";
+
+let lastProvisionWarningAt = 0;
 
 type ManagerConfig = {
   server?: {
@@ -333,10 +334,18 @@ async function projectCamera(
         // WHEP, which no browser can decode, well after this should have
         // self-corrected.
         if (!result.ok) {
-          console.warn(`[receiverManager] provisionMediaMtxCamera failed for ${camera.id}: ${result.error ?? "unknown error"}`);
+          const now = Date.now();
+          if (now - lastProvisionWarningAt > 30000) {
+            console.warn(`[receiverManager] provisionMediaMtxCamera failed for ${camera.id}: ${result.error ?? "unknown error"}`);
+            lastProvisionWarningAt = now;
+          }
         }
       }).catch((error) => {
-        console.warn(`[receiverManager] provisionMediaMtxCamera threw for ${camera.id}:`, error instanceof Error ? error.message : error);
+        const now = Date.now();
+        if (now - lastProvisionWarningAt > 30000) {
+          console.warn(`[receiverManager] provisionMediaMtxCamera threw for ${camera.id}:`, error instanceof Error ? error.message : error);
+          lastProvisionWarningAt = now;
+        }
       });
     }
   } else if (camera.type === "srtla") {
@@ -483,6 +492,8 @@ let cachedSnapshot: CameraDirectorySnapshot | null = null;
 let cachedAt = 0;
 const CACHE_TTL_MS = 2500;
 
+let lastSnapshotErrorLogAt = 0;
+
 export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnapshot> {
   const now = Date.now();
   if (cachedSnapshot && now - cachedAt < CACHE_TTL_MS) {
@@ -529,11 +540,12 @@ export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnaps
     cachedSnapshot = snapshot;
     cachedAt = now;
     return snapshot;
-  } catch (err) {
-    // Was completely silent — every camera falling back to fixture/"standby"
-    // data (which never counts as online anywhere downstream) had no visible
-    // cause anywhere in the logs. This is that cause.
-    console.error("[receiverManager] getCameraDirectorySnapshot failed, falling back to fixtures:", err);
+  } catch (err: any) {
+    const errorMsg = err?.message || (typeof err === "string" ? err : "Timeout / unreachable");
+    if (now - lastSnapshotErrorLogAt > 30000) {
+      console.warn(`[receiverManager] getCameraDirectorySnapshot falling back to fixtures (${errorMsg})`);
+      lastSnapshotErrorLogAt = now;
+    }
     const fallbackCameras: DiscoveredCamera[] = fixtureCameras.map((c) => ({
       id: c.id,
       slug: c.slug,

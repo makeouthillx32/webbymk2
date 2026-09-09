@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { DETECTION, DETECTION_MONO, confidenceOpacity } from "../../detectionTheme";
+import { DETECTION, DETECTION_MONO, confidenceOpacity, classColor } from "../../detectionTheme";
 import type { CameraTelemetryInput } from "../../../server/directorVirtualAtlas";
 
 // Draws detections ON the subject, not in the corner.
@@ -16,9 +16,7 @@ import type { CameraTelemetryInput } from "../../../server/directorVirtualAtlas"
 // knowledge of the tile's pixel size and stays correct when the canvas is
 // zoomed or the grid reflows.
 
-type Box = NonNullable<CameraTelemetryInput["boundingBoxes"]>[number] & {
-  confidence?: number;
-};
+type Box = NonNullable<CameraTelemetryInput["boundingBoxes"]>[number];
 
 type SubjectBoxLayerProps = {
   boxes: Box[];
@@ -32,7 +30,13 @@ type SubjectBoxLayerProps = {
 };
 
 /**
- * A person box carries identity; an object box carries its label.
+ * A person box carries identity; an object box carries its label. Every box
+ * shows a real confidence percentage when one exists — standard practice in
+ * every detection tool (Ultralytics, CVAT, Roboflow all label boxes
+ * `class conf%`) — and NEVER a made-up one. This used to hardcode a fallback
+ * 50%/65% for trash/clutter when no real confidence was posted, which read
+ * as a real (if middling) detector reading instead of what it actually was:
+ * no confidence at all. Omitting the number is the honest option.
  *
  * Identity is deliberately matched by the detector against enrolled members and
  * arrives here as a name — the overlay never infers who someone is from how
@@ -40,44 +44,29 @@ type SubjectBoxLayerProps = {
  */
 function boxTitle(box: Box, memberLabel?: string | null, isPrimary?: boolean): string {
   const raw = (box.label || "object").toLowerCase();
-  if (raw === "trash" || raw.includes("trash")) {
-    const conf = box.confidence ? Math.round(box.confidence * 100) : 50;
-    return `LIKELY TRASH (${conf}%)`;
+  const conf = box.confidence != null ? Math.round(box.confidence * 100) : null;
+  const confSuffix = conf != null ? ` (${conf}%)` : "";
+
+  if (raw === "trash" || raw.includes("trash")) return `LIKELY TRASH${confSuffix}`;
+  if (raw === "clutter") return `CLUTTER${confSuffix}`;
+  if (raw === "dog" || raw === "cat") {
+    // Named when the detector matched a specific enrolled pet (currently
+    // only the simulator does this — see petRoster.ts), generic species
+    // otherwise. Same "never infer, only display what was matched" rule as
+    // the person/member case below.
+    if (box.targetName) return `${box.targetName.toUpperCase()} (${raw.toUpperCase()})${confSuffix}`;
+    return `${raw.toUpperCase()}${confSuffix}`;
   }
-  if (raw === "clutter") {
-    const conf = box.confidence ? Math.round(box.confidence * 100) : 65;
-    return `CLUTTER (${conf}%)`;
-  }
-  const label = (box.label || "object").toUpperCase();
-  if (label !== "PERSON") return label;
-  if (isPrimary && memberLabel) return memberLabel.toUpperCase();
-  return "UNKNOWN PERSON";
+
+  if (raw !== "person") return (box.label || "object").toUpperCase();
+  if (isPrimary && memberLabel) return `${memberLabel.toUpperCase()}${confSuffix}`;
+  return `UNKNOWN PERSON${confSuffix}`;
 }
 
+/** Thin wrapper kept for call-site clarity — box border/badge colors are the
+ * single CLASS_COLORS palette in detectionTheme.ts, not a local literal. */
 function getBoxAccent(label: string) {
-  const raw = (label || "").toLowerCase();
-  if (raw === "trash" || raw.includes("trash")) {
-    return {
-      border: "#FF4D00",
-      bg: "rgba(255, 77, 0, 0.18)",
-      badgeBg: "#FF4D00",
-      badgeText: "#FFFFFF",
-    };
-  }
-  if (raw === "clutter") {
-    return {
-      border: "#FBBF24",
-      bg: "rgba(251, 191, 36, 0.14)",
-      badgeBg: "#FBBF24",
-      badgeText: "#000000",
-    };
-  }
-  return {
-    border: DETECTION.accent,
-    bg: "transparent",
-    badgeBg: DETECTION.accent,
-    badgeText: "#141414",
-  };
+  return classColor(label);
 }
 
 export function SubjectBoxLayer({
@@ -108,7 +97,18 @@ export function SubjectBoxLayer({
         const isPrimary = i === primaryIndex;
         const isPerson = (box.label || "").toLowerCase() === "person";
         const isTrash = (box.label || "").toLowerCase().includes("trash");
-        const opacity = isPrimary ? confidenceOpacity(memberConfidence || 0.9) : isTrash ? 0.95 : 0.85;
+        // Confidence drives visual prominence — standard practice, and now
+        // possible for every class (real dog/cat/person detections all
+        // carry a real box.confidence from the YOLO decoder). Only falls
+        // back to the old flat guesses when nothing real is known at all.
+        const opacity =
+          box.confidence != null
+            ? confidenceOpacity(box.confidence)
+            : isPrimary
+              ? confidenceOpacity(memberConfidence || 0.9)
+              : isTrash
+                ? 0.95
+                : 0.85;
 
         const left = `${box.nx * 100}%`;
         const top = `${box.ny * 100}%`;
@@ -143,14 +143,17 @@ export function SubjectBoxLayer({
                 style={{
                   bottom: "100%",
                   left: -stroke,
-                  marginBottom: 3,
+                  marginBottom: 2,
                   background: accent.badgeBg,
                   color: accent.badgeText,
                   fontFamily: DETECTION_MONO,
-                  fontSize: 9,
+                  // Was fontSize 9 / padding "1px 5px" — same reasoning as
+                  // SubjectTelemetryCard: a 6-up grid tile is a few hundred
+                  // px wide, not a single full-frame camera view.
+                  fontSize: 7,
                   fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  padding: "1px 5px",
+                  letterSpacing: "0.03em",
+                  padding: "1px 4px",
                 }}
               >
                 {boxTitle(box, memberLabel, isPrimary)}

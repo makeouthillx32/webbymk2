@@ -21,11 +21,11 @@ const ZONE_ASSET_PREFIXES = {
   app:       `https://app.${CORE_DOMAIN}`,
 };
 
-const zone         = process.env.NEXT_PUBLIC_ZONE ?? "unenter";
-const assetPrefix  = process.env.NEXT_PUBLIC_ZONE_ASSET_PREFIX
-  ?? ZONE_ASSET_PREFIXES[zone]
-  ?? "";
 const isDev = process.env.NODE_ENV !== "production";
+const zone         = process.env.NEXT_PUBLIC_ZONE ?? "unenter";
+const assetPrefix  = isDev
+  ? ""
+  : (process.env.NEXT_PUBLIC_ZONE_ASSET_PREFIX ?? ZONE_ASSET_PREFIXES[zone] ?? "");
 const devNoStoreHeaders = [
   {
     key:   "Cache-Control",
@@ -53,6 +53,7 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  devIndicators: false,
 
   // ── Build-worker count ───────────────────────────────────────────────────
   // The build VM has 32 cores + ~31 GB, BUT it concurrently runs ~25 containers
@@ -79,7 +80,7 @@ const nextConfig = {
   experimental: {
     cpus: isDev
       ? undefined
-      : (process.env.NEXT_BUILD_CPUS ? parseInt(process.env.NEXT_BUILD_CPUS, 10) : 2),
+      : (process.env.NEXT_BUILD_CPUS ? parseInt(process.env.NEXT_BUILD_CPUS, 10) : 4),
   },
   // ── Dev origins ────────────────────────────────────────────────────────────
   // Suppresses the "Cross origin request detected" warning when accessing the
