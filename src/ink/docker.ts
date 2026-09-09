@@ -10,10 +10,13 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname }         from "path";
 import { PROJECT_DIR, PROXY, GHCR_USER, type Zone } from "../config/zones.ts";
 import { ARTIFACT_STORE_DIR }                        from "../config/stack.ts";
+import { dockerCliHostPath }                         from "./utils/dockerPath.ts";
 import { getCredential } from "../utils/secureStorage/index.js";
 import { DOCKER_ENV } from "./utils/dockerEnv.ts";
-import { dbGetZones } from "./control-db.ts";
+import { dbGetZones, dbGetEnvironments, dbGetEnvironmentById } from "./control-db.ts";
 import { genZonesCompose } from "./zone-templates.ts";
+import { fetchContainers, containerAction, type ContainerSummary } from "./agent-client.ts";
+import type { UnaxisEnvironment } from "./environment-store.ts";
 
 
 export type Status =
@@ -299,7 +302,7 @@ export async function composeRun(
   dockerUrl?: string,
 ): Promise<number> {
   const cb       = onLine ?? (() => {});
-  const fileFlag = composeFile ? ["-f", composeFile] : [];
+  const fileFlag = composeFile ? ["-f", dockerCliHostPath(composeFile)] : [];
   const proc = spawn("docker", ["compose", ...fileFlag, ...args], {
     cwd:   PROJECT_DIR,
     env:   makeDockerEnv(dockerUrl),
@@ -408,17 +411,92 @@ async function checkProxyAdmin(): Promise<boolean> {
 export async function pollAll(
   zones: Zone[]
 ): Promise<{ zoneStatuses: Record<string, Status>; proxyStatus: Status }> {
-  const [statuses, adminOk] = await Promise.all([
-    getStatuses([PROXY.container, ...zones.map((z) => z.container)]),
+  // 1. Separate zones by target environment
+  let envs: UnaxisEnvironment[] = [];
+  try { envs = dbGetEnvironments(); } catch {}
+  const envById = new Map(envs.map((e) => [e.id, e]));
+
+  const localZoneContainers: string[] = [];
+  const remoteZonesByEnv = new Map<UnaxisEnvironment, Zone[]>();
+
+  for (const z of zones) {
+    if (z.hosting === "vercel") continue;
+    const env = z.environmentId ? envById.get(z.environmentId) : null;
+    if (env && env.type !== "local-docker" && env.agentUrl) {
+      const list = remoteZonesByEnv.get(env) ?? [];
+      list.push(z);
+      remoteZonesByEnv.set(env, list);
+    } else {
+      localZoneContainers.push(z.container);
+    }
+  }
+
+  // 2. Poll local Docker & proxy in parallel with remote agents
+  const remoteQueries: Promise<{ env: UnaxisEnvironment; containers: ContainerSummary[] | null }>[] = [];
+  for (const [env] of remoteZonesByEnv) {
+    remoteQueries.push(
+      fetchContainers(env)
+        .then((c) => ({ env, containers: c }))
+        .catch(() => ({ env, containers: null }))
+    );
+  }
+
+  const [localStatuses, adminOk, ...remoteResults] = await Promise.all([
+    getStatuses([PROXY.container, ...localZoneContainers]),
     checkProxyAdmin(),
+    ...remoteQueries,
   ]);
 
   const zoneStatuses: Record<string, Status> = {};
-  zones.forEach((z) => {
-    zoneStatuses[z.key] = z.hosting === "vercel" ? "vercel" : (statuses[z.container] ?? "missing");
-  });
 
-  let proxyStatus: Status = statuses[PROXY.container] ?? "missing";
+  // Fill vercel zones
+  for (const z of zones) {
+    if (z.hosting === "vercel") zoneStatuses[z.key] = "vercel";
+  }
+
+  // Fill local zones
+  for (const z of zones) {
+    if (z.hosting === "vercel") continue;
+    const env = z.environmentId ? envById.get(z.environmentId) : null;
+    if (!env || env.type === "local-docker" || !env.agentUrl) {
+      zoneStatuses[z.key] = localStatuses[z.container] ?? "missing";
+    }
+  }
+
+  // Fill remote zones from remote container lists
+  for (const { env, containers } of remoteResults) {
+    const envZones = remoteZonesByEnv.get(env) ?? [];
+    for (const z of envZones) {
+      if (!containers) {
+        zoneStatuses[z.key] = "missing";
+        continue;
+      }
+      const match = containers.find(
+        (c) => c.Names.includes(`/${z.container}`) || c.Names.includes(`/${z.service}`)
+      );
+      if (!match) {
+        zoneStatuses[z.key] = "missing";
+      } else {
+        const state = match.State?.toLowerCase();
+        const statusStr = match.Status?.toLowerCase() || "";
+        if (state === "running") {
+          if (statusStr.includes("(unhealthy)")) {
+            zoneStatuses[z.key] = "unhealthy";
+          } else if (statusStr.includes("starting")) {
+            zoneStatuses[z.key] = "starting";
+          } else {
+            zoneStatuses[z.key] = "running";
+          }
+        } else if (state === "exited" || state === "dead") {
+          zoneStatuses[z.key] = "stopped";
+        } else {
+          zoneStatuses[z.key] = "stopped";
+        }
+      }
+    }
+  }
+
+  let proxyStatus: Status = localStatuses[PROXY.container] ?? "missing";
   // Container "running" but admin API dark → process crashed / restarting.
   // Surface as "unhealthy" so the TUI dot goes red instead of green.
   if (proxyStatus === "running" && !adminOk) proxyStatus = "unhealthy";
@@ -495,8 +573,49 @@ export async function restartZone(
   zone: Zone,
   onLine?: (l: string) => void
 ): Promise<number> {
+  if (zone.environmentId) {
+    let env: UnaxisEnvironment | null = null;
+    try { env = dbGetEnvironmentById(zone.environmentId); } catch {}
+    if (env && env.type !== "local-docker" && env.agentUrl) {
+      onLine?.(`Restarting ${zone.container} on ${env.name}...`);
+      const ok = await containerAction(env, zone.container, "restart");
+      if (ok) {
+        onLine?.(`✓ Container restarted on ${env.name} (${zone.container})`);
+        return 0;
+      } else {
+        onLine?.(`✗ Failed to restart ${zone.container} on ${env.name}`);
+        return 1;
+      }
+    }
+  }
   const file = zoneComposeExists(zone.key) ? zoneComposePath(zone.key) : undefined;
   return composeRun(["restart", zone.service], onLine, file);
+}
+
+/**
+ * Force-recreate one zone service so docker compose re-resolves the root .env.
+ * Unlike restartZone(), this applies payment-mode and credential changes while
+ * keeping the operation scoped to the selected zone and its existing image.
+ */
+export async function recreateZoneService(
+  zone: Zone,
+  onLine?: (l: string) => void
+): Promise<number> {
+  if (zone.environmentId) {
+    let env: UnaxisEnvironment | null = null;
+    try { env = dbGetEnvironmentById(zone.environmentId); } catch {}
+    if (env && env.type !== "local-docker") {
+      onLine?.(`✗ ${zone.label} is assigned to ${env.name}; local .env cannot be applied remotely.`);
+      return 1;
+    }
+  }
+
+  const file = zoneComposeExists(zone.key) ? zoneComposePath(zone.key) : undefined;
+  return composeRun(
+    ["up", "-d", "--no-build", "--force-recreate", "--no-deps", zone.service],
+    onLine,
+    file,
+  );
 }
 
 // ── Core-stack service recreate ─────────────────────────────────────────────
@@ -637,6 +756,17 @@ export async function pullAndUp(
   dockerUrl?: string,
   options?:   { skipProxyReload?: boolean },
 ): Promise<number> {
+  // If this zone is assigned to a remote environment and no explicit dockerUrl was passed,
+  // delegate to remote deployment.
+  if (!dockerUrl && zone.environmentId) {
+    let env: UnaxisEnvironment | null = null;
+    try { env = dbGetEnvironmentById(zone.environmentId); } catch {}
+    if (env && env.type !== "local-docker" && env.agentUrl) {
+      const { deployRemoteZoneManifest } = await import("./zone-build.js");
+      return deployRemoteZoneManifest(zone, env, onLine ?? (() => {}));
+    }
+  }
+
   // Compose-file resolution, in priority order:
   //   1. Artifact-store copy (%APPDATA%/unenter/stacks/<key>/) — authoritative.
   //   2. Repo's per-zone template (zones/<key>/docker-compose.yml) — used when

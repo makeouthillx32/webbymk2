@@ -30,6 +30,11 @@
 #      there -- no docker commands needed either way.
 # -----------------------------------------------------------------------------
 
+param(
+    [switch]$Windows,
+    [switch]$Prod
+)
+
 $TUI_DIR     = $PSScriptRoot
 $PROJECT_DIR = Split-Path (Split-Path $TUI_DIR -Parent) -Parent
 
@@ -43,6 +48,16 @@ while (-not (Test-Path $PROJECT_DIR)) {
         exit 1
     }
     Start-Sleep -Seconds 2
+}
+
+$wslCmd = Get-Command wsl.exe -ErrorAction SilentlyContinue
+if ($wslCmd -and -not $Windows) {
+    Write-Host "UNAXIS autostart: launching in WSL (Ubuntu)..." -ForegroundColor Cyan
+    $wslProjectDir = "/mnt/z/WEBSITES/webbymk2"
+    $wslTargetCmd  = if ($Prod) { "unaxis" } else { "bun run tui:dev" }
+    
+    & wsl.exe -d Ubuntu -u skill --cd $wslProjectDir bash -lic $wslTargetCmd
+    exit $LASTEXITCODE
 }
 
 $portBusy = Test-NetConnection -ComputerName 127.0.0.1 -Port 50505 -InformationLevel Quiet -WarningAction SilentlyContinue

@@ -28,11 +28,20 @@ import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
-import { dbRecordLedger } from "./control-db.ts";
+import {
+  dbRecordLedger,
+  dbGetEnvironmentById,
+  dbCreateDeployment,
+  dbUpdateDeployment,
+  dbPromoteDeploymentToProduction,
+} from "./control-db.ts";
 import { composeRun, pullAndUp, reloadProxy } from "./docker.ts";
 import { drainStream }                       from "./utils.ts";
 import { getCredential }                     from "../utils/secureStorage/index.js";
 import { log }                               from "./logger.ts";
+import { deployRemoteZone, fetchContainers, type ZoneDeployManifest } from "./agent-client.ts";
+import type { UnaxisEnvironment }            from "./environment-store.ts";
+import { ensureRuntimeEnv }                  from "../utils/runtimeEnv.js";
 
 declare const UNAXIS_VERSION: string | undefined;
 
@@ -400,21 +409,97 @@ function resolveUnaxisVersion(): string {
   return "dev";
 }
 
-interface GitProvenance { shortSha: string; fullSha: string; dirty: boolean; }
+interface GitProvenance {
+  shortSha:  string;
+  fullSha:   string;
+  dirty:     boolean;
+  branch:    string;
+  commitMsg: string;
+  author:    string;
+}
+
+let _cachedGitBin: string | null = null;
+export function resolveGitBin(cwd: string = PROJECT_DIR): string {
+  if (_cachedGitBin) return _cachedGitBin;
+  if (process.platform === "linux" && cwd.startsWith("/mnt/")) {
+    if (existsSync("/mnt/c/program files/git/cmd/git.exe")) {
+      return (_cachedGitBin = "/mnt/c/program files/git/cmd/git.exe");
+    }
+    if (existsSync("/mnt/c/Program Files/Git/cmd/git.exe")) {
+      return (_cachedGitBin = "/mnt/c/Program Files/Git/cmd/git.exe");
+    }
+    try {
+      const probe = spawnSync("which", ["git.exe"], { encoding: "utf-8", timeout: 300 });
+      if (probe.status === 0 && probe.stdout.trim()) {
+        return (_cachedGitBin = probe.stdout.trim());
+      }
+    } catch {}
+  }
+  return (_cachedGitBin = "git");
+}
+
+let _provCache: { data: GitProvenance; expiresAt: number } | null = null;
 
 /** Source provenance of the build context — best-effort; degrades to "nogit". */
 function gitProvenance(): GitProvenance {
-  const run = (args: string[]): string => {
-    try {
-      const r = spawnSync("git", args, { cwd: PROJECT_DIR, encoding: "utf-8" });
-      return r.status === 0 ? (r.stdout ?? "").trim() : "";
-    } catch { return ""; }
+  const now = Date.now();
+  if (_provCache && _provCache.expiresAt > now) {
+    return _provCache.data;
+  }
+  const gitBin = resolveGitBin(PROJECT_DIR);
+
+  let branch = "main";
+  try {
+    const head = readFileSync(join(PROJECT_DIR, ".git", "HEAD"), "utf-8").trim();
+    if (head.startsWith("ref: refs/heads/")) {
+      branch = head.replace("ref: refs/heads/", "");
+    }
+  } catch {}
+
+  let fullSha = "";
+  let shortSha = "nogit";
+  let commitMsg = "";
+  let author = "makeouthillx32";
+
+  try {
+    const logRes = spawnSync(gitBin, ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], {
+      cwd: PROJECT_DIR,
+      encoding: "utf-8",
+      timeout: 1200,
+    });
+    if (logRes.status === 0 && logRes.stdout) {
+      const parts = logRes.stdout.split("\0");
+      if (parts.length >= 4) {
+        fullSha = (parts[0] ?? "").trim();
+        shortSha = (parts[1] ?? "").trim() || (fullSha ? fullSha.slice(0, 8) : "nogit");
+        commitMsg = (parts[2] ?? "").trim();
+        author = (parts[3] ?? "").trim() || "makeouthillx32";
+      }
+    }
+  } catch {}
+
+  let dirty = false;
+  try {
+    // Non-empty porcelain = uncommitted changes → the image matches no commit.
+    // Pass -uno (untracked-files=no) to prevent 30+ second filesystem scans over 9p DrvFs mounts in WSL.
+    const statusRes = spawnSync(gitBin, ["status", "--porcelain", "-uno"], {
+      cwd: PROJECT_DIR,
+      encoding: "utf-8",
+      timeout: 1200,
+    });
+    dirty = statusRes.status === 0 && (statusRes.stdout ?? "").trim().length > 0;
+  } catch {}
+
+  const data: GitProvenance = {
+    shortSha: shortSha || "nogit",
+    fullSha,
+    dirty,
+    branch,
+    commitMsg,
+    author,
   };
-  const fullSha  = run(["rev-parse", "HEAD"]);
-  const shortSha = run(["rev-parse", "--short=8", "HEAD"]) || (fullSha ? fullSha.slice(0, 8) : "nogit");
-  // Non-empty porcelain = uncommitted changes → the image matches no commit.
-  const dirty = run(["status", "--porcelain"]).length > 0;
-  return { shortSha: shortSha || "nogit", fullSha, dirty };
+  _provCache = { data, expiresAt: now + 15_000 };
+  return data;
 }
 
 /** Content/source identity tag: `g<sha>[-dirty]` — the meaningful "version". */
@@ -490,6 +575,7 @@ export async function buildZone(
   onLine: (l: string) => void,
   opts:   { noCache?: boolean } = {},
 ): Promise<number> {
+  onLine(`▶ Initializing build for ${zone.label}...`);
   const dockerfile = zone.dockerfile ?? "Dockerfile";
   const dockerCfg  = await createBuildDockerConfig();
   const restoreDockerignore = scopeDockerignoreToZone(zone.key);
@@ -520,6 +606,19 @@ export async function buildZone(
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
     if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
 
+    const depTarget = prov.branch === "main" ? "production" : "preview";
+    const dep = dbCreateDeployment({
+      zoneKey: zone.key,
+      environmentId: (zone as any).environmentId ?? null,
+      status: "building",
+      target: depTarget,
+      commitSha: prov.shortSha,
+      commitMsg: prov.commitMsg || `build(${zone.key}): docker image`,
+      branch: prov.branch,
+      author: prov.author,
+      image: zone.image,
+    });
+
     // The default BuildKit builder can't attach RUN steps to a custom Docker
     // network, so Next.js SSG (`bun run build`) can't reach the internal
     // Supabase host (kong:8000) and hangs at "Generating static pages (0/92)"
@@ -535,7 +634,16 @@ export async function buildZone(
         ["buildx", "create", "--name", BUILDX_BUILDER, "--driver", "docker-container", "--driver-opt", "network=unenter", "--bootstrap"],
         logBuild, dockerEnvBuild,
       );
-      if (createCode !== 0) { logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`); return createCode; }
+      if (createCode !== 0) {
+        logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`);
+        dbUpdateDeployment(dep.id, {
+          status: "error",
+          durationMs: Date.now() - t0,
+          errorMessage: `Could not create buildx builder "${BUILDX_BUILDER}"`,
+          completedAt: new Date().toISOString(),
+        });
+        return createCode;
+      }
     }
 
     const buildCmd  = [
@@ -557,6 +665,7 @@ export async function buildZone(
       // cost of a full `--no-cache` (the deps stage stays cached). Zones whose
       // Dockerfiles don't declare the ARG yet just emit a harmless warning.
       "--build-arg", `SOURCE_REF=${buildId}`,
+      "--build-arg", `NEXT_BUILD_CPUS=${process.env.UNAXIS_BUILD_CPUS || "4"}`,
       // OCI labels — provenance lives in metadata, queryable via `docker
       // inspect`, never confused with the image tag. This is where the UNAXIS
       // build-tool version belongs (decoupled from app/zone content).
@@ -597,6 +706,12 @@ export async function buildZone(
     if (buildCode !== 0) {
       log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
       logBuild(`FAILED: build exited ${buildCode}`);
+      dbUpdateDeployment(dep.id, {
+        status: "error",
+        durationMs: Date.now() - t0,
+        errorMessage: `Docker build exited with code ${buildCode}`,
+        completedAt: new Date().toISOString(),
+      });
       return buildCode;
     }
     const buildDurationSec = ((Date.now() - t0) / 1000).toFixed(1);
@@ -611,6 +726,12 @@ export async function buildZone(
     if (pushCode !== 0) {
       log.error("push", "registry denied or network error", { zone: zone.key, image: zone.image, exit: pushCode, ms: Date.now() - tp });
       logPush("FAILED: push - set GHCR token in Settings [s] -> [t]");
+      dbUpdateDeployment(dep.id, {
+        status: "error",
+        durationMs: Date.now() - t0,
+        errorMessage: `Push failed with exit code ${pushCode} (GHCR token or network error)`,
+        completedAt: new Date().toISOString(),
+      });
       return pushCode;
     }
     const pushDurationSec = ((Date.now() - tp) / 1000).toFixed(1);
@@ -627,6 +748,16 @@ export async function buildZone(
     await tagAndPush(zone.image, contentTag, logPush, dockerEnv);
     log.info("push", "versioned tags pushed", { zone: zone.key, dateTag, contentTag, unaxisVersion: unaxisVer, dirty: prov.dirty });
     logPush(`OK: versioned tags pushed — ${contentTag}${prov.dirty ? " (DIRTY working tree — matches no commit)" : ""}`);
+
+    const finalDurationMs = Date.now() - t0;
+    dbUpdateDeployment(dep.id, {
+      status: "ready",
+      durationMs: finalDurationMs,
+      completedAt: new Date().toISOString(),
+    });
+    if (depTarget === "production") {
+      dbPromoteDeploymentToProduction(dep.id, zone.key);
+    }
 
     return 0;
 
@@ -649,6 +780,7 @@ export async function buildAndDeploy(
   onLine: (l: string) => void,
   opts:   { noCache?: boolean } = {},
 ): Promise<number> {
+  onLine(`=== Shipping ${zone.label} (${zone.key}) ===`);
   // Vercel-hosted zones never touch Docker — "build" is a git push instead.
   // This check lives HERE (not just in the IPC dispatcher) because the TUI's
   // own [b]/[R] keybindings call buildAndDeploy directly, bypassing that
@@ -713,6 +845,156 @@ export async function deployZone(
     log.info("deploy", "complete", { zone: zone.key, ms: Date.now() - t0 });
   }
   return code;
+}
+
+/**
+ * Deploy a zone to a remote environment via the UNAXIS Agent manifest API (`POST /zones/deploy`).
+ * Handles remote port resolution, preflight health verification against the POWER Supabase gateway,
+ * 0600 secret env file creation, and container recreation on the remote host.
+ */
+export async function deployRemoteZoneManifest(
+  zone:    Zone,
+  env:     UnaxisEnvironment,
+  onLine:  (l: string) => void,
+): Promise<number> {
+  const t0 = Date.now();
+  onLine(`=== Deploying ${zone.label} to ${env.name} via agent ===`);
+  try {
+    ensureRuntimeEnv(true);
+  } catch {}
+
+  const prov = gitProvenance();
+  const depTarget = prov.branch === "main" ? "production" : "preview";
+  const dep = dbCreateDeployment({
+    zoneKey: zone.key,
+    environmentId: env.id,
+    status: "building",
+    target: depTarget,
+    commitSha: prov.shortSha,
+    commitMsg: prov.commitMsg || `deploy(${zone.key}): remote deploy to ${env.name}`,
+    branch: prov.branch,
+    author: prov.author,
+    image: zone.image,
+  });
+
+  // 1. Determine target port on remote machine
+  let targetPort = 3001;
+  try {
+    const containers = await fetchContainers(env);
+    if (containers) {
+      const match = containers.find((c) =>
+        c.Names?.some((n) => n.replace(/^\//, "") === zone.container)
+      );
+      if (match && match.Ports && match.Ports.length > 0) {
+        const bound = match.Ports.find((p) => p.PublicPort && p.PublicPort > 0);
+        if (bound?.PublicPort) {
+          targetPort = bound.PublicPort;
+        }
+      } else {
+        const usedPorts = new Set<number>();
+        for (const c of containers) {
+          for (const p of c.Ports ?? []) {
+            if (p.PublicPort) usedPorts.add(p.PublicPort);
+          }
+        }
+        if (zone.key === "blog" && !usedPorts.has(3001)) {
+          targetPort = 3001;
+        } else if (zone.key === "docs" && !usedPorts.has(3002)) {
+          targetPort = 3002;
+        } else {
+          let candidate = 3001;
+          while (usedPorts.has(candidate)) candidate++;
+          targetPort = candidate;
+        }
+      }
+    }
+  } catch (err) {
+    onLine(`  (could not query remote containers for port, defaulting to ${targetPort})`);
+  }
+
+  // 2. Private LAN Kong gateway on POWER for server-side container traffic
+  const kongHost = process.env.POWER_LAN_IP || "192.168.50.204";
+  const supabaseLanUrl = `http://${kongHost}:8001`;
+
+  // 3. Assemble environment variables
+  const containerEnv: Record<string, string> = {
+    NODE_ENV: "production",
+    PORT: "3000",
+    NEXT_PUBLIC_ZONE: zone.key,
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live",
+    NEXT_PUBLIC_APP_TITLE: process.env.NEXT_PUBLIC_APP_TITLE || "unenter.live",
+    NEXT_PUBLIC_COMPANY_NAME: process.env.NEXT_PUBLIC_COMPANY_NAME || "unenter",
+    NEXT_PUBLIC_SUPABASE_URL_BROWSER: process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || "https://db.unenter.live",
+    NEXT_PUBLIC_SUPABASE_URL: supabaseLanUrl,
+    SUPABASE_URL: supabaseLanUrl,
+    API_EXTERNAL_URL: process.env.API_EXTERNAL_URL || "https://db.unenter.live",
+  };
+
+  const keysToCopy = [
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SERVICE_ROLE_KEY",
+    "BLOG_INGEST_TOKEN",
+    "STATUS_PUBLIC_KEY",
+    "NEXT_PUBLIC_GIPHY_API_KEY",
+    "NEXT_PUBLIC_OWNER_USERNAME",
+    "NEXT_PUBLIC_OWNER_EMAIL",
+  ];
+
+  for (const k of keysToCopy) {
+    if (process.env[k]) {
+      containerEnv[k] = process.env[k]!;
+    }
+  }
+
+  const buildKeys = loadBuildEnvKeys(zone);
+  if (buildKeys) {
+    for (const k of buildKeys) {
+      if (process.env[k] && !containerEnv[k]) {
+        containerEnv[k] = process.env[k]!;
+      }
+    }
+  }
+
+  const manifest: ZoneDeployManifest = {
+    zone: zone.key,
+    name: zone.container,
+    image: zone.image,
+    port: targetPort,
+    internalPort: 3000,
+    domain: zone.domain,
+    preflight: {
+      supabase_health_url: `${supabaseLanUrl}/auth/v1/health`,
+    },
+    env: containerEnv,
+  };
+
+  const res = await deployRemoteZone(env, manifest, onLine);
+  if (!res.ok) {
+    dbUpdateDeployment(dep.id, {
+      status: "error",
+      durationMs: Date.now() - t0,
+      errorMessage: res.error || "Remote deploy failed",
+      completedAt: new Date().toISOString(),
+    });
+    log.error("deploy", "remote deploy failed", { zone: zone.key, env: env.name, error: res.error, ms: Date.now() - t0 });
+    return 1;
+  }
+
+  const finalDurationMs = Date.now() - t0;
+  dbUpdateDeployment(dep.id, {
+    status: "ready",
+    durationMs: finalDurationMs,
+    completedAt: new Date().toISOString(),
+  });
+  if (depTarget === "production") {
+    dbPromoteDeploymentToProduction(dep.id, zone.key);
+  }
+
+  log.info("deploy", "remote deploy succeeded", { zone: zone.key, env: env.name, port: targetPort, ms: Date.now() - t0 });
+  onLine(`✓ Deployed ${zone.label} to ${env.name}:${targetPort} (status: ${res.httpStatus ?? 200})`);
+  return 0;
 }
 
 // ── Build + deploy all zones ──────────────────────────────────────────────────
@@ -794,10 +1076,11 @@ export async function deployAll(
 export async function gitPush(onLine: (l: string) => void): Promise<number> {
   const { spawn } = await import("child_process");
   const { drainStream } = await import("./utils.ts");
+  const gitBin = resolveGitBin(PROJECT_DIR);
 
   onLine("--- git push ---");
 
-  const proc = spawn("git", ["push"], {
+  const proc = spawn(gitBin, ["push"], {
     cwd:   PROJECT_DIR,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -832,8 +1115,9 @@ export async function gitCommitAndPushZone(
   zone:   Zone,
   onLine: (l: string) => void,
 ): Promise<number> {
+  const gitBin = resolveGitBin(PROJECT_DIR);
   const paths = [`zones/${zone.key}`, `src/zones/${zone.key}`];
-  const branchResult = spawnSync("git", ["branch", "--show-current"], { cwd: PROJECT_DIR });
+  const branchResult = spawnSync(gitBin, ["branch", "--show-current"], { cwd: PROJECT_DIR, timeout: 2000 });
   const branch = branchResult.status === 0
     ? branchResult.stdout?.toString().trim() || "unknown"
     : "unknown";
@@ -844,21 +1128,21 @@ export async function gitCommitAndPushZone(
   }
 
   onLine(`--- git add (${paths.join(", ")}) ---`);
-  const add = spawnSync("git", ["add", ...paths], { cwd: PROJECT_DIR });
+  const add = spawnSync(gitBin, ["add", ...paths], { cwd: PROJECT_DIR, timeout: 5000 });
   if (add.status !== 0) {
     onLine(`✗ git add failed: ${add.stderr?.toString().trim()}`);
     return add.status ?? 1;
   }
 
-  const staged = spawnSync("git", ["diff", "--cached", "--quiet"], { cwd: PROJECT_DIR });
+  const staged = spawnSync(gitBin, ["diff", "--cached", "--quiet"], { cwd: PROJECT_DIR, timeout: 2000 });
   if (staged.status === 0) {
     onLine("(nothing staged under this zone's paths — skipping commit)");
   } else {
     onLine("--- git commit ---");
     const commit = spawnSync(
-      "git",
+      gitBin,
       ["commit", "-m", `chore(${zone.key}): sync zone source for Vercel build`],
-      { cwd: PROJECT_DIR },
+      { cwd: PROJECT_DIR, timeout: 5000 },
     );
     for (const line of commit.stdout?.toString().split("\n") ?? []) if (line) onLine(line);
     if (commit.status !== 0) {

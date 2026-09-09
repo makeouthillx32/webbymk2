@@ -18,33 +18,44 @@ import { useScrollIntoView } from "../../components/ScrollBox.js";
 type StatusMap = Record<string, Status>;
 
 interface ZonesPanelProps {
-  zones:        Zone[];
-  zoneStatuses: StatusMap;
-  selected:     number;
+  zones:         Zone[];
+  zoneStatuses:  StatusMap;
+  selected:      number;
   emptyMessage?: string;
+  environments?: Record<string, string>;
 }
 
 // ── ZonesPanelRow Component ───────────────────────────────────────────────────
 
-function ZonesPanelRow({ zone, status, focused }: {
-  zone: Zone;
-  status: Status;
-  focused: boolean;
+function ZonesPanelRow({ zone, status, focused, envName }: {
+  zone:     Zone;
+  status:   Status;
+  focused:  boolean;
+  envName?: string;
 }) {
   const ref = React.useRef<any>(null);
   useScrollIntoView(ref, focused);
+
+  const isRemote = Boolean(envName && envName.toUpperCase() !== "POWER" && envName.toUpperCase() !== "LOCAL");
+  const badgeColor = isRemote ? "magenta" : "blue";
+  const badgeText = envName ? `[${envName.toUpperCase()}]` : "[POWER]";
 
   return (
     <Box ref={ref} paddingX={1} gap={2}>
       <Text color={focused ? "cyan" : undefined} bold={focused}>
         {focused ? "▶" : " "}
       </Text>
-      <Box width={18}>
+      <Box width={16}>
         <Text color={focused ? "cyan" : undefined} bold={focused}>
           {zone.label}
         </Text>
       </Box>
-      <Box width={28}>
+      <Box width={8}>
+        <Text color={badgeColor} bold={isRemote}>
+          {badgeText}
+        </Text>
+      </Box>
+      <Box width={26}>
         <Text dimColor={!focused}>{zone.domain}</Text>
       </Box>
       <StatusBadge status={status} />
@@ -75,6 +86,7 @@ export function ZonesPanel({
   zoneStatuses,
   selected,
   emptyMessage = "No zones yet — press [n] to create one",
+  environments = {},
 }: ZonesPanelProps) {
   return (
     <Box flexDirection="column">
@@ -83,12 +95,16 @@ export function ZonesPanel({
         ? zones.map((zone, i) => {
             const status  = zoneStatuses[zone.key] ?? "missing";
             const focused = i === selected;
+            const envName = (zone.environmentId && environments[zone.environmentId])
+              ? environments[zone.environmentId]
+              : "POWER";
             return (
               <ZonesPanelRow
                 key={zone.key}
                 zone={zone}
                 status={status}
                 focused={focused}
+                envName={envName}
               />
             );
           })

@@ -25,6 +25,8 @@ import { join, dirname }              from "path";
 import type { UnaxisEnvironment }     from "./environment-store.ts";
 import type { AgentHealthResult }     from "./environment-store.ts";
 import { ARTIFACT_STORE_DIR }         from "../config/stack.ts";
+import { GHCR_USER }                  from "../config/zones.ts";
+import { getCredential }              from "../utils/secureStorage/index.js";
 
 // ── Key pair storage ──────────────────────────────────────────────────────────
 
@@ -836,6 +838,89 @@ export async function deployStack(
   } catch (err) {
     onLine(`✗ ${err instanceof Error ? err.message : String(err)}`);
     return false;
+  }
+}
+
+// ── Zone manifest deploy ──────────────────────────────────────────────────────
+// POST /zones/deploy { zone, name, image, port, internalPort, domain, env, preflight }
+// Agent runs: preflight probe -> writes 0600 .env -> docker compose pull -> up -> verifies local HTTP -> returns scrubbed logs.
+
+export interface ZoneDeployManifest {
+  zone:          string;
+  name:          string;
+  image:         string;
+  port:          number;
+  internalPort?: number;
+  domain?:       string;
+  registry_auth?: string;
+  env?:          Record<string, string>;
+  preflight?: {
+    supabase_health_url?: string;
+  };
+}
+
+export interface ZoneDeployResult {
+  ok:          boolean;
+  zone?:       string;
+  name?:       string;
+  port?:       number;
+  checksum?:   string;
+  verified?:   boolean;
+  httpStatus?: number;
+  step?:       string;
+  error?:      string;
+  logs?:       string;
+}
+
+export async function deployRemoteZone(
+  env:      UnaxisEnvironment,
+  manifest: ZoneDeployManifest,
+  onLine?:  (line: string) => void,
+): Promise<ZoneDeployResult> {
+  if (!env.agentUrl) {
+    onLine?.("✗ Environment has no agentUrl");
+    return { ok: false, error: "Environment has no agentUrl" };
+  }
+
+  try {
+    let registry_auth = manifest.registry_auth;
+    if (!registry_auth) {
+      try {
+        const pat = await getCredential("ghcr_token");
+        if (pat?.trim()) {
+          registry_auth = Buffer.from(`${GHCR_USER}:${pat.trim()}`).toString("base64");
+        }
+      } catch { /* ignore */ }
+    }
+
+    const payload = { ...manifest, ...(registry_auth ? { registry_auth } : {}) };
+
+    onLine?.(`Deploying ${manifest.name} to ${env.name} via /zones/deploy...`);
+    const res = await agentFetch(env, "/zones/deploy", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+      signal:  AbortSignal.timeout(180_000),
+    });
+
+    const data = (await res.json()) as ZoneDeployResult;
+    if (data.logs) {
+      for (const line of data.logs.split("\n").filter(Boolean)) {
+        onLine?.(`  ${line}`);
+      }
+    }
+
+    if (!res.ok || !data.ok) {
+      onLine?.(`✗ Deployment failed at step [${data.step || "deploy"}]: ${data.error || res.statusText}`);
+      return { ok: false, ...data, error: data.error || `HTTP ${res.status}` };
+    }
+
+    onLine?.(`✓ Zone ${manifest.name} deployed and verified on ${env.name}:${manifest.port} (status: ${data.httpStatus ?? 200})`);
+    return data;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onLine?.(`✗ Network/deploy error: ${msg}`);
+    return { ok: false, error: msg };
   }
 }
 

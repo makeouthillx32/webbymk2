@@ -12,6 +12,7 @@ type UseGlobalAppInputParams = {
   navigateReplace: (view: PanelTab) => void;
   toggleStackFocus: () => void;
   toggleStackManager: () => void;
+  addNotification?: (msg: string, type?: "success" | "error" | "info") => void;
 };
 
 export function useGlobalAppInput({
@@ -23,10 +24,11 @@ export function useGlobalAppInput({
   navigateReplace,
   toggleStackFocus,
   toggleStackManager,
+  addNotification,
 }: UseGlobalAppInputParams) {
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
-      gracefulShutdownSync(0);
+      addNotification?.("UNAXIS stays open. Press 'q' from root view or close terminal to exit.", "info");
       return;
     }
 

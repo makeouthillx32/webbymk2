@@ -4,8 +4,7 @@ import { Header } from "./components/Header.js";
 import { Tabs } from "./components/Tabs.js";
 import { NotificationsPane } from "./components/Notifications.js";
 import { DetachedStack } from "./components/DetachedStack.js";
-
-const PANEL_TABS = ["core", "zones", "npm", "db", "infra"] as const;
+import { PANEL_TABS } from "./hooks/useAppRouter.ts";
 
 interface AppShellProps {
   view: string;

@@ -16,6 +16,7 @@ import { NPM_HOST }                           from "../../config/stack.ts";
 import { npmPing, npmGetToken }               from "./auth.ts";
 import { npmFindHost, npmUpdateHost, npmCreateHost } from "./hosts.ts";
 import { npmFindCertForDomain }               from "./certs.ts";
+import { DEFAULT_ZONE_ADVANCED_CONFIG }       from "./zone.ts";
 import type { OnLine }                        from "./types.ts";
 
 export async function npmAddDevHost(
@@ -82,7 +83,7 @@ export async function npmAddDevHost(
         hsts_enabled:            false,
         hsts_subdomains:         false,
         access_list_id:          0,
-        advanced_config:         "",
+        advanced_config:         DEFAULT_ZONE_ADVANCED_CONFIG,
         locations:               [],
       }, token);
       const certNote = cert ? `, SSL cert #${cert.id} attached` : "";
@@ -114,7 +115,7 @@ export async function npmAddDevHost(
       hsts_enabled:            false,
       hsts_subdomains:         false,
       access_list_id:          0,
-      advanced_config:         "",
+      advanced_config:         DEFAULT_ZONE_ADVANCED_CONFIG,
       locations:               [],
     }, token);
     const sslNote = cert ? `SSL via cert #${cert.id}` : `HTTP-only (no cert available)`;

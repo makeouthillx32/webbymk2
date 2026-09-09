@@ -61,6 +61,15 @@ export interface ProxyRoutes {
   zones:        Record<string, string>;
   /** Registered Supabase database instances, keyed by slug. */
   databases?:   Record<string, DatabaseRouteEntry>;
+  /**
+   * Zones explicitly taken offline via `zone off <key> "<reason>"`, keyed by
+   * zone key. proxy/server.js (a standalone Node process with no SQLite
+   * access) reads this to redirect a visitor to core with the reason instead
+   * of silently falling through to coreUpstream when a route is missing.
+   * A missing/removed route with no entry here (e.g. a crashed container)
+   * still falls through as before — this is only for deliberate kill-switch use.
+   */
+  offlineZones?: Record<string, { reason: string }>;
 }
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
@@ -112,6 +121,45 @@ export async function removeZoneRoute(
 
 export function getRoutes(): ProxyRoutes {
   return read();
+}
+
+// ── Zone kill-switch ──────────────────────────────────────────────────────────
+//
+// Deliberately separate from addZoneRoute/removeZoneRoute: those track
+// whatever container happens to be running (rewritten wholesale by
+// reconcileProxyRoutes on every TUI boot). offlineZones is operator intent —
+// "this zone is OFF, on purpose, here's why" — and must survive a reconcile
+// pass untouched, which is why reconcileProxyRoutes() below only ever
+// touches `zones`, never `offlineZones`.
+
+/** Mark a zone offline with a visitor-facing reason and reload the proxy. */
+export async function markZoneOffline(
+  key:     string,
+  reason:  string,
+  onLine?: (l: string) => void,
+): Promise<void> {
+  const routes = read();
+  routes.offlineZones = routes.offlineZones ?? {};
+  routes.offlineZones[key] = { reason };
+  write(routes);
+  await signalProxyReload();
+  onLine?.(`✓ zone marked offline: ${key} — "${reason}"`);
+}
+
+/** Clear a zone's offline mark and reload the proxy. */
+export async function clearZoneOffline(
+  key:     string,
+  onLine?: (l: string) => void,
+): Promise<void> {
+  const routes = read();
+  if (!routes.offlineZones?.[key]) {
+    onLine?.(`  "${key}" was not marked offline — nothing to clear`);
+    return;
+  }
+  delete routes.offlineZones[key];
+  write(routes);
+  await signalProxyReload();
+  onLine?.(`✓ zone offline mark cleared: ${key}`);
 }
 
 // ── Database instance routing ─────────────────────────────────────────────────

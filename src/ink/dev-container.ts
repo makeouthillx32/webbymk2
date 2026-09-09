@@ -38,6 +38,7 @@ import { addZoneRoute, removeZoneRoute } from "./proxy-config.ts";
 import { npmAddDevHost }        from "./npm-api.ts";
 import { deleteZoneNpmHost }   from "./zone/npm-cleanup.ts";
 import { DOCKER_ENV }          from "./utils/dockerEnv.ts";
+import { dockerCliHostPath }   from "./utils/dockerPath.ts";
 
 // ── Naming helpers ────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ function dockerRmForce(container: string, onLine: (l: string) => void): Promise<
  *  PROJECT_DIR — Docker Desktop's CLI handles translation automatically.
  */
 function mountSource(): string {
-  return PROJECT_DIR;
+  return dockerCliHostPath(PROJECT_DIR);
 }
 
 /**
@@ -131,11 +132,12 @@ function mountSource(): string {
  * the live bind mount, so feature edits still reach Next HMR.
  */
 function devOverlayCommand(zoneKey: string): string {
-  return `
-set -eu
+  const shopExtraDirs = zoneKey === "shop" ? " [categorySlug] products collections shop checkout '(auth-pages)'" : "";
+
+  const overlay = zoneKey === "unenter" ? "" : `
 find /app/src/app -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
-for name in api actions auth _components providers; do
+for name in api actions auth _components providers${shopExtraDirs}; do
   [ -e "/source/src/app/$name" ] || continue
   cp -a "/source/src/app/$name" "/app/src/app/$name"
 done
@@ -148,22 +150,11 @@ done
 for entry in /source/zones/${zoneKey}/src/app/* /source/zones/${zoneKey}/src/app/.[!.]* /source/zones/${zoneKey}/src/app/..?*; do
   [ -e "$entry" ] || continue
   name="\${entry##*/}"
-  # ALWAYS merge, never rm -rf a whole top-level entry first. The very first
-  # line of this script already wipes all of /app/src/app clean on every
-  # boot, so that rm -rf never bought any real freshness guarantee — its
-  # only actual effect was silently deleting whatever core had at that same
-  # top-level name (api/actions/_components/providers, or auth/*) the moment
-  # a zone ALSO had a top-level entry with that name, since core is restored
-  # first and the zone loop ran after. Confirmed live 2026-08-25 twice: once
-  # for api/ (a new zones/tank/src/app/api/.../attention/ route wiped
-  # telemetry, telemetry/live, telemetry/simulate), then again for auth/ (a
-  # pre-existing zones/tank/src/app/auth/callback/ wiped auth/sync,
-  # auth/logout, auth/logout/finish, auth/sign-in, auth/provider/[provider] —
-  # "[AuthProvider] Server session sync failed" was POST /auth/sync 404ing).
-  # This merge-always approach matches production's plain
-  # \`COPY zones/<key>/src/app/ ./src/app/\`, which merges directory trees and
-  # deletes nothing, for every top-level name uniformly — not just the ones
-  # this class of bug has been caught on so far.
+  if [ "${zoneKey}" = "shop" ]; then
+    case "$name" in
+      "[categorySlug]"|"products"|"collections"|"checkout") continue ;;
+    esac
+  fi
   if [ -d "$entry" ]; then
     mkdir -p "/app/src/app/$name"
     cp -a "$entry/." "/app/src/app/$name/"
@@ -171,7 +162,11 @@ for entry in /source/zones/${zoneKey}/src/app/* /source/zones/${zoneKey}/src/app
     cp -a "$entry" "/app/src/app/$name"
   fi
 done
+`;
 
+  return `
+set -eu
+${overlay}
 cd /app
 # .next is a Docker volume that survives restarts — it is the only compile
 # cache this container has. Wiping it on every start meant every run was a cold
@@ -248,7 +243,7 @@ export async function startDevContainer(
     "-v", `${appVolume}:/app/src/app`,
     "-v", `${nextVolume}:/app/.next`,
     // Full environment parity with production
-    ...(existsSync(envFile) ? ["--env-file", envFile] : []),
+    ...(existsSync(envFile) ? ["--env-file", dockerCliHostPath(envFile)] : []),
     // Zone identity override
     "-e", `NEXT_PUBLIC_ZONE=${zone.key}`,
     "-e", "NODE_OPTIONS=--max-old-space-size=2048",

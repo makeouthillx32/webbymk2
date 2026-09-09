@@ -46,6 +46,12 @@ export const UNAXIS_CLI_SCHEMA = {
     "builder-reset": {
       description: "Remove the unaxis-net buildx builder (recreated on next build); unsticks a zombie build.",
     },
+    clean: {
+      description: "Prune unused Docker images/stopped containers/build cache to free disk. Never touches volumes or anything a running container needs.",
+      options: {
+        "--dry-run": { type: "boolean", description: "Show what docker system df currently reports without deleting anything." }
+      }
+    },
     zones: {
       description: "List all zones managed by the control plane, including public footer tag state.",
       options: {
@@ -56,6 +62,25 @@ export const UNAXIS_CLI_SCHEMA = {
       description: "List environment mappings and domains.",
       options: {
         "--json": { type: "boolean", description: "Output as structured JSON." }
+      }
+    },
+    domain: {
+      description: "Manage provider-aware domain controllers and their zone bindings.",
+      subcommands: ["list", "add", "show", "check", "records", "capabilities", "backend", "official-inspect", "plan", "dns-plan", "plans", "plan-cancel", "plan-apply", "bind", "unbind", "remove", "help"],
+      arguments: [
+        { name: "name", type: "string", required: false },
+        { name: "zone", type: "string", required: false }
+      ],
+      options: {
+        "--provider": { type: "string", description: "Provider: dns, unstoppable, ens, or web3." },
+        "--role": { type: "string", description: "Role: primary, alias, redirect, identity, or decentralized-site." },
+        "--project": { type: "string", description: "Owning project slug." },
+        "--workspace": { type: "string", description: "Domain-controller workspace path; may be on another drive." },
+        "--owner": { type: "string", description: "Onchain owner address (metadata only)." },
+        "--chain": { type: "string", description: "Onchain network name." },
+        "--path": { type: "string", description: "Path mounted to the zone binding. Default: /." },
+        "--confirm": { type: "boolean", description: "Confirm registry removal; external records are never deleted." },
+        "--json": { type: "boolean", description: "Output structured JSON." }
       }
     },
     "env health": {
@@ -217,6 +242,16 @@ export const UNAXIS_CLI_SCHEMA = {
         { name: "action", type: "string", enum: ["public", "local", "toggle", "status"], required: false, default: "status" }
       ]
     },
+    "project changelog": {
+      description: "Per-zone changelog derived from the deploy ledger — walks consecutive pushes for a zone and lists the git commits (by subject) that landed between each, filtered to that zone's own source plus shared code. No new authoring required; sourced from existing commit messages.",
+      arguments: [
+        { name: "zone", type: "string", required: true }
+      ],
+      options: {
+        "--limit": { type: "number", description: "How many recent pushes to include. Default: 15." },
+        "--json":  { type: "boolean", description: "Emit machine-readable JSON instead of formatted lines." }
+      }
+    },
     up: {
       description: "Cold-start the platform: bring the core compose stack (db, kong, auth, app, proxy…) up, wait for db+kong health, then hydrate the control DB from unenter.db. Idempotent — THE command to run after a reboot or when everything is down.",
       options: {
@@ -228,6 +263,19 @@ export const UNAXIS_CLI_SCHEMA = {
       arguments: [
         { name: "service", type: "string", required: true }
       ]
+    },
+    stripe: {
+      description: "Inspect or switch Stripe payment lanes independently or all at once. Applies changes by force-recreating only affected services; live mode fails closed.",
+      subcommands: ["status", "set"],
+      arguments: [
+        { name: "target", type: "string", required: false, description: "shop, labs, pos, tank, or all" },
+        { name: "mode", type: "string", required: false, description: "test or live" }
+      ],
+      options: {
+        "--json": { type: "boolean", description: "With status: output structured readiness without credential values." },
+        "--confirm-live": { type: "boolean", description: "Required acknowledgement for a live-mode change." },
+        "--config-only": { type: "boolean", description: "Save .env without recreating running services." }
+      }
     },
     "db migrate-control": {
       description: "One-time import: migrate zones + environments from unenter.db (Supabase) into the local SQLite control-plane DB. Safe to re-run.",

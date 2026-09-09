@@ -11,6 +11,8 @@ import { NpmPanel } from "./panels/Npm/index.tsx";
 import { DbPanel } from "./panels/Db/index.tsx";
 import { InfraPanel } from "./panels/Infra/index.tsx";
 import { EnvPanel } from "./panels/Env/index.tsx";
+import { ServicesPanel } from "./panels/Services/index.tsx";
+import { DeploymentsPanel } from "./panels/Deployments/index.tsx";
 import { EnvDetailScreen } from "./panels/Env/EnvDetailScreen.tsx";
 import { gracefulShutdownSync } from "../utils/gracefulShutdown.js";
 import { snapshotInstance } from "./zone/snapshot.ts";
@@ -53,6 +55,9 @@ type AppRoutesProps = {
   runOpQueued: (title: string, run: (onLine: (line: string) => void) => Promise<number> | number, priority?: any) => void;
   openLogs: (zone: any) => void;
   runDevMode: (zone: any) => void;
+  runBareDevMode: (zone: any) => void;
+  rememberedZoneKey: string | null;
+  onZoneFocusChange: (key: string | null) => void;
   forceRefreshZoneList: () => void;
   checkInfra: () => void;
 };
@@ -84,6 +89,9 @@ export function AppRoutes({
   runOpQueued,
   openLogs,
   runDevMode,
+  runBareDevMode,
+  rememberedZoneKey,
+  onZoneFocusChange,
   forceRefreshZoneList,
   checkInfra,
 }: AppRoutesProps) {
@@ -94,6 +102,7 @@ export function AppRoutes({
   // ZonesView on mount to pre-select + open that zone's action panel, so
   // "go to a zone" from Welcome lands on the zone instead of core.
   const [pendingZoneKey, setPendingZoneKey] = useState<string | null>(null);
+  const [deploymentsZoneKey, setDeploymentsZoneKey] = useState<string | null>(null);
 
   const handleInstanceAction = (action: "restart" | "stop" | "delete" | "snapshot" | "verify" | "npm", inst: RuntimeInstance) => {
     if (action === "snapshot") {
@@ -151,6 +160,7 @@ export function AppRoutes({
       {view === "settings" && (
         <SettingsScreen
           zones={zones}
+          runOp={runOpQueued}
           onTokenEditStart={() => setTokenEditing(true)}
           onTokenEditEnd={() => setTokenEditing(false)}
         />
@@ -181,6 +191,9 @@ export function AppRoutes({
           runOp={runOpQueued}
           openLogs={openLogs}
           runDevMode={runDevMode}
+          runBareDevMode={runBareDevMode}
+          rememberedZoneKey={rememberedZoneKey}
+          onZoneFocusChange={onZoneFocusChange}
           addNotification={addNotification}
           onGoBack={goBack}
           onNewZone={() => navigate("wizard")}
@@ -188,6 +201,20 @@ export function AppRoutes({
           isActive={!stackFocused}
           initialZoneKey={pendingZoneKey}
           onConsumeInitialZoneKey={() => setPendingZoneKey(null)}
+          onOpenDeployments={(zk) => {
+            setDeploymentsZoneKey(zk ?? null);
+            navigate("deploys");
+          }}
+        />
+      )}
+
+      {view === "deploys" && (
+        <DeploymentsPanel
+          onGoBack={goBack}
+          runOp={runOpQueued}
+          openLogs={openLogs}
+          addNotification={addNotification}
+          filterZoneKey={deploymentsZoneKey}
         />
       )}
 
@@ -302,6 +329,14 @@ export function AppRoutes({
           envStale={envStale}
           lastEnvError={lastEnvError}
           envDataAge={envDataAge}
+        />
+      )}
+
+      {view === "services" && (
+        <ServicesPanel
+          onGoBack={goBack}
+          activeEnv={activeEnv}
+          addNotification={addNotification}
         />
       )}
 

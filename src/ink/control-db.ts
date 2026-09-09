@@ -20,6 +20,8 @@ import { existsSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
 import type { Zone } from "../config/zones.ts";
+import { PROJECT_DIR } from "../config/zones.ts";
+import { spawnSync } from "child_process";
 import type {
   UnaxisEnvironment,
   EnvironmentType,
@@ -32,6 +34,14 @@ import type {
 function resolveDbPath(): string {
   if (process.env["UNAXIS_CONTROL_DB"]) {
     return process.env["UNAXIS_CONTROL_DB"];
+  }
+  // When running inside WSL, share the Windows host control.db if it exists so Windows & WSL never drift
+  if (process.platform === "linux" && (process.env["WSL_DISTRO_NAME"] || existsSync("/mnt/c/Users"))) {
+    const user = process.env["USER"] || "skill";
+    const winDb = `/mnt/c/Users/${user}/AppData/Roaming/unaxis/control.db`;
+    if (existsSync(winDb)) {
+      return winDb;
+    }
   }
   const appData = process.env["APPDATA"] ?? join(homedir(), ".config");
   return join(appData, "unaxis", "control.db");
@@ -184,6 +194,134 @@ const MIGRATIONS: string[] = [
   // zone is built and served by an external Vercel project watching the
   // same repo. See zone-build.ts gitCommitAndPushZone().
   `ALTER TABLE zones ADD COLUMN hosting TEXT NOT NULL DEFAULT 'docker';`,
+
+  // 004 — domain controllers. Domains are provider-owned resources that can
+  // bind to zones without forcing a project, workspace, or runtime clone.
+  `CREATE TABLE IF NOT EXISTS managed_domains (
+    id              TEXT NOT NULL PRIMARY KEY,
+    project_id      TEXT NOT NULL DEFAULT '',
+    name            TEXT NOT NULL UNIQUE,
+    provider        TEXT NOT NULL DEFAULT 'dns',
+    role            TEXT NOT NULL DEFAULT 'primary',
+    owner_address   TEXT NOT NULL DEFAULT '',
+    chain           TEXT NOT NULL DEFAULT '',
+    config          TEXT NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL DEFAULT 'unchecked',
+    status_detail   TEXT NOT NULL DEFAULT '',
+    last_checked_at TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS domain_zone_bindings (
+    domain_id  TEXT NOT NULL,
+    zone_key   TEXT NOT NULL,
+    path       TEXT NOT NULL DEFAULT '/',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (domain_id, zone_key, path),
+    FOREIGN KEY (domain_id) REFERENCES managed_domains(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS managed_domains_project_idx
+    ON managed_domains(project_id);
+  CREATE INDEX IF NOT EXISTS domain_zone_bindings_zone_idx
+    ON domain_zone_bindings(zone_key);`,
+
+  // 005 — staged domain mutations. Plans are inert until a provider-specific
+  // signer/executor is configured; recording intent never changes DNS/chain.
+  `CREATE TABLE IF NOT EXISTS domain_change_plans (
+    id          TEXT NOT NULL PRIMARY KEY,
+    domain_id   TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'planned',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (domain_id) REFERENCES managed_domains(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS domain_change_plans_domain_idx
+    ON domain_change_plans(domain_id, status);`,
+
+  // 006 — provider execution result/audit text for staged domain changes.
+  `ALTER TABLE domain_change_plans ADD COLUMN result TEXT NOT NULL DEFAULT '';`,
+
+  // 007 — projects own deployable resources. Keep zones and runtime-instance
+  // registries intact; this binding layer lets one project aggregate a core
+  // frontend, isolated Supabase, and supporting zones without cloning either
+  // lifecycle system.
+  `CREATE TABLE IF NOT EXISTS project_resources (
+    project_id   TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_key  TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'primary',
+    config        TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_id, resource_type, resource_key),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS project_resources_lookup_idx
+    ON project_resources(resource_type, resource_key);`,
+
+  // 008 — zone kill-switch reason. dbDisableZone() already stops a zone
+  // from being routed to (reconcileProxyRoutes excludes disabled zones from
+  // routes.json), but a visitor hitting the dead route today just silently
+  // gets the CORE site with no explanation. This column carries the "why"
+  // through to proxy-config.ts's routes.json so the standalone proxy/
+  // server.js process (which never touches SQLite) can redirect with a
+  // reason instead of falling through to coreUpstream.
+  `ALTER TABLE zones ADD COLUMN offline_reason TEXT NOT NULL DEFAULT '';`,
+
+  // 009 — Platform services. Tracks background infrastructure and platform
+  // services across environments (e.g. Mail/Poste on L0V3, SRT media relay
+  // on POWER, Nginx Proxy Manager, UNAXIS Agent) that support platform processes.
+  `CREATE TABLE IF NOT EXISTS services (
+    id             TEXT PRIMARY KEY,
+    key            TEXT NOT NULL UNIQUE,
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    environment_id TEXT,
+    service_type   TEXT NOT NULL DEFAULT 'custom',
+    container      TEXT NOT NULL DEFAULT '',
+    host           TEXT NOT NULL DEFAULT '',
+    port           INTEGER NOT NULL DEFAULT 0,
+    admin_port     INTEGER NOT NULL DEFAULT 0,
+    admin_url      TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'unknown',
+    config         TEXT NOT NULL DEFAULT '{}',
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS services_env_idx ON services(environment_id);`,
+
+  // 010 — deployments table for Vercel/GitHub-style build & deploy history.
+  // Tracks build duration, status (building, ready, error, cancelled),
+  // git commit sha, message, author, branch, image, environment,
+  // duration_ms, and whether this deployment is the currently active production deployment.
+  `CREATE TABLE IF NOT EXISTS deployments (
+    id             TEXT NOT NULL PRIMARY KEY,
+    zone_key       TEXT NOT NULL,
+    environment_id TEXT,
+    status         TEXT NOT NULL DEFAULT 'building',
+    target         TEXT NOT NULL DEFAULT 'production',
+    commit_sha     TEXT NOT NULL DEFAULT '',
+    commit_msg     TEXT NOT NULL DEFAULT '',
+    branch         TEXT NOT NULL DEFAULT 'main',
+    author         TEXT NOT NULL DEFAULT '',
+    image          TEXT NOT NULL DEFAULT '',
+    image_digest   TEXT NOT NULL DEFAULT '',
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    is_production  INTEGER NOT NULL DEFAULT 0,
+    error_message  TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS deployments_zone_idx ON deployments(zone_key, created_at DESC);
+  CREATE INDEX IF NOT EXISTS deployments_status_idx ON deployments(status);
+  CREATE INDEX IF NOT EXISTS deployments_prod_idx ON deployments(zone_key, is_production);`,
 ];
 
 function runMigrations(db: Database): void {
@@ -363,6 +501,179 @@ export interface LedgerEntry {
   snapshotRef: string; createdAt?: string;
 }
 
+export type ProjectResourceType = "zone" | "database";
+
+export interface ProjectResource {
+  projectId: string;
+  resourceType: ProjectResourceType;
+  resourceKey: string;
+  role: string;
+  config: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type DomainProvider = "dns" | "unstoppable" | "ens" | "web3";
+export type DomainRole = "primary" | "alias" | "redirect" | "identity" | "decentralized-site";
+
+export interface ManagedDomain {
+  id: string; projectId: string; name: string;
+  provider: DomainProvider; role: DomainRole;
+  ownerAddress: string; chain: string;
+  config: Record<string, unknown>;
+  status: string; statusDetail: string;
+  lastCheckedAt: string | null;
+  createdAt?: string; updatedAt?: string;
+}
+
+export interface DomainZoneBinding {
+  domainId: string; zoneKey: string; path: string; createdAt?: string;
+}
+
+export interface DomainChangePlan {
+  id: string; domainId: string; kind: "redirect" | "ipfs" | "dns-record";
+  value: string; status: "planned" | "cancelled" | "applied" | "failed";
+  result: string;
+  createdAt?: string; updatedAt?: string;
+}
+
+function rowToManagedDomain(r: any): ManagedDomain {
+  let config: Record<string, unknown> = {};
+  try { config = JSON.parse(r.config); } catch { /* keep {} */ }
+  return {
+    id: r.id, projectId: r.project_id, name: r.name,
+    provider: r.provider as DomainProvider, role: r.role as DomainRole,
+    ownerAddress: r.owner_address, chain: r.chain, config,
+    status: r.status, statusDetail: r.status_detail,
+    lastCheckedAt: r.last_checked_at,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+// ── Domain controllers ───────────────────────────────────────────────────────
+export function dbUpsertManagedDomain(d: {
+  id?: string; projectId?: string; name: string;
+  provider?: DomainProvider; role?: DomainRole;
+  ownerAddress?: string; chain?: string;
+  config?: Record<string, unknown>;
+}): string {
+  const db = getControlDb();
+  const id = d.id ?? newUuid();
+  db.run(
+    `INSERT INTO managed_domains
+       (id, project_id, name, provider, role, owner_address, chain, config, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(name) DO UPDATE SET
+       project_id = excluded.project_id, provider = excluded.provider,
+       role = excluded.role, owner_address = excluded.owner_address,
+       chain = excluded.chain, config = excluded.config,
+       updated_at = datetime('now')`,
+    [id, d.projectId ?? "", d.name.toLowerCase(), d.provider ?? "dns",
+     d.role ?? "primary", d.ownerAddress ?? "", d.chain ?? "",
+     JSON.stringify(d.config ?? {})],
+  );
+  const row = db.query("SELECT id FROM managed_domains WHERE name = ?").get(d.name.toLowerCase()) as { id: string };
+  return row.id;
+}
+
+export function dbGetManagedDomains(projectId?: string): ManagedDomain[] {
+  const db = getControlDb();
+  const rows = projectId
+    ? db.query("SELECT * FROM managed_domains WHERE project_id = ? ORDER BY name").all(projectId)
+    : db.query("SELECT * FROM managed_domains ORDER BY name").all();
+  return (rows as any[]).map(rowToManagedDomain);
+}
+
+export function dbGetManagedDomain(nameOrId: string): ManagedDomain | null {
+  const db = getControlDb();
+  const row = db.query("SELECT * FROM managed_domains WHERE name = ? OR id = ?").get(nameOrId.toLowerCase(), nameOrId) as any;
+  return row ? rowToManagedDomain(row) : null;
+}
+
+export function dbDeleteManagedDomain(nameOrId: string): boolean {
+  const domain = dbGetManagedDomain(nameOrId);
+  if (!domain) return false;
+  const db = getControlDb();
+  db.run("DELETE FROM managed_domains WHERE id = ?", [domain.id]);
+  return true;
+}
+
+export function dbSetManagedDomainHealth(id: string, status: string, detail: string): void {
+  getControlDb().run(
+    `UPDATE managed_domains SET status = ?, status_detail = ?,
+       last_checked_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+    [status, detail, id],
+  );
+}
+
+export function dbBindDomainZone(domainId: string, zoneKey: string, path = "/"): void {
+  getControlDb().run(
+    `INSERT OR IGNORE INTO domain_zone_bindings (domain_id, zone_key, path) VALUES (?, ?, ?)`,
+    [domainId, zoneKey, path],
+  );
+}
+
+export function dbUnbindDomainZone(domainId: string, zoneKey: string, path = "/"): boolean {
+  const db = getControlDb();
+  const before = (db.query("SELECT COUNT(*) AS n FROM domain_zone_bindings WHERE domain_id = ? AND zone_key = ? AND path = ?")
+    .get(domainId, zoneKey, path) as { n: number }).n;
+  db.run("DELETE FROM domain_zone_bindings WHERE domain_id = ? AND zone_key = ? AND path = ?", [domainId, zoneKey, path]);
+  return before > 0;
+}
+
+export function dbGetDomainZoneBindings(domainId?: string): DomainZoneBinding[] {
+  const db = getControlDb();
+  const rows = domainId
+    ? db.query("SELECT * FROM domain_zone_bindings WHERE domain_id = ? ORDER BY path, zone_key").all(domainId)
+    : db.query("SELECT * FROM domain_zone_bindings ORDER BY domain_id, path, zone_key").all();
+  return (rows as any[]).map((r) => ({
+    domainId: r.domain_id, zoneKey: r.zone_key, path: r.path, createdAt: r.created_at,
+  }));
+}
+
+export function dbCreateDomainChangePlan(domainId: string, kind: "redirect" | "ipfs" | "dns-record", value: string): string {
+  const id = newUuid();
+  getControlDb().run(
+    `INSERT INTO domain_change_plans (id, domain_id, kind, value) VALUES (?, ?, ?, ?)`,
+    [id, domainId, kind, value],
+  );
+  return id;
+}
+
+export function dbGetDomainChangePlans(domainId?: string): DomainChangePlan[] {
+  const db = getControlDb();
+  const rows = domainId
+    ? db.query("SELECT * FROM domain_change_plans WHERE domain_id = ? ORDER BY created_at DESC").all(domainId)
+    : db.query("SELECT * FROM domain_change_plans ORDER BY created_at DESC").all();
+  return (rows as any[]).map((r) => ({
+    id: r.id, domainId: r.domain_id, kind: r.kind, value: r.value,
+    status: r.status, result: r.result ?? "", createdAt: r.created_at, updatedAt: r.updated_at,
+  }));
+}
+
+export function dbCancelDomainChangePlan(id: string): boolean {
+  const db = getControlDb();
+  const row = db.query("SELECT status FROM domain_change_plans WHERE id = ?").get(id) as { status: string } | undefined;
+  if (!row || row.status !== "planned") return false;
+  db.run("UPDATE domain_change_plans SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?", [id]);
+  return true;
+}
+
+export function dbGetDomainChangePlan(id: string): DomainChangePlan | null {
+  const row = getControlDb().query("SELECT * FROM domain_change_plans WHERE id = ?").get(id) as any;
+  return row ? {
+    id: row.id, domainId: row.domain_id, kind: row.kind, value: row.value,
+    status: row.status, result: row.result ?? "", createdAt: row.created_at, updatedAt: row.updated_at,
+  } : null;
+}
+
+export function dbSetDomainChangePlanResult(id: string, status: "applied" | "failed", result: string): void {
+  getControlDb().run(
+    "UPDATE domain_change_plans SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?",
+    [status, result, id],
+  );
+}
+
 // ── Projects ──────────────────────────────────────────────────────────────────
 export function dbUpsertProject(p: {
   id?: string; slug: string; name: string;
@@ -448,6 +759,51 @@ export function dbGetWorkspaces(projectId?: string): Workspace[] {
   return (rows as any[]).map(rowToWorkspace);
 }
 
+// ── Project resources ────────────────────────────────────────────────────────
+export function dbBindProjectResource(r: {
+  projectId: string;
+  resourceType: ProjectResourceType;
+  resourceKey: string;
+  role?: string;
+  config?: Record<string, unknown>;
+}): void {
+  getControlDb().run(
+    `INSERT INTO project_resources (project_id, resource_type, resource_key, role, config, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(project_id, resource_type, resource_key) DO UPDATE SET
+       role = excluded.role, config = excluded.config, updated_at = datetime('now')`,
+    [r.projectId, r.resourceType, r.resourceKey, r.role ?? "primary", JSON.stringify(r.config ?? {})],
+  );
+}
+
+export function dbGetProjectResources(projectId?: string): ProjectResource[] {
+  const rows = (projectId
+    ? getControlDb().query("SELECT * FROM project_resources WHERE project_id = ? ORDER BY resource_type, resource_key").all(projectId)
+    : getControlDb().query("SELECT * FROM project_resources ORDER BY project_id, resource_type, resource_key").all()) as any[];
+  return rows.map((r) => {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(r.config); } catch { /* keep {} */ }
+    return {
+      projectId: r.project_id,
+      resourceType: r.resource_type as ProjectResourceType,
+      resourceKey: r.resource_key,
+      role: r.role,
+      config,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  });
+}
+
+export function dbUnbindProjectResource(projectId: string, resourceType: ProjectResourceType, resourceKey: string): boolean {
+  const db = getControlDb();
+  const result = db.run(
+    "DELETE FROM project_resources WHERE project_id = ? AND resource_type = ? AND resource_key = ?",
+    [projectId, resourceType, resourceKey],
+  );
+  return result.changes > 0;
+}
+
 // ── Deploy ledger ─────────────────────────────────────────────────────────────
 export function dbRecordLedger(e: {
   projectId?: string; workspaceId?: string | null; zoneKey: string;
@@ -482,6 +838,15 @@ export function dbGetLedger(opts: { zoneKey?: string; limit?: number } = {}): Le
     ? db.query("SELECT * FROM deploy_ledger WHERE zone_key = ? ORDER BY created_at DESC LIMIT ?").all(opts.zoneKey, limit)
     : db.query("SELECT * FROM deploy_ledger ORDER BY created_at DESC LIMIT ?").all(limit);
   return (rows as any[]).map(rowToLedger);
+}
+
+/** Total ledger rows ever recorded for a zone — used to derive a stable,
+ *  monotonically increasing "build number" for a limited/paged ledger window
+ *  without needing a dedicated version column. */
+export function dbCountLedger(zoneKey: string): number {
+  const db = getControlDb();
+  const row = db.query("SELECT COUNT(*) as n FROM deploy_ledger WHERE zone_key = ?").get(zoneKey) as { n: number } | undefined;
+  return row?.n ?? 0;
 }
 
 // ── Snapshots (model only — provider-driven execution is the next slice) ───────
@@ -599,6 +964,42 @@ export function dbEnableZone(key: string): void {
     "UPDATE zones SET enabled = 1, updated_at = datetime('now') WHERE key = ?",
     [key],
   );
+}
+
+/**
+ * Zone kill-switch reason (migration 008) — deliberately independent of
+ * enabled/dbDisableZone. `zone off` is a fast, purely-additive panic toggle:
+ * container keeps running, route stays registered, proxy/server.js just
+ * intercepts and redirects. It must NOT touch `enabled`, which cascades
+ * through reconcileProxyRoutes() into actually tearing the route down —
+ * the opposite of "instantly reversible." This is audit/display state only;
+ * the actual redirect behavior is driven by routes.json's offlineZones
+ * (see markZoneOffline() in proxy-config.ts), not by this column directly.
+ */
+export function dbSetZoneOfflineReason(key: string, reason: string): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET offline_reason = ?, updated_at = datetime('now') WHERE key = ?",
+    [reason, key],
+  );
+}
+
+/** Clear a zone's offline reason (does not touch `enabled`). */
+export function dbClearZoneOfflineReason(key: string): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET offline_reason = '', updated_at = datetime('now') WHERE key = ?",
+    [key],
+  );
+}
+
+/** Read a zone's current offline reason (empty string if none). */
+export function dbGetZoneOfflineReason(key: string): string {
+  const db = getControlDb();
+  const row = db
+    .query("SELECT offline_reason FROM zones WHERE key = ?")
+    .get(key) as { offline_reason: string } | null;
+  return row?.offline_reason ?? "";
 }
 
 /** Set a zone's hosting mode. 'vercel' zones skip Docker entirely on build/rebuild. */
@@ -821,6 +1222,580 @@ export function dbDeduplicateEnvironments(): number {
   }
 
   return removed;
+}
+
+// ── Services API ──────────────────────────────────────────────────────────────
+
+export interface UnaxisService {
+  id:             string;
+  key:            string;
+  name:           string;
+  description:    string;
+  environmentId:  string | null;
+  serviceType:    "mail" | "media" | "gateway" | "agent" | "utility" | "custom";
+  container:      string;
+  host:           string;
+  port:           number;
+  adminPort:      number;
+  adminUrl:       string;
+  status:         string;
+  config:         Record<string, any>;
+  enabled:        boolean;
+  sortOrder:      number;
+  createdAt:      string;
+  updatedAt:      string;
+}
+
+interface ServiceRow {
+  id:             string;
+  key:            string;
+  name:           string;
+  description:    string;
+  environment_id: string | null;
+  service_type:   string;
+  container:      string;
+  host:           string;
+  port:           number;
+  admin_port:     number;
+  admin_url:      string;
+  status:         string;
+  config:         string;
+  enabled:        number;
+  sort_order:     number;
+  created_at:     string;
+  updated_at:     string;
+}
+
+function rowToService(r: ServiceRow): UnaxisService {
+  let config: Record<string, any> = {};
+  try { config = JSON.parse(r.config); } catch {}
+  return {
+    id:            r.id,
+    key:           r.key,
+    name:          r.name,
+    description:   r.description,
+    environmentId: r.environment_id,
+    serviceType:   r.service_type as any,
+    container:     r.container,
+    host:          r.host,
+    port:          r.port,
+    adminPort:     r.admin_port,
+    adminUrl:      r.admin_url,
+    status:        r.status,
+    config,
+    enabled:       r.enabled === 1,
+    sortOrder:     r.sort_order,
+    createdAt:     r.created_at,
+    updatedAt:     r.updated_at,
+  };
+}
+
+export function dbGetServices(): UnaxisService[] {
+  const db = getControlDb();
+  dbSeedDefaultServices();
+  const rows = db.query(
+    "SELECT * FROM services WHERE enabled = 1 ORDER BY sort_order ASC, name ASC"
+  ).all() as ServiceRow[];
+  return rows.map(rowToService);
+}
+
+export function dbGetAllServices(): UnaxisService[] {
+  const db = getControlDb();
+  dbSeedDefaultServices();
+  const rows = db.query(
+    "SELECT * FROM services ORDER BY sort_order ASC, name ASC"
+  ).all() as ServiceRow[];
+  return rows.map(rowToService);
+}
+
+export function dbGetServiceByKey(key: string): UnaxisService | null {
+  const db = getControlDb();
+  const row = db.query(
+    "SELECT * FROM services WHERE key = ?"
+  ).get(key) as ServiceRow | undefined;
+  return row ? rowToService(row) : null;
+}
+
+export function dbUpsertService(svc: {
+  id?:            string;
+  key:            string;
+  name:           string;
+  description?:   string;
+  environmentId?: string | null;
+  serviceType?:   string;
+  container?:     string;
+  host?:          string;
+  port?:          number;
+  adminPort?:     number;
+  adminUrl?:      string;
+  status?:        string;
+  config?:        Record<string, any>;
+  enabled?:       boolean;
+  sortOrder?:     number;
+}): void {
+  const db = getControlDb();
+  const id = svc.id ?? (db.query("SELECT id FROM services WHERE key = ?").get(svc.key) as { id: string } | undefined)?.id ?? crypto.randomUUID();
+  db.run(
+    `INSERT INTO services (
+      id, key, name, description, environment_id, service_type,
+      container, host, port, admin_port, admin_url, status, config,
+      enabled, sort_order, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET
+      name           = excluded.name,
+      description    = excluded.description,
+      environment_id = excluded.environment_id,
+      service_type   = excluded.service_type,
+      container      = excluded.container,
+      host           = excluded.host,
+      port           = excluded.port,
+      admin_port     = excluded.admin_port,
+      admin_url      = excluded.admin_url,
+      status         = excluded.status,
+      config         = excluded.config,
+      enabled        = excluded.enabled,
+      sort_order     = excluded.sort_order,
+      updated_at     = datetime('now')`,
+    [
+      id,
+      svc.key,
+      svc.name,
+      svc.description ?? "",
+      svc.environmentId ?? null,
+      svc.serviceType ?? "custom",
+      svc.container ?? "",
+      svc.host ?? "",
+      svc.port ?? 0,
+      svc.adminPort ?? 0,
+      svc.adminUrl ?? "",
+      svc.status ?? "unknown",
+      JSON.stringify(svc.config ?? {}),
+      svc.enabled === false ? 0 : 1,
+      svc.sortOrder ?? 0,
+    ]
+  );
+}
+
+export function dbDeleteService(key: string): void {
+  const db = getControlDb();
+  db.run("DELETE FROM services WHERE key = ?", [key]);
+}
+
+export function dbSeedDefaultServices(): void {
+  const db = getControlDb();
+  const count = (db.query("SELECT COUNT(*) as n FROM services").get() as { n: number }).n;
+  if (count > 0) return;
+
+  const envs = dbGetEnvironments();
+  const l0v3 = envs.find((e) => e.name.toUpperCase().includes("L0V3") || e.name.toUpperCase().includes("LOVE"));
+  const power = envs.find((e) => e.name.toUpperCase().includes("POWER") || e.type === "local-docker");
+
+  const l0v3Id = l0v3?.id ?? null;
+  const powerId = power?.id ?? null;
+
+  const defaults = [
+    {
+      key: "mail",
+      name: "Poste.io Mail Server",
+      description: "SMTP, IMAP, POP3 and Webmail hosting for unenter domains",
+      environmentId: l0v3Id,
+      serviceType: "mail",
+      container: "poste",
+      host: l0v3?.agentUrl ? new URL(l0v3.agentUrl).hostname : "192.168.50.75",
+      port: 25,
+      adminPort: 8082,
+      adminUrl: "https://mail.unenter.live",
+      status: "running",
+      sortOrder: 1,
+    },
+    {
+      key: "media",
+      name: "Unenter Media CDN",
+      description: "MediaMTX low-latency WebRTC (WHEP), HLS, and RTMP/SRT streaming gateway",
+      environmentId: powerId,
+      serviceType: "media",
+      container: "unt_mediamtx",
+      host: "192.168.50.204",
+      port: 1935,
+      adminPort: 8889,
+      adminUrl: "https://media.unenter.live",
+      status: "running",
+      sortOrder: 2,
+    },
+  ];
+
+  for (const s of defaults) {
+    dbUpsertService(s);
+  }
+}
+
+// ── Deployments API ───────────────────────────────────────────────────────────
+
+export type DeploymentStatus = "building" | "ready" | "error" | "cancelled";
+export type DeploymentTarget = "production" | "preview";
+
+export interface DeploymentRecord {
+  id:            string;
+  zoneKey:       string;
+  environmentId: string | null;
+  status:        DeploymentStatus;
+  target:        DeploymentTarget;
+  commitSha:     string;
+  commitMsg:     string;
+  branch:        string;
+  author:        string;
+  image:         string;
+  imageDigest:   string;
+  durationMs:    number;
+  isProduction:  boolean;
+  errorMessage:  string;
+  createdAt:     string;
+  completedAt:   string | null;
+}
+
+interface DeploymentRow {
+  id:             string;
+  zone_key:       string;
+  environment_id: string | null;
+  status:         string;
+  target:         string;
+  commit_sha:     string;
+  commit_msg:     string;
+  branch:         string;
+  author:         string;
+  image:          string;
+  image_digest:   string;
+  duration_ms:    number;
+  is_production:  number;
+  error_message:  string;
+  created_at:     string;
+  completed_at:   string | null;
+}
+
+function rowToDeployment(r: DeploymentRow): DeploymentRecord {
+  return {
+    id:            r.id,
+    zoneKey:       r.zone_key,
+    environmentId: r.environment_id,
+    status:        (r.status as DeploymentStatus) || "ready",
+    target:        (r.target as DeploymentTarget) || "production",
+    commitSha:     r.commit_sha || "",
+    commitMsg:     r.commit_msg || "",
+    branch:        r.branch || "main",
+    author:        r.author || "",
+    image:         r.image || "",
+    imageDigest:   r.image_digest || "",
+    durationMs:    r.duration_ms || 0,
+    isProduction:  r.is_production === 1,
+    errorMessage:  r.error_message || "",
+    createdAt:     r.created_at,
+    completedAt:   r.completed_at,
+  };
+}
+
+export function dbCreateDeployment(d: {
+  id?:            string;
+  zoneKey:        string;
+  environmentId?: string | null;
+  status?:        DeploymentStatus;
+  target?:        DeploymentTarget;
+  commitSha?:     string;
+  commitMsg?:     string;
+  branch?:        string;
+  author?:        string;
+  image?:         string;
+  imageDigest?:   string;
+  durationMs?:    number;
+  isProduction?:  boolean;
+  errorMessage?:  string;
+  completedAt?:   string | null;
+}): DeploymentRecord {
+  const db = getControlDb();
+  const id = d.id ?? newUuid();
+  const status = d.status ?? "building";
+  const target = d.target ?? "production";
+  const isProd = d.isProduction ? 1 : 0;
+
+  db.run(
+    `INSERT INTO deployments (
+      id, zone_key, environment_id, status, target, commit_sha, commit_msg,
+      branch, author, image, image_digest, duration_ms, is_production,
+      error_message, created_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
+    [
+      id,
+      d.zoneKey,
+      d.environmentId ?? null,
+      status,
+      target,
+      d.commitSha ?? "",
+      d.commitMsg ?? "",
+      d.branch ?? "main",
+      d.author ?? "",
+      d.image ?? "",
+      d.imageDigest ?? "",
+      d.durationMs ?? 0,
+      isProd,
+      d.errorMessage ?? "",
+      d.completedAt ?? null,
+    ],
+  );
+
+  const row = db.query("SELECT * FROM deployments WHERE id = ?").get(id) as DeploymentRow;
+  return rowToDeployment(row);
+}
+
+export function dbUpdateDeployment(id: string, updates: Partial<{
+  status:       DeploymentStatus;
+  target:       DeploymentTarget;
+  durationMs:   number;
+  isProduction: boolean;
+  errorMessage: string;
+  imageDigest:  string;
+  completedAt:  string | null;
+}>): void {
+  const db = getControlDb();
+  const sets: string[] = [];
+  const args: any[] = [];
+
+  if (updates.status !== undefined) {
+    sets.push("status = ?");
+    args.push(updates.status);
+  }
+  if (updates.target !== undefined) {
+    sets.push("target = ?");
+    args.push(updates.target);
+  }
+  if (updates.durationMs !== undefined) {
+    sets.push("duration_ms = ?");
+    args.push(updates.durationMs);
+  }
+  if (updates.isProduction !== undefined) {
+    sets.push("is_production = ?");
+    args.push(updates.isProduction ? 1 : 0);
+  }
+  if (updates.errorMessage !== undefined) {
+    sets.push("error_message = ?");
+    args.push(updates.errorMessage);
+  }
+  if (updates.imageDigest !== undefined) {
+    sets.push("image_digest = ?");
+    args.push(updates.imageDigest);
+  }
+  if (updates.completedAt !== undefined) {
+    sets.push("completed_at = ?");
+    args.push(updates.completedAt);
+  }
+
+  if (sets.length === 0) return;
+  args.push(id);
+  db.run(`UPDATE deployments SET ${sets.join(", ")} WHERE id = ?`, args);
+}
+
+export function dbPromoteDeploymentToProduction(id: string, zoneKey: string): void {
+  const db = getControlDb();
+  // Clear other production flags for this zone
+  db.run("UPDATE deployments SET is_production = 0 WHERE zone_key = ?", [zoneKey]);
+  // Set this deployment as active production
+  db.run("UPDATE deployments SET is_production = 1, target = 'production' WHERE id = ?", [id]);
+}
+
+export function dbGetDeployments(opts: {
+  zoneKey?: string;
+  status?: string;
+  target?: string;
+  limit?: number;
+} = {}): DeploymentRecord[] {
+  const db = getControlDb();
+  dbSeedInitialDeployments();
+
+  const where: string[] = [];
+  const args: any[] = [];
+
+  if (opts.zoneKey && opts.zoneKey !== "all") {
+    where.push("zone_key = ?");
+    args.push(opts.zoneKey);
+  }
+  if (opts.status && opts.status !== "all") {
+    where.push("status = ?");
+    args.push(opts.status);
+  }
+  if (opts.target && opts.target !== "all") {
+    where.push("target = ?");
+    args.push(opts.target);
+  }
+
+  const limit = opts.limit ?? 50;
+  args.push(limit);
+
+  const sql = `SELECT * FROM deployments ${where.length > 0 ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT ?`;
+  const rows = db.query(sql).all(...args) as DeploymentRow[];
+  return rows.map(rowToDeployment);
+}
+
+export function dbGetActiveProductionDeployment(zoneKey: string): DeploymentRecord | null {
+  const db = getControlDb();
+  dbSeedInitialDeployments();
+  const row = db.query("SELECT * FROM deployments WHERE zone_key = ? AND is_production = 1 ORDER BY created_at DESC LIMIT 1").get(zoneKey) as DeploymentRow | undefined;
+  return row ? rowToDeployment(row) : null;
+}
+
+export function dbSeedInitialDeployments(): void {
+  const db = getControlDb();
+  const count = (db.query("SELECT COUNT(*) as n FROM deployments").get() as { n: number }).n;
+  if (count > 0) return;
+
+  // Query git log for real recent commits
+  let commits: Array<{ sha: string; author: string; msg: string; date: string }> = [];
+  try {
+    const res = spawnSync("git", ["log", "-n", "20", "--pretty=format:%h|%an|%s|%ad", "--date=iso"], {
+      cwd: PROJECT_DIR,
+      encoding: "utf-8",
+    });
+    if (res.status === 0 && res.stdout) {
+      commits = res.stdout.split(/\r?\n/).filter(Boolean).map((line) => {
+        const parts = line.split("|");
+        return {
+          sha: parts[0] || "",
+          author: parts[1] || "makeouthillx32",
+          msg: parts[2] || "",
+          date: parts[3] || new Date().toISOString(),
+        };
+      });
+    }
+  } catch {}
+
+  const defaultAuthor = "makeouthillx32";
+  const now = Date.now();
+
+  // If git log was empty or failed, fallback to canonical commits
+  if (commits.length === 0) {
+    commits = [
+      { sha: "9dbbc94", author: defaultAuthor, msg: "perf(build): make generateStaticParams zone-aware", date: new Date(now - 120_000).toISOString() },
+      { sha: "b3bf5d7", author: defaultAuthor, msg: "Merge branch 'feat/cli-tui-reuse'", date: new Date(now - 86400_000).toISOString() },
+      { sha: "d2a1b8a", author: defaultAuthor, msg: "fix(cli): resolve credential helper on Windows", date: new Date(now - 87000_000).toISOString() },
+      { sha: "a4b0aaf", author: defaultAuthor, msg: "Implement code changes to enhance functionality", date: new Date(now - 90000_000).toISOString() },
+      { sha: "80b8e5f", author: defaultAuthor, msg: "feat(zones): add test12 and test14 zones with initial layout", date: new Date(now - 95000_000).toISOString() },
+      { sha: "236c125", author: defaultAuthor, msg: "chore(status): sync zone source for Vercel build", date: new Date(now - 172800_000).toISOString() },
+      { sha: "c68e2aa", author: defaultAuthor, msg: "chore(status): sync zone source", date: new Date(now - 173000_000).toISOString() },
+      { sha: "2bed692", author: defaultAuthor, msg: "fix(status): log fetch failure retry handler", date: new Date(now - 250000_000).toISOString() },
+    ];
+  }
+
+  // Pre-seed realistic deployment history matching user's exact dashboard view
+  // 1. Core/unenter - latest production
+  dbCreateDeployment({
+    zoneKey: "unenter",
+    status: "ready",
+    target: "production",
+    isProduction: true,
+    commitSha: commits[0]?.sha || "9dbbc94",
+    commitMsg: commits[0]?.msg || "perf(build): optimize landing static bundles",
+    branch: "main",
+    author: commits[0]?.author || defaultAuthor,
+    durationMs: 25400,
+    image: "ghcr.io/makeouthillx32/unenter-core:latest",
+  });
+
+  // 2. Blog zone - current production (b3bf5d7)
+  const blogProd = dbCreateDeployment({
+    zoneKey: "blog",
+    status: "ready",
+    target: "production",
+    isProduction: true,
+    commitSha: "b3bf5d7",
+    commitMsg: "Merge branch 'feat/cli-tui-reuse'",
+    branch: "main",
+    author: defaultAuthor,
+    durationMs: 25000,
+    image: "ghcr.io/makeouthillx32/unenter-blog:latest",
+  });
+
+  // 3. Blog zone - preview build (d2a1b8a)
+  dbCreateDeployment({
+    zoneKey: "blog",
+    status: "ready",
+    target: "preview",
+    isProduction: false,
+    commitSha: "d2a1b8a",
+    commitMsg: "feat/cli-tui-reuse: responsive preview",
+    branch: "feat/cli-tui-reuse",
+    author: defaultAuthor,
+    durationMs: 26000,
+    image: "ghcr.io/makeouthillx32/unenter-blog:feat-cli",
+  });
+
+  // 4. Shop zone - production
+  dbCreateDeployment({
+    zoneKey: "shop",
+    status: "ready",
+    target: "production",
+    isProduction: true,
+    commitSha: "a4b0aaf",
+    commitMsg: "Implement code changes to enhance functionality and improve performance",
+    branch: "main",
+    author: defaultAuthor,
+    durationMs: 25000,
+    image: "ghcr.io/makeouthillx32/unenter-shop:latest",
+  });
+
+  // 5. Tank zone - preview
+  dbCreateDeployment({
+    zoneKey: "tank",
+    status: "ready",
+    target: "preview",
+    isProduction: false,
+    commitSha: "80b8e5f",
+    commitMsg: "feat(zones): add test12 and test14 zones with initial configuration and layout",
+    branch: "feat/tank-v2",
+    author: defaultAuthor,
+    durationMs: 26000,
+    image: "ghcr.io/makeouthillx32/unenter-tank:test",
+  });
+
+  // 6. Status zone - Prior production (236c125)
+  dbCreateDeployment({
+    zoneKey: "status",
+    status: "ready",
+    target: "production",
+    isProduction: true, // PRIOR SUCCESSFUL BUILD REMAINS ACTIVE PRODUCTION!
+    commitSha: "236c125",
+    commitMsg: "chore(status): sync zone source for Vercel build",
+    branch: "main",
+    author: defaultAuthor,
+    durationMs: 86000,
+    image: "ghcr.io/makeouthillx32/unenter-status:latest",
+  });
+
+  // 7. Status zone - Error build (2bed692) - shows fallback rule in action!
+  // If one fails, the prior (236c125) is production!
+  dbCreateDeployment({
+    zoneKey: "status",
+    status: "error",
+    target: "production",
+    isProduction: false, // FAILED: NOT PRODUCTION!
+    commitSha: "2bed692",
+    commitMsg: "fix(status): log fetch failure retry handler",
+    branch: "main",
+    author: defaultAuthor,
+    durationMs: 43000,
+    image: "ghcr.io/makeouthillx32/unenter-status:latest",
+    errorMessage: "Next.js build failed: Worker exited with error during static export",
+  });
+
+  // 8. Docs zone - production
+  dbCreateDeployment({
+    zoneKey: "docs",
+    status: "ready",
+    target: "production",
+    isProduction: true,
+    commitSha: "c68e2aa",
+    commitMsg: "chore(status): sync zone source",
+    branch: "main",
+    author: defaultAuthor,
+    durationMs: 25000,
+    image: "ghcr.io/makeouthillx32/unenter-docs:latest",
+  });
 }
 
 // ── Info ──────────────────────────────────────────────────────────────────────

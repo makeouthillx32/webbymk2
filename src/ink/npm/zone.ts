@@ -26,6 +26,15 @@ import { npmFindCertForDomain }             from "./certs.ts";
 import { SLOW_TIMEOUT_MS }                  from "./client.ts";
 import type { OnLine }                      from "./types.ts";
 
+export const DEFAULT_ZONE_ADVANCED_CONFIG = [
+  "# Unenter Multi-Zone Enhanced Buffers & WebKit Cookie Isolation",
+  "large_client_header_buffers 4 32k;",
+  "client_header_buffer_size 32k;",
+  "proxy_buffer_size 32k;",
+  "proxy_buffers 8 32k;",
+  "proxy_busy_buffers_size 64k;",
+].join("\n");
+
 // ── Upstream derivation ───────────────────────────────────────────────────────
 
 /**
@@ -154,10 +163,42 @@ export async function npmAddZone(
     onLine(`Found (host #${existing.id})  ·  ${sslLabel}  ·  ${enabledLabel}`);
     onLine(`  forward  →  ${existing.forward_host}:${existing.forward_port}`);
 
-    if (existing.forward_host === fwdHost && existing.forward_port === fwdPort) {
+    if (existing.forward_host === fwdHost && existing.forward_port === fwdPort && existing.certificate_id) {
       onLine(`✓ Forward target is correct  (${fwdHost}:${fwdPort})`);
       onLine(`  Review: ${NPM_HOST.uiUrl}`);
       return 0;
+    }
+
+    if (existing.forward_host === fwdHost && existing.forward_port === fwdPort) {
+      onLine(`⚠ Forward target is correct but SSL is missing — securing host #${existing.id}...`);
+      const reusable = await npmFindCertForDomain(domain, token, onLine);
+      if (!reusable && !NPM_HOST.letsencryptEmail) {
+        onLine("✗ NPM_LE_EMAIL or NPM_EMAIL must be set for Let's Encrypt");
+        return 1;
+      }
+      const certificateId: number | string = reusable?.id ?? "new";
+      try {
+        await npmUpdateHost(existing.id, {
+          ...existing,
+          domain_names: [domain],
+          certificate_id: certificateId,
+          ssl_forced: true,
+          http2_support: true,
+          allow_websocket_upgrade: true,
+          block_exploits: true,
+          hsts_enabled: false,
+          hsts_subdomains: false,
+          advanced_config: existing.advanced_config || DEFAULT_ZONE_ADVANCED_CONFIG,
+          meta: {},
+        }, token, certificateId === "new");
+        onLine(reusable
+          ? `✓ SSL certificate #${reusable.id} attached to host #${existing.id}`
+          : `✓ Let's Encrypt certificate requested for host #${existing.id}`);
+        return 0;
+      } catch (error) {
+        onLine(`✗ SSL setup failed: ${String(error)}`);
+        return 1;
+      }
     }
 
     // 6. Stale forward — update in place
@@ -178,7 +219,7 @@ export async function npmAddZone(
         hsts_enabled:            false,
         hsts_subdomains:         false,
         access_list_id:          0,
-        advanced_config:         "",
+        advanced_config:         existing.advanced_config || DEFAULT_ZONE_ADVANCED_CONFIG,
         locations:               [],
       }, token, true);
       onLine(`✓ Proxy host updated  →  ${fwdHost}:${fwdPort}`);
@@ -231,7 +272,7 @@ export async function npmAddZone(
     hsts_enabled:            false,
     hsts_subdomains:         false,
     access_list_id:          0,
-    advanced_config:         "",
+    advanced_config:         DEFAULT_ZONE_ADVANCED_CONFIG,
     locations:               [],
   };
 

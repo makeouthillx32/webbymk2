@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text } from "../runtimeInk.js";
+import { Box, Text, useInput } from "../runtimeInk.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -7,16 +7,16 @@ const TEARDROP  = "✻";
 const TITLE     = "UNAXIS";
 const ECHO      = "U N A X I S";   // expanded echo — "doubles" outward
 
-const TOTAL_MS  = 3800;            // total animation duration (up from 3000)
-const HUE_MS    = 1900;            // one full hue rotation
+const TOTAL_MS  = 1400;            // snappy startup animation duration
+const HUE_MS    = 1000;            // one full hue rotation
 
 const SETTLED_GREY = "#999999";
 
 // Timing milestones
-const TWIN_APPEAR_MS  = 420;   // second ✻ phases in
-const TITLE_APPEAR_MS = process.env.USER_TYPE === "ant" ? 0 : 500;   // main title appears
-const ECHO_APPEAR_MS  = 580;   // expanded title echo appears
-const ECHO_HIDE_MS    = 3100;  // echo starts collapsing back out
+const TWIN_APPEAR_MS  = 200;   // second ✻ phases in
+const TITLE_APPEAR_MS = 0;     // main title appears immediately
+const ECHO_APPEAR_MS  = 300;   // expanded title echo appears
+const ECHO_HIDE_MS    = 1100;  // echo starts collapsing back out
 
 const GLYPH_FRAMES   = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢", "·"] as const;
 const GLYPH_TICK_MS  = 110;
@@ -59,6 +59,11 @@ export function StartupSplash({ onComplete }: Props) {
   const [tick, setTick]      = useState(0);
   const [glyphIdx, setGlyph] = useState(0);
   const [shimPos, setShimPos]= useState(0);
+
+  // Pressing any key immediately skips the animation
+  useInput(() => {
+    onComplete();
+  });
 
   // Main animation loop (16ms)
   useEffect(() => {

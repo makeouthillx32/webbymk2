@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Zone } from "../config/zones.ts";
-import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone, dbEnableZone, dbSetZoneHosting } from "./control-db.ts";
+import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone, dbEnableZone, dbSetZoneHosting, dbGetZoneOfflineReason, dbSetZoneOfflineReason, dbClearZoneOfflineReason } from "./control-db.ts";
 
 // In-memory cache (still useful to avoid repeated SQLite reads on tight loops)
 
@@ -95,6 +95,26 @@ export function removeZone(key: string, soft = true): void {
 export function restoreZone(key: string): void {
   dbEnableZone(key);
   invalidateZoneCache();
+}
+
+/**
+ * Zone kill-switch reason (audit/display only — see control-db.ts's
+ * dbSetZoneOfflineReason for why this is deliberately separate from
+ * removeZone/dbDisableZone). Doesn't touch `enabled`, so it doesn't need to
+ * bust the zone-list cache.
+ */
+export function setZoneOfflineReason(key: string, reason: string): void {
+  dbSetZoneOfflineReason(key, reason);
+}
+
+/** Clear a zone's offline reason. */
+export function clearZoneOfflineReason(key: string): void {
+  dbClearZoneOfflineReason(key);
+}
+
+/** Read a zone's current offline reason (empty string if none). */
+export function getZoneOfflineReason(key: string): string {
+  return dbGetZoneOfflineReason(key);
 }
 
 /** Set a zone's hosting mode ('docker' | 'vercel') and bust the cache. */

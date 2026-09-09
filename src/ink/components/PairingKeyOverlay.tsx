@@ -11,9 +11,9 @@ import { setClipboard } from "../termio/osc.js";
 import { spawn }                              from "child_process";
 import { gracefulShutdownSync }               from "../../utils/gracefulShutdown.js";
 
-// Dev mode = bun --watch (process.execPath contains "bun").
+// Dev mode = bun --watch (process.execPath contains "bun") or UNAXIS_DEV="true".
 // Production = node running dist/cli.js.  R-restart is only meaningful in prod.
-const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+const isProductionMode = process.env.UNAXIS_DEV !== "true" && !process.execPath.toLowerCase().includes("bun");
 
 function selfRestart(): void {
   const child = spawn(process.execPath, process.argv.slice(1), {

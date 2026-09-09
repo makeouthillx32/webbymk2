@@ -106,7 +106,7 @@ export function OperationOverlay({
     if (input === "q")       { onQ?.();                                          return; }
     if (key.escape)          { dismissable ? onKill?.() : onEsc?.();            return; }
     if (key.return && !busy) { onEnter?.();                                      return; }
-    if (input === "c")       { onCopy?.();                                        return; }
+    if (input === "c" || (key.ctrl && input === "c")) { onCopy?.();               return; }
     if (input === "C")       { onCopyTail?.(lines.slice(-contentHeight));         return; }
     if (input === "r" && dismissable) { onRestart?.();                            return; }
     if (input === "O")       { onPopout?.();                                      return; }

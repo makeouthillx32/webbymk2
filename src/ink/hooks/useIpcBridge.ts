@@ -473,7 +473,8 @@ export function useIpcBridge({
       // Returns package version immediately, then pings agents concurrently.
       // Offline fallback is handled in cli.tsx (prints pkg version if TUI is down).
       version: async (_args, onLine) => {
-        const _ver = (() => { try { return UNAXIS_VERSION; } catch { return "dev"; } })();
+        const isDevTui = process.env.UNAXIS_DEV === "true";
+        const _ver = isDevTui ? "dev" : (() => { try { return UNAXIS_VERSION; } catch { return "dev"; } })();
         onLine(`\nUNAXIS  ${_ver}\n`);
         const all = await loadEnvironments();
         if (all.length === 0) {

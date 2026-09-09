@@ -195,14 +195,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_ZONE=${z.key}
 ENV HOME=/tmp
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser  --system --uid 1001 nextjs
+# oven/bun:*‑slim is intentionally minimal and no longer guarantees Debian's
+# adduser/addgroup helpers. Docker supports numeric ownership and users without
+# passwd entries, so keep the runner non-root without installing OS packages.
+COPY --from=builder --chown=1001:1001 /app/public           ./public
+COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
+COPY --from=builder --chown=1001:1001 /app/.next/static     ./.next/static
 
-COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
-
-USER nextjs
+USER 1001:1001
 
 EXPOSE 3000
 ENV PORT=3000

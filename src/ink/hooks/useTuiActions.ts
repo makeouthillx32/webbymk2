@@ -3,6 +3,7 @@ import { startCreation, deleteZone } from "../zone/index.js";
 import { pullAndUp, restartZone, reloadProxy, doctorComposeService } from "../docker.js";
 import { deployZone, buildAndDeploy, gitPush, buildAll, deployAll } from "../zone-build.js";
 import { startDevContainer } from "../dev-container.js";
+import { bareDevConfig, startBareDev } from "../bare-dev.js";
 import { npmAddZone } from "../npm/index.ts";
 import { loadEnvironments } from "../environment-store.js";
 import { invalidateZoneCache } from "../zone-store.js";
@@ -68,7 +69,11 @@ export function useTuiActions(
       // (status, tank, blog, ...) silently did nothing. This gives it the
       // same basic-but-working treatment every other action here already
       // gets, rather than leaving it dead.
-      case "dev": runOp(`Dev mode  ${zone.label}`, (o) => startDevContainer(zone, o)); break;
+      case "dev": {
+        const bareCfg = bareDevConfig(zone);
+        runOp(`Dev mode  ${zone.label}`, (o) => bareCfg ? startBareDev(zone, o) : startDevContainer(zone, o));
+        break;
+      }
       case "build":
         if (!zone.dockerfile) {
           const { addLine } = _startOp(`Build: ${zone.key}`, false, true);

@@ -48,6 +48,7 @@ import {
 }                             from "../docker.ts";
 import { buildAndDeploy, buildAll, deployAll, deployZone, gitPush } from "../zone-build.ts";
 import { npmAddZone }         from "../npm/index.ts";
+import { bareDevConfig }      from "../bare-dev.ts";
 import { deleteZone, DS_CATALOG } from "../zone-scaffold.ts";
 import { addZoneRoute, getRoutes, deriveZoneUpstream } from "../proxy-config.ts";
 import { invalidateZoneCache, loadZones, lastZoneError } from "../zone-store.ts";
@@ -82,6 +83,10 @@ interface ZonesViewProps {
   setZones:        React.Dispatch<React.SetStateAction<Zone[]>>;
   runOp:           (title: string, op: (o: (l: string) => void) => Promise<number>) => void;
   openLogs:        (zone: Zone) => void;
+  /** Docker dev-container path — fullscreen/background/dismiss-to-stop/restart via the op stack. */
+  runDevMode:      (zone: Zone) => void;
+  /** Bare-metal dev-server sibling of runDevMode — same op-stack UI, zones with bareDevConfig only. */
+  runBareDevMode:  (zone: Zone) => void;
   addNotification: (msg: string, type?: "success" | "error" | "info") => void;
   /** Called when q is pressed on the zone list — pops one history level */
   onGoBack:        () => void;
@@ -94,6 +99,23 @@ interface ZonesViewProps {
   initialZoneKey?: string | null;
   /** Called once initialZoneKey has been applied, so the caller can clear it. */
   onConsumeInitialZoneKey?: () => void;
+  /**
+   * Last zone key the caller remembers being focused here, persisted across
+   * ZonesView's own remounts (see App.tsx's lastZoneKeyRef). Unlike
+   * initialZoneKey this is never "consumed" — it just keeps getting restored
+   * every time ZonesView mounts fresh, which happens far more often than you'd
+   * expect: AppFrame.tsx only renders AppRoutes (and everything under it,
+   * ZonesView included) when overlayOpId === null, so every background op's
+   * fullscreen overlay unmounts this whole view and remounts it on close,
+   * silently resetting `selected` back to 0. Confirmed live 2026-08-31 as the
+   * cause of "every command run drops me back to the top of the zone list."
+   */
+  rememberedZoneKey?: string | null;
+  /** Fires whenever the focused zone changes, so the caller (App.tsx) can keep
+   *  rememberedZoneKey current for the next remount. */
+  onZoneFocusChange?: (key: string | null) => void;
+  /** Navigate to deployments view, optionally filtered by zone key. */
+  onOpenDeployments?: (zoneKey?: string) => void;
 }
 
 // ── ZonesView ─────────────────────────────────────────────────────────────────
@@ -101,12 +123,27 @@ interface ZonesViewProps {
 export function ZonesView({
   zones, zoneStatuses, proxyStatus,
   setZones, runOp, openLogs, addNotification,
+  runDevMode, runBareDevMode,
   onGoBack, onNewZone, onSubCrumbs, isActive,
   initialZoneKey, onConsumeInitialZoneKey,
+  rememberedZoneKey, onZoneFocusChange,
+  onOpenDeployments,
 }: ZonesViewProps) {
 
   // Strip core (key="unenter") — it's not a zone and doesn't belong here.
   const realZones = useMemo(() => zones.filter((z) => !isCoreZone(z)), [zones]);
+
+  const [environments, setEnvironments] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    loadEnvironments().then((envs) => {
+      const map: Record<string, string> = {};
+      for (const e of envs) {
+        map[e.id] = e.name;
+      }
+      setEnvironments(map);
+    }).catch(() => {});
+  }, []);
 
   const [selected,       setSelected]       = useState(0);
   const [searchQuery,    setSearchQuery]    = useState("");
@@ -129,11 +166,12 @@ export function ZonesView({
   // Active actions depend on which zone is selected — must come after
   // visibleZones so the reference is already initialized.
   const activeZone    = visibleZones[selected];
+  const activeEnvName = activeZone?.environmentId ? environments[activeZone.environmentId] : "POWER";
   const activeActions = useMemo(() => {
     if (!activeZone) return [];
     if (isProxyZone(activeZone)) return buildProxyActions();
-    return buildActions(activeZone);
-  }, [activeZone]);
+    return buildActions(activeZone, activeEnvName);
+  }, [activeZone, activeEnvName]);
   const actionNav = useActionNav(activeActions);
 
   const handleSearchChange = useCallback((query: string) => {
@@ -171,6 +209,33 @@ export function ZonesView({
   // are read fresh each time but shouldn't retrigger this on their own.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialZoneKey]);
+
+  // Restore whatever zone was focused before this remount — see
+  // rememberedZoneKey's own doc comment for why remounts happen so often.
+  // Deliberately mount-only (empty deps): this component is fresh every time
+  // it appears, and re-running on every visibleZones change would fight the
+  // user's own navigation. initialZoneKey (an explicit fresh action from
+  // Welcome) wins if both happen to be set on the same mount. Also opens the
+  // action panel, same as initialZoneKey does — the far more common case is
+  // "I was inside a zone's action menu when I triggered whatever just ran an
+  // op," not "I was just browsing the list."
+  useEffect(() => {
+    if (initialZoneKey || !rememberedZoneKey) return;
+    const idx = visibleZones.findIndex((z) => z.key === rememberedZoneKey);
+    if (idx >= 0) {
+      const zone = visibleZones[idx]!;
+      setSelected(idx);
+      actionNav.reset(firstEnabled(zone));
+      setActionOpen(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the caller's memory of "which zone was focused" current so the next
+  // remount (see above) restores here instead of the top of the list.
+  useEffect(() => {
+    onZoneFocusChange?.(activeZone?.key ?? null);
+  }, [activeZone?.key, onZoneFocusChange]);
 
   // ── Breadcrumb sync ──────────────────────────────────────────────────────
   // Declaratively derives sub-crumbs from local state so the breadcrumb trail
@@ -224,6 +289,39 @@ export function ZonesView({
 
       case "logs":
         openLogs(zone);
+        break;
+
+      // Was missing entirely — the [v] Dev mode row has been in the action
+      // list (panels/Action/index.tsx) since bare-metal dev mode shipped,
+      // but this switch never got a matching case. Every other action here
+      // has one, so pressing [v] (or Enter with Dev mode highlighted) hit no
+      // case, fell through, and did nothing — no error, no op, no visible
+      // reaction at all. Confirmed live 2026-08-30/31.
+      //
+      // Two intermediate versions of this case existed before this one: the
+      // first called startBareDev unconditionally (no "already running"
+      // check — every [v] press would've spawned a duplicate dev-bare.ps1).
+      // The second added that check but only via a bare runOp — started/
+      // stopped fine, but the op flashed "done" and vanished from the stack,
+      // so once you looked away there was no way to see it was still alive,
+      // pull it back up fullscreen, or background it — none of the op-stack
+      // affordances Docker dev containers already get via runDevMode /
+      // runDevModeOp. This wires the bare-metal-equivalent runBareDevMode
+      // (runBareDevModeOp in useBackgroundOps.ts) so [v] gives bare-metal
+      // zones the exact same fullscreen/background/dismiss-to-stop/restart
+      // experience Docker dev containers have always had — same op stack,
+      // same [x] to end it, just backed by isBareDevRunning/streamBareDevLogs
+      // instead of `docker ps` / `docker logs -f`.
+      case "dev": {
+        const bareCfg = bareDevConfig(zone);
+        if (bareCfg) { runBareDevMode(zone); break; }
+        runDevMode(zone);
+        break;
+      }
+
+      case "deployments":
+        setActionOpen(false);
+        onOpenDeployments?.(zone.key);
         break;
 
       case "npm":
@@ -338,7 +436,7 @@ export function ZonesView({
         });
         break;
     }
-  }, [runOp, openLogs, addNotification, setZones, setConfirmDelete]);
+  }, [runOp, openLogs, addNotification, setZones, setConfirmDelete, runDevMode, runBareDevMode, onOpenDeployments]);
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
   // isActive is also false while the confirm-delete dialog is open so [y/n]
@@ -421,6 +519,7 @@ export function ZonesView({
     // One-key ship: build → push → pull + up the HIGHLIGHTED zone, no menu.
     // Same path as [↵] → [b]; the build case guards no-Dockerfile zones.
     if (input === "b") { const z = visibleZones[selected]; if (z) executeAction("build", z); return; }
+    if (input === "H" || input === "h") { const z = visibleZones[selected]; if (z) { onOpenDeployments?.(z.key); return; } }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }
     if (input === "R") {
@@ -477,6 +576,7 @@ export function ZonesView({
             zones={visibleZones}
             zoneStatuses={zoneStatuses}
             selected={selected}
+            environments={environments}
             emptyMessage={
               searchQuery
                 ? `No zones match "${searchQuery}"`
@@ -494,6 +594,7 @@ export function ZonesView({
           zone={visibleZones[selected]!}
           status={zoneStatuses[visibleZones[selected]!.key] ?? "missing"}
           selected={actionNav.selected}
+          envName={activeEnvName}
         />
       )}
 
