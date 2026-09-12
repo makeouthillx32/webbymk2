@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import incidentLedger from "../../../data/incidents.json";
+import { fetchIncidentHistory } from "../../../lib/incidents";
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
-export function GET() {
-  return NextResponse.json(incidentLedger, {
-    headers: {
-      "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=300",
-    },
+export async function GET() {
+  const incidents = await fetchIncidentHistory();
+  return NextResponse.json({ incidents, generatedAt: new Date().toISOString() }, {
+    headers: { "Cache-Control": "public, max-age=30, s-maxage=30, stale-while-revalidate=120" },
   });
 }

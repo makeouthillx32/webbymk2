@@ -5,7 +5,7 @@
 // container/proxy/SRT-manager health is UNAXIS control-plane data and lives
 // in its own local store instead. See vault/Docker for the full writeup.
 
-import incidentLedger from "../data/incidents.json";
+import { fetchIncidentHistory } from "./incidents";
 
 const STATUS_API_URL = process.env.STATUS_API_URL!;      // e.g. https://unenter.live/__status-api/public
 const STATUS_API_KEY = process.env.STATUS_API_KEY!;      // matches STATUS_PUBLIC_KEY on the agent
@@ -37,26 +37,16 @@ export type StatusSnapshotResult = {
 
 const EMPTY_SNAPSHOT: StatusSnapshot = { current: [], history: [], incidents: [], generatedAt: new Date(0).toISOString() };
 
-const INDEPENDENT_INCIDENTS = incidentLedger.incidents as Incident[];
-
-function withIndependentIncidents(snapshot: StatusSnapshot): StatusSnapshot {
+async function withIndependentIncidents(snapshot: StatusSnapshot): Promise<StatusSnapshot> {
   const byId = new Map(snapshot.incidents.map((incident) => [incident.id, incident]));
-
-  // The repository ledger wins on matching IDs. It is the status page's
-  // independent, append-only incident record and remains available when the
-  // POWER-hosted collector and db.unenter.live are both unreachable.
-  for (const incident of INDEPENDENT_INCIDENTS) byId.set(incident.id, incident);
-
-  return {
-    ...snapshot,
-    incidents: [...byId.values()].sort((a, b) => b.started_at.localeCompare(a.started_at)),
-  };
+  for (const incident of await fetchIncidentHistory()) byId.set(incident.id, incident);
+  return { ...snapshot, incidents: [...byId.values()].sort((a, b) => b.started_at.localeCompare(a.started_at)) };
 }
 
 export async function fetchStatusSnapshot(): Promise<StatusSnapshotResult> {
   if (!STATUS_API_URL || !STATUS_API_KEY) {
     console.error("status fetch: STATUS_API_URL or STATUS_API_KEY is not configured");
-    return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
+    return { snapshot: await withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
   }
 
   try {
@@ -77,11 +67,11 @@ export async function fetchStatusSnapshot(): Promise<StatusSnapshotResult> {
     }).finally(() => clearTimeout(timeout));
     if (!res.ok) {
       console.error(`status fetch: non-OK response`, { status: res.status, url: STATUS_API_URL });
-      return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
+      return { snapshot: await withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
     }
-    return { snapshot: withIndependentIncidents(await res.json()), source: "live" };
+    return { snapshot: await withIndependentIncidents(await res.json()), source: "live" };
   } catch (err) {
     console.error(`status fetch: failed`, { error: err instanceof Error ? err.message : String(err), url: STATUS_API_URL });
-    return { snapshot: withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
+    return { snapshot: await withIndependentIncidents(EMPTY_SNAPSHOT), source: "unreachable" };
   }
 }
