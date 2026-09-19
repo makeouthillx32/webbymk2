@@ -3,13 +3,7 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
 
-export type VirtualPtzState = {
-  zoomFactor: number;
-  panOffsetX: number;
-  panOffsetY: number;
-  zoomSpeed: number; // 1 to 10
-  speedMode?: "fine" | "sport";
-};
+export type { VirtualPtzState } from "../../../director/ptzState";
 
 export type ManualPtzControllerProps = {
   activeCameraName?: string;

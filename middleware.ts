@@ -31,12 +31,14 @@ import {
   PROMOTION_ZONE_HEADER,
 } from "@/lib/multiZone";
 import { isProtectedRoute } from "@/lib/protectedRoutes";
+import { evaluateSessionFreshness } from "@/lib/auth/sessionPolicy";
+import { isTankBackstagePath, sessionPolicyKey } from "@/lib/auth/backstage";
 import { createShieldChallenge, verifyClearanceToken } from "@/lib/shield/crypto";
 import { renderShieldVerificationHtml } from "@/lib/shield/template";
 import { SHIELD_COOKIE_NAME } from "@/lib/shield/types";
 import { getShieldPolicyForHost } from "@/lib/shield/policy";
 import { inspectRequest } from "@/lib/shield/waf";
-import { globalRateLimiter } from "@/lib/shield/ratelimit";
+import { globalRateLimiter, SlidingWindowLimiter } from "@/lib/shield/ratelimit";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -99,6 +101,81 @@ function getClientIp(request: NextRequest): string {
   return "127.0.0.1";
 }
 
+/**
+ * Traffic that must never be volumetrically rate-limited.
+ *
+ * The threat model for the shield is the public internet. These sources are not
+ * it, and throttling them breaks the system rather than protecting it:
+ *
+ *  - **Loopback / no forwarding header at all.** Service-to-service calls inside
+ *    the Docker network (tank-vision-worker posting telemetry several times a
+ *    second, MediaMTX hooks, the archive ingest) arrive with no
+ *    x-forwarded-for, so they all shared ONE 400-req/min bucket keyed
+ *    `ip:127.0.0.1`. Blocking that bucket does not stop an attacker; it stops
+ *    the house watching itself.
+ *  - **RFC1918 / ULA private addresses.** That is this building: the admin
+ *    machine and, critically, the OBS instance whose browser source is the
+ *    24/7 broadcast. An OBS browser source polls camera state, director state,
+ *    attention and audio metrics continuously and can clear 400 req/min on its
+ *    own — a 429 there replaces the live programme on Twitch, Kick, Trovo and
+ *    YouTube with a JSON error page.
+ *
+ * A real flood always arrives from a routable public address, which is still
+ * limited. This is a deliberate exemption, not an oversight.
+ */
+function isTrustedSourceIp(ip: string): boolean {
+  const addr = ip.replace(/^::ffff:/i, "").trim();
+  if (!addr || addr === "localhost") return true;
+  if (addr === "127.0.0.1" || addr === "::1") return true;
+  if (addr.startsWith("127.")) return true;
+  if (addr.startsWith("10.")) return true;
+  if (addr.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(addr)) return true;
+  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
+  if (/^f[cd][0-9a-f]{2}:/i.test(addr)) return true;
+  if (/^fe[89ab][0-9a-f]:/i.test(addr)) return true;
+  return false;
+}
+
+/**
+ * Is this request carrying a signed-in session?
+ *
+ * Cookie presence only — no network call, because this runs on the hot path of
+ * every request. It does not prove the session is valid or that the user is an
+ * admin, and it is not used for authorisation: it only selects a more generous
+ * rate-limit tier. The worst case is an attacker sending a junk auth cookie to
+ * buy a higher ceiling, which is a far smaller problem than throttling the
+ * operator out of their own console mid-broadcast.
+ */
+function hasAuthSession(request: NextRequest): boolean {
+  for (const cookie of request.cookies.getAll()) {
+    if (cookie.name.startsWith("sb-unenter-auth-token") && cookie.value) return true;
+  }
+  return false;
+}
+
+/**
+ * The ceiling for a signed-in client.
+ *
+ * Thresholds are ~5x the anonymous tier because the workload genuinely is. The
+ * house console, director configurator and camera grid each poll several
+ * endpoints on short intervals, and an operator commonly has two or three of
+ * them open at once; 400 req/min across all of that is an afternoon's normal
+ * use, not an attack. The block is also much shorter — an operator who somehow
+ * does trip it is mid-broadcast, and five minutes off-air is not an acceptable
+ * price for a heuristic.
+ */
+const authenticatedRateLimiter = new SlidingWindowLimiter({
+  maxRequestsBeforeChallenge: 600,
+  maxRequestsBeforeBlock: 2_000,
+  blockDurationMs: 30_000,
+});
+
+/** Anonymous traffic keeps the strict tier; a signed-in session gets the wider one. */
+function limiterFor(request: NextRequest): SlidingWindowLimiter {
+  return hasAuthSession(request) ? authenticatedRateLimiter : globalRateLimiter;
+}
+
 function shouldCheckShield(request: NextRequest, normalizedHost: string, clientIp: string): boolean {
   const path = request.nextUrl.pathname;
   if (
@@ -130,7 +207,12 @@ function shouldCheckShield(request: NextRequest, normalizedHost: string, clientI
   if (isLabs) return true;
 
   // ── Rate-limit burst trigger (Automated bot / brute force defense) ──────
-  if (globalRateLimiter.check(clientIp).challengeRequired) return true;
+  // Read the SAME tier the limiter itself used. Reading the anonymous bucket
+  // for a signed-in operator would hand them a proof-of-work challenge on the
+  // strict threshold they were deliberately exempted from, which is the same
+  // lockout wearing a different hat.
+  if (isTrustedSourceIp(clientIp)) return false;
+  if (limiterFor(request).check(clientIp).challengeRequired) return true;
 
   return false;
 }
@@ -196,13 +278,24 @@ export async function middleware(request: NextRequest) {
     url.pathname.startsWith("/_next") ||
     /\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|woff2|ttf|mp3|mp4|m3u8|ts)$/i.test(url.pathname);
 
-  if (!isStatic && !url.pathname.startsWith("/api/shield")) {
-    globalRateLimiter.record(clientIp);
-    const rateStatus = globalRateLimiter.check(clientIp);
+  // Trusted sources are exempt outright — see isTrustedSourceIp. Signed-in
+  // sessions get a far higher ceiling than anonymous traffic: an operator with
+  // the house console, the director configurator and a couple of camera tabs
+  // open is legitimately the heaviest client on the site, and is exactly who
+  // must never be locked out of it.
+  const limiter = limiterFor(request);
+
+  if (!isStatic && !url.pathname.startsWith("/api/shield") && !isTrustedSourceIp(clientIp)) {
+    limiter.record(clientIp);
+    const rateStatus = limiter.check(clientIp);
     if (rateStatus.isBlocked) {
       return new NextResponse(
         JSON.stringify({
-          error: "Too Many Requests: Subnet rate limit exceeded. Cooling down.",
+          // Says per-client, because it IS per-client: aggregateBySubnet has
+          // defaulted false since 2026-09-03. The old "Subnet rate limit"
+          // wording sent an admin hunting for a network-wide cause when the
+          // block was on their own single address.
+          error: "Too Many Requests: rate limit exceeded for this client. Cooling down.",
           retryAfterMs: rateStatus.resetMs,
         }),
         {
@@ -318,6 +411,48 @@ export async function middleware(request: NextRequest) {
     requestHeaders.set(PROMOTION_STATUS_HEADER, zoneCtx.promotionStatus);
   if (zoneCtx.promotedToZone)
     requestHeaders.set(PROMOTION_ZONE_HEADER, zoneCtx.promotedToZone);
+
+  // ── 4b. Agent Identity Headers ────────────────────────────────────────────
+  // If the request carries an Authorization: Bearer <token> where the token
+  // looks like an Agent Access Token (has a spiffe_id claim), inject lightweight
+  // headers so server components can identify the acting agent without re-parsing.
+  //
+  // This is a DISPLAY / ROUTING hint only — NOT an authorization decision.
+  // Actual cryptographic verification is the responsibility of the individual
+  // API route or server component that handles the sensitive operation.
+  //
+  // We decode (not verify) in middleware because:
+  //   a) Edge Runtime cannot load the CA RSA key cheaply on every request
+  //   b) This runs on the hot path — we cannot afford the async key load
+  //   c) The headers are informational; auth is enforced at the resource layer
+  const authHeader = request.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const rawToken = authHeader.slice(7);
+      const parts = rawToken.split(".");
+      if (parts.length === 3) {
+        const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const pad = (4 - (padded.length % 4)) % 4;
+        const payload = JSON.parse(atob(padded + "=".repeat(pad))) as Record<string, unknown>;
+        // Only treat as an agent token if it has our custom spiffe_id claim
+        if (typeof payload.spiffe_id === "string" && payload.spiffe_id.startsWith("spiffe://")) {
+          requestHeaders.set("x-agent-spiffe-id", payload.spiffe_id);
+          if (typeof payload.sub === "string" && payload.sub.startsWith("spiffe://")) {
+            // Self-auth: sub is the agent itself
+            requestHeaders.set("x-agent-mode", "self");
+            requestHeaders.set("x-agent-id", payload.spiffe_id);
+          } else if (typeof payload.sub === "string" && typeof payload.user_id === "string") {
+            // Delegated: sub is the user, act.sub is the agent
+            requestHeaders.set("x-agent-mode", "delegated");
+            requestHeaders.set("x-agent-id", payload.spiffe_id);
+            requestHeaders.set("x-agent-user-id", payload.user_id);
+          }
+        }
+      }
+    } catch {
+      // Malformed bearer token — ignore silently, don't set agent headers
+    }
+  }
 
   const requestInit = { headers: requestHeaders };
 
@@ -501,7 +636,14 @@ export async function middleware(request: NextRequest) {
   // so any visitor who hits this self-heals on their very next request
   // instead of needing to know how to clear a browser cookie.
   let user: { id: string } | null = null;
-  let authError = false;
+  // "This token is definitively bad" and "I could not check right now" are
+  // different facts and must not share a flag.
+  //
+  // They did, and the purge below acted on both — so a 4-second timeout during
+  // a deploy (exactly when Kong and GoTrue are slowest) wiped every auth cookie
+  // the visitor had. That is why a rebuild signed everyone out: not an expiry,
+  // a restart being mistaken for a rejection.
+  let authRejected = false;
   try {
     const { data, error } = await Promise.race([
       supabase.auth.getUser(),
@@ -510,13 +652,18 @@ export async function middleware(request: NextRequest) {
       ),
     ]);
     if (error) {
-      authError = true;
+      // Only an explicit 401/403 means the credential itself was refused.
+      // Anything else — 5xx, a socket error, GoTrue restarting — is the auth
+      // backend being unavailable, and the session is very probably fine.
+      const status = (error as { status?: number }).status;
+      authRejected = status === 401 || status === 403;
     } else {
       user = data.user;
     }
   } catch {
+    // Timeout or network failure. Degrade to signed-out for THIS request so
+    // public pages keep serving, but never destroy the cookies over it.
     user = null;
-    authError = true;
   }
 
   const finalResponse = supabaseResponse.current;
@@ -526,13 +673,14 @@ export async function middleware(request: NextRequest) {
   // (e.g. after a deploy, session invalidation, or corrupted cookie chunks),
   // immediately purge the stale cookies from the response (both domain and host-only)
   // so the client never enters an infinite redirect loop or HTTP 431 header overflow.
-  if (!user && authError) {
+  if (!user && authRejected) {
     const authCookieNames = [
       "userRole",
       "userRoleUserId",
       "userDisplayName",
       "userPermissions",
       "rememberMe",
+      "authAt",
       "lastPage",
       "sb-unenter-auth-token",
       "sb-unenter-auth-token-code-verifier",
@@ -572,26 +720,50 @@ export async function middleware(request: NextRequest) {
   const isLabsResearchCheckout =
     zoneFromHost === "labs" &&
     effectivePathname.startsWith("/research-checkout");
+  // Shared with the session policy so the auth gate and the freshness ceiling
+  // cover exactly the same paths. Previously this was /admin only, which left
+  // /director-configuration and /director returning 200 to anyone.
   const isTankBackstage =
-    zoneFromHost === "tank" &&
-    (effectivePathname === "/admin" || effectivePathname.startsWith("/admin/"));
+    zoneFromHost === "tank" && isTankBackstagePath(effectivePathname);
   const routeIsProtected =
     zoneConfig.requiresAuth ||
     isProtectedRoute(effectivePathname) ||
     isLabsResearchCheckout ||
     isTankBackstage;
 
-  if (routeIsProtected && !user) {
+  // Per-zone session freshness. Every zone shares one session cookie, so a
+  // zone cannot expire it — instead each zone decides how recent a sign-in has
+  // to be before it will accept it. Tank has no limit (remember the viewer
+  // until they clear cookies); core expires weekly because that is where admin
+  // and billing live. See src/lib/auth/sessionPolicy.ts.
+  //
+  // Crucially this does NOT sign the user out — the shared session stays
+  // valid, so core going stale never logs anyone out of Tank. It only sends
+  // them to re-authenticate for the zone that asked.
+  const authAtRaw = request.cookies.get("authAt")?.value;
+  const parsedAuthAt = authAtRaw ? Number.parseInt(authAtRaw, 10) : Number.NaN;
+  const freshness = evaluateSessionFreshness({
+    zone: zoneCtx.isCoreHost ? "core" : sessionPolicyKey(zoneFromHost, effectivePathname),
+    signedIn: Boolean(user),
+    authAtSeconds: Number.isFinite(parsedAuthAt) ? parsedAuthAt : null,
+  });
+
+  const needsSignIn = routeIsProtected && !user;
+  const needsReauth = routeIsProtected && Boolean(user) && !freshness.fresh;
+
+  if (needsSignIn || needsReauth) {
     if (isLocal) {
       const signInUrl = request.nextUrl.clone();
       signInUrl.pathname = "/sign-in";
       signInUrl.searchParams.set("next", url.pathname);
+      if (needsReauth) signInUrl.searchParams.set("reason", "session-expired");
       return NextResponse.redirect(signInUrl);
     }
 
     const signInUrl = new URL(`https://auth.${CORE_DOMAIN}/sign-in`);
     const publicNextUrl = `https://${canonicalHost}${url.pathname}${url.search}`;
     signInUrl.searchParams.set("next", publicNextUrl);
+    if (needsReauth) signInUrl.searchParams.set("reason", "session-expired");
     return NextResponse.redirect(signInUrl);
   }
 

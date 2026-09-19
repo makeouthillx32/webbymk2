@@ -78,3 +78,83 @@ describe("Edge Shield Rate Limiter (opt-in subnet aggregation)", () => {
     expect(res.challengeRequired).toBe(true);
   });
 });
+
+describe("a block must not renew itself", () => {
+  // The bug this pins, in full: the block lasts 5 minutes but the window is 1
+  // minute. Every rejected request used to be recorded anyway, so at the moment
+  // a block expired the window was full of the client's own retries from the
+  // last 60s of that block — and the next request re-blocked them for another 5
+  // minutes. Anything that keeps polling renewed its own block forever. An
+  // admin could not reach their own house console on 2026-09-12.
+
+  it("requests made WHILE blocked are not counted", () => {
+    const limiter = new SlidingWindowLimiter({
+      windowMs: 60_000,
+      maxRequestsBeforeChallenge: 5,
+      maxRequestsBeforeBlock: 10,
+      blockDurationMs: 300_000,
+    });
+    const ip = "203.0.113.7";
+
+    for (let i = 0; i < 10; i++) limiter.record(ip);
+    expect(limiter.check(ip).isBlocked).toBe(true);
+
+    // The client keeps hammering — a polling tab, or a human refreshing.
+    for (let i = 0; i < 500; i++) {
+      limiter.record(ip);
+      limiter.check(ip);
+    }
+
+    // None of that may have accumulated. Before the fix this was 500.
+    expect(limiter.check(ip).count).toBe(0);
+  });
+
+  it("the window is emptied at the moment of blocking", () => {
+    const limiter = new SlidingWindowLimiter({
+      windowMs: 60_000,
+      maxRequestsBeforeChallenge: 5,
+      maxRequestsBeforeBlock: 10,
+      blockDurationMs: 300_000,
+    });
+    const ip = "203.0.113.8";
+    for (let i = 0; i < 10; i++) limiter.record(ip);
+
+    const blocked = limiter.check(ip);
+    expect(blocked.isBlocked).toBe(true);
+    // Nothing carries over into the window that resumes after the block.
+    expect(limiter.check(ip).count).toBe(0);
+  });
+
+  it("a client is usable again the moment the block lapses", () => {
+    const limiter = new SlidingWindowLimiter({
+      windowMs: 60_000,
+      maxRequestsBeforeChallenge: 5,
+      maxRequestsBeforeBlock: 10,
+      // Short block so the lapse is observable without faking the clock.
+      blockDurationMs: 20,
+    });
+    const ip = "203.0.113.9";
+
+    for (let i = 0; i < 10; i++) limiter.record(ip);
+    expect(limiter.check(ip).isBlocked).toBe(true);
+    for (let i = 0; i < 200; i++) limiter.record(ip);
+
+    return Bun.sleep(40).then(() => {
+      const after = limiter.check(ip);
+      expect(after.isBlocked).toBe(false);
+      expect(after.count).toBe(0);
+    });
+  });
+
+  it("an honest client below the threshold is never blocked", () => {
+    const limiter = new SlidingWindowLimiter({
+      windowMs: 60_000,
+      maxRequestsBeforeChallenge: 5,
+      maxRequestsBeforeBlock: 10,
+      blockDurationMs: 300_000,
+    });
+    const ip = "203.0.113.10";
+    for (let i = 0; i < 9; i++) limiter.record(ip);
+    expect(limiter.check(ip).isBlocked).toBe(false);
+  });
+});

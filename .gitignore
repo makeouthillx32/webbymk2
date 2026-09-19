@@ -90,6 +90,8 @@ tuibuildlogs.md
 scratch/
 /state/
 sandbox/
+/.temp/tank-identity-*/
+/.temp/tank-identity-profiles/
 
 # backup & generated files
 backups/
@@ -133,13 +135,23 @@ vault/
 supabase/claude_desktop_config.json
 claude_desktop_config.json
 proxy-config/status-history.json
-.claude/skills/open-knowledge/
-.cursor/skills/open-knowledge/
-.codex/skills/open-knowledge/
-.github/skills/open-knowledge/
-.opencode/skills/open-knowledge/
-.pi/skills/open-knowledge/
 
 # Accidental Windows `> NUL` redirect output — a reserved device name that
 # git cannot mmap ("fatal: mmap failed"), which aborts `git add -A` entirely.
 NUL
+
+# ── Local-only: never commit (2026-09-19 cleanup) ─────────────────────────────
+# Python env, model weights and the identity gallery/crops (people's likenesses).
+services/tank-vision-gpu/.venv/
+services/tank-vision-gpu/models/
+services/tank-vision-gpu/out/
+# Scratch captures and diagnostics.
+/.temp/
+# Env backups hold live secrets.
+.env.bak*
+# Timestamped config backups (kong.yml.bak-093434 carries Supabase keys).
+*.bak-*
+# Other agents' local config (may carry MCP tokens) and Claude worktrees.
+/.cursor/
+/.codex/
+/.claude/worktrees/

@@ -24,8 +24,6 @@ export function LiveProgramMonitor({
     activeLiveCam?.presence === "degraded";
 
   const zoom = ptzState?.zoomFactor || directorState.zoomFactor || 1;
-  const panX = ptzState?.panOffsetX || 0;
-  const panY = ptzState?.panOffsetY || 0;
   const cropW = Math.round(3840 / zoom);
   const cropH = Math.round(2160 / zoom);
 
@@ -75,24 +73,17 @@ export function LiveProgramMonitor({
       <div className="relative aspect-video rounded-lg overflow-hidden bg-black border border-white/20 shadow-inner">
         <div
           key={tile.cameraId}
-          className="w-full h-full transition-transform duration-150 ease-out origin-top-left overflow-hidden animate-in fade-in-60 zoom-in-95 duration-200"
-          style={
-            zoom > 1
-              ? {
-                  transform: `scale(${zoom}) translate3d(-${(panX / 3840) * 100}%, -${(panY / 2160) * 100}%, 0)`,
-                  transformOrigin: "0% 0%",
-                  willChange: "transform",
-                }
-              : {
-                  willChange: "transform",
-                }
-          }
+          className="absolute inset-0 overflow-hidden animate-in fade-in-60 zoom-in-95 duration-200"
         >
           <CameraPlayer
             online={online}
             playbackUrl={activeLiveCam?.playbackUrl ?? null}
             playbackProtocol={activeLiveCam?.playbackProtocol ?? "none"}
             priority="hero"
+            // Same gimbal as the public Director and OBS, so this monitor
+            // shows the motion viewers get, not a 150 ms-stepped copy of it.
+            ptzTarget={ptzState ?? null}
+            ptzSnapKey={tile.cameraId}
           />
         </div>
 

@@ -15,6 +15,10 @@ import {
   type OverlayTriggerType,
   type OverlayTriggerScope,
 } from "../server/overlays";
+import {
+  getOverlayFxEnabledAction,
+  setOverlayFxEnabledAction,
+} from "../server/actions";
 
 const TRIGGER_TYPE_ICON: Record<OverlayTriggerType, React.ReactNode> = {
   cron: <ClockIcon className="h-3 w-3 shrink-0 text-cyan-400" />,
@@ -58,6 +62,11 @@ export function OverlaysPanel({ operatorRole }: OverlaysPanelProps) {
   const [triggerRoomKey, setTriggerRoomKey] = useState("");
   const [triggerMessage, setTriggerMessage] = useState("");
 
+  // Chaos-item overlay fx kill-switch. Absent means ON, so the initial state
+  // is optimistic-enabled and corrected by the load.
+  const [fxEnabled, setFxEnabled] = useState(true);
+  const [fxBusy, setFxBusy] = useState(false);
+
   const isAdmin = operatorRole === "admin";
 
   const refresh = async () => {
@@ -68,7 +77,18 @@ export function OverlaysPanel({ operatorRole }: OverlaysPanelProps) {
   useEffect(() => {
     if (typeof window !== "undefined") setOrigin(window.location.origin);
     void refresh();
+    void getOverlayFxEnabledAction().then((res) => {
+      if (res.success) setFxEnabled(res.enabled);
+    });
   }, []);
+
+  const handleToggleFx = async () => {
+    if (!isAdmin || fxBusy) return;
+    setFxBusy(true);
+    const res = await setOverlayFxEnabledAction(!fxEnabled);
+    setFxBusy(false);
+    if (res.success) setFxEnabled(!fxEnabled);
+  };
 
   const handleCopy = (slug: string) => {
     const url = `${origin}/overlay/${slug}`;
@@ -183,6 +203,40 @@ export function OverlaysPanel({ operatorRole }: OverlaysPanelProps) {
         </div>
 
         {error && <p className="text-xs font-bold text-red-500">{error}</p>}
+
+        {/* Chaos-item overlay fx kill-switch. Off means used chaos items are
+            consumed as normal items and the overlays never change. */}
+        <div className="flex items-center justify-between rounded border border-black/15 bg-white/50 px-2.5 py-1.5">
+          <div className="flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 shrink-0 text-yellow-600" />
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wide text-[#241f14]">
+                Chaos Item Overlay FX
+              </p>
+              <p className="text-[10px] text-[#241f14]/70">
+                When ON, using a chaos item (Chrome Spray, Welding Torch, Grease Gun) re-skins the HUD &amp; VU overlays for its duration. Per-viewer 30s cooldown.
+              </p>
+            </div>
+          </div>
+          {isAdmin ? (
+            <button
+              type="button"
+              disabled={fxBusy}
+              onClick={handleToggleFx}
+              className={`shrink-0 rounded px-2.5 py-1 text-[10px] font-black uppercase transition ${
+                fxEnabled
+                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "bg-slate-600 text-slate-200 hover:bg-slate-700"
+              } disabled:opacity-50`}
+            >
+              {fxEnabled ? "Enabled" : "Disabled"}
+            </button>
+          ) : (
+            <span className={`shrink-0 text-[10px] font-black uppercase ${fxEnabled ? "text-emerald-700" : "text-slate-500"}`}>
+              {fxEnabled ? "Enabled" : "Disabled"}
+            </span>
+          )}
+        </div>
 
         {showNewScene && isAdmin && (
           <form onSubmit={handleCreateScene} className="rounded border border-purple-500/30 bg-purple-950/10 p-2.5 space-y-2">

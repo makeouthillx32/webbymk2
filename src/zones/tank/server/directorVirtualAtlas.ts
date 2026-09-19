@@ -13,15 +13,31 @@ export type SubjectMode =
   | "speaker"
   | "feet"
   | "face"
+  | "member"
   | "motion"
   | "crowd"
   | "group"
   | "animals"
+  | "dog"
+  | "cat"
   | "chaos"
   | "manual"
-  | "rotation";
+  | "rotation"
+  // Follows the one body the house cannot name, collecting it to enroll a guest.
+  | "enroll";
 
-export type FramingMode = "camera" | "group" | "follow" | "close" | "wide";
+export type FramingMode =
+  | "normal"
+  | "upper_body"
+  | "close_up"
+  | "headless"
+  | "lower_body"
+  | "zone"
+  | "group"
+  | "camera"
+  | "follow"
+  | "close"
+  | "wide";
 
 export type MotionCurve = "snap" | "track";
 
@@ -89,6 +105,8 @@ export type CameraDetectionBox = {
   isMovement?: boolean;
   velocity?: number;
   targetName?: string;
+  /** Which side of the body this camera sees (learner pose check). */
+  facing?: "front" | "side" | "back";
   category?: "people" | "pets" | "trash" | "clutter" | "waldo" | "unknown";
 };
 
@@ -518,17 +536,20 @@ export function calculateCameraScore(
     }
     case "animals": {
       // Animal & Pet Tracking Mode (Cuts to room with most dogs & cats)
+      // Matched on CLASS, never on individual names. The previous version also
+      // tested for "Buster", "Kona", "Mochi" and "Shadow" — pets that no longer
+      // exist; the house's animals are Molly, Olly, James and Kitty. Those
+      // branches had been dead since the rename, and re-adding today's names
+      // would only set up the same rot. A resolved individual arrives as
+      // `targetName` with `label` still "dog" or "cat", so class matching
+      // catches every case a name list could.
       const animalBoxes = (telemetry.boundingBoxes ?? []).filter(
         (b) =>
           b.label === "dog" ||
           b.label === "cat" ||
           b.label === "pet" ||
           b.label === "animal" ||
-          b.category === "pets" ||
-          b.label === "Buster" ||
-          b.label === "Kona" ||
-          b.label === "Mochi" ||
-          b.label === "Shadow",
+          b.category === "pets",
       );
       const count = Math.max(telemetry.animalCount ?? 0, animalBoxes.length);
       const animalScore = count >= 2 ? Math.round(Math.pow(count, 1.8) * 35) : count * 35;
@@ -553,7 +574,50 @@ export function calculateCameraScore(
       breakdown.items = itemScore;
       break;
     }
-    case "face": {
+    case "dog": {
+      // Dog Tracking Mode (Focuses specifically on dogs in the house)
+      const dogBoxes = (telemetry.boundingBoxes ?? []).filter(
+        (b) =>
+          b.label === "dog" ||
+          b.targetName?.toLowerCase().includes("dog") ||
+          b.targetName?.toLowerCase().includes("buster") ||
+          b.targetName?.toLowerCase().includes("kona") ||
+          b.targetName?.toLowerCase().includes("molly") ||
+          b.targetName?.toLowerCase().includes("olly")
+      );
+      const count = dogBoxes.length;
+      const dogScore = count >= 2 ? Math.round(Math.pow(count, 1.8) * 45) : count * 45;
+      const motionScore = Math.round(telemetry.motionScore * 20);
+      const audioScore = Math.round(telemetry.audioPeak * 0.15);
+      score = dogScore + motionScore + audioScore;
+      breakdown.dogs = dogScore;
+      breakdown.motion = motionScore;
+      breakdown.audio = audioScore;
+      break;
+    }
+    case "cat": {
+      // Cat Tracking Mode (Focuses specifically on cats in the house)
+      const catBoxes = (telemetry.boundingBoxes ?? []).filter(
+        (b) =>
+          b.label === "cat" ||
+          b.targetName?.toLowerCase().includes("cat") ||
+          b.targetName?.toLowerCase().includes("mochi") ||
+          b.targetName?.toLowerCase().includes("shadow") ||
+          b.targetName?.toLowerCase().includes("kitty") ||
+          b.targetName?.toLowerCase().includes("james")
+      );
+      const count = catBoxes.length;
+      const catScore = count >= 2 ? Math.round(Math.pow(count, 1.8) * 45) : count * 45;
+      const motionScore = Math.round(telemetry.motionScore * 20);
+      const audioScore = Math.round(telemetry.audioPeak * 0.15);
+      score = catScore + motionScore + audioScore;
+      breakdown.cats = catScore;
+      breakdown.motion = motionScore;
+      breakdown.audio = audioScore;
+      break;
+    }
+    case "face":
+    case "member": {
       // Defined Member / Facial Recognition Tracking Mode (VIP Item Tracking)
       const targetBonus = telemetry.targetMemberDetected ? 110 : 0;
       const faceScore = (telemetry.faceCount || 1) * 30;

@@ -10,6 +10,24 @@ services:
           - /auth/v1/
     plugins:
       - name: cors
+      # GoTrue v2 builds every confirmation and recovery link from
+      # X-Forwarded-Proto + X-Forwarded-Host, NOT from API_EXTERNAL_URL. The app
+      # reaches Supabase over the internal network as http://kong:8000, so Kong
+      # was forwarding Host "kong" and signup emails went out linking to
+      # http://kong/auth/v1/verify?... which no browser can resolve. Pinning the
+      # pair here makes every link public-addressable no matter which side of
+      # the split-horizon the request came in on; a request that already arrived
+      # on https://db.unenter.live is unchanged by it.
+      - name: request-transformer
+        config:
+          replace:
+            headers:
+              - "X-Forwarded-Host:db.unenter.live"
+              - "X-Forwarded-Proto:https"
+          add:
+            headers:
+              - "X-Forwarded-Host:db.unenter.live"
+              - "X-Forwarded-Proto:https"
 
   - name: rest-v1
     url: http://rest:3000/

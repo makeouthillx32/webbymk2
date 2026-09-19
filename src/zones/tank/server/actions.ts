@@ -14,10 +14,11 @@ import {
   executeItemFlex,
   ITEM_ACTION_DEFINITIONS,
 } from "./chatRngEvents";
+import { tryFireOverlayFx, isOverlayFxEnabled, setOverlayFxEnabled } from "./overlayFxStore";
 import { checkChatActivityTriggers } from "./overlays";
 import {
-  setOperatorMode,
   getEffectiveMode,
+  loadPersistedOperatorModeFromDb,
   persistOperatorModeToDb,
 } from "./directorTelemetryStore";
 import { recordMovementLog } from "./directorMovementLogStore";
@@ -30,8 +31,11 @@ import {
   DEFAULT_DIRECTOR_FEED_PRIORITIES,
 } from "./directorAttentionDb";
 import { requireStaff } from "./staffAuth";
+import { TANK_ITEM_CATALOG } from "../tankItemCatalog";
 import { resolveTankDisplayName } from "../identity";
 import { extractImageIdsFromText } from "./chatAttachments";
+import { getProviderGuild } from "./externalChatContract";
+
 
 
 import {
@@ -232,7 +236,13 @@ export async function sendChatMessage(
     if (!isClickChat) {
       const channel = adminSupabase.channel(`room:${roomId}:chat`);
       try {
-        await channel.httpSend("new_message", chatMsg);
+        await channel.send({
+          type: "broadcast",
+          event: "new_message",
+          payload: chatMsg,
+        });
+      } catch (broadcastErr) {
+        console.error("[ChatSend] Realtime broadcast failed:", broadcastErr);
       } finally {
         await adminSupabase.removeChannel(channel);
       }
@@ -485,6 +495,24 @@ export async function useTankItem(
     });
 
     if (!rpcErr && rpcResult?.success) {
+      // Chaos items: the RPC path consumes the item but knows nothing about
+      // overlay fx, so fire it here — same gates (kill-switch, cooldown) as
+      // the fallback path in executeItemUsage. Failure degrades to a normal
+      // item use, never a dead button.
+      const chaosFx = TANK_ITEM_CATALOG[itemSlug]?.overlayFx;
+      if (chaosFx) {
+        try {
+          await tryFireOverlayFx({
+            userId: user.id,
+            triggeredBy: userName,
+            texture: chaosFx.texture,
+            durationSec: chaosFx.durationSec,
+          });
+        } catch (err) {
+          console.error("[UseTankItem] overlay fx failed:", err);
+        }
+      }
+
       const message: ChatMessage = {
         id: rpcResult.message_id || `item_${Date.now()}`,
         userId: user.id,
@@ -549,7 +577,7 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("tank_chat_messages")
-      .select("id, user_id, user_name, user_role, body, created_at, message_type, item_slug, metadata, client_nonce, reply_to_message_id, reply_to_user_id")
+      .select("id, user_id, user_name, user_role, body, created_at, message_type, item_slug, metadata, client_nonce, reply_to_message_id, reply_to_user_id, source_provider, source_message_id, source_channel_id, source_user_id, source_avatar_url, source_name_color, source_badges")
       .eq("room_id", roomId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -648,8 +676,10 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
       // broadcastConsoleMessage). Sniffing the body for "[SYSTEM]" markers is
       // only a fallback for legacy rows written before the column existed.
       const persistedType = (row.message_type ?? null) as ChatMessageType | "chat" | null;
+      const sourceProvider = (row.source_provider || "tank") as NonNullable<ChatMessage["sourceProvider"]>;
+      const isExternalProvider = sourceProvider !== "tank";
       const hasNoSender =
-        !row.user_id ||
+        (!row.user_id && !isExternalProvider) ||
         row.user_name === "CONSOLE" ||
         row.user_name === "SYSTEM" ||
         row.user_name === "HOUSE EVENT";
@@ -699,6 +729,39 @@ export async function getRecentChatMessages(roomId: string): Promise<ChatMessage
           itemIconUrl: itemDef?.iconUrl,
           itemRarity: itemDef?.rarity,
           clientNonce: row.client_nonce || undefined,
+          replyToMessageId: row.reply_to_message_id || undefined,
+          replyToUserId: row.reply_to_user_id || undefined,
+          replyToUserName: row.reply_to_message_id ? replyMap.get(row.reply_to_message_id)?.user_name : undefined,
+          replyPreview: row.reply_to_message_id ? replyMap.get(row.reply_to_message_id)?.body.slice(0, 100) : undefined,
+          reactions: reactionMap.get(row.id) ?? [],
+        } satisfies ChatMessage;
+      }
+
+      if (isExternalProvider) {
+        const guild = getProviderGuild(sourceProvider);
+        const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+        const clanTag = (typeof metadata.clan_tag === "string" && metadata.clan_tag) || guild?.tag;
+        const clanColor = (typeof metadata.clan_color === "string" && metadata.clan_color) || guild?.bannerColor;
+
+        return {
+          id: row.id,
+          user: row.user_name,
+          body: row.body,
+          time,
+          createdAt: row.created_at,
+          role: "viewer",
+          avatarUrl: row.source_avatar_url || undefined,
+          nameColor: row.source_name_color || undefined,
+          messageType: "text",
+          sourceProvider,
+          sourceMessageId: row.source_message_id || undefined,
+          sourceChannelId: row.source_channel_id || undefined,
+          sourceUserId: row.source_user_id || undefined,
+          sourceBadges: Array.isArray(row.source_badges)
+            ? row.source_badges.filter((badge): badge is string => typeof badge === "string")
+            : [],
+          ...(clanTag ? { clanTag } : {}),
+          ...(clanColor ? { clanColor } : {}),
           replyToMessageId: row.reply_to_message_id || undefined,
           replyToUserId: row.reply_to_user_id || undefined,
           replyToUserName: row.reply_to_message_id ? replyMap.get(row.reply_to_message_id)?.user_name : undefined,
@@ -983,7 +1046,7 @@ export async function recordTankAuthSignIn(): Promise<{ success: boolean; error?
     ]);
 
     // 4. Mark the first-time mission as complete
-    void completeMission("Sign in for the first time");
+    void recordTankMissionProgress("sign_in_first_time", 1, user.id);
 
     return { success: true };
   } catch (err) {
@@ -1415,11 +1478,15 @@ export async function craftTankFusion(
 
 export async function setDirectorModeAction(
   mode: SubjectMode,
-  operatorName = "Operator",
+  _operatorName = "Operator",
 ): Promise<{ success: boolean; mode: SubjectMode; error?: string }> {
   try {
-    setOperatorMode(mode);
-    await persistOperatorModeToDb(mode, operatorName);
+    const staff = await requireStaff();
+    if (!staff) {
+      return { success: false, mode: getEffectiveMode(), error: "Staff access required." };
+    }
+    const trustedOperator = `${staff.role}:${staff.id}`;
+    await persistOperatorModeToDb(mode, trustedOperator);
 
     // Broadcast change across Realtime channel
     const admin = createAdminClient();
@@ -1429,7 +1496,7 @@ export async function setDirectorModeAction(
       event: "director_mode_changed",
       payload: {
         mode,
-        operator: operatorName,
+        operator: trustedOperator,
         timestamp: Date.now(),
       },
     });
@@ -1437,7 +1504,7 @@ export async function setDirectorModeAction(
     // Record audit log entry
     recordMovementLog({
       eventType: "auto_cut",
-      operator: { user: operatorName, connectionType: "browser_web" },
+      operator: { user: trustedOperator, connectionType: "browser_web" },
       source: {
         roomId: "director",
         cameraName: "Director",
@@ -1457,12 +1524,41 @@ export async function setDirectorModeAction(
 
     return { success: true, mode };
   } catch (err: any) {
-    return { success: false, mode: "auto", error: err?.message || "Failed to set director mode" };
+    return {
+      success: false,
+      mode: getEffectiveMode(),
+      error: err?.message || "Failed to set director mode",
+    };
   }
 }
 
 export async function getDirectorModeAction(): Promise<{ success: boolean; mode: SubjectMode }> {
-  return { success: true, mode: getEffectiveMode() };
+  try {
+    await loadPersistedOperatorModeFromDb(true);
+    return { success: true, mode: getEffectiveMode() };
+  } catch {
+    return { success: false, mode: getEffectiveMode() };
+  }
+}
+
+// Chaos-item overlay fx kill-switch, for the House Console. Read/write go
+// through the "use server" wrapper like every other console toggle so the
+// client component never touches the store module directly.
+export async function getOverlayFxEnabledAction(): Promise<{ success: boolean; enabled: boolean }> {
+  try {
+    return { success: true, enabled: await isOverlayFxEnabled() };
+  } catch {
+    return { success: false, enabled: true };
+  }
+}
+
+export async function setOverlayFxEnabledAction(enabled: boolean): Promise<{ success: boolean }> {
+  try {
+    await setOverlayFxEnabled(enabled);
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
 }
 
 export async function getDirectorPrioritiesAction(): Promise<{

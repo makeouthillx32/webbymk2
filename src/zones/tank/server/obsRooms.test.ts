@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { authorizePublish, OBS_PATH_PREFIX, resolveObsRoomReadiness, type ObsRoom } from "./obsRooms";
+import { authorizePublish, buildCredentials, OBS_PATH_PREFIX, resolveObsRoomReadiness, type ObsRoom } from "./obsRooms";
 
 const REGISTERED_ROOM: ObsRoom = {
   id: "room-1",
@@ -12,9 +12,6 @@ const REGISTERED_ROOM: ObsRoom = {
 };
 
 describe("OBS ingest path namespace", () => {
-  // The regex in mediamtx.yml that scopes the lifecycle hooks to OBS rooms.
-  // If these drift apart, a publish either gets no hooks (ghost rooms that
-  // never disappear) or the hooks fire for camera paths too.
   const MEDIAMTX_OBS_PATH = /^obs\/[a-z0-9][a-z0-9-]*$/;
 
   test("slugs Tank can mint are accepted by the MediaMTX path regex", () => {
@@ -91,5 +88,43 @@ describe("OBS room readiness reconciliation", () => {
   test("preserves database liveness when MediaMTX cannot answer", () => {
     expect(resolveObsRoomReadiness({ ...REGISTERED_ROOM, isLive: true }, null, false))
       .toMatchObject({ isLive: true, whepReady: false });
+  });
+});
+
+describe("OBS credentials and director program key", () => {
+  test("excludes directorProgram for regular or moderator roles", () => {
+    const credsUser = buildCredentials(REGISTERED_ROOM, "user-secret", "user");
+    expect(credsUser.directorProgram).toBeUndefined();
+
+    const credsMod = buildCredentials(REGISTERED_ROOM, "mod-secret", "moderator");
+    expect(credsMod.directorProgram).toBeUndefined();
+  });
+
+  test("includes directorProgram only when role is admin and env key is set", () => {
+    const prev = process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+    process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY = "super-secret-director";
+    try {
+      const credsAdmin = buildCredentials(REGISTERED_ROOM, "admin-secret", "admin");
+      expect(credsAdmin.directorProgram).toBeDefined();
+      expect(credsAdmin.directorProgram?.obsStreamKey).toBe("director?user=director&pass=super-secret-director");
+      expect(credsAdmin.obsStreamKey).toBe("admin?user=admin&pass=admin-secret");
+
+      const credsMod = buildCredentials(REGISTERED_ROOM, "mod-secret", "moderator");
+      expect(credsMod.directorProgram).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+      else process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY = prev;
+    }
+  });
+
+  test("excludes directorProgram for admin if env key is missing", () => {
+    const prev = process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+    delete process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
+    try {
+      const credsAdmin = buildCredentials(REGISTERED_ROOM, "admin-secret", "admin");
+      expect(credsAdmin.directorProgram).toBeUndefined();
+    } finally {
+      if (prev !== undefined) process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY = prev;
+    }
   });
 });

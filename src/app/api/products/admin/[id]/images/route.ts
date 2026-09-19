@@ -1,6 +1,9 @@
 // app/api/products/admin/[id]/images/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { requireAdminClient } from "@/lib/require-admin";
+import { reconcileProviderArtworkVariants } from "@/lib/fulfillment/catalog/artwork-readiness";
 
 type Params = { params: Promise<{ id: string }> }; // ✅ Promise
 
@@ -16,10 +19,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!id) return jsonError(400, "INVALID_ID", "Missing product id");
 
   // Check auth (reuse your requireAdmin if you have it)
-  const { data: userData, error: authError } = await supabase.auth.getUser();
-  if (authError || !userData.user) {
-    return jsonError(401, "UNAUTHORIZED", "Authentication required");
-  }
+  const gate = await requireAdminClient(supabase);
+  if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   let body: any;
   try {
@@ -35,7 +37,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   // ✅ Get the next available position for this product
-  const { data: existingImages } = await supabase
+  const { data: existingImages } = await admin
     .from("product_images")
     .select("position")
     .eq("product_id", id)
@@ -48,7 +50,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     : 0;
 
   // Insert into product_images table
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("product_images")
     .insert({
       product_id: id,
@@ -67,6 +69,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     return jsonError(500, "IMAGE_INSERT_FAILED", error.message, error);
   }
 
+  try {
+    await reconcileProviderArtworkVariants(admin, id);
+  } catch (reconcileError) {
+    console.error("Image saved but provider variant readiness reconciliation failed", reconcileError);
+  }
+
   return NextResponse.json({ ok: true, data });
 }
 
@@ -78,10 +86,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   if (!id) return jsonError(400, "INVALID_ID", "Missing product id");
 
   // Check auth
-  const { data: userData, error: authError } = await supabase.auth.getUser();
-  if (authError || !userData.user) {
-    return jsonError(401, "UNAUTHORIZED", "Authentication required");
-  }
+  const gate = await requireAdminClient(supabase);
+  if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   let body: any;
   try {
@@ -96,7 +103,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   }
 
   // Delete the image record
-  const { error } = await supabase
+  const { error } = await admin
     .from("product_images")
     .delete()
     .eq("id", image_id)
@@ -104,6 +111,12 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   if (error) {
     return jsonError(500, "IMAGE_DELETE_FAILED", error.message, error);
+  }
+
+  try {
+    await reconcileProviderArtworkVariants(admin, id);
+  } catch (reconcileError) {
+    console.error("Image deleted but provider variant readiness reconciliation failed", reconcileError);
   }
 
   return NextResponse.json({ ok: true });

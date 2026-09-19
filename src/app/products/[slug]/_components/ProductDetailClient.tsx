@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCart } from "@/components/Layouts/overlays/cart/cart-context";
 import { supabasePublicUrlFromImage, supabaseTransformedUrlFromImage } from "@/lib/images";
+import { shopperVariantOptions } from "@/lib/fulfillment/provider-metadata";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
     const firstInStock =
       product.variants.find((v) => v.inventory_quantity > 0 || v.allow_backorder) ||
       product.variants[0];
-    return firstInStock?.options || {};
+    return shopperVariantOptions(firstInStock?.options);
   }, [product.variants]);
 
   const [selectedOptions, setSelectedOptions] = useState<Record<string, any>>(initialOptions);
@@ -225,25 +226,13 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
   // ── Variant / option logic ─────────────────────────────────────────────────
   const hasVariants = product.variants && product.variants.length > 0;
 
-  // Keys that live in variant.options as descriptive metadata, NOT as user-selectable
-  // choices. These are surfaced in the Details accordion instead.
-  const DESCRIPTOR_OPTION_KEYS = new Set([
-    "material",
-    "made_in",
-    "dimensions",
-    "weight",
-  ]);
-
   const optionTypes = useMemo(() => {
     if (!hasVariants) return {};
     const types: Record<string, Set<string>> = {};
     const rawValues: Record<string, any[]> = {};
 
     product.variants.forEach((variant) => {
-      Object.entries(variant.options || {}).forEach(([key, value]) => {
-        // Skip descriptor keys — they describe the product, not a variant choice
-        if (DESCRIPTOR_OPTION_KEYS.has(key.toLowerCase())) return;
-
+      Object.entries(shopperVariantOptions(variant.options)).forEach(([key, value]) => {
         if (!types[key]) {
           types[key] = new Set();
           rawValues[key] = [];
@@ -278,6 +267,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
   }, [product.variants, selectedOptions, hasVariants]);
 
   const displayPrice = selectedVariant?.price_cents ?? product.price_cents;
+  const hasValidPrice = Number.isFinite(displayPrice) && displayPrice > 0;
   const compareAtPrice =
     selectedVariant?.compare_at_price_cents ?? product.compare_at_price_cents;
   const hasDiscount = compareAtPrice && compareAtPrice > displayPrice;
@@ -303,7 +293,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
 
   // ── Add to cart ────────────────────────────────────────────────────────────
   const handleAddToCart = async () => {
-    if (!selectedVariant || !inStock) return;
+    if (!selectedVariant || !inStock || !hasValidPrice) return;
     setIsAddingToCart(true);
     try {
       await addItem(selectedVariant.id, 1);
@@ -469,7 +459,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
           {/* 2 · Price */}
           <div className="flex items-baseline gap-3">
             <span className="text-2xl font-bold">
-              ${(displayPrice / 100).toFixed(2)}
+              {hasValidPrice ? `$${(displayPrice / 100).toFixed(2)}` : "Pricing coming soon"}
             </span>
             {hasDiscount && compareAtPrice && (
               <span className="text-lg text-muted-foreground line-through">
@@ -614,10 +604,10 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
               size="lg"
               className="flex-1 h-12 rounded-xl text-base font-semibold shadow-sm hover:shadow transition-all"
               onClick={handleAddToCart}
-              disabled={!inStock || isAddingToCart}
+              disabled={!inStock || !hasValidPrice || isAddingToCart}
             >
               <ShoppingCart className="w-5 h-5 mr-2" />
-              {isAddingToCart ? "Adding…" : "Add to Cart"}
+              {isAddingToCart ? "Adding…" : hasValidPrice ? "Add to Cart" : "Set price before purchase"}
             </Button>
             <Button
               size="lg"
@@ -659,7 +649,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
             {/* Description */}
             {product.description && (
               <Accordion title="Description" defaultOpen={true}>
-                <p className="text-sm text-muted-foreground leading-relaxed">
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                   {product.description}
                 </p>
               </Accordion>

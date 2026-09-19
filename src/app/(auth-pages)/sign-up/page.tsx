@@ -21,6 +21,7 @@ export const metadata: Metadata = {
 
 type SearchParams = Message & {
   invite?: string;
+  next?: string;
 };
 
 export default async function SignUpPage({
@@ -78,6 +79,7 @@ export default async function SignUpPage({
       <form className="space-y-6" action={signUpAction}>
         {/* Hidden invite only (NO manual entry field) */}
         <input type="hidden" name="invite" value={invite} />
+        <input type="hidden" name="next" value={resolvedSearchParams?.next || ""} />
 
         {/* first + last name (matches signUpAction) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -211,7 +213,7 @@ export default async function SignUpPage({
       <p className="text-center text-sm mt-6 text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-[1.5]">
         Already have an account?{" "}
         <Link
-          href="/sign-in"
+          href={resolvedSearchParams?.next ? `/sign-in?next=${encodeURIComponent(resolvedSearchParams.next)}` : "/sign-in"}
           className="text-[hsl(var(--sidebar-primary))] hover:underline transition-all duration-200"
         >
           Sign in

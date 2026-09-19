@@ -271,7 +271,8 @@ export function deriveZoneUpstream(zone: Zone, env: UnaxisEnvironment | null): s
     try { host = new URL(env.agentUrl).hostname; } catch { /* ignore */ }
   }
 
-  return host ? `http://${host}:3000` : `http://${zone.container}:3000`;
+  const port = zone.port ?? 3000;
+  return host ? `http://${host}:${port}` : `http://${zone.container}:3000`;
 }
 
 // ── Startup reconciliation ────────────────────────────────────────────────────

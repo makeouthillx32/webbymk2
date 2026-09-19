@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import dynamic from "next/dynamic";
@@ -101,15 +100,17 @@ import { DailyClaimModal } from "./components/DailyClaimModal";
 import { PrizeMachineModal } from "./components/PrizeMachineModal";
 import { SecretCodeModal } from "./components/SecretCodeModal";
 import { TankBanAppealsModal } from "./components/TankBanAppealsModal";
-import { DirectorRoomLabel } from "./components/DirectorRoomLabel";
 import { getDirectorModePresentation } from "../director/directorModePresentation";
 import { useViewerPresence } from "./useViewerPresence";
 import {
-  SettingsOverlay,
   DEFAULT_SETTINGS,
   PATTERNS_CATALOG,
   type TankSettings,
 } from "./components/SettingsOverlay";
+import { CompactSettingsOverlay as SettingsOverlay } from "./components/CompactSettingsOverlay";
+import { RoomPortalOverlay } from "./components/RoomPortalOverlay";
+import type { RoomPortal } from "../vision/portalGeometry";
+import { fetchPortalsForRoom } from "../server/portalActions";
 import { TankThemeStyles } from "./TankThemeStyles";
 import { TankViewportDebugHud } from "./components/TankViewportDebugHud";
 import { TankCameraDebugHud } from "./components/TankCameraDebugHud";
@@ -119,6 +120,11 @@ import {
   type LiveEdgeInfo,
   type StreamStabilityInfo,
 } from "./CameraPlayer";
+import {
+  nextTankPlayerQuality,
+  tankPlayerQualityLabel,
+  type TankPlayerQuality,
+} from "./playerQuality";
 import { useNetworkQuality } from "./useNetworkQuality";
 import {
   countNewInventoryItems,
@@ -136,7 +142,8 @@ import { resolveTankDisplayName } from "../identity";
 import { buildGlobalLogoutUrl } from "@/lib/authRedirect";
 import { ChromePanel } from "./components/ChromePanel";
 import { ConsoleButton } from "./components/ConsoleButton";
-import { TopConsoleStrip } from "./components/TopConsoleStrip";
+import { SeasonMarquee } from "./components/SeasonMarquee";
+import { TankBrandBlock } from "./components/TankBrandBlock";
 import { ProfilePanel } from "./components/ProfilePanel";
 import {
   NavigationPanel,
@@ -149,11 +156,10 @@ import {
 } from "./components/MissionsTabsPanel";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { CameraRosterPanel } from "./components/CameraRosterPanel";
-import { RoomDescriptionPanel } from "./components/RoomDescriptionPanel";
+import { CollapsedPanelRestore } from "./components/CollapsedPanelRestore";
 import { ChatConsolePanel } from "./components/ChatConsolePanel";
 import { ArchiveOverlayPanel } from "./components/ArchiveOverlayPanel";
 import { TankExperienceSkeleton } from "./components/TankExperienceSkeleton";
-import { CrtTransition } from "./components/CrtTransition";
 import { MobileRoomGrid } from "./components/MobileRoomGrid";
 import { MobileRoomSourceStrip } from "./components/MobileRoomSourceStrip";
 import { TankMarkIcon } from "./components/TankMarkIcon";
@@ -179,6 +185,7 @@ import {
   getXpCeilForLevel,
   getXpProgressPercent,
 } from "../xpLevels";
+import { calculateHouseDay } from "../houseDay";
 
 // Stripe's browser SDK must not be part of Tank's startup path. A static import
 // evaluates loadStripe() before the store is opened, which makes every viewer
@@ -450,7 +457,9 @@ export type TankExperienceProps = {
   initialCameraSnapshot?: CameraDirectorySnapshot | null;
   initialProfile: TankPlayerProfile | null;
   initialDirectorState?: ServerDirectorState | null;
+  initialRoomPortals?: RoomPortal[];
   season: TankSeason | null;
+  houseDayStartedAt: string | null;
   missions: TankMission[];
   leaderboard: TankLeaderboardRow[];
   clans: TankClanSummary[];
@@ -461,6 +470,19 @@ export type TankExperienceProps = {
 };
 
 const COOKIE_MOBILE_CHAT_SIZE = "tank_mobile_chat_size";
+const LS_DESKTOP_CHAT_SIZE = "tank_desktop_chat_size";
+const LS_DESKTOP_PANEL_STATE = "tank_desktop_panel_state";
+const LS_DESKTOP_RAIL_VISIBLE = "tank_desktop_rail_visible";
+
+type DesktopPanelKey = "navigation" | "inventory" | "missions" | "telemetry";
+type DesktopPanelState = Record<DesktopPanelKey, boolean>;
+
+const DEFAULT_DESKTOP_PANEL_STATE: DesktopPanelState = {
+  navigation: true,
+  inventory: true,
+  missions: true,
+  telemetry: true,
+};
 
 function readSavedMobileChatSize(): "hidden" | "half" | "full" {
   if (typeof window === "undefined") return "half";
@@ -542,6 +564,9 @@ const TANK_OWNED_STORAGE_KEYS = [
   LS_CHAT_TARGET,
   LS_ROOM_ORIGIN,
   COOKIE_MOBILE_CHAT_SIZE, // "tank_mobile_chat_size"
+  LS_DESKTOP_CHAT_SIZE,
+  LS_DESKTOP_PANEL_STATE,
+  LS_DESKTOP_RAIL_VISIBLE,
   "tank_settings_v1",
   "tank:assigned-room-key",
   "tank_local_profile",
@@ -592,58 +617,43 @@ function readRoomLocation(): TankInitialLocation | null {
   return null;
 }
 
-function persistRoomLocation(
-  mode: ViewMode,
-  slug: string,
-  historyMode: "push" | "replace" = "replace",
-) {
-  try {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    // `refresh=true` was a legacy auth-session cache buster. A full-page auth
-    // return already carries the shared session cookie, and preserving this
-    // transient flag made it reappear on every room change.
-    params.delete("refresh");
-    const query = params.toString();
-    const pathname =
-      mode === "director"
-        ? "/"
-        : mode === "grid"
-          ? "/rooms"
-          : `/rooms/${encodeURIComponent(slug)}`;
-    const nextUrl = query ? `${pathname}?${query}` : pathname;
-    const currentUrl = `${window.location.pathname}${window.location.search}`;
-    if (currentUrl === nextUrl && !window.location.hash) return;
-    const updateHistory =
-      historyMode === "push"
-        ? window.history.pushState.bind(window.history)
-        : window.history.replaceState.bind(window.history);
-    updateHistory(window.history.state, "", nextUrl);
-  } catch {}
-}
-
+/**
+ * Tab-local first, then the cross-tab copy.
+ *
+ * The view is deliberately tab-local so two tabs can sit in different rooms
+ * without fighting. But sessionStorage dies with the tab, so opening Tank in
+ * a new tab — or after a browser restart — found nothing and fell back to
+ * Director every time, no matter where you had been.
+ *
+ * Reading through to localStorage keeps both: within a tab, that tab wins;
+ * a brand-new tab starts where you last were instead of somewhere arbitrary.
+ */
 function readPersistedRoomValue(key: string): string | null {
   try {
     if (typeof window === "undefined") return null;
-    const stored = window.sessionStorage.getItem(key);
-    if (stored !== null) return stored;
+    const tabLocal = window.sessionStorage.getItem(key);
+    if (tabLocal !== null) return tabLocal;
+    return window.localStorage.getItem(key);
   } catch {}
   return null;
 }
 
+// Written to both: sessionStorage is what this tab reads back, localStorage
+// is what the NEXT tab inherits.
 function persistRoomValue(key: string, value: string) {
   try {
     if (typeof window === "undefined") return;
     window.sessionStorage.setItem(key, value);
+    window.localStorage.setItem(key, value);
   } catch {}
 }
 
-function readSavedChatTarget(): string {
+function readSavedChatTarget(): string | null {
   try {
     const v = readPersistedRoomValue(LS_CHAT_TARGET);
-    if (v) return v;
+    if (v && v !== "director" && v !== "grid" && v !== "room") return v;
   } catch {}
-  return "global";
+  return null;
 }
 
 function readSavedRoomOrigin(): Exclude<ViewMode, "room"> {
@@ -654,16 +664,34 @@ function readSavedRoomOrigin(): Exclude<ViewMode, "room"> {
   return "grid";
 }
 
+function readSavedRoomLocation(): TankInitialLocation | null {
+  try {
+    const mode = readPersistedRoomValue(LS_ROOM_MODE);
+    if (mode === "director" || mode === "grid") return { mode };
+    if (mode !== "room") return null;
+
+    const slug = readPersistedRoomValue(LS_ROOM_SLUG)?.trim().toLowerCase();
+    if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
+    return { mode: "room", slug };
+  } catch {}
+  return null;
+}
+
 function persistRoomState(
   mode: ViewMode,
   slug: string,
-  chatTarget: string,
+  chatTarget: string | null,
   origin: Exclude<ViewMode, "room">,
-  historyMode: "push" | "replace" = "replace",
 ) {
   try {
-    persistRoomLocation(mode, slug, historyMode);
-    persistRoomValue(LS_CHAT_TARGET, chatTarget);
+    persistRoomValue(LS_ROOM_MODE, mode);
+    persistRoomValue(LS_ROOM_SLUG, slug);
+    if (chatTarget) {
+      persistRoomValue(LS_CHAT_TARGET, chatTarget);
+    } else if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(LS_CHAT_TARGET);
+      window.localStorage.removeItem(LS_CHAT_TARGET);
+    }
     persistRoomValue(LS_ROOM_ORIGIN, origin);
   } catch {}
 }
@@ -673,7 +701,9 @@ export function TankExperience({
   initialCameraSnapshot = null,
   initialProfile,
   initialDirectorState = null,
+  initialRoomPortals = [],
   season,
+  houseDayStartedAt,
   missions,
   leaderboard,
   clans,
@@ -682,6 +712,7 @@ export function TankExperience({
   archives,
   tokenTransactions,
 }: TankExperienceProps) {
+  const [roomPortals, setRoomPortals] = useState(initialRoomPortals);
   const [snapshot, setSnapshot] = useState<CameraDirectorySnapshot | null>(
     initialCameraSnapshot,
   );
@@ -818,10 +849,13 @@ export function TankExperience({
     return Array.from(map.values());
   }, [snapshot?.rooms]);
 
-  // Routes are authoritative: / is Director, /rooms is the grid, and each
-  // /rooms/:slug is a room. Local storage preserves secondary preferences but
-  // never turns two browser destinations into the same page.
-  const [mode, setMode] = useState<ViewMode>(initialLocation?.mode ?? "director");
+  // Tank behaves like a single-page app: the selected view is tab-local state,
+  // not navigation state. Refresh restores it without changing the address bar.
+  // Old /rooms links remain readable below only for backwards compatibility.
+  // All Rooms is the default landing, not Director. Someone arriving with no
+  // saved view wants to see the house and choose; dropping them into a single
+  // directed feed hides the other six rooms behind a click.
+  const [mode, setMode] = useState<ViewMode>(initialLocation?.mode ?? "grid");
   const [activeRoomSlug, setActiveRoomSlug] = useState<string>(
     initialLocation?.slug ?? DIRECTOR_ROOM.slug,
   );
@@ -835,25 +869,37 @@ export function TankExperience({
   const prevModeRef = useRef<Exclude<ViewMode, "room">>("grid");
   const navigateTo = (next: ViewMode) => {
     if (mode !== "room") prevModeRef.current = mode;
-    // Save during the navigation event, not only in an effect. Mobile Safari
-    // can reload or suspend the page before React flushes that effect.
+    const nextChatTarget =
+      next === "director" || next === "grid"
+        ? explicitChatTarget?.startsWith("click:")
+          ? explicitChatTarget
+          : null
+        : explicitChatTarget;
+    if (nextChatTarget !== explicitChatTarget) {
+      setExplicitChatTarget(nextChatTarget);
+    }
     persistRoomState(
       next,
       activeRoomSlug,
-      explicitChatTarget ?? "global",
+      nextChatTarget,
       prevModeRef.current,
-      "push",
     );
     setMode(next);
   };
   const openRoom = (roomSlug: string) => {
     if (mode !== "room") prevModeRef.current = mode;
+    const nextChatTarget =
+      explicitChatTarget === "global" || explicitChatTarget?.startsWith("click:")
+        ? explicitChatTarget
+        : null;
+    if (nextChatTarget !== explicitChatTarget) {
+      setExplicitChatTarget(nextChatTarget);
+    }
     persistRoomState(
       "room",
       roomSlug,
-      explicitChatTarget ?? "global",
+      nextChatTarget,
       prevModeRef.current,
-      "push",
     );
     setActiveRoomSlug(roomSlug);
     setMode("room");
@@ -861,8 +907,16 @@ export function TankExperience({
 
   useEffect(() => {
     purgeIncompatibleTankState();
-    const savedLocation = initialLocation ?? readRoomLocation();
-    const savedMode = savedLocation?.mode ?? "director";
+    const browserLocation = readRoomLocation();
+    const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+    // A deliberately opened /rooms or /rooms/:slug route wins. At the root,
+    // restore the last tab-local view so refreshing All Rooms does not silently
+    // bounce back to Director. This adds no query string or extra link.
+    const explicitRoomPath = pathname === "/rooms" || pathname.startsWith("/rooms/");
+    const savedLocation = explicitRoomPath
+      ? browserLocation
+      : readSavedRoomLocation() ?? initialLocation ?? browserLocation;
+    const savedMode = savedLocation?.mode ?? "grid";
     const savedSlug = savedLocation?.slug ?? DIRECTOR_ROOM.slug;
     const savedChatTarget = readSavedChatTarget();
     const savedOrigin = readSavedRoomOrigin();
@@ -925,6 +979,13 @@ export function TankExperience({
   const [mobileChatSize, setMobileChatSizeState] = useState<
     "hidden" | "half" | "full"
   >("half");
+  const [desktopChatSize, setDesktopChatSizeState] = useState<
+    "hidden" | "full"
+  >("full");
+  const [desktopPanels, setDesktopPanels] = useState<DesktopPanelState>(
+    DEFAULT_DESKTOP_PANEL_STATE,
+  );
+  const [desktopRailVisible, setDesktopRailVisibleState] = useState(true);
 
   useEffect(() => {
     // Scrub legacy UI cookies that previously caused HTTP 431 header bloat
@@ -939,6 +1000,28 @@ export function TankExperience({
       ) {
         setMobileChatSizeState(saved);
       }
+      const savedDesktopChat = safeStorage.getItem(LS_DESKTOP_CHAT_SIZE);
+      if (savedDesktopChat === "hidden") {
+        setDesktopChatSizeState("hidden");
+      } else if (
+        savedDesktopChat === "full" ||
+        savedDesktopChat === "half"
+      ) {
+        // Migrate the retired desktop partial state to a supported open state.
+        setDesktopChatSizeState("full");
+        if (savedDesktopChat === "half") {
+          safeStorage.setItem(LS_DESKTOP_CHAT_SIZE, "full");
+        }
+      }
+      const savedPanels = safeStorage.getItem(LS_DESKTOP_PANEL_STATE);
+      if (savedPanels) {
+        const parsed = JSON.parse(savedPanels) as Partial<DesktopPanelState>;
+        setDesktopPanels({ ...DEFAULT_DESKTOP_PANEL_STATE, ...parsed });
+      }
+      const savedRailVisible = safeStorage.getItem(LS_DESKTOP_RAIL_VISIBLE);
+      if (savedRailVisible === "true" || savedRailVisible === "false") {
+        setDesktopRailVisibleState(savedRailVisible === "true");
+      }
     } catch {}
 
   }, []);
@@ -946,6 +1029,27 @@ export function TankExperience({
   const setMobileChatSize = (size: "hidden" | "half" | "full") => {
     setMobileChatSizeState(size);
     persistMobileChatSize(size);
+  };
+  const setDesktopChatSize = (size: "hidden" | "full") => {
+    setDesktopChatSizeState(size);
+    try {
+      safeStorage.setItem(LS_DESKTOP_CHAT_SIZE, size);
+    } catch {}
+  };
+  const setDesktopPanelExpanded = (key: DesktopPanelKey, expanded: boolean) => {
+    setDesktopPanels((previous) => {
+      const next = { ...previous, [key]: expanded };
+      try {
+        safeStorage.setItem(LS_DESKTOP_PANEL_STATE, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+  const setDesktopRailVisible = (visible: boolean) => {
+    setDesktopRailVisibleState(visible);
+    try {
+      safeStorage.setItem(LS_DESKTOP_RAIL_VISIBLE, String(visible));
+    } catch {}
   };
   const [mobileDockOpen, setMobileDockOpen] = useState(false);
   const [mobileProfileMenuOpen, setMobileProfileMenuOpen] = useState(false);
@@ -1343,7 +1447,7 @@ export function TankExperience({
   }, [signedIn]);
 
   // Live wall-clock — real, not fabricated. Used for the STATS "TIME" LED
-  // readout and for computing "days into season" for "DAY".
+  // readout and the separately resettable public house-day counter.
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     setNow(new Date());
@@ -1351,15 +1455,10 @@ export function TankExperience({
     return () => window.clearInterval(timer);
   }, []);
 
-  const seasonDay = useMemo(() => {
-    if (!season || !now) return null;
-    const started = new Date(season.startsAt).getTime();
-    const diffDays = Math.max(
-      1,
-      Math.floor((now.getTime() - started) / 86_400_000) + 1,
-    );
-    return diffDays;
-  }, [season, now]);
+  const houseDay = useMemo(
+    () => (now ? calculateHouseDay(houseDayStartedAt, now) : null),
+    [houseDayStartedAt, now],
+  );
 
   const watchMode =
     mode === "room" && activeRoomSlug !== "director"
@@ -1526,7 +1625,7 @@ export function TankExperience({
   // scene-cutting on the SRT Receiver Manager side — see receiverManager.ts's
   // `directorAssigned` flag). Follow that when it's present.
   const directorAssignedCameraId = useMemo(() => {
-    for (const camera of snapshot?.cameras ?? []) {
+    for (const camera of rosterCameras) {
       if (
         camera.directorAssigned &&
         (camera.presence === "online" || camera.presence === "degraded")
@@ -1535,7 +1634,7 @@ export function TankExperience({
       }
     }
     return undefined;
-  }, [snapshot]);
+  }, [rosterCameras]);
 
   // ── Central Server-Side Director Attachment (Pre-Seeded via SSR Quartz) ──
   const serverDirector = useServerDirector({
@@ -1564,8 +1663,13 @@ export function TankExperience({
     dwellSeconds,
   ]);
 
+  const configuredDirectorCameraId = onlineCameraIds.includes(
+    serverDirector.activeCameraId,
+  )
+    ? serverDirector.activeCameraId
+    : undefined;
   const directorCameraId =
-    serverDirector.activeCameraId ||
+    configuredDirectorCameraId ||
     directorNegotiation.selectedCameraId ||
     directorAssignedCameraId ||
     onlineCameraIds[0];
@@ -1575,44 +1679,87 @@ export function TankExperience({
       ? directorCameraId
       : (selectedCameraId ?? resolvedRoomFeaturedCameraId);
   const heroLive = heroCameraId ? liveById.get(heroCameraId) : undefined;
+  // Doorways belong to the camera frame currently on screen. In a room this
+  // is the selected room; in Director it follows the room of each live cut.
+  const portalSourceRoomSlug =
+    mode === "director"
+      ? (heroLive?.roomScope ||
+        serverDirector.activeRoomKey ||
+        directorNegotiation.selectedRoomKey)
+      : activeRoomSlug;
+  useEffect(() => {
+    setRoomPortals(initialRoomPortals);
+  }, [initialRoomPortals]);
+
+  useEffect(() => {
+    if (
+      !portalSourceRoomSlug ||
+      portalSourceRoomSlug === "director" ||
+      portalSourceRoomSlug === "global"
+    ) {
+      return;
+    }
+    let active = true;
+
+    void fetchPortalsForRoom(portalSourceRoomSlug)
+      .then((nextPortals) => {
+        if (!active) return;
+        setRoomPortals((current) => [
+          ...current.filter(
+            (portal) => portal.sourceRoomSlug !== portalSourceRoomSlug,
+          ),
+          ...nextPortals,
+        ]);
+      })
+      .catch(() => {
+        // Preserve the server-rendered records when a refresh is unavailable.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [portalSourceRoomSlug]);
+
+  const activeRoomPortals = useMemo(() => {
+    if (!portalSourceRoomSlug) return [];
+    return roomPortals.filter((portal) => {
+      if (!portal.enabled || portal.sourceRoomSlug !== portalSourceRoomSlug) return false;
+      if (!portal.sourceCameraId) return true;
+      return (
+        portal.sourceCameraId === heroCameraId ||
+        portal.sourceCameraId === heroLive?.id ||
+        portal.sourceCameraId === heroLive?.slug
+      );
+    });
+  }, [heroCameraId, heroLive?.id, heroLive?.slug, portalSourceRoomSlug, roomPortals]);
   const heroCameraOnline = heroCameraId ? isOnline(heroCameraId) : false;
-  const directorProgram = serverDirector.program;
-  const usingDirectorProgram =
-    mode === "director" &&
-    directorProgram?.online === true &&
-    Boolean(directorProgram.playbackUrl) &&
-    directorProgram.playbackProtocol !== "none";
-  const heroOnline = usingDirectorProgram
-    ? directorProgram?.online === true
-    : heroCameraOnline;
-  const heroPlaybackUrl = usingDirectorProgram
-    ? directorProgram?.playbackUrl ?? null
-    : heroLive?.playbackUrl ?? null;
-  const heroPlaybackProtocol = usingDirectorProgram
-    ? directorProgram?.playbackProtocol ?? "none"
-    : heroLive?.playbackProtocol ?? "none";
+  const directorSourceCamera = directorCameraId
+    ? liveById.get(directorCameraId)
+    : undefined;
+  const directorRosterCamera = directorSourceCamera
+    ? {
+        ...directorSourceCamera,
+        id: "director-program",
+        slug: "director-program",
+        name: "Director",
+        roomScope: "director",
+        tags: Array.from(
+          new Set([...directorSourceCamera.tags, "director", "program"]),
+        ),
+        previewUrl: null,
+        previewProtocol: undefined,
+        recentClipUrl: null,
+      }
+    : undefined;
+  const heroOnline = heroCameraOnline;
+  const heroPlaybackUrl = heroLive?.playbackUrl ?? null;
+  const heroPlaybackProtocol = heroLive?.playbackProtocol ?? "none";
   const heroHasRealFeed =
     Boolean(heroPlaybackUrl) && heroPlaybackProtocol !== "none";
-  const heroPlayerStyle = useMemo<CSSProperties | undefined>(() => {
-    if (
-      mode !== "director" ||
-      usingDirectorProgram ||
-      serverDirector.mode !== "MANUAL_PILOT" ||
-      !serverDirector.ptzState
-    ) {
-      return undefined;
-    }
-    const zoom = Math.min(3, Math.max(1, serverDirector.ptzState.zoomFactor || 1));
-    const maxPanX = Math.max(0, 3840 - 3840 / zoom);
-    const maxPanY = Math.max(0, 2160 - 2160 / zoom);
-    const panX = Math.min(maxPanX, Math.max(0, serverDirector.ptzState.panOffsetX || 0));
-    const panY = Math.min(maxPanY, Math.max(0, serverDirector.ptzState.panOffsetY || 0));
-    return {
-      transformOrigin: "top left",
-      transform: `scale(${zoom}) translate(${-panX / 38.4}%, ${-panY / 21.6}%)`,
-      transition: "transform 120ms linear",
-    };
-  }, [mode, usingDirectorProgram, serverDirector.mode, serverDirector.ptzState]);
+  // The programme crop, glided by the player itself (see CameraPlayer's
+  // ptzTarget). Only "is the shot zoomed" is needed at this level.
+  const heroPtzTarget = mode === "director" ? serverDirector.ptzState ?? null : undefined;
+  const heroZoomed = Boolean(heroPtzTarget && heroPtzTarget.zoomFactor > 1);
   const anyHouseCameraOnline = onlineCameraIds.length > 0;
 
   // The director has nothing to negotiate between when no house camera is
@@ -1649,8 +1796,12 @@ export function TankExperience({
   // Real hero-player controls — fullscreen via the actual Fullscreen API,
   // play/pause and mute via imperative calls into the underlying <video>
   // (CameraPlayer exposes both through a ref), not decorative buttons.
-  const heroSectionRef = useRef<HTMLElement | null>(null);
+  const heroSectionRef = useRef<HTMLDivElement | null>(null);
+  const heroViewportRef = useRef<HTMLElement | null>(null);
   const heroPlayerRef = useRef<CameraPlayerHandle | null>(null);
+  const qualityPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [heroQuality, setHeroQuality] = useState<TankPlayerQuality>("high");
+  const [qualityKeyPressed, setQualityKeyPressed] = useState(false);
   const [tapParticles, setTapParticles] = useState<Array<{ id: string; x: number; y: number; text: string }>>([]);
   const [activeScavengerQuest, setActiveScavengerQuest] = useState<ScavengerQuest | null>(null);
 
@@ -1670,9 +1821,29 @@ export function TankExperience({
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (qualityPressTimerRef.current) {
+        clearTimeout(qualityPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const cycleHeroQuality = () => {
+    setHeroQuality((current) => nextTankPlayerQuality(current));
+    setQualityKeyPressed(true);
+    if (qualityPressTimerRef.current) {
+      clearTimeout(qualityPressTimerRef.current);
+    }
+    qualityPressTimerRef.current = setTimeout(() => {
+      setQualityKeyPressed(false);
+      qualityPressTimerRef.current = null;
+    }, 140);
+  };
+
   const handleHeroTap = async (e: React.MouseEvent<HTMLElement>) => {
-    if (!heroSectionRef.current) return;
-    const rect = heroSectionRef.current.getBoundingClientRect();
+    if (!heroViewportRef.current) return;
+    const rect = heroViewportRef.current.getBoundingClientRect();
     const { isInsideVideo, globalNx, globalNy } = clientToNormalizedVideoCoords(
       e.clientX,
       e.clientY,
@@ -1913,13 +2084,13 @@ export function TankExperience({
         ? "click"
         : "room";
 
-  // The URL persists the room; tab-local storage preserves chat context.
+  // The URL stays untouched; tab-local state restores both view and chat.
   useEffect(() => {
     if (!roomStateRestored) return;
     persistRoomState(
       mode,
       activeRoomSlug,
-      explicitChatTarget ?? "global",
+      explicitChatTarget,
       prevModeRef.current,
     );
   }, [mode, activeRoomSlug, explicitChatTarget, roomStateRestored]);
@@ -2062,6 +2233,9 @@ export function TankExperience({
   const activeBackgroundUrl =
     activeBackgroundTheme.backgroundUrl || ACTIVE_THEME.images.background;
 
+  const desktopFocusView =
+    !desktopRailVisible && desktopChatSize === "hidden" && mode !== "grid";
+
   const labelWide: React.CSSProperties = {
     fontFamily: ACTIVE_THEME.fonts.labelWide,
   };
@@ -2126,10 +2300,18 @@ export function TankExperience({
         }}
       />
 
-      <TankThemeStyles statusBarColor={activeBackgroundTheme.statusBarHex} />
+      <TankThemeStyles
+        statusBarColor={activeBackgroundTheme.statusBarHex}
+        designTheme="tank-neutral-chrome"
+        customTheme={settings.customTheme}
+      />
       <TankViewportDebugHud />
       <TankCameraDebugHud />
-      <div className="relative z-10 mx-auto max-w-[1800px] p-2 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:p-3 lg:pb-3">
+      <div
+        className={`relative z-10 mx-auto p-2 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:p-3 lg:pb-3 ${
+          desktopFocusView ? "lg:max-w-none" : "max-w-[1800px]"
+        }`}
+      >
         {/* ═══════════ MOBILE TOP HEADER BAR (lg:hidden) ═══════════ */}
         <div className="mb-2 flex items-center justify-between px-1 lg:hidden">
           {/* Breadcrumbs: Room -> Director -> All Rooms Grid */}
@@ -2309,13 +2491,50 @@ export function TankExperience({
           </div>
         </div>
 
-        {/* Top console strip: balanced 3-column layout (Desktop only) */}
-        <div className="hidden lg:block">
-          <TopConsoleStrip
-            season={season}
-            onClaimDaily={() => setDailyClaimOpen(true)}
-            merchHref={TANK_MERCH_URL}
-          />
+        {/* Three independent desktop header blocks: brand, season, and a
+            scrollable room switcher. */}
+        <div
+          className="mb-2 hidden gap-2 lg:grid lg:grid-cols-[180px_220px_minmax(0,1fr)]"
+          style={{ gap: "var(--tank-module-gap, 0.75rem)" }}
+        >
+          <TankBrandBlock />
+          <SeasonMarquee season={season} />
+          <ChromePanel
+            withScrews
+            className="min-w-0 w-full"
+            contentClassName="!px-5 !py-1.5 flex min-h-[54px] items-center gap-1.5 overflow-x-auto flex-nowrap [scrollbar-color:#555b62_transparent] [scrollbar-width:thin]"
+          >
+            <ConsoleButton
+              active={mode === "grid"}
+              variant={mode === "grid" ? "orange" : "gray"}
+              className="shrink-0"
+              onClick={() => navigateTo("grid")}
+            >
+              All Rooms
+            </ConsoleButton>
+            <ConsoleButton
+              active={mode === "director"}
+              variant={mode === "director" ? "orange" : "gray"}
+              className="shrink-0"
+              onClick={() => navigateTo("director")}
+            >
+              🌐 Director
+            </ConsoleButton>
+            {browseRooms.map((room) => {
+              const active = mode === "room" && activeRoomSlug === room.roomKey;
+              return (
+                <ConsoleButton
+                  key={room.roomKey}
+                  active={active}
+                  variant={active ? "orange" : "gray"}
+                  className="shrink-0"
+                  onClick={() => openRoom(room.roomKey)}
+                >
+                  {room.title}
+                </ConsoleButton>
+              );
+            })}
+          </ChromePanel>
         </div>
 
         {/* ═══════════ MOBILE-ONLY ALL-ROOMS GRID VIEW ═══════════ */}
@@ -2339,11 +2558,7 @@ export function TankExperience({
                 };
               })}
               directorCamera={
-                directorCameraId
-                  ? liveById.get(directorCameraId)
-                  : onlineCameraIds[0]
-                    ? liveById.get(onlineCameraIds[0])
-                    : undefined
+                directorRosterCamera
               }
               directorOnline={anyHouseCameraOnline}
               onSelectDirector={() => navigateTo("director")}
@@ -2359,13 +2574,25 @@ export function TankExperience({
             wrapper (chat included) was `hidden` on mobile whenever
             mode==="grid", making chat completely unreachable from the All
             Rooms view. */}
-        <div className="flex flex-col items-stretch gap-2 lg:grid lg:grid-cols-[230px_minmax(0,1fr)_380px] xl:grid-cols-[240px_minmax(0,1fr)_420px] 2xl:grid-cols-[250px_minmax(0,1fr)_460px]">
+        <div
+          className={`flex flex-col items-stretch gap-2 lg:grid ${
+            !desktopRailVisible && desktopChatSize === "hidden"
+              ? "lg:grid-cols-[56px_minmax(0,1fr)_48px]"
+              : !desktopRailVisible
+                ? "lg:grid-cols-[56px_minmax(0,1fr)_380px] xl:grid-cols-[56px_minmax(0,1fr)_420px] 2xl:grid-cols-[56px_minmax(0,1fr)_460px]"
+                : desktopChatSize === "hidden"
+                  ? "lg:grid-cols-[230px_minmax(0,1fr)_48px] xl:grid-cols-[240px_minmax(0,1fr)_48px] 2xl:grid-cols-[250px_minmax(0,1fr)_48px]"
+                  : "lg:grid-cols-[230px_minmax(0,1fr)_380px] xl:grid-cols-[240px_minmax(0,1fr)_420px] 2xl:grid-cols-[250px_minmax(0,1fr)_460px]"
+          } ${desktopFocusView ? "lg:h-[calc(100dvh-7.5rem)] lg:min-h-0" : ""}`}
+          style={{ gap: "var(--tank-module-gap, 0.75rem)" }}
+        >
           {/* ── Left rail: profile, nav, inventory, missions, stats ────── */}
-          <div className="hidden flex-col gap-2 lg:flex">
+          {desktopRailVisible ? <div className="hidden flex-col gap-2 lg:flex" style={{ gap: "var(--tank-module-gap, 0.75rem)" }}>
             <ProfilePanel
               initialProfile={livePlayerProfile ?? playerProfile}
-              userClan={userClan}
               signedIn={signedIn}
+              merchHref={TANK_MERCH_URL}
+              onClaimDaily={() => setDailyClaimOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
               onOpenSignIn={() => setAccountOpen(true)}
               onOpenProfile={() => setProfileOpen(true)}
@@ -2382,9 +2609,14 @@ export function TankExperience({
               onOpenAppeals={() => setAppealsModalOpen(true)}
               unreadNotificationsCount={unreadNotificationCount}
               onSignOut={handleSignOutInline}
+              onCollapseRail={() => setDesktopRailVisible(false)}
             />
 
-            <NavigationPanel onSelectOverlay={setOverlayView} />
+            <NavigationPanel
+              onSelectOverlay={setOverlayView}
+              expanded={desktopPanels.navigation}
+              onExpandedChange={(expanded) => setDesktopPanelExpanded("navigation", expanded)}
+            />
 
             <InventoryPanel
               inventory={liveInventory}
@@ -2393,6 +2625,8 @@ export function TankExperience({
                 acknowledgeInventory();
                 setOverlayView("inventory");
               }}
+              expanded={desktopPanels.inventory}
+              onExpandedChange={(expanded) => setDesktopPanelExpanded("inventory", expanded)}
             />
 
             <MissionsTabsPanel
@@ -2403,49 +2637,35 @@ export function TankExperience({
               // Keep the Logs badge deterministic for the server and first
               // client render, then reveal the live count after mount.
               messages={mounted ? messages : []}
+              expanded={desktopPanels.missions}
+              onExpandedChange={(expanded) => setDesktopPanelExpanded("missions", expanded)}
             />
 
             <TelemetryPanel
-              seasonDay={seasonDay}
+              seasonDay={houseDay}
               now={now}
               level={currentLvl}
               tokens={signedIn ? currentTokens : (initialProfile?.tokens ?? 0)}
+              expanded={desktopPanels.telemetry}
+              onExpandedChange={(expanded) => setDesktopPanelExpanded("telemetry", expanded)}
             />
-          </div>
+          </div> : (
+            <div className="hidden min-h-0 lg:block">
+              <CollapsedPanelRestore
+                label="Panels"
+                side="left"
+                onRestore={() => setDesktopRailVisible(true)}
+              />
+            </div>
+          )}
 
-          {/* ── Center: hero player + camera grid + room description ─── */}
-          <div className="flex min-w-0 shrink-0 flex-col gap-1.5 lg:shrink">
-            {/* Room / Director Switcher Bar with Corner Screws (Desktop only; Mobile uses top breadcrumbs) */}
-            <ChromePanel
-              withScrews
-              className="hidden w-full lg:block"
-              contentClassName="!px-7 !py-1.5 flex flex-row items-center gap-1.5 overflow-x-auto flex-nowrap min-h-[44px] scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            >
-              <ConsoleButton
-                active={mode === "director"}
-                variant={mode === "director" ? "orange" : "gray"}
-                className="shrink-0"
-                onClick={() => navigateTo("director")}
-              >
-                🌐 Director
-              </ConsoleButton>
-              {browseRooms.map((room) => {
-                const active =
-                  mode === "room" && activeRoomSlug === room.roomKey;
-                return (
-                  <ConsoleButton
-                    key={room.roomKey}
-                    active={active}
-                    variant={active ? "orange" : "gray"}
-                    className="shrink-0"
-                    onClick={() => openRoom(room.roomKey)}
-                  >
-                    {room.title}
-                  </ConsoleButton>
-                );
-              })}
-            </ChromePanel>
-
+          {/* ── Center: mutually exclusive All Rooms or selected feed ── */}
+          <div
+            className={`flex min-w-0 shrink-0 flex-col gap-1.5 lg:shrink ${
+              desktopFocusView ? "lg:h-full lg:min-h-0" : ""
+            }`}
+            style={{ gap: "var(--tank-module-gap, 0.75rem)" }}
+          >
             {/* Clean Director Mode Attention Banner (Decibels hidden from public view) */}
             {mode === "director" &&
               Boolean(serverDirector.attentionLock?.active) && (
@@ -2514,21 +2734,78 @@ export function TankExperience({
               </div>
             )}
 
-            {/* Hidden on mobile in All Rooms mode. The wrapper above stays in
-                the tree because chat lives inside it, but the hero player must
-                not: with no room selected it renders a second, camera-less
-                video panel under the grid reading "This camera — not
-                connected", and it takes a stream admission slot away from the
-                tiles the viewer is actually looking at. */}
+            {/* All Rooms is the room matrix at every breakpoint. Keep chat and
+                the surrounding three-column shell mounted, but do not mount an
+                empty hero player when no room/director feed is selected. */}
             <div
+              ref={heroSectionRef}
               className={`rounded-lg border-2 border-[#232920] bg-black p-1.5 shadow-xl ${
-                mode === "grid" ? "hidden lg:block" : ""
-              }`}
+                mode === "grid" ? "hidden" : ""
+              } ${desktopFocusView ? "lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:p-0" : ""}`}
             >
+              <div
+                className={
+                  desktopFocusView
+                    ? "lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[8.5rem_minmax(0,1fr)_15rem] lg:grid-rows-[minmax(0,1fr)]"
+                    : ""
+                }
+                data-tank-focus-stage={desktopFocusView ? "side-rails" : undefined}
+              >
+              <div
+                className={`hidden text-white lg:flex ${
+                  desktopFocusView
+                    ? "lg:!contents"
+                    : "items-center justify-between border-b border-white/10 bg-[#0b0c0e] px-3 py-2"
+                }`}
+              >
+                <span
+                  className={`truncate text-sm font-black ${
+                    desktopFocusView
+                      ? "lg:col-start-1 lg:row-start-1 lg:flex lg:h-full lg:items-start lg:border-r lg:border-white/10 lg:bg-[#0b0c0e] lg:px-4 lg:py-4"
+                      : ""
+                  }`}
+                  style={{ fontFamily: ACTIVE_THEME.fonts.label }}
+                >
+                  {mode === "director"
+                    ? "Director"
+                    : (activeRoom?.title ?? "Room")}
+                </span>
+                <div
+                  className={`flex min-w-0 items-center justify-end gap-3 ${
+                    desktopFocusView
+                      ? "lg:col-start-3 lg:row-start-1 lg:h-full lg:flex-col lg:items-stretch lg:justify-start lg:border-l lg:border-white/10 lg:bg-[#0b0c0e] lg:px-4 lg:py-4"
+                      : ""
+                  }`}
+                >
+                  {desktopFocusView && (
+                    <p className="order-2 text-left text-[10px] leading-relaxed text-white/55">
+                      {mode === "director"
+                        ? DIRECTOR_ROOM.description
+                        : (activeRoom?.description ??
+                          "Connected camera room view.")}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigateTo("grid")}
+                    className={`grid h-7 w-7 shrink-0 place-items-center rounded border border-red-500/80 bg-red-600 text-white shadow-[inset_0_1px_0_rgba(255,255,255,.35)] transition hover:bg-red-500 active:translate-y-px ${
+                      desktopFocusView ? "order-1 self-end" : ""
+                    }`}
+                    aria-label="Back to All Rooms"
+                    title="Back to All Rooms"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
               <section
-                ref={heroSectionRef}
+                ref={heroViewportRef}
                 onClick={handleHeroTap}
-                className={`relative aspect-video max-h-[52vh] w-full overflow-hidden rounded lg:max-h-[65vh] landscape:max-h-[calc(100dvh-2.5rem)] ${
+                className={`relative aspect-video max-h-[52vh] w-full overflow-hidden rounded landscape:max-h-[calc(100dvh-2.5rem)] ${
+                  desktopFocusView
+                    ? "lg:col-start-2 lg:row-start-1 lg:h-full lg:w-full lg:max-h-none lg:aspect-auto lg:rounded-none"
+                    : "lg:max-h-[65vh]"
+                } ${
                   heroOnline
                     ? `bg-gradient-to-br ${heroLive?.accent ?? "from-cyan-500/35 via-blue-950/60 to-slate-950"}`
                     : "bg-slate-950"
@@ -2548,12 +2825,14 @@ export function TankExperience({
                     playbackUrl={heroPlaybackUrl}
                     playbackProtocol={heroPlaybackProtocol}
                     online={heroOnline}
-                    prerollLoopUrl={usingDirectorProgram ? null : heroLive?.recentClipUrl ?? null}
+                    prerollLoopUrl={mode === "director" ? null : heroLive?.recentClipUrl ?? null}
                     muted={heroMuted}
                     volume={heroVolume}
                     className="absolute inset-0 h-full w-full object-cover"
-                    videoStyle={heroPlayerStyle}
+                    ptzTarget={heroPtzTarget}
+                    ptzSnapKey={serverDirector.activeCameraId}
                     priority="hero"
+                    quality={heroQuality}
                     onPlayStateChange={setHeroPaused}
                     onLiveEdgeChange={setHeroLiveEdge}
                     onStabilityChange={setHeroStability}
@@ -2562,10 +2841,17 @@ export function TankExperience({
                   />
                 )}
 
-                {/* Director feed: plain room text only. Mode and auto-cycle
-                    are diagnostics and live in the Stats for Nerds HUD. */}
-                {mode === "director" && (
-                  <DirectorRoomLabel roomTitle={heroRoom?.title} />
+                {/* Doorways follow the camera frame in selected rooms and in
+                    Director cuts. A transformed manual-pilot frame is excluded
+                    because its saved doorway coordinates are no longer safe. */}
+                {(mode === "room" || mode === "director") &&
+                  !heroZoomed &&
+                  activeRoomPortals.length > 0 && (
+                  <RoomPortalOverlay
+                    roomSlug={portalSourceRoomSlug ?? activeRoomSlug}
+                    portals={activeRoomPortals}
+                    onSelectRoom={openRoom}
+                  />
                 )}
 
                 {/* Live Scavenger Quest HUD Banner */}
@@ -2582,8 +2868,6 @@ export function TankExperience({
                   </div>
                 ))}
 
-                {/* CRT Static & Scanline Glitch Transition Sweep */}
-                <CrtTransition triggerKey={heroCameraId} />
                 <div
                   className={`absolute inset-0 grid place-items-center ${heroHasRealFeed ? "pointer-events-none opacity-0" : ""}`}
                 >
@@ -2858,13 +3142,65 @@ export function TankExperience({
                   </div>
                 )}
 
-                {/* ── Standard Clean Minimalist Player Control Bar ── */}
-                <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pb-2.5 pt-8 text-white sm:px-4">
-                  <div className="flex items-center justify-between">
-                    {/* Left: Clean space (LIVE overlay pill legacied for pristine presentation) */}
-                    <div className="flex items-center gap-2">
-                      {/* [LEGACY LIVE PILL - REMOVED FOR CLEAN MODERN PRESENTATION] */}
-                    </div>
+              </section>
+
+              {/* Room information and player controls live below the picture so
+                  the camera image remains completely unobstructed. */}
+              <div
+                className={`flex flex-col gap-1.5 border-t border-white/10 bg-[#0b0c0e] px-3 py-2 text-white sm:px-4 ${
+                  desktopFocusView ? "lg:!contents" : ""
+                }`}
+                data-tank-player-footer
+              >
+                <div
+                  className={`min-w-0 items-start gap-2 ${
+                    desktopFocusView ? "flex lg:hidden" : "flex"
+                  }`}
+                >
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                      heroOnline
+                        ? "bg-[#39ff6a] shadow-[0_0_6px_#39ff6a]"
+                        : "bg-red-500 shadow-[0_0_6px_#ef4444]"
+                    }`}
+                  />
+                  <p className="min-w-0 truncate text-[10px] text-white/65 sm:text-[11px]">
+                    {mode === "director"
+                      ? DIRECTOR_ROOM.description
+                      : (activeRoom?.description ??
+                        "Connected camera room view.")}
+                  </p>
+                </div>
+
+                <div
+                  className={`flex items-center justify-between gap-3 ${
+                    desktopFocusView ? "lg:!contents" : ""
+                  }`}
+                >
+
+                    <button
+                      type="button"
+                      data-tank-quality-key
+                      aria-label={`Stream quality ${tankPlayerQualityLabel(heroQuality)}. Change quality.`}
+                      title="Change stream quality"
+                      disabled={!heroHasRealFeed}
+                      onClick={cycleHeroQuality}
+                      className={`relative isolate min-w-[2.6rem] px-2 py-1 text-[10px] font-black leading-none text-white transition-[transform,filter,background-color,box-shadow] duration-100 disabled:cursor-not-allowed disabled:opacity-35 ${
+                        qualityKeyPressed
+                          ? "translate-y-0.5 bg-[#70757a] grayscale shadow-[0_1px_0_#31363a]"
+                          : "bg-[#55ae76] shadow-[0_3px_0_#2d6645,0_5px_8px_rgba(0,0,0,.42),inset_0_1px_0_rgba(255,255,255,.28)] hover:brightness-110 active:translate-y-0.5 active:bg-[#70757a] active:grayscale active:shadow-[0_1px_0_#31363a]"
+                      } ${
+                        desktopFocusView
+                          ? "lg:col-start-1 lg:row-start-1 lg:z-10 lg:mb-4 lg:ml-4 lg:self-end lg:justify-self-start"
+                          : ""
+                      }`}
+                      style={{
+                        borderRadius: "var(--tank-border-radius, 0.25rem)",
+                        fontFamily: ACTIVE_THEME.fonts.label,
+                      }}
+                    >
+                      {tankPlayerQualityLabel(heroQuality)}
+                    </button>
 
                     {/* [LEGACY BONES - RE-EXPLORE LATER: DVR PAUSE/PLAY BUTTON]
                     <button
@@ -2877,8 +3213,14 @@ export function TankExperience({
                     </button>
                     */}
 
-                    {/* Right: Mute / Volume, 3-Dots Options Menu, Fullscreen */}
-                    <div className="flex items-center gap-1.5 sm:gap-2">
+                    {/* Mute / Volume, 3-Dots Options Menu, Fullscreen */}
+                    <div
+                      className={`flex items-center gap-1.5 sm:gap-2 ${
+                        desktopFocusView
+                          ? "lg:col-start-3 lg:row-start-1 lg:z-10 lg:mb-3 lg:mr-3 lg:self-end lg:justify-self-end"
+                          : ""
+                      }`}
+                    >
                       {/* Volume Slider & Mute Toggle */}
                       <div className="mr-1 flex items-center gap-1.5">
                         <button
@@ -3007,72 +3349,114 @@ export function TankExperience({
                           <Maximize className="h-5 w-5" />
                         )}
                       </button>
-                    </div>
                   </div>
                 </div>
-              </section>
+              </div>
+              </div>
             </div>
 
-            {mode !== "grid" && (
-              <div className="lg:hidden">
-                <RoomDescriptionPanel
-                  compact
-                  title={
-                    mode === "director"
-                      ? "Director Program Cut"
-                      : activeRoom.title
+            {mode === "grid" && (
+              <div className="hidden lg:flex lg:flex-col lg:gap-2">
+                <CameraRosterPanel
+                  mode={mode}
+                  onSetMode={navigateTo}
+                  directorCamera={
+                    directorRosterCamera
                   }
-                  description={
-                    mode === "director"
-                      ? DIRECTOR_ROOM.description
-                      : activeRoom.description
-                  }
-                  live={mode === "director" ? anyHouseCameraOnline : heroOnline}
+                  anyHouseCameraOnline={anyHouseCameraOnline}
+                  onlineCameraCount={onlineCameraIds.length}
+                  totalCameraCount={browseRooms.length}
+                  rooms={browseRooms.map((room) => ({
+                    roomKey: room.roomKey,
+                    title: room.title,
+                    camera:
+                      liveById.get(room.roomKey) ??
+                      (room.cameraIds[0]
+                        ? liveById.get(room.cameraIds[0])
+                        : undefined),
+                    isOnline:
+                      isOnline(room.roomKey) ||
+                      room.cameraIds.some((cid) => isOnline(cid)),
+                  }))}
+                  selectedRoomSlug={activeRoomSlug}
+                  onSelectRoom={openRoom}
                 />
               </div>
             )}
 
-            <div className="hidden lg:flex lg:flex-col lg:gap-2">
-              <CameraRosterPanel
-                mode={mode}
-                onSetMode={navigateTo}
-                anyHouseCameraOnline={anyHouseCameraOnline}
-                onlineCameraCount={onlineCameraIds.length}
-                totalCameraCount={browseRooms.length}
-                rooms={browseRooms.map((room) => ({
-                  roomKey: room.roomKey,
-                  title: room.title,
-                  camera:
-                    liveById.get(room.roomKey) ??
-                    (room.cameraIds[0]
-                      ? liveById.get(room.cameraIds[0])
-                      : undefined),
-                  isOnline:
-                    isOnline(room.roomKey) ||
-                    room.cameraIds.some((cid) => isOnline(cid)),
-                }))}
-                selectedRoomSlug={activeRoomSlug}
-                onSelectRoom={openRoom}
-              />
-
-              <RoomDescriptionPanel
-                title={
-                  mode === "director"
-                    ? "Director Program Cut"
-                    : (activeRoom?.title ?? "Room")
-                }
-                description={
-                  mode === "director"
-                    ? DIRECTOR_ROOM.description
-                    : (activeRoom?.description ?? "Connected camera room view.")
-                }
-              />
+            {/* Keep progression attached to the feed column. The chat column can
+                grow to a full viewport without pushing this rail below it. */}
+            <div
+              className="mt-auto hidden pt-2 lg:block"
+              data-tank-level-rail
+            >
+              <ChromePanel
+                withScrews
+                className="w-full"
+                contentClassName="!px-5 !py-1.5 flex min-h-[42px] items-center gap-3"
+              >
+                <div className="flex shrink-0 items-center gap-2">
+                  <span
+                    className="shrink-0 text-[10px] font-black tracking-widest"
+                    style={{
+                      color: "#241f14",
+                      fontFamily: ACTIVE_THEME.fonts.label,
+                    }}
+                  >
+                    {signedIn
+                      ? `LVL ${currentLvl} · ${Math.floor(activeXp)} XP`
+                      : "SIGN IN FOR XP"}
+                  </span>
+                  {signedIn && (
+                    <span className="rounded border border-black/40 bg-black/80 px-1.5 py-0.5 text-[9px] font-black text-[#39ff6a]">
+                      +{ratePerSecond.toFixed(1)}/s
+                    </span>
+                  )}
+                </div>
+                <div className="h-2.5 min-w-24 flex-1 overflow-hidden rounded-full border border-black/50 bg-black/60 shadow-[inset_0_1px_3px_rgba(0,0,0,0.8)]">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.round(xpProgress * 100)}%`,
+                      background: "linear-gradient(90deg,#39ff6a,#1a9c3c)",
+                      boxShadow: "0 0 6px rgba(57,255,106,0.6)",
+                    }}
+                  />
+                </div>
+                <div className="hidden min-w-0 flex-1 overflow-hidden xl:block">
+                  <p
+                    className="truncate text-[10px] font-bold"
+                    style={{ color: "#241f14" }}
+                  >
+                    {missions.length > 0
+                      ? `COMPLETE MISSIONS FOR XP & TOKENS — ${missions.map((m) => m.title).join("   ·   ")}`
+                      : "CHECK BACK FOR NEW MISSIONS"}
+                  </p>
+                </div>
+              </ChromePanel>
             </div>
+
           </div>
 
           {/* ── Right: chat — sticky on desktop so it never scrolls below the fold ── */}
-          <div className="flex min-h-0 w-full flex-1 flex-col lg:sticky lg:top-2 lg:h-[calc(100dvh-5.5rem)] lg:max-h-[calc(100dvh-5.5rem)] lg:self-start">
-            <ChatConsolePanel
+          <div
+            className={`min-h-0 w-full flex-1 flex-col ${
+              desktopChatSize === "hidden"
+                ? "flex lg:h-full lg:min-h-56"
+                : "flex lg:sticky lg:top-2 lg:h-[calc(100dvh-5.5rem)] lg:max-h-[calc(100dvh-5.5rem)] lg:self-start"
+            }`}
+          >
+            {desktopChatSize === "hidden" && (
+              <div className="hidden h-full lg:block">
+                <CollapsedPanelRestore
+                  label={`Chat ${onlineCount}`}
+                  side="right"
+                  onRestore={() => setDesktopChatSize("full")}
+                />
+              </div>
+            )}
+            <div className={desktopChatSize === "hidden" ? "contents lg:hidden" : "contents"}>
+              <ChatConsolePanel
               className="flex h-full min-h-0 w-full flex-1 flex-col"
               chatScope={activeChatScope}
               onSetChatScope={handleSetChatScope}
@@ -3128,6 +3512,8 @@ export function TankExperience({
               activeChatRoomKey={activeChatRoomId}
               mobileSize={mobileChatSize}
               onMobileSizeChange={setMobileChatSize}
+              desktopSize={desktopChatSize}
+              onDesktopSizeChange={setDesktopChatSize}
               currentUserRole={(initialProfile?.role as any) ?? "member"}
               currentUserId={
                 playerProfile?.id ?? initialProfile?.id ?? undefined
@@ -3137,57 +3523,11 @@ export function TankExperience({
                 initialProfile?.userName ||
                 "Viewer"
               }
-            />
+              />
+            </div>
           </div>
         </div>
 
-        {/* Bottom strip: XP bar + missions ticker (Desktop only) */}
-        <div className="hidden lg:block">
-          <ChromePanel
-            withScrews
-            className="mt-2 w-full"
-            contentClassName="!px-8 !py-3 flex items-center gap-3"
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className="hidden shrink-0 text-[10px] font-black tracking-widest sm:inline"
-                style={{
-                  color: "#241f14",
-                  fontFamily: ACTIVE_THEME.fonts.label,
-                }}
-              >
-                {signedIn
-                  ? `LVL ${currentLvl} · ${Math.floor(activeXp)} XP`
-                  : "SIGN IN FOR XP"}
-              </span>
-              {signedIn && (
-                <span className="rounded border border-black/40 bg-black/80 px-1.5 py-0.5 text-[9px] font-black text-[#39ff6a]">
-                  +{ratePerSecond.toFixed(1)}/s
-                </span>
-              )}
-            </div>
-            <div className="h-3 flex-1 overflow-hidden rounded-full border border-black/50 bg-black/60 shadow-[inset_0_1px_3px_rgba(0,0,0,0.8)]">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.round(xpProgress * 100)}%`,
-                  background: "linear-gradient(90deg,#39ff6a,#1a9c3c)",
-                  boxShadow: "0 0 6px rgba(57,255,106,0.6)",
-                }}
-              />
-            </div>
-            <div className="hidden flex-1 overflow-hidden lg:block">
-              <p
-                className="truncate text-[11px] font-bold"
-                style={{ color: "#241f14" }}
-              >
-                {missions.length > 0
-                  ? `COMPLETE MISSIONS FOR XP & TOKENS — ${missions.map((m) => m.title).join("   ·   ")}`
-                  : "CHECK BACK FOR NEW MISSIONS"}
-              </p>
-            </div>
-          </ChromePanel>
-        </div>
       </div>
 
       {/* ═══════════ MOBILE QUICK ACTION PYRAMID DOCK ═══════════ */}
@@ -3443,7 +3783,7 @@ export function TankExperience({
               className="text-[11px] font-black uppercase text-[#241f14]"
               style={{ fontFamily: ACTIVE_THEME.fonts.label }}
             >
-              Day {seasonDay ?? 1}
+              Day {houseDay ?? 1}
             </p>
             <p
               suppressHydrationWarning

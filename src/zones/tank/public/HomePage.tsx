@@ -133,9 +133,12 @@ export default function TankHomePage() {
 
   const handleSendChat = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!chatInput.trim() || sending) return;
-    const ok = await postMessage(chatInput);
-    if (ok) setChatInput("");
+    const text = chatInput.trim();
+    if (!text || sending) return;
+    setChatInput("");
+    await postMessage(text, undefined, (failedText) => {
+      setChatInput((current) => (current ? `${failedText} ${current}` : failedText));
+    });
   };
 
   const handleSyncLiveEdge = () => {

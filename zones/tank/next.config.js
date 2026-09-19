@@ -40,6 +40,31 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
 
+  async redirects() {
+    return [
+      {
+        source: "/archive",
+        destination: "/archives",
+        permanent: true,
+      },
+      {
+        source: "/rooms/:slug",
+        destination: "/",
+        permanent: true,
+      },
+      {
+        source: "/room/:slug",
+        destination: "/",
+        permanent: true,
+      },
+      {
+        source: "/rooms",
+        destination: "/",
+        permanent: true,
+      },
+    ];
+  },
+
   webpack(config) {
     config.module = config.module ?? {};
     config.module.exprContextCritical = false;

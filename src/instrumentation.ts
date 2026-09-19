@@ -23,6 +23,24 @@ export async function register() {
       } catch (err) {
         console.warn("[Instrumentation] Skipping Tank Director warmup on non-tank runtime:", err);
       }
+
+      try {
+        const { startYouTubeChatPoller } = await import(
+          "@/zones/tank/server/youtubeChatPoller"
+        );
+        startYouTubeChatPoller();
+      } catch (err) {
+        console.warn("[Instrumentation] Skipping YouTube Chat Poller warmup on non-tank runtime:", err);
+      }
+
+      try {
+        const { startArchiveAggregationScheduler } = await import(
+          "@/zones/tank/server/archiveAggregate"
+        );
+        startArchiveAggregationScheduler();
+      } catch (err) {
+        console.warn("[Instrumentation] Skipping Archive Aggregation Scheduler warmup on non-tank runtime:", err);
+      }
     }
 
     // Process-level backstop, confirmed necessary live 2026-09-02: a

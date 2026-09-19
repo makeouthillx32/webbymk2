@@ -9,5 +9,12 @@ export type SeasonPassOverlayProps = {
   onClose: () => void;
   variant?: SeasonPassVariant;
   onSelectTier?: (tier: SeasonPassTier, billing: BillingCycle) => void;
+  /**
+   * The tier this viewer already holds, or null if none.
+   *
+   * Without it the overlay happily sells a base holder a second base pass —
+   * Stripe creates a SECOND subscription and charges them twice a month.
+   */
+  currentTier?: SeasonPassTier | null;
   onOpenProducerLounge?: () => void;
 };

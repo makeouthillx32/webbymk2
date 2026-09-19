@@ -8,6 +8,7 @@ const PROTECTED_KEYS = new Set([
   "sb-unenter-auth-token",
   "unenter_session_id",
   "rememberMe",
+  "authAt",
   "themeId",
   "theme",
   "themeType",

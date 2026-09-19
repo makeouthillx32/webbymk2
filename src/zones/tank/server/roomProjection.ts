@@ -38,6 +38,17 @@ function inferPolicy(cameras: DiscoveredCamera[]): RoomVisibilityPolicy {
 //
 // An admin's explicit tank_rooms.visibility_policy always overrides the
 // inference above.
+/**
+ * Room keys an admin has switched off.
+ *
+ * deriveRooms drops these rooms, which is only half the kill-switch: their
+ * cameras have to be dropped from the public projection too, and by then the
+ * rooms are gone. This is the list that carries that across.
+ */
+export function deriveOfflineRoomKeys(presentation: RoomPresentationRow[]): string[] {
+  return presentation.filter((row) => row.isOffline).map((row) => row.roomKey);
+}
+
 export function deriveRooms(
   cameras: DiscoveredCamera[],
   presentation: RoomPresentationRow[],

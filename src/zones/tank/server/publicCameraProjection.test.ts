@@ -63,3 +63,79 @@ describe("public Tank camera API projection", () => {
     expect(serialized).not.toContain("srtauth");
   });
 });
+
+// The room kill-switch (tank_rooms.is_offline) promises that "nothing about an
+// offline room, including its camera URLs, ever leaves the server". deriveRooms
+// held up its half by omitting the room; this projection did not, so a room
+// switched off went dark in the grid while its cameras kept streaming out of
+// /api/tank/cameras with a live WHEP URL attached. Observed on production
+// 2026-09-10 after game-room and game-room-2 were toggled off.
+describe("offline room kill-switch", () => {
+  const liveUrl = "https://media.tank.unenter.live/cameras/cam-1786768240090/whep";
+
+  const snapshotWith = (offlineRoomKeys?: string[]): CameraDirectorySnapshot => ({
+    source: "receiver-manager",
+    generatedAt: "2026-09-10T00:00:00.000Z",
+    gracePeriodSeconds: 90,
+    rooms: [],
+    cameras: [
+      { ...baseCamera, roomScope: "game-room", playbackUrl: liveUrl, playbackProtocol: "whep" },
+      {
+        ...baseCamera,
+        id: "cam-living",
+        slug: "cam-living",
+        roomScope: "living-room",
+        sceneKey: "camera:cam-living",
+      },
+    ],
+    ...(offlineRoomKeys ? { offlineRoomKeys } : {}),
+  });
+
+  test("a switched-off room's cameras are dropped entirely", () => {
+    const result = toPublicCameraDirectory(snapshotWith(["game-room"]));
+    expect(result.cameras).toHaveLength(1);
+    expect(result.cameras[0].roomScope).toBe("living-room");
+  });
+
+  test("the offline room's playback URL does not leave the server", () => {
+    // The actual safety property. A camera merely flagged offline while still
+    // carrying a live WHEP URL is exactly the failure this guards.
+    const serialized = JSON.stringify(toPublicCameraDirectory(snapshotWith(["game-room"])));
+    expect(serialized).not.toContain(liveUrl);
+    expect(serialized).not.toContain("cam-1786768240090");
+  });
+
+  test("rooms that are on are untouched", () => {
+    const result = toPublicCameraDirectory(snapshotWith(["makeup-room"]));
+    expect(result.cameras).toHaveLength(2);
+  });
+
+  test("several rooms can be off at once", () => {
+    const result = toPublicCameraDirectory(snapshotWith(["game-room", "living-room"]));
+    expect(result.cameras).toHaveLength(0);
+  });
+
+  test("which rooms are off is not disclosed publicly", () => {
+    const result = toPublicCameraDirectory(snapshotWith(["game-room"]));
+    expect(result.offlineRoomKeys).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("offlineRoomKeys");
+  });
+
+  test("FAILS OPEN: no offlineRoomKeys means no filtering, never a blank site", () => {
+    // Deliberate. Deriving the offline set by diffing against `rooms` would
+    // fail closed here — `rooms` is empty — and hide every camera on the site.
+    const result = toPublicCameraDirectory(snapshotWith(undefined));
+    expect(result.cameras).toHaveLength(2);
+  });
+
+  test("an empty offline list filters nothing", () => {
+    expect(toPublicCameraDirectory(snapshotWith([])).cameras).toHaveLength(2);
+  });
+
+  test("a non-public camera in an online room is still dropped", () => {
+    const snapshot = snapshotWith(["game-room"]);
+    snapshot.cameras.push({ ...baseCamera, id: "hidden", roomScope: "living-room", publicVisible: false });
+    const result = toPublicCameraDirectory(snapshot);
+    expect(result.cameras.map((c) => c.id)).toEqual(["cam-living"]);
+  });
+});

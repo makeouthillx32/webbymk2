@@ -3407,6 +3407,7 @@ export type Database = {
           stripe_payment_intent_id: string | null
           stripe_risk_level: string | null
           stripe_risk_score: number | null
+          stripe_mode: string | null
           subtotal_cents: number
           tax_breakdown: Json | null
           tax_cents: number
@@ -3481,6 +3482,7 @@ export type Database = {
           stripe_payment_intent_id?: string | null
           stripe_risk_level?: string | null
           stripe_risk_score?: number | null
+          stripe_mode?: string | null
           subtotal_cents?: number
           tax_breakdown?: Json | null
           tax_cents?: number
@@ -3555,6 +3557,7 @@ export type Database = {
           stripe_payment_intent_id?: string | null
           stripe_risk_level?: string | null
           stripe_risk_score?: number | null
+          stripe_mode?: string | null
           subtotal_cents?: number
           tax_breakdown?: Json | null
           tax_cents?: number
@@ -7395,18 +7398,21 @@ export type Database = {
       tank_mission_progress: {
         Row: {
           completed_at: string | null
+          mission_day: string
           mission_id: string
           progress: number
           user_id: string
         }
         Insert: {
           completed_at?: string | null
+          mission_day?: string
           mission_id: string
           progress?: number
           user_id: string
         }
         Update: {
           completed_at?: string | null
+          mission_day?: string
           mission_id?: string
           progress?: number
           user_id?: string

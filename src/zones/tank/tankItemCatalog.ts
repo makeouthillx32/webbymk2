@@ -3,6 +3,13 @@
 // Tank Inventory Item Catalog & Guaranteed SVG Vector Assets
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type TankItemOverlayFx = {
+  /** Overlay texture the HUD/VU wear while the fx runs. */
+  texture: "aluminum" | "metal" | "plate";
+  /** How long the re-skin lasts, in seconds. */
+  durationSec: number;
+};
+
 export type TankItemMetadata = {
   slug: string;
   name: string;
@@ -11,6 +18,12 @@ export type TankItemMetadata = {
   rarityColor: string;
   description: string;
   svgIcon: string;
+  /**
+   * Chaos items: using one re-skins the OBS HUD/VU overlays for a while.
+   * Absent on every normal item; presence alone is what makes an item a
+   * chaos item, so the use pipeline has exactly one branch to test.
+   */
+  overlayFx?: TankItemOverlayFx;
 };
 
 export const TANK_ITEM_ICONS: Record<string, string> = {
@@ -156,6 +169,42 @@ export const TANK_ITEM_CATALOG: Record<string, TankItemMetadata> = {
     rarityColor: "none",
     description: "A basic handheld noisemaker for stirring up the room.",
     svgIcon: TANK_ITEM_ICONS["didgeridoo"],
+  },
+
+  // ─── Chaos items — using one re-skins the OBS HUD/VU overlays ──────────────
+  // The overlayFx metadata is the whole contract: the use pipeline reads it,
+  // writes the "fx" row into tank_overlay_settings, and the overlays pick it
+  // up through their existing settings subscription. Adding a chaos item is
+  // one entry here plus one tank_inventory_items seed row (migration).
+  "chrome-spray": {
+    slug: "chrome-spray",
+    name: "Chrome Spray Paint",
+    emoji: "🎨",
+    rarity: "rare",
+    rarityColor: "#3b82f6",
+    description: "Spray the console chrome. The HUD and VU go full brushed aluminium for a while.",
+    svgIcon: TANK_ITEM_ICONS["battery"],
+    overlayFx: { texture: "aluminum", durationSec: 120 },
+  },
+  "welding-torch": {
+    slug: "welding-torch",
+    name: "Welding Torch",
+    emoji: "🔥",
+    rarity: "epic",
+    rarityColor: "#a855f7",
+    description: "Bolt a heavy dark-metal plate over the overlays. Rivets included.",
+    svgIcon: TANK_ITEM_ICONS["lightsaber"],
+    overlayFx: { texture: "plate", durationSec: 90 },
+  },
+  "grease-gun": {
+    slug: "grease-gun",
+    name: "Grease Gun",
+    emoji: "🛠️",
+    rarity: "uncommon",
+    rarityColor: "#22c55e",
+    description: "Grease the panels. The overlays go dark metal until it dries.",
+    svgIcon: TANK_ITEM_ICONS["boxing-gloves"],
+    overlayFx: { texture: "metal", durationSec: 180 },
   },
 
   // ─── Test items (2026-08-26) — see the TANK_ITEM_ICONS comment above ───

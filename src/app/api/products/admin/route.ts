@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/utils/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/require-admin";
+import {
+  fulfillmentProviderFromOptions,
+  fulfillmentProviderFromTags,
+} from "@/lib/fulfillment/provider-metadata";
 
 function jsonError(status: number, code: string, message: string, details?: any) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
-}
-
-async function requireAdmin(supabase: SupabaseClient) {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return { ok: false as const, status: 401 as const, message: error.message };
-  if (!data.user) return { ok: false as const, status: 401 as const, message: "Authentication required" };
-  return { ok: true as const, user: data.user };
 }
 
 /**
@@ -24,10 +20,9 @@ async function requireAdmin(supabase: SupabaseClient) {
  *  - q = search string (matches products.search_text via ILIKE)
  */
 export async function GET(req: NextRequest) {
-  const supabase = await createServerClient();
-
-  const gate = await requireAdmin(supabase);
-  if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const gate = await requireAdmin();
+  if (gate.error) return gate.error;
+  const supabase = gate.admin;
 
   const { searchParams } = new URL(req.url);
   const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? 50), 1), 200);
@@ -47,6 +42,7 @@ export async function GET(req: NextRequest) {
       compare_at_price_cents,
       currency,
       badge,
+      tags,
       is_featured,
       status,
       created_at,
@@ -61,6 +57,16 @@ export async function GET(req: NextRequest) {
         is_primary,
         is_public,
         created_at
+      ),
+      product_variants (
+        options
+      ),
+      provider_products (
+        sync_status,
+        last_error,
+        source_updated_at,
+        last_seen_at,
+        removed_at
       )
     `
     )
@@ -91,7 +97,23 @@ export async function GET(req: NextRequest) {
       return ca - cb;
     });
 
-    return { ...p, product_images: imgs };
+    const fulfillmentProvider =
+      fulfillmentProviderFromTags(p.tags) ??
+      (p.product_variants ?? [])
+        .map((variant: any) => fulfillmentProviderFromOptions(variant.options))
+        .find(Boolean) ??
+      null;
+    const providerProduct = (p.provider_products ?? [])[0] ?? null;
+    const { product_variants: _productVariants, provider_products: _providerProducts, ...product } = p;
+    return {
+      ...product,
+      fulfillment_provider: fulfillmentProvider,
+      fulfillment_source: fulfillmentProvider ? "dropship" : "local",
+      provider_sync_status: providerProduct?.sync_status ?? null,
+      provider_sync_error: providerProduct?.last_error ?? null,
+      provider_last_seen_at: providerProduct?.last_seen_at ?? null,
+      product_images: imgs,
+    };
   });
 
   // ✅ Debug guard: if THIS triggers, your UI will definitely get "Missing product id"
@@ -119,10 +141,9 @@ export async function GET(req: NextRequest) {
  * Body: { slug, title, description?, material?, made_in?, price_cents }
  */
 export async function POST(req: NextRequest) {
-  const supabase = await createServerClient();
-
-  const gate = await requireAdmin(supabase);
-  if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const gate = await requireAdmin();
+  if (gate.error) return gate.error;
+  const supabase = gate.admin;
 
   let body: any;
   try {

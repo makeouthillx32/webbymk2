@@ -179,6 +179,9 @@ export const signUpAction = async (formData: FormData) => {
     console.error("[Auth] ⚠️ Notification failed:", err);
   }
 
+  const rawNext = formData.get("next")?.toString()?.trim() || "";
+  const safeNext = safeRedirectPath(rawNext);
+
   if (data.session) {
     authLogger.memberSignUp(userId, email, { firstName, lastName, source: "email_signup" });
     await populateUserCookies(userId, false);
@@ -191,10 +194,11 @@ export const signUpAction = async (formData: FormData) => {
     // never be an implicit post-auth destination, only something you
     // deliberately navigate to. Fixed 2026-08-12.
     const lastPage = safeRedirectPath(await getAndClearLastPage()) ?? "/";
-    return redirect(lastPage);
+    return redirect(safeNext ?? lastPage);
   }
 
-  return encodedRedirect("success", "/sign-in", "Account created. Please check your email to verify, then sign in.");
+  const signInTarget = safeNext ? `/sign-in?next=${encodeURIComponent(safeNext)}` : "/sign-in";
+  return encodedRedirect("success", signInTarget, "Account created. Please check your email to verify, then sign in.");
 };
 
 export const signInAction = async (formData: FormData) => {

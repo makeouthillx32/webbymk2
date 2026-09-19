@@ -8,14 +8,23 @@ import { ACTIVE_THEME } from "../../theme";
 import type { TankInventoryEntry } from "../../server/gamification";
 import { DEFAULT_AUTHENTIC_ITEMS } from "./InventoryOverlay";
 import { getTankItemIcon, getTankItemEmoji } from "../../tankItemCatalog";
+import { PanelCollapseButton } from "./PanelCollapseButton";
 
 export type InventoryPanelProps = {
   inventory?: TankInventoryEntry[];
   onOpenShop: () => void;
   onOpenInventory?: () => void;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 };
 
-export function InventoryPanel({ inventory = [], onOpenShop, onOpenInventory }: InventoryPanelProps) {
+export function InventoryPanel({
+  inventory = [],
+  onOpenShop,
+  onOpenInventory,
+  expanded = true,
+  onExpandedChange,
+}: InventoryPanelProps) {
   // Map real database items or fallback to DEFAULT_AUTHENTIC_ITEMS
   const mappedItems = inventory.length > 0
     ? inventory.map((entry) => {
@@ -54,10 +63,10 @@ export function InventoryPanel({ inventory = [], onOpenShop, onOpenInventory }: 
     <ChromePanel
       withScrews
       className="w-full cursor-pointer transition-all hover:brightness-105"
-      contentClassName="!px-6 !py-4 space-y-3"
+      contentClassName="!p-0"
     >
       {/* Header with Title and Shop Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex h-9 items-center justify-between gap-2 border-b border-black/40 px-4">
         <p
           onClick={onOpenInventory}
           className="text-[10px] font-black uppercase tracking-[.18em] text-white hover:text-yellow-400 select-none"
@@ -65,20 +74,31 @@ export function InventoryPanel({ inventory = [], onOpenShop, onOpenInventory }: 
         >
           Inventory ({totalItemCount})
         </p>
-        <ConsoleButton
-          variant="orange"
-          className="!px-2.5 !py-1 !text-[9px]"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenShop();
-          }}
-        >
-          Get Toys
-        </ConsoleButton>
+        <div className="flex items-center gap-1.5">
+          {expanded && (
+            <ConsoleButton
+              variant="orange"
+              className="!px-2.5 !py-1 !text-[9px]"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenShop();
+              }}
+            >
+              Get Toys
+            </ConsoleButton>
+          )}
+          {onExpandedChange && (
+            <PanelCollapseButton
+              title="Inventory"
+              expanded={expanded}
+              onExpandedChange={onExpandedChange}
+            />
+          )}
+        </div>
       </div>
 
       {/* 8-slot grid with authentic item icons */}
-      <div className="grid grid-cols-4 gap-2" onClick={onOpenInventory}>
+      {expanded && <div className="grid grid-cols-4 gap-2 px-6 py-4" onClick={onOpenInventory}>
         {displaySlots.map((item, i) => {
           if (!item) {
             return (
@@ -129,7 +149,7 @@ export function InventoryPanel({ inventory = [], onOpenShop, onOpenInventory }: 
             </div>
           );
         })}
-      </div>
+      </div>}
     </ChromePanel>
   );
 }

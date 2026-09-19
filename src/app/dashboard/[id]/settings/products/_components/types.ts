@@ -98,6 +98,19 @@ export type ProductRow = {
   categories?: any[];
   collections?: any[];
   tags?: { id: string; slug: string; name: string }[];
+  provider_artwork_readiness?: {
+    managed: boolean;
+    colors: Array<{
+      color: string;
+      variantCount: number;
+      vendorEnabled: boolean;
+      hasArtwork: boolean;
+      ready: boolean;
+    }>;
+    missingArtworkColors: string[];
+    awaitingVendorColors: string[];
+    readyColors: string[];
+  } | null;
 };
 
 // Tab types for ProductModal

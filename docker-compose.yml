@@ -25,6 +25,9 @@ volumes:
     name: webbymk2_unt-storage-data
   unt-db-data:
     name: webbymk2_unt-db-data
+  # DINOv2 weights, fetched by torch.hub on the learner's first start.
+  unt-learner-torch:
+    name: webbymk2_unt-learner-torch
   # MediaMTX recording staging area — see the mediamtx service for why this is
   # a small bounded buffer rather than the archive itself.
   # unt-ink-modules and unt-tui-modules removed — TUI now runs natively via Bun (tui/run.ps1)
@@ -69,6 +72,17 @@ services:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,ip-restriction,proxy-cache
+      # Trust X-Forwarded-* from inside the compose network only.
+      #
+      # Without this Kong REGENERATES those headers from the incoming Host,
+      # after its plugins have run — so an internal call to http://kong:8000
+      # reached GoTrue as X-Forwarded-Host: kong, and every signup email linked
+      # to http://kong/auth/v1/verify, which no browser can resolve. Scoped to
+      # the docker subnet rather than 0.0.0.0/0: public traffic arrives via NPM,
+      # which is on this network and sets these headers correctly anyway.
+      KONG_TRUSTED_IPS: 172.18.0.0/16
+      KONG_REAL_IP_HEADER: X-Forwarded-For
+      KONG_REAL_IP_RECURSIVE: "on"
       KONG_LOG_LEVEL: warn
       # GoTrue can return large auth response headers when a user's JWT carries
       # non-trivial metadata. Kong's default one-page Nginx proxy header buffer
@@ -101,7 +115,25 @@ services:
     environment:
       GOTRUE_API_HOST: "0.0.0.0"
       GOTRUE_API_PORT: 9999
-      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://unenter.live}
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://db.unenter.live}
+      # The GOTRUE_-prefixed form is the one this image actually reads.
+      #
+      # Without it GoTrue builds every confirmation link from the request Host,
+      # and the app reaches Supabase over the internal network as http://kong:8000
+      # — so signup emails went out linking to `http://kong/auth/v1/verify?...`,
+      # which no browser can resolve (DNS_PROBE_POSSIBLE). Every email signup was
+      # unverifiable; two real accounts were stranded before this was found.
+      # The unprefixed name above is kept because it feeds the OAuth redirect
+      # URIs below.
+      GOTRUE_API_EXTERNAL_URL: ${API_EXTERNAL_URL:-https://db.unenter.live}
+      # Which forwarded hosts GoTrue will believe when building email links.
+      #
+      # It trusts X-Forwarded-Host over API_EXTERNAL_URL, and Kong regenerates
+      # that header from the incoming Host AFTER its plugins run — so internal
+      # calls to http://kong:8000 produced http://kong/... links that no browser
+      # can resolve. Naming the only legitimate host here makes GoTrue reject
+      # "kong" and fall back to API_EXTERNAL_URL above.
+      GOTRUE_MAILER_EXTERNAL_HOSTS: db.unenter.live
       GOTRUE_DB_DRIVER: postgres
       # search_path=auth is REQUIRED. GoTrue's migrator reads an unqualified
       # `schema_migrations`; supabase_admin's search_path puts public first, so
@@ -117,7 +149,7 @@ services:
       # (2026-08-17) broke Google/Apple/Facebook OAuth with a 400 "redirect_to
       # not allowed" the moment the callback tried to land on the new zone.
       # Wildcard covers every current and future path on both hosts.
-      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-https://www.unenter.live,http://localhost:3000},https://auth.unenter.live/**,https://www.unenter.live/**
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-https://www.unenter.live,http://localhost:3000},https://auth.unenter.live/**,https://www.unenter.live/**,https://tank.unenter.live/**
       # External OAuth providers. Redirect URI registered in each provider's
       # console is the same for all three — Kong's public callback endpoint,
       # not our app: https://db.unenter.live/auth/v1/callback
@@ -139,6 +171,22 @@ services:
       GOTRUE_EXTERNAL_APPLE_REDIRECT_URI: ${API_EXTERNAL_URL:-https://db.unenter.live}/auth/v1/callback
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_JWT_EXP: 3600
+      # THE cause of "randomly logged out after ~30 minutes", diagnosed
+      # 2026-09-10. Unset, GoTrue defaults this to 0: a rotated refresh token
+      # reused even once immediately revokes the whole token family and
+      # destroys the session.
+      #
+      # Every zone shares ONE cookie on .unenter.live, so several tabs (or the
+      # middleware and a client tab) refresh the same token concurrently. The
+      # audit log showed the signature exactly: two token_refreshed events 5ms
+      # apart on one session, and 76 token_refreshed -> token_revoked pairs
+      # with an average gap of 0.00s. That is not a timeout, it is GoTrue
+      # correctly applying a theft-detection rule to what is really a race.
+      #
+      # 10s is what Supabase's own hosted platform uses: long enough to absorb
+      # concurrent refreshes, short enough that a genuinely stolen token is
+      # still caught.
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: ${GOTRUE_REFRESH_TOKEN_REUSE_INTERVAL:-10}
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
       GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-true}
@@ -336,6 +384,13 @@ services:
     ports:
       - "3002:3000"
     environment:
+      # Studio is a Next standalone server, which binds to $HOSTNAME -- by
+      # default the container id, so nothing answers on localhost and the
+      # image's own healthcheck (which probes localhost:3000) can never pass.
+      # It had failed 23,288 times in a row since the 2026-09-16 reboot, which
+      # showed "Database & API: Degraded" on status.unenter.live the whole time
+      # while Studio itself was serving fine.
+      HOSTNAME: "0.0.0.0"
       STUDIO_PG_META_URL: http://meta:8080
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-unenter}
@@ -470,11 +525,49 @@ services:
     # Measured here: libx264 veryfast costs 30.4 CPU seconds per 60s of 720p30
     # against 3.2s for h264_nvenc. See mediamtx/Dockerfile.nvenc.
     image: unenter/mediamtx:1.20.0-nvenc
+    init: true
+    # A ceiling, not a target — and it counts TASKS (threads), not processes.
+    # 512 was set from a process count and immediately wedged the container:
+    # ~25 ffmpeg jobs with CUDA run several hundred threads between them, so
+    # hooks hit "Cannot fork" and even `docker exec` failed with
+    # "procReady not received" at only 31 processes.
+    #
+    # Steady state measures in the hundreds of tasks. 4096 leaves generous
+    # headroom while still bounding a runaway: the hook storm that took the
+    # house down five times ran ~87 new processes a second and would cross
+    # this in seconds, failing loudly inside the container instead of
+    # silently starving the host of PIDs.
+    pids_limit: 4096
     build:
       context: ./mediamtx
       dockerfile: Dockerfile.nvenc
     container_name: unt_mediamtx
+    # WHY THIS EXISTS — measured 2026-09-12.
+    #
+    # mediamtx.yml points webrtcICEServers2 at turn:media.tank.unenter.live:3478.
+    # Inside this container that name resolves to the PUBLIC WAN IP
+    # (173.24.124.104), so MediaMTX tried to allocate a TURN relay by leaving the
+    # network and coming back in through the router. That hairpin never
+    # completes, so ICE gathering stalled until its internal timeout and only
+    # THEN answered the WHEP POST.
+    #
+    # Measured: a valid offer posted to localhost:8889 — no proxy, no browser —
+    # took 8.7s to return 201. Every viewer paid that per camera, which is why
+    # clicking a room took minutes.
+    #
+    # Mapping the name to the LAN address fixes MediaMTX's own lookup while
+    # leaving the advertised URL string untouched, so remote browsers still
+    # receive a public TURN address they can actually reach. Pointing
+    # webrtcICEServers2 itself at the LAN IP would have broken exactly those
+    # viewers.
+    extra_hosts:
+      - "media.tank.unenter.live:192.168.50.204"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ZOMBIES=$$(ps aux | grep -c '<defunct>') && echo \"zombies=$${ZOMBIES}\" && test $${ZOMBIES} -lt 50"]
+      interval: 300s
+      timeout: 5s
+      retries: 2
     # `video` alongside `gpu` is required: without it the runtime injects CUDA
     # but NOT libnvidia-encode, and every nvenc rung dies at startup with a
     # misleading "Cannot load libnvidia-encode.so.1".
@@ -544,10 +637,9 @@ services:
       # disk that churn grows the VHDX forever (it grows on write, never shrinks
       # on delete), which is what took C: to 5% and killed the core stack.
       - U:/tank-spool:/recordings
-      # The archive itself, on the same disk as the spool so a finished segment
-      # is MOVED into place rather than uploaded. Nothing about the archive
-      # touches C: — that is what filled the disk and took the stack down.
-      - U:/tank-archive:/archive
+      # The archive destination: external network share on ASUS GT-BE98_PRO router
+      # with 852 GB free headroom, completely isolated from host drives and Docker VHDX.
+      - /mnt/host/v/tank-archive:/archive
     networks:
       - unenter
     labels:
@@ -629,4 +721,124 @@ services:
       unaxis.project: "unenter.live"
       unaxis.domain: "unenter.live"
       unaxis.role: "core"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
+  # The house's eyes. Detection used to run only in whichever browser had the
+  # director-configuration page open — close the tab and the director went
+  # blind. This is the same decoder and the same identity catalog, in a
+  # supervised process that never stops.
+  #
+  # Not profiled off by default, but it is the one service that is pure
+  # consumer: if it is down, Tank and the cameras are unaffected and the
+  # director simply falls back to whatever telemetry a browser posts.
+  tank-vision-worker:
+    # Explicit tag, same as mediamtx: a registered UNAXIS service should be
+    # inspectable by name (`docker images`, `unaxis env images`) rather than
+    # carrying a compose-generated project-prefixed name.
+    image: unenter/tank-vision-worker:0.1.3
+    build:
+      # Repo root, not the service dir: the worker imports the decoder and the
+      # detection catalog from src/zones/tank/ by relative path so browser and
+      # server can never drift. See the Dockerfile.
+      context: .
+      dockerfile: services/tank-vision-worker/Dockerfile
+    container_name: unt_tank_vision
+    restart: unless-stopped
+    environment:
+      SUPABASE_URL: ${SUPABASE_INTERNAL_URL:-http://kong:8000}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      TANK_ARCHIVE_INGEST_SECRET: ${TANK_ARCHIVE_INGEST_SECRET}
+      TANK_BASE_URL: ${TANK_VISION_TANK_BASE_URL:-http://unt_tank:3000}
+      # HLS is exposed on the internal network only, which is exactly where
+      # this runs. 9997 is MediaMTX's control API, used for path readiness.
+      MEDIAMTX_API_URL: ${MEDIAMTX_API_URL:-http://unt_mediamtx:9997}
+      MEDIAMTX_HLS_URL: ${TANK_VISION_MEDIAMTX_HLS_URL:-http://unt_mediamtx:8888}
+      MEDIAMTX_API_TOKEN: ${MEDIAMTX_API_TOKEN:-}
+      TANK_VISION_CAPTURE_FPS: ${TANK_VISION_CAPTURE_FPS:-1}
+      TANK_VISION_INFERENCE_INTERVAL_MS: ${TANK_VISION_INFERENCE_INTERVAL_MS:-600}
+      TANK_VISION_WASM_THREADS: ${TANK_VISION_WASM_THREADS:-1}
+      TANK_VISION_ROOMS: ${TANK_VISION_ROOMS:-}
+      TANK_VISION_CAMERA_DENY: ${TANK_VISION_CAMERA_DENY:-}
+      TANK_VISION_LOG_DETECTIONS: ${TANK_VISION_LOG_DETECTIONS:-1}
+      # People are named from the operator's graded gallery (read-only mount
+      # below; reloaded when a gallery rebuild rewrites it). One thread for the
+      # re-id model so naming never competes with detection.
+      TANK_GALLERY_DIR: /gallery
+      TANK_VISION_REID_THREADS: ${TANK_VISION_REID_THREADS:-1}
+    volumes:
+      - ./services/tank-vision-gpu/out/gallery:/gallery:ro
+    depends_on:
+      mediamtx:
+        condition: service_started
+      kong:
+        condition: service_started
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "tank-vision"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
+  # The AI-mode learner (services/tank-vision-gpu/tools/live_learner.py).
+  #
+  # Two jobs, both gated on the director: while it is on AI it names the bodies
+  # in frame from the operator's graded gallery and posts them as the director's
+  # identity overlay, and in "auto" -- the roam-anywhere mode -- it also collects
+  # sightings for the operator to grade at /house/labels. A hand on the controls
+  # (manual mode, or a browser pilot lease) stops it dead: cameras released,
+  # CUDA freed. It was a detached host process until 2026-09-17, which did not
+  # survive a reboot.
+  #
+  # Weights, the graded gallery and the run state are mounted, not baked: the
+  # gallery changes every time the operator grades a group.
+  tank-vision-learner:
+    image: unenter/tank-vision-learner:0.1.0
+    build:
+      context: .
+      dockerfile: services/tank-vision-gpu/Dockerfile
+    container_name: unt_tank_learner
+    restart: unless-stopped
+    # 1 fps is plenty to catch a sighting and costs half of 2 fps. Raise it back
+    # with `--fps 2` when the house PC is idle.
+    command: ["--fps", "1"]
+    environment:
+      SUPABASE_URL: ${SUPABASE_INTERNAL_URL:-http://kong:8000}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      TANK_ARCHIVE_INGEST_SECRET: ${TANK_ARCHIVE_INGEST_SECRET}
+      TANK_BASE_URL: ${TANK_VISION_TANK_BASE_URL:-http://unt_tank:3000}
+      # RTSP is internal-only, which is where this runs: no docker exec needed.
+      TANK_LEARNER_RTSP: ${TANK_LEARNER_RTSP:-rtsp://unt_mediamtx:8554/cameras/{camera}-hls-low}
+      # Empty: grading crops live in the tank-identity-crops bucket, and this
+      # container's view of the V: share cannot be trusted after a reboot.
+      TANK_LEARNER_CROP_DIR: ""
+    volumes:
+      - ./services/tank-vision-gpu/models:/app/models:ro
+      - ./services/tank-vision-gpu/out:/app/out
+      - unt-learner-torch:/root/.cache/torch
+    deploy:
+      resources:
+        limits:
+          # Offline work must always lose to live work: the box has 32 threads.
+          cpus: "4"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      mediamtx:
+        condition: service_started
+      kong:
+        condition: service_started
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "tank-learner"
       unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"

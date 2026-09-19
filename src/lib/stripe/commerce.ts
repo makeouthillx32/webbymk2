@@ -69,6 +69,23 @@ type VerifiedWebhook = {
   stripe: Stripe;
 };
 
+export function eventPaymentLane(event: Stripe.Event): PaymentLane | undefined {
+  const object = event.data.object as {
+    metadata?: Stripe.Metadata | null;
+    subscription_details?: { metadata?: Stripe.Metadata | null } | null;
+    parent?: {
+      subscription_details?: { metadata?: Stripe.Metadata | null } | null;
+    } | null;
+  };
+  const rawLane =
+    object.metadata?.payment_lane ??
+    object.subscription_details?.metadata?.payment_lane ??
+    object.parent?.subscription_details?.metadata?.payment_lane;
+  return rawLane === "shop" || rawLane === "labs" || rawLane === "pos" || rawLane === "tank"
+    ? rawLane
+    : undefined;
+}
+
 /**
  * Test and live Stripe endpoints always have different signing secrets, even
  * when they post to the same URL. Try only explicitly configured secrets and
@@ -78,7 +95,18 @@ export function constructCommerceWebhookEvent(body: string, signature: string): 
   const candidates: Array<{
     mode: CommerceStripeMode;
     signingSecret: string | undefined;
+    expectedLane?: PaymentLane;
   }> = [
+    {
+      mode: "live",
+      signingSecret: process.env.STRIPE_TANK_LIVE_WEBHOOK_SECRET,
+      expectedLane: "tank",
+    },
+    {
+      mode: "test",
+      signingSecret: process.env.STRIPE_TANK_WEBHOOK_SECRET,
+      expectedLane: "tank",
+    },
     { mode: "live", signingSecret: process.env.STRIPE_LIVE_WEBHOOK_SECRET },
     { mode: "test", signingSecret: process.env.STRIPE_WEBHOOK_SECRET },
   ];
@@ -93,11 +121,10 @@ export function constructCommerceWebhookEvent(body: string, signature: string): 
       if (event.livemode !== (candidate.mode === "live")) {
         throw new Error("Stripe event mode does not match its signing secret");
       }
-      const object = event.data.object as Stripe.PaymentIntent | Stripe.Charge;
-      const rawLane = object.metadata?.payment_lane;
-      const lane = rawLane === "shop" || rawLane === "labs" || rawLane === "pos" || rawLane === "tank"
-        ? rawLane
-        : undefined;
+      const lane = eventPaymentLane(event);
+      if (candidate.expectedLane && lane !== candidate.expectedLane) {
+        throw new Error(`Stripe event does not belong to the ${candidate.expectedLane} lane`);
+      }
       if (candidate.mode === "live" && !lane) {
         throw new Error("Live Stripe event is missing payment_lane metadata");
       }

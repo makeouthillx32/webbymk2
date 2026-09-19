@@ -98,6 +98,10 @@ function tone(health: StreamHealth) {
       : "bg-slate-500";
 }
 
+import type { RotationRoster } from "../server/rotationRoster";
+import type { ServerDirectorState } from "../server/serverDirectorEngine";
+import type { SubjectMode } from "../server/directorVirtualAtlas";
+
 export function Panel({
   title,
   description,
@@ -125,10 +129,24 @@ export function Panel({
   );
 }
 
-export default function AdminConsole() {
+export type AdminConsoleProps = {
+  initialServerDirector?: Partial<ServerDirectorState> | null;
+  initialMode?: SubjectMode | null;
+  initialRoster?: RotationRoster | null;
+};
+
+export default function AdminConsole({
+  initialServerDirector,
+  initialMode,
+  initialRoster,
+}: AdminConsoleProps = {}) {
   return (
     <main className="min-h-screen min-h-[100dvh] bg-[#0c0d10] p-2 md:p-4 text-slate-100">
-      <DirectorWorkspace />
+      <DirectorWorkspace
+        initialServerDirector={initialServerDirector}
+        initialMode={initialMode}
+        initialRoster={initialRoster}
+      />
     </main>
   );
 }

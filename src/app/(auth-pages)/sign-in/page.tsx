@@ -126,7 +126,7 @@ export default async function SignInPage({
       <p className="mt-6 text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-[1.5]">
         Don&apos;t have an account?{" "}
         <Link
-          href="/sign-up"
+          href={resolvedSearchParams?.next ? `/sign-up?next=${encodeURIComponent(resolvedSearchParams.next)}` : "/sign-up"}
           className="font-medium text-[hsl(var(--sidebar-primary))] hover:underline"
         >
           Sign up

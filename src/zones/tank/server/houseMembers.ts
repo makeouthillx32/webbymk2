@@ -26,6 +26,8 @@ export type HouseMember = {
   bio?: string;
   favoriteRoom?: string;
   badge?: string;
+  /** Baseline physical height in cm used for anthropometric gating. */
+  heightCm?: number;
 };
 
 export const DEFAULT_HOUSE_MEMBERS: HouseMember[] = [
@@ -39,6 +41,7 @@ export const DEFAULT_HOUSE_MEMBERS: HouseMember[] = [
     bio: "Main operator of the Tank infrastructure. Usually found tuning cameras or coding in the control room.",
     favoriteRoom: "control-room",
     badge: "PRODUCER",
+    heightCm: 178,
   },
   {
     id: "joe",
@@ -50,6 +53,7 @@ export const DEFAULT_HOUSE_MEMBERS: HouseMember[] = [
     bio: "Brings the high-energy banter, games, and late-night challenges across the living room.",
     favoriteRoom: "living-room",
     badge: "HOUSE HOST",
+    heightCm: 188,
   },
   {
     id: "malia",
@@ -61,6 +65,7 @@ export const DEFAULT_HOUSE_MEMBERS: HouseMember[] = [
     bio: "Head chef of the kitchen, keeps the pets well-fed and runs culinary streams.",
     favoriteRoom: "kitchen",
     badge: "CHEF & CREATIVE",
+    heightCm: 162,
   },
 ];
 

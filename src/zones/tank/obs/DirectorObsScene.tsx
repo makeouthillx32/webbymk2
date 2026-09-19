@@ -4,40 +4,34 @@ import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Hls from "hls.js";
 import { useTankCameras } from "../public/useTankCameras";
-import { useDirectorAttention } from "../director/useDirectorAttention";
 import { useServerDirector } from "../director/useServerDirector";
-import { useCameraAudioMetrics } from "../director/useCameraAudioMetrics";
-import { CrtTransition } from "../public/components/CrtTransition";
+import { useBuildReload } from "./useBuildReload";
 import type { PlaybackProtocol } from "../contracts";
+import { hasNewDecodedPicture, readVideoPictureProbe } from "./directorPlayback";
+import { useGimbalVideoDriver } from "../director/useGimbalVideoDriver";
 
-export function DirectorObsScene() {
+export interface DirectorObsSceneProps {
+  documentBuildId?: string | null;
+}
+
+export function DirectorObsScene({ documentBuildId }: DirectorObsSceneProps = {}) {
+  // Pick up a redeploy without anyone right-clicking this source in OBS.
+  useBuildReload(true);
+
   const searchParams = useSearchParams();
 
   // Query configuration (inspired by Polish-Kick-TTS OBS parameter standards)
   const enableAudio = searchParams.get("audio") !== "0" && searchParams.get("audio") !== "false";
   const rawVolume = parseFloat(searchParams.get("volume") || "100");
   const initialVolume = isNaN(rawVolume) ? 1.0 : Math.max(0, Math.min(1, rawVolume > 1 ? rawVolume / 100 : rawVolume));
-  const showHud = searchParams.get("hud") !== "0" && searchParams.get("hud") !== "false";
-  const showAttention = searchParams.get("attention") !== "0" && searchParams.get("attention") !== "false";
-  const showVu = searchParams.get("vu") !== "0" && searchParams.get("vu") !== "false";
-  const enableCrt = searchParams.get("crt") !== "0" && searchParams.get("crt") !== "false";
-  const theme = searchParams.get("theme") || "cctv"; // "cctv" | "clean" | "minimal" | "cyber"
   const urlLock = searchParams.get("lock"); // e.g. "living-room"
 
   // Live platform hooks
   const { snapshot, liveById } = useTankCameras();
   const cameras = snapshot?.cameras ?? [];
-  const {
-    attentionLock,
-    timeRemainingSeconds,
-  } = useDirectorAttention();
-  const { metricsMap } = useCameraAudioMetrics(cameras);
 
   // Active negotiated feed
   const [activeCamId, setActiveCamId] = useState<string | null>(null);
-  const [activeReason, setActiveReason] = useState<string>("Initializing Director...");
-  const [dwellSeconds, setDwellSeconds] = useState<number>(0);
-  const lastSwitchTimeRef = useRef<number>(Date.now());
 
   // Dual-buffered video elements (Buffer A & Buffer B)
   const videoRefA = useRef<HTMLVideoElement | null>(null);
@@ -48,26 +42,13 @@ export function DirectorObsScene() {
   const hlsRefB = useRef<Hls | null>(null);
 
   const [activeBuffer, setActiveBuffer] = useState<"A" | "B">("A");
-  const [isGlitching, setIsGlitching] = useState(false);
-  const [currentTime, setCurrentTime] = useState<string>("");
-
-  // Clock tick for CCTV timecode
-  useEffect(() => {
-    const updateTime = () => {
-      const d = new Date();
-      setCurrentTime(
-        d.toLocaleTimeString("en-US", {
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      );
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // Timers and async callbacks read these instead of state, which would hand
+  // them the value from whichever render scheduled them.
+  const activeBufferRef = useRef<"A" | "B">("A");
+  // Bumped on every connect or release of a buffer. A picture-wait, retry or
+  // teardown carrying an older number belongs to a connection that has since
+  // been replaced, and must do nothing.
+  const bufferGeneration = useRef<Record<"A" | "B", number>>({ A: 0, B: 0 });
 
   // ── Central Server Director State Attachment ──
   const serverDirector = useServerDirector();
@@ -78,21 +59,15 @@ export function DirectorObsScene() {
       const lockedCam = cameras.find((c) => c.roomScope === urlLock || c.id === urlLock);
       if (lockedCam && lockedCam.id !== activeCamId) {
         setActiveCamId(lockedCam.id);
-        setActiveReason(`[OBS URL LOCK] Locked to ${lockedCam.name}`);
-        setDwellSeconds(0);
       }
       return;
     }
 
     if (serverDirector.activeCameraId && serverDirector.activeCameraId !== activeCamId) {
       setActiveCamId(serverDirector.activeCameraId);
-      setActiveReason(serverDirector.reason);
-      setDwellSeconds(serverDirector.dwellSecondsRemaining);
     }
   }, [
     serverDirector.activeCameraId,
-    serverDirector.reason,
-    serverDirector.dwellSecondsRemaining,
     urlLock,
     cameras,
     activeCamId,
@@ -109,6 +84,39 @@ export function DirectorObsScene() {
   }, [activeCamera, liveById]);
 
   // Connect stream to video buffer helper
+  // Held in a ref so scheduleRetry can call the connector without being
+  // declared after it (and without capturing a stale closure).
+  const connectBufferRef = useRef<
+    ((buffer: "A" | "B", url: string, protocol: string, onReady: () => void) => void) | null
+  >(null);
+
+  // An unattended OBS browser source has nobody to press refresh, so every
+  // failure path has to end in another attempt rather than a dark frame.
+  const retryTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({ A: null, B: null });
+  const retryCounts = useRef<Record<string, number>>({ A: 0, B: 0 });
+
+  const scheduleRetry = (
+    buffer: "A" | "B",
+    url: string,
+    protocol: string,
+    onReady: () => void,
+  ) => {
+    const generation = bufferGeneration.current[buffer];
+    const attempt = (retryCounts.current[buffer] ?? 0) + 1;
+    retryCounts.current[buffer] = attempt;
+    // Backs off to 10s and stays there: a camera can be down for minutes and
+    // the scene must still recover on its own when it returns.
+    const delay = Math.min(10000, 1000 * attempt);
+    if (retryTimers.current[buffer]) clearTimeout(retryTimers.current[buffer]!);
+    console.warn(`[OBS Director] buffer ${buffer} retrying in ${delay}ms (attempt ${attempt})`);
+    retryTimers.current[buffer] = setTimeout(() => {
+      // A retry for a room the director has since left would reconnect it and
+      // then swap the programme BACK to that stale room once it painted.
+      if (bufferGeneration.current[buffer] !== generation) return;
+      connectBufferRef.current?.(buffer, url, protocol, onReady);
+    }, delay);
+  };
+
   const connectBuffer = async (
     buffer: "A" | "B",
     url: string,
@@ -130,13 +138,46 @@ export function DirectorObsScene() {
     video.muted = !enableAudio;
     video.volume = initialVolume;
 
-    const handleLoaded = () => {
-      video.play().catch(() => {});
-      onReady();
+    const generation = ++bufferGeneration.current[buffer];
+
+    // Promote this buffer to programme only once it has painted a real frame.
+    //
+    // ontrack and MANIFEST_PARSED prove signalling, not decoding. Swapping on
+    // them showed the incoming room before its first keyframe, so every room
+    // change could put up to a full GOP (~2s on these cameras) of black or
+    // frozen picture on every platform the multistream reaches. The outgoing
+    // room now stays on air until the incoming one is genuinely moving.
+    let awaitingPicture = false;
+    const onFirstPicture = () => {
+      if (awaitingPicture) return; // ontrack fires once per track
+      awaitingPicture = true;
+      const baseline = readVideoPictureProbe(video);
+      const startedAt = Date.now();
+      const poll = () => {
+        if (bufferGeneration.current[buffer] !== generation) return;
+        if (hasNewDecodedPicture(baseline, readVideoPictureProbe(video))) {
+          onReady();
+          return;
+        }
+        // Connected but never painting is a failed connect, not a slow one.
+        if (Date.now() - startedAt > 15000) {
+          scheduleRetry(buffer, url, protocol, onReady);
+          return;
+        }
+        setTimeout(poll, 50);
+      };
+      poll();
     };
 
-    video.onloadeddata = handleLoaded;
+    const handleLoaded = () => {
+      video.play().catch(() => {});
+      onFirstPicture();
+    };
 
+    // Any successful attach resets the backoff for this buffer.
+    const markConnected = () => { retryCounts.current[buffer] = 0; };
+    video.onloadeddata = handleLoaded;
+    video.onloadeddata = () => { markConnected(); handleLoaded(); };
     if (protocol === "whep" && typeof RTCPeerConnection !== "undefined") {
       try {
         const pc = new RTCPeerConnection({
@@ -148,6 +189,15 @@ export function DirectorObsScene() {
         if (buffer === "A") pcRefA.current = pc;
         else pcRefB.current = pc;
 
+        // WHEP had no failure path once connected: a dropped peer left the
+        // last frame frozen on air until someone refreshed the source in OBS.
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState !== "failed") return;
+          if (bufferGeneration.current[buffer] !== generation) return;
+          console.warn(`[OBS Director] WHEP peer failed on buffer ${buffer}, reconnecting`);
+          scheduleRetry(buffer, url, protocol, onReady);
+        };
+
         pc.addTransceiver("video", { direction: "recvonly" });
         if (enableAudio) {
           pc.addTransceiver("audio", { direction: "recvonly" });
@@ -157,7 +207,7 @@ export function DirectorObsScene() {
           if (event.streams[0]) {
             video.srcObject = event.streams[0];
             video.play().catch(() => {});
-            onReady();
+            onFirstPicture();
           }
         };
 
@@ -170,30 +220,81 @@ export function DirectorObsScene() {
           body: offer.sdp,
         });
 
-        if (res.ok) {
-          const sdp = await res.text();
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp }));
-          return;
+        if (!res.ok) {
+          // A non-OK answer (MediaMTX returns 404 "no stream is available"
+          // the moment a source path is mid-restart) used to fall straight
+          // through to the fallback below WITHOUT throwing, which then set
+          // video.src to the WHEP endpoint itself. A WHEP URL is not a
+          // decodable media file, so the scene went black permanently and
+          // never retried -- surviving even after every camera recovered.
+          throw new Error(`WHEP ${res.status} for ${url}`);
         }
+        const sdp = await res.text();
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp }));
+        return;
       } catch (e) {
         console.warn(`[OBS Director] WHEP failed on buffer ${buffer}, falling back to HLS:`, e);
       }
     }
 
-    // Fallback: HLS or Direct Video URL
-    if (url.includes(".m3u8") && Hls.isSupported()) {
+    // A newer connect on this buffer closed our peer mid-handshake, which
+    // throws into the catch above. Falling through would attach the room
+    // the director already left.
+    if (bufferGeneration.current[buffer] !== generation) return;
+
+    // Fallback. The source here may be a WHEP endpoint we just failed on,
+    // and a WHEP URL is not decodable media — assigning it to video.src is
+    // what produced a permanently black programme feed. Derive the HLS
+    // sibling instead, and only ever hand the element a real playlist.
+    const playbackUrl = url.includes("/whep")
+      ? url.replace(/\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/whep(\?.*)?$/, "/$1-hls/index.m3u8")
+      : url;
+
+    if (playbackUrl.includes(".m3u8") && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
       if (buffer === "A") hlsRefA.current = hls;
       else hlsRefB.current = hls;
 
-      hls.loadSource(url);
+      hls.loadSource(playbackUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {});
-        onReady();
+        onFirstPicture();
       });
+      // Even HLS can be handed a path that is mid-restart. Without this the
+      // scene stays dark until a human refreshes the browser source in OBS.
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (!data?.fatal) return;
+        hls.destroy();
+        if (buffer === "A") hlsRefA.current = null;
+        else hlsRefB.current = null;
+        scheduleRetry(buffer, url, protocol, onReady);
+      });
+    } else if (playbackUrl.includes(".m3u8")) {
+      // Safari plays HLS natively; Hls.js reports unsupported there.
+      video.src = playbackUrl;
+      video.load();
     } else {
-      video.src = url;
+      scheduleRetry(buffer, url, protocol, onReady);
+    }
+  };
+
+  connectBufferRef.current = connectBuffer;
+
+  const releaseBuffer = (buffer: "A" | "B") => {
+    bufferGeneration.current[buffer] += 1;
+    if (retryTimers.current[buffer]) {
+      clearTimeout(retryTimers.current[buffer]!);
+      retryTimers.current[buffer] = null;
+    }
+    const pcRef = buffer === "A" ? pcRefA : pcRefB;
+    const hlsRef = buffer === "A" ? hlsRefA : hlsRefB;
+    if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    const video = buffer === "A" ? videoRefA.current : videoRefB.current;
+    if (video) {
+      video.srcObject = null;
+      video.removeAttribute("src");
       video.load();
     }
   };
@@ -202,52 +303,53 @@ export function DirectorObsScene() {
   useEffect(() => {
     if (!activeFeed?.playbackUrl) return;
 
-    const incomingBuffer = activeBuffer === "A" ? "B" : "A";
+    const incomingBuffer = activeBufferRef.current === "A" ? "B" : "A";
     const url = activeFeed.playbackUrl;
     const protocol = activeFeed.playbackProtocol || "whep";
 
     connectBuffer(incomingBuffer, url, protocol, () => {
-      if (enableCrt) {
-        setIsGlitching(true);
-        setTimeout(() => {
-          setActiveBuffer(incomingBuffer);
-          setTimeout(() => setIsGlitching(false), 250);
-        }, 120);
-      } else {
-        setActiveBuffer(incomingBuffer);
-      }
+      const outgoing = incomingBuffer === "A" ? "B" : "A";
+      activeBufferRef.current = incomingBuffer;
+      setActiveBuffer(incomingBuffer);
+
+      // Release the outgoing room after the 200ms crossfade. It was never
+      // closed, so from the first room change onward this source decoded two
+      // 4K feeds at once -- measured 8.5 + 8.2 Mbps, both at full frame rate,
+      // one of them at opacity 0 -- double the decode work for the browser
+      // source that feeds every platform.
+      const outgoingGeneration = bufferGeneration.current[outgoing];
+      setTimeout(() => {
+        if (activeBufferRef.current === outgoing) return;
+        if (bufferGeneration.current[outgoing] !== outgoingGeneration) return;
+        releaseBuffer(outgoing);
+      }, 400);
     });
-  }, [activeFeed?.playbackUrl, activeFeed?.playbackProtocol, enableAudio, enableCrt, initialVolume]);
+  }, [activeFeed?.playbackUrl, activeFeed?.playbackProtocol, enableAudio, initialVolume]);
 
-  // Audio metrics for active camera
-  const currentMetric = activeCamera ? metricsMap.get(activeCamera.id) : null;
-  const currentDb = currentMetric ? Math.round(currentMetric.decibels) : -45;
-  const energyPercent = Math.min(100, Math.max(0, ((currentDb + 60) / 60) * 100));
-
-  const programVideoStyle = useMemo<React.CSSProperties | undefined>(() => {
-    if (serverDirector.mode !== "MANUAL_PILOT" || !serverDirector.ptzState) return undefined;
-    const zoom = Math.min(3, Math.max(1, serverDirector.ptzState.zoomFactor || 1));
-    const maxPanX = Math.max(0, 3840 - 3840 / zoom);
-    const maxPanY = Math.max(0, 2160 - 2160 / zoom);
-    const panX = Math.min(maxPanX, Math.max(0, serverDirector.ptzState.panOffsetX || 0));
-    const panY = Math.min(maxPanY, Math.max(0, serverDirector.ptzState.panOffsetY || 0));
-    return {
-      transformOrigin: "top left",
-      transform: `scale(${zoom}) translate(${-panX / 38.4}%, ${-panY / 21.6}%)`,
-      transition: "transform 120ms linear, opacity 200ms",
+  // Clean up any open streams when component unmounts
+  useEffect(() => {
+    return () => {
+      bufferGeneration.current.A += 1;
+      bufferGeneration.current.B += 1;
+      for (const b of ["A", "B"] as const) {
+        if (retryTimers.current[b]) clearTimeout(retryTimers.current[b]!);
+      }
+      if (pcRefA.current) { pcRefA.current.close(); pcRefA.current = null; }
+      if (pcRefB.current) { pcRefB.current.close(); pcRefB.current = null; }
+      if (hlsRefA.current) { hlsRefA.current.destroy(); hlsRefA.current = null; }
+      if (hlsRefB.current) { hlsRefB.current.destroy(); hlsRefB.current = null; }
     };
-  }, [serverDirector.mode, serverDirector.ptzState]);
+  }, []);
 
-  const formatTimer = (seconds: number | null) => {
-    if (seconds === null) return "LOCK";
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+  // The crop glides on the gimbal (director/gimbal.ts), written straight to the
+  // two buffers -- not a style prop, which re-rendered this scene per update.
+  useGimbalVideoDriver(serverDirector.ptzState, () => [videoRefA.current, videoRefB.current], {
+    snapKey: serverDirector.activeCameraId,
+  });
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-transparent select-none">
-      {/* ═══════════ DUAL-BUFFER VIDEO STAGE ═══════════ */}
+      {/* ═══════════ DUAL-BUFFER VIDEO STAGE (PROGRAMME FEED ONLY) ═══════════ */}
       <div className="absolute inset-0 bg-black">
         {/* Buffer A */}
         <video
@@ -258,7 +360,6 @@ export function DirectorObsScene() {
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             activeBuffer === "A" ? "opacity-100 z-10" : "opacity-0 z-0"
           }`}
-          style={programVideoStyle}
         />
 
         {/* Buffer B */}
@@ -270,96 +371,10 @@ export function DirectorObsScene() {
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             activeBuffer === "B" ? "opacity-100 z-10" : "opacity-0 z-0"
           }`}
-          style={programVideoStyle}
         />
-
-        {/* CRT Glitch Transition */}
-        {enableCrt && <CrtTransition triggerKey={activeCamId} />}
       </div>
-
-      {/* ═══════════ BROADCAST OVERLAY SYSTEM ═══════════ */}
-      {showHud && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-6">
-          {/* Top Header: REC Badge, CCTV Room ID & Live Timecode */}
-          <div className="flex items-center justify-between">
-            {/* Left: CCTV Camera Tag & REC Indicator */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded bg-black/80 backdrop-blur-md px-3 py-1.5 border border-white/20 shadow-2xl">
-                <span className="h-3 w-3 rounded-full bg-red-600 animate-pulse shadow-[0_0_8px_#ff0000]" />
-                <span className="font-mono text-xs font-black uppercase tracking-widest text-white">
-                  REC
-                </span>
-                <span className="text-white/40">|</span>
-                <span className="font-mono text-xs font-bold text-emerald-400 uppercase tracking-wide">
-                  DIRECTOR FEED
-                </span>
-              </div>
-
-              {activeCamera && (
-                <div className="rounded bg-black/80 backdrop-blur-md px-3 py-1.5 border border-white/20 shadow-2xl">
-                  <span className="font-mono text-xs font-black uppercase text-yellow-400">
-                    {activeCamera.location ?? "TANK HOUSE"} • {activeCamera.name}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Right: Real-Time Timestamp & Day */}
-            <div className="flex items-center gap-2">
-              <div className="rounded bg-black/80 backdrop-blur-md px-3 py-1.5 border border-white/20 shadow-2xl font-mono text-xs font-black tracking-widest text-white">
-                <span>{currentTime}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Center-Top: Director Attention Lock Alert (when active) */}
-          {showAttention && attentionLock.active && (
-            <div className="self-center">
-              <div className="flex items-center gap-2 rounded-full bg-orange-600/90 backdrop-blur-md px-4 py-1.5 text-black font-black uppercase text-xs tracking-wider shadow-[0_0_20px_rgba(255,77,0,0.6)] animate-pulse border border-orange-300">
-                <span>🎯 ATTENTION LOCKED: {attentionLock.targetLabel}</span>
-                <span className="bg-black text-orange-400 px-2 py-0.5 rounded font-mono text-[11px]">
-                  {formatTimer(timeRemainingSeconds)}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Bottom Bar: Sound Energy Meter & Watermark */}
-          <div className="flex items-end justify-between">
-            {/* Left: Audio VU Meter */}
-            {showVu && (
-              <div className="flex items-center gap-2 rounded bg-black/80 backdrop-blur-md px-3 py-2 border border-white/20 shadow-2xl">
-                <span className="font-mono text-[11px] font-bold text-slate-300 uppercase">
-                  MIC:
-                </span>
-                <div className="h-2.5 w-28 rounded-full bg-slate-800 overflow-hidden relative border border-white/10">
-                  <div
-                    className={`h-full transition-all duration-150 ${
-                      currentDb > -24
-                        ? "bg-gradient-to-r from-emerald-400 via-yellow-400 to-red-500"
-                        : currentDb > -32
-                        ? "bg-gradient-to-r from-emerald-400 to-yellow-400"
-                        : "bg-emerald-400"
-                    }`}
-                    style={{ width: `${energyPercent}%` }}
-                  />
-                </div>
-                <span className="font-mono text-[10px] font-bold text-slate-400">
-                  {currentDb} dB
-                </span>
-              </div>
-            )}
-
-            {/* Right: Tank Branding Watermark */}
-            <div className="rounded bg-black/80 backdrop-blur-md px-3 py-1 border border-white/10 shadow-2xl">
-              <span className="font-black text-xs uppercase tracking-widest text-white">
-                tank<span className="text-[#ff4d00]">®</span> live
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+
 export default DirectorObsScene;

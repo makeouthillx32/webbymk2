@@ -635,14 +635,41 @@ export async function buildZone(
         logBuild, dockerEnvBuild,
       );
       if (createCode !== 0) {
-        logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`);
-        dbUpdateDeployment(dep.id, {
-          status: "error",
-          durationMs: Date.now() - t0,
-          errorMessage: `Could not create buildx builder "${BUILDX_BUILDER}"`,
-          completedAt: new Date().toISOString(),
-        });
-        return createCode;
+        // Getting here does NOT mean the builder is missing.
+        //
+        // `buildx inspect` talks to the daemon over the WSL vsock, and that
+        // link times out transiently on this host:
+        //
+        //   <3>WSL ERROR: UtilAcceptVsock:273: accept4 failed 110   (ETIMEDOUT)
+        //
+        // A timed-out inspect returns non-zero, which reads exactly like "no
+        // such builder" — so we try to create one that already exists, and the
+        // create fails on the name. Bailing here turned a blip into a failed
+        // ship even though a healthy `unaxis-net` was running the whole time.
+        //
+        // So: ask again before believing it. If the builder is really there,
+        // carry on. Only if it is genuinely absent do we reset and retry once,
+        // reusing the same recovery the idle-watchdog path uses.
+        const recheck = await spawnDocker(["buildx", "inspect", BUILDX_BUILDER], () => {}, dockerEnvBuild);
+        if (recheck === 0) {
+          logBuild(`--- builder "${BUILDX_BUILDER}" already exists (first inspect was a false negative) — continuing ---`);
+        } else {
+          await resetBuildxBuilder(logBuild);
+          const retryCode = await spawnDocker(
+            ["buildx", "create", "--name", BUILDX_BUILDER, "--driver", "docker-container", "--driver-opt", "network=unenter", "--bootstrap"],
+            logBuild, dockerEnvBuild,
+          );
+          if (retryCode !== 0) {
+            logBuild(`FAILED: could not create buildx builder "${BUILDX_BUILDER}"`);
+            dbUpdateDeployment(dep.id, {
+              status: "error",
+              durationMs: Date.now() - t0,
+              errorMessage: `Could not create buildx builder "${BUILDX_BUILDER}"`,
+              completedAt: new Date().toISOString(),
+            });
+            return retryCode;
+          }
+        }
       }
     }
 
@@ -994,6 +1021,25 @@ export async function deployRemoteZoneManifest(
 
   log.info("deploy", "remote deploy succeeded", { zone: zone.key, env: env.name, port: targetPort, ms: Date.now() - t0 });
   onLine(`✓ Deployed ${zone.label} to ${env.name}:${targetPort} (status: ${res.httpStatus ?? 200})`);
+
+  // Persist port to zone control state
+  try {
+    const { dbSetZonePort } = await import("./control-db.ts");
+    dbSetZonePort(zone.key, targetPort);
+    const { invalidateZoneCache } = await import("./zone-store.ts");
+    invalidateZoneCache();
+  } catch (err) {
+    onLine(`  (warning: failed to save zone port ${targetPort}: ${err})`);
+  }
+
+  // Synchronize NPM proxy host with the live port
+  try {
+    const { npmAddZone } = await import("./npm/zone.ts");
+    await npmAddZone({ ...zone, port: targetPort }, onLine, env);
+  } catch (err) {
+    onLine(`  (warning: failed to sync NPM for ${zone.label}: ${err})`);
+  }
+
   return 0;
 }
 

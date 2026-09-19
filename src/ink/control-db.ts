@@ -322,6 +322,11 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS deployments_zone_idx ON deployments(zone_key, created_at DESC);
   CREATE INDEX IF NOT EXISTS deployments_status_idx ON deployments(status);
   CREATE INDEX IF NOT EXISTS deployments_prod_idx ON deployments(zone_key, is_production);`,
+
+  // 011 — remote zone target host port. Tracks the published host port on remote
+  // environments (e.g. 3001 for blog on L0VE) so NPM and proxy routing derive
+  // the exact bound port instead of hardcoding :3000.
+  `ALTER TABLE zones ADD COLUMN port INTEGER;`,
 ];
 
 function runMigrations(db: Database): void {
@@ -362,6 +367,7 @@ interface ZoneRow {
   enabled:          number;   // SQLite INTEGER: 1 = true, 0 = false
   environment_id:   string | null;
   hosting:          string;   // 'docker' (default) | 'vercel'
+  port:             number | null;
 }
 
 interface EnvironmentRow {
@@ -409,6 +415,7 @@ function rowToZone(r: ZoneRow): Zone {
     upstreamEnvKey: r.upstream_env_key,
     environmentId:  r.environment_id ?? null,
     hosting:        r.hosting === "vercel" ? "vercel" : "docker",
+    port:           r.port != null && r.port > 0 ? r.port : undefined,
   };
 }
 
@@ -912,13 +919,14 @@ export function dbUpsertZone(zone: {
   sortOrder?:       number;
   enabled?:         boolean;
   environmentId?:   string | null;
+  port?:            number | null;
 }): void {
   const db = getControlDb();
   db.run(
     `INSERT INTO zones
        (id, key, label, domain, service, container, image, dockerfile,
-        upstream_env_key, sort_order, enabled, environment_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        upstream_env_key, sort_order, enabled, environment_id, port, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET
        label            = excluded.label,
        domain           = excluded.domain,
@@ -930,6 +938,7 @@ export function dbUpsertZone(zone: {
        sort_order       = excluded.sort_order,
        enabled          = excluded.enabled,
        environment_id   = excluded.environment_id,
+       port             = coalesce(excluded.port, zones.port),
        updated_at       = datetime('now')`,
     [
       zone.id ?? newUuid(),
@@ -944,7 +953,17 @@ export function dbUpsertZone(zone: {
       zone.sortOrder ?? 0,
       zone.enabled !== false ? 1 : 0,
       zone.environmentId ?? null,
+      zone.port ?? null,
     ],
+  );
+}
+
+/** Set or update a zone's published remote host port. */
+export function dbSetZonePort(key: string, port: number): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET port = ?, updated_at = datetime('now') WHERE key = ?",
+    [port, key],
   );
 }
 
@@ -1421,6 +1440,26 @@ export function dbSeedDefaultServices(): void {
       adminUrl: "https://media.unenter.live",
       status: "running",
       sortOrder: 2,
+    },
+    {
+      key: "tank-vision",
+      name: "Tank Vision Worker",
+      description:
+        "Server-side detection: pulls HLS from MediaMTX, runs YOLOv8n headless, posts telemetry to the Tank director 24/7",
+      environmentId: powerId,
+      serviceType: "media",
+      container: "unt_tank_vision",
+      host: "192.168.50.204",
+      // Headless by design — it opens no listener. It is a pure consumer:
+      // MediaMTX in, director telemetry out. 0 is the honest value here rather
+      // than inventing a port the operator could try to open.
+      port: 0,
+      adminPort: 0,
+      // Its observable surface is the director console it feeds, not a UI of
+      // its own. `unaxis env logs unt_tank_vision` is how you actually watch it.
+      adminUrl: "https://tank.unenter.live/director-configuration",
+      status: "stopped",
+      sortOrder: 3,
     },
   ];
 

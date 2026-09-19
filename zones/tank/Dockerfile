@@ -66,6 +66,10 @@ RUN mkdir -p /tmp/core-app && \
 # layouts, loading.tsx, error boundaries, route groups) gets picked up
 # automatically.  This is how your zone ships its own pages on top of the
 # shared shell.
+#
+# NOT API routes: a file under zones/tank/src/app/api replaces core's route of
+# the same path here without a word. Tank's API lives in src/app/api only
+# (guarded by src/zones/tank/zoneRouteOverlay.test.ts).
 COPY zones/tank/src/app/ ./src/app/
 
 # Always use core's globals.css so shared theme tokens resolve inside the

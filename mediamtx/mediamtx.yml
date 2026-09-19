@@ -97,8 +97,8 @@ hlsVariant: fmp4
 # lowers that same 3-segment cushion to ~3s without touching hlsVariant -
 # still plain fmp4 segments over HTTP/1.1, NOT LL-HLS parts, so this does
 # not reintroduce the iOS AVFoundation black-frame bug documented above.
-hlsSegmentCount: 4
-hlsSegmentDuration: 1s
+hlsSegmentCount: 6
+hlsSegmentDuration: 2s
 
 # Default 60s meant a refresh (or any brief gap with zero readers) could
 # outlive the muxer, so the next viewer paid a full cold-start remux
@@ -155,6 +155,51 @@ paths:
     source: publisher
     sourceOnDemand: no
     runOnInit: /scripts/archive-transcode.sh
+    runOnInitRestart: yes
+
+  # Archive daily aggregator.
+  # Consolidates fragmented 10-minute segments of completed broadcast days into
+  # a single continuous 24-hour master file (daily/s01_{room}_{date}.mp4).
+  _archive_aggregator:
+    source: publisher
+    sourceOnDemand: no
+    runOnInit: /scripts/archive-aggregate.sh
+    runOnInitRestart: yes
+
+
+  # Connecting-clip worker.
+  #
+  # Replaces the per-path on-loop-ready.sh hooks. Those were started via
+  # runOnReady, which MediaMTX re-fires on EVERY publisher reconnect without
+  # stopping the previous worker — 260 alive against 6 ready paths at the
+  # worst measurement, and five outages behind it.
+  #
+  # One process, owned by this dummy path, discovers ready paths from the API
+  # itself and refreshes whichever clips are stale. Copies are impossible by
+  # construction, so none of the old locking, session-pinning or
+  # self-termination machinery is needed.
+  _clip_worker:
+    source: publisher
+    sourceOnDemand: no
+    runOnInit: /scripts/clip-worker.sh
+    runOnInitRestart: yes
+
+  # Hook janitor.
+  #
+  # MediaMTX re-fires runOnReady on every publisher reconnect and does not
+  # reliably stop the previous worker, so preview/clip workers accumulate.
+  # Four times since launch the count climbed until MediaMTX was burning
+  # 400-750% CPU and the admin console stopped responding — each time cleared
+  # by hand, mid-incident.
+  #
+  # Same dummy-path trick as the archive transcoder above: the path exists only
+  # to own a long-running process that MediaMTX starts with the server and
+  # restarts if it dies. Sweeping every minute makes this maintenance instead
+  # of a rescue.
+  _hook_janitor:
+    source: publisher
+    sourceOnDemand: no
+    runOnInit: /scripts/hook-janitor.sh
     runOnInitRestart: yes
 
   # OBS / Streamlabs ingest namespace. Rooms are created on publish and torn

@@ -2,27 +2,22 @@ import { NextResponse } from "next/server";
 import { requireStaff } from "./staffAuth";
 import {
   getFreshTelemetry,
+  isSubjectMode,
+  isServerDetectionActive,
   normaliseTelemetryReading,
   recordTelemetry,
 } from "./directorTelemetryStore";
 import type { CameraTelemetryInput, SubjectMode } from "./directorVirtualAtlas";
 
-const SUBJECT_MODES: SubjectMode[] = [
-  "auto",
-  "person",
-  "speaker",
-  "feet",
-  "face",
-  "motion",
-  "crowd",
-  "chaos",
-  "manual",
-];
-
 export async function handleDirectorTelemetryLiveGet() {
   const staff = await requireStaff();
   if (!staff) return NextResponse.json({ error: "Staff only" }, { status: 403 });
-  return NextResponse.json({ success: true, telemetry: getFreshTelemetry() });
+  return NextResponse.json({
+    success: true,
+    telemetry: getFreshTelemetry(),
+    // The console polls this to decide whether to run detection itself.
+    serverDetectionActive: isServerDetectionActive(),
+  });
 }
 
 export async function handleDirectorTelemetryLivePost(request: Request) {
@@ -55,7 +50,7 @@ export async function handleDirectorTelemetryLivePost(request: Request) {
     return NextResponse.json({ error: "No readings carried a cameraId" }, { status: 400 });
   }
 
-  const mode = SUBJECT_MODES.includes(body?.mode) ? (body.mode as SubjectMode) : null;
+  const mode = isSubjectMode(body?.mode) ? body.mode : null;
   const stored = recordTelemetry(inputs, mode);
   return NextResponse.json({ success: true, stored, mode });
 }
@@ -78,8 +73,7 @@ export async function handleDirectorTelemetrySimulatePost(request: Request) {
     return NextResponse.json({ error: "Expected { cameras: [...] }" }, { status: 400 });
   }
 
-  const mode: SubjectMode | undefined =
-    typeof body?.mode === "string" ? body.mode : undefined;
+  const mode: SubjectMode | undefined = isSubjectMode(body?.mode) ? body.mode : undefined;
   const stored = recordTelemetry(cameras, mode);
   return NextResponse.json({ success: true, stored });
 }

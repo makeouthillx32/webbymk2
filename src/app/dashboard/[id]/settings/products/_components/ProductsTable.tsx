@@ -6,6 +6,7 @@ import { Trash2, Loader2, Settings2, Image as ImageIcon, Tag as TagIcon } from "
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getPrimaryImageUrl } from "@/lib/images";
+import { fulfillmentProviderLabel } from "@/lib/fulfillment/provider-metadata";
 
 export type ProductImageRow = {
   id?: string;
@@ -28,6 +29,12 @@ export type ProductRow = {
   compare_at_price_cents: number | null;
   currency: string;
   badge: string | null;
+  tags?: string[] | null;
+  fulfillment_provider?: string | null;
+  fulfillment_source?: "dropship" | "local";
+  provider_sync_status?: string | null;
+  provider_sync_error?: string | null;
+  provider_last_seen_at?: string | null;
   is_featured: boolean;
   status?: string;
   created_at: string;
@@ -77,7 +84,7 @@ export default function ProductsTable({
         <div className="col-span-6 md:col-span-4">Product</div>
         <div className="hidden md:block md:col-span-2">Status</div>
         <div className="col-span-3 md:col-span-2">Price</div>
-        <div className="hidden md:block md:col-span-2">Badge</div>
+        <div className="hidden md:block md:col-span-2">Source</div>
         <div className="col-span-3 md:col-span-2 text-right">Actions</div>
       </div>
 
@@ -89,7 +96,6 @@ export default function ProductsTable({
           // ✅ Optimized=true forces Next to serve webp/avif when possible
           const thumbUrl =
             getPrimaryImageUrl(p.product_images ?? [], {
-              optimized: true,
               width: 96,
               quality: 80,
             }) ?? null;
@@ -129,6 +135,12 @@ export default function ProductsTable({
 
                     <div className="mt-2 flex flex-wrap items-center gap-2 md:hidden">
                       <Badge variant={statusBadgeVariant(p.status)}>{p.status ?? "draft"}</Badge>
+                      <Badge variant={p.fulfillment_provider ? "default" : "outline"}>
+                        {p.fulfillment_provider
+                          ? `${fulfillmentProviderLabel(p.fulfillment_provider)} · Dropship`
+                          : "Local inventory"}
+                      </Badge>
+                      {p.provider_sync_status ? <Badge variant="secondary">{p.provider_sync_status.replaceAll("_", " ")}</Badge> : null}
                       {p.badge ? <Badge variant="secondary">{p.badge}</Badge> : null}
 
                       <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--muted-foreground))]">
@@ -153,8 +165,20 @@ export default function ProductsTable({
                 </span>
               </div>
 
-              <div className="hidden md:flex md:col-span-2 items-center">
-                <span className="text-sm text-[hsl(var(--muted-foreground))]">{p.badge ?? "—"}</span>
+              <div className="hidden md:flex md:col-span-2 items-start flex-col justify-center gap-1">
+                <Badge variant={p.fulfillment_provider ? "default" : "outline"}>
+                  {p.fulfillment_provider
+                    ? `${fulfillmentProviderLabel(p.fulfillment_provider)} · Dropship`
+                    : "Local inventory"}
+                </Badge>
+                {p.provider_sync_status ? (
+                  <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                    {p.provider_sync_status.replaceAll("_", " ")}
+                  </span>
+                ) : null}
+                {p.badge ? (
+                  <span className="text-xs text-[hsl(var(--muted-foreground))]">{p.badge}</span>
+                ) : null}
               </div>
 
               <div className="col-span-6 md:col-span-2 flex items-center justify-end">

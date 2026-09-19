@@ -10,12 +10,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { Heart, Sparkles, MapPin, Bone, Star, Eye, Zap, ShieldCheck } from "lucide-react";
+import { Heart, Sparkles, MapPin, Bone, Star, Eye, Zap, ShieldCheck, UserCheck } from "lucide-react";
 import { DEFAULT_HOUSE_ANIMALS, type HouseAnimal } from "../server/houseAnimals";
 import { DEFAULT_HOUSE_MEMBERS, type HouseMember } from "../server/houseMembers";
 import { applyDirectorItemOverride } from "../server/directorPolicyHierarchy";
 
-export function PetsAdminPanel() {
+export function PetsAdminPanel({
+  onNavigateToEnrolment,
+}: {
+  onNavigateToEnrolment?: () => void;
+} = {}) {
   const [pets, setPets] = useState<HouseAnimal[]>(DEFAULT_HOUSE_ANIMALS);
   const [selectedPet, setSelectedPet] = useState<HouseAnimal>(DEFAULT_HOUSE_ANIMALS[0]);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -160,7 +164,7 @@ export function PetsAdminPanel() {
           <h3 className="text-xs font-black uppercase tracking-wider text-cyan-400 font-mono flex items-center gap-2">
             <span>👤 3 Enrolled House Residents</span>
             <span className="rounded bg-cyan-950 px-1.5 py-0.5 text-[10px] text-cyan-300 border border-cyan-500/30">
-              BIOMETRIC RE-ID
+              IDENTITY REGISTRY
             </span>
           </h3>
 
@@ -191,6 +195,16 @@ export function PetsAdminPanel() {
                 <ShieldCheck className="h-4 w-4 text-emerald-400 flex-shrink-0 mt-1" />
               </div>
             ))}
+            {onNavigateToEnrolment && (
+              <button
+                type="button"
+                onClick={onNavigateToEnrolment}
+                className="w-full py-2 px-3 rounded-xl text-xs font-black uppercase tracking-wider text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/40 flex items-center justify-center gap-2 transition shadow-sm"
+              >
+                <UserCheck className="h-4 w-4 text-cyan-400" />
+                <span>View Identity Registry</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

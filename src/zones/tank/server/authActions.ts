@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { sendTankVerifyEmail } from "@/lib/mail/sendTankVerify";
+import { sendTankPasswordResetEmail } from "@/lib/mail/sendTankPasswordReset";
 import { TANK_PARTICIPANT_COOKIE } from "./participantIdentity";
 import { CORE_DOMAIN } from "@/lib/multiZone";
 
@@ -106,8 +107,12 @@ export async function registerTankUser({
   }
 
   const name = displayName?.trim() || trimmedEmail.split("@")[0];
-  // Direct verification link to Auth zone
-  const redirectTarget = "https://unenter.live/auth/verify";
+  // Direct verification link to Auth zone (explicitly allowed in GoTrue URI allowlist)
+  // ?zone=tank is what makes the landing page wear Tank's furniture instead
+  // of the generic unenter shell. Auth is shared across every zone, but a
+  // viewer who signed up from the stream should never be shown another
+  // zone's branding mid-flow — see AuthVerifyPage.
+  const redirectTarget = "https://auth.unenter.live/auth/verify/tank";
 
   try {
     const admin = createAdminClient();
@@ -170,7 +175,7 @@ export async function registerTankUser({
       };
     }
 
-    const verifyUrl = linkData.properties.action_link;
+    const verifyUrl = toPublicAuthUrl(linkData.properties.action_link);
 
     // 2. Dispatch custom Tank branded verification email
     const mailRes = await sendTankVerifyEmail({
@@ -198,6 +203,92 @@ export async function registerTankUser({
 /**
  * Resends the verification email for an unconfirmed account.
  */
+/**
+ * Force a GoTrue action link onto the public origin.
+ *
+ * GoTrue builds these from the X-Forwarded-* pair on the request, and server
+ * calls reach Supabase internally as http://kong:8000 — so links came out as
+ * `http://kong/auth/v1/verify?...`, which no browser can resolve. Every email
+ * signup was unverifiable until this was traced.
+ *
+ * The previous guard here was `.replace(/^http:\/\/db\.unenter\.live/, ...)`.
+ * It only ever upgraded the scheme on a host that was already correct, so it
+ * could never have caught `kong` — the one host that actually broke. Rewriting
+ * origin AND scheme, whatever they are, is the version that cannot miss.
+ */
+function toPublicAuthUrl(actionLink: string): string {
+  const publicOrigin = (
+    process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER ||
+    process.env.API_EXTERNAL_URL ||
+    "https://db.unenter.live"
+  ).replace(/\/$/, "");
+  try {
+    const link = new URL(actionLink);
+    const target = new URL(publicOrigin);
+    link.protocol = target.protocol;
+    link.host = target.host;
+    return link.toString();
+  } catch {
+    return actionLink;
+  }
+}
+
+
+/**
+ * Password reset, started from Tank.
+ *
+ * Mirrors resendTankVerification deliberately: GoTrue generates the link, but
+ * TANK sends the email and TANK's page receives it. Calling
+ * supabase.auth.resetPasswordForEmail() directly — which is what this replaced
+ * — uses GoTrue's built-in template from unenter.live and lands on the core
+ * site, so a viewer who only knows Tank got mail from a domain they have never
+ * heard of about "your user". That reads as phishing.
+ *
+ * Always reports success. Whether an address has an account is not something to
+ * confirm to an unauthenticated caller; the reply is identical either way.
+ */
+export async function sendTankPasswordReset({
+  email,
+}: {
+  email: string;
+}): Promise<SignUpResult> {
+  const trimmedEmail = email.trim().toLowerCase();
+  if (!trimmedEmail) {
+    return { success: false, error: "Email address is required." };
+  }
+
+  const redirectTarget = "https://auth.unenter.live/auth/reset/tank";
+
+  try {
+    const admin = createAdminClient();
+    const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+      type: "recovery",
+      email: trimmedEmail,
+      options: { redirectTo: redirectTarget },
+    });
+
+    // A missing account lands here. Reported as success on purpose — see above.
+    if (linkErr || !linkData?.properties?.action_link) {
+      return {
+        success: true,
+        message: `If ${trimmedEmail} has an account, a reset link is on its way.`,
+      };
+    }
+
+    await sendTankPasswordResetEmail({
+      email: trimmedEmail,
+      resetUrl: toPublicAuthUrl(linkData.properties.action_link),
+    });
+
+    return {
+      success: true,
+      message: `If ${trimmedEmail} has an account, a reset link is on its way.`,
+    };
+  } catch {
+    return { success: false, error: "Could not send the reset link. Try again in a moment." };
+  }
+}
+
 export async function resendTankVerification({
   email,
 }: {
@@ -209,7 +300,11 @@ export async function resendTankVerification({
     return { success: false, error: "Email address is required." };
   }
 
-  const redirectTarget = "https://unenter.live/auth/verify";
+  // ?zone=tank is what makes the landing page wear Tank's furniture instead
+  // of the generic unenter shell. Auth is shared across every zone, but a
+  // viewer who signed up from the stream should never be shown another
+  // zone's branding mid-flow — see AuthVerifyPage.
+  const redirectTarget = "https://auth.unenter.live/auth/verify/tank";
 
   try {
     const admin = createAdminClient();
@@ -229,9 +324,11 @@ export async function resendTankVerification({
       };
     }
 
+    const verifyUrl = toPublicAuthUrl(linkData.properties.action_link);
+
     await sendTankVerifyEmail({
       email: trimmedEmail,
-      verifyUrl: linkData.properties.action_link,
+      verifyUrl,
     });
 
     return {
@@ -274,6 +371,29 @@ export async function broadcastVerificationSuccess(email: string, userId: string
     const admin = createAdminClient();
     const cleanEmail = email.trim().toLowerCase();
 
+    // ROLE IS NOT BLINDLY WRITTEN HERE.
+    //
+    // This upsert used to hardcode `role: "member"` with onConflict:"id", so
+    // every trip through verification REWROTE the row's role. Any admin or
+    // moderator who passed through was silently demoted to member — and the
+    // demotion is invisible until they hit a guard.
+    //
+    // That is exactly how the live admin account lost /director on
+    // 2026-09-13: the verify page's old "whoever is signed in" fallback called
+    // this with the admin's own id, and requireTankAdmin then read
+    // profiles.role = "member" and redirected to ?error=access_denied. The
+    // staff room still worked because it reads app_metadata, which was
+    // untouched — which is what made it look like a permissions config drift
+    // rather than a data write.
+    //
+    // A brand new account still needs a default, so the role is supplied ONLY
+    // when there is no row yet.
+    const { data: existingProfile } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
     // Ensure profiles and tank_profiles exist and are tagged
     await Promise.all([
       admin.from("profiles").upsert(
@@ -281,7 +401,7 @@ export async function broadcastVerificationSuccess(email: string, userId: string
           id: userId,
           auth_user_id: userId,
           email: cleanEmail,
-          role: "member",
+          ...(existingProfile?.role ? {} : { role: "member" }),
           updated_at: new Date().toISOString(),
         },
         { onConflict: "id" }

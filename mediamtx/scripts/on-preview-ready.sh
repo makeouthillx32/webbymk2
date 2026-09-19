@@ -58,9 +58,96 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── Self-termination ────────────────────────────────────────────────────────
+# MediaMTX does not reliably stop runOnReady hooks when a path stops being
+# ready. Measured on this container 2026-09-10: 260 of these workers alive
+# against 6 ready camera paths, accumulated over ~30h of receiver reconnects,
+# plus 255 stale files left in the clip workdir. Nothing in the Tank codebase
+# deletes a MediaMTX path, so no teardown call was ever going to reap them.
+#
+# So each worker decides for itself. It asks MediaMTX whether its own path is
+# still ready and exits once it clearly is not. Exiting runs the EXIT trap,
+# which releases the encode slot and removes this worker's temp files.
+#
+# A failed or empty API read counts as "still ready" on purpose: a blip in the
+# control API must never take down workers for paths that are serving fine.
+# Several consecutive misses are required so a brief reconnect does not kill a
+# live worker either.
+MTX_API="${MTX_API_URL:-http://127.0.0.1:9997}"
+READY_MISSES=0
+MAX_READY_MISSES="${TANK_HOOK_MAX_READY_MISSES:-3}"
+
+# THE SESSION THIS WORKER OWNS.
+#
+# "Is my path ready?" was not enough, and the gap is the whole leak. MediaMTX
+# re-fires runOnReady on EVERY publisher reconnect, so a camera that drops and
+# comes back gets a second worker while the first is mid-sleep. The first then
+# asks "is my path ready?", sees the NEW session's true, resets its miss count
+# and lives forever. Every reconnect left one behind, permanently.
+#
+# Measured on this container 2026-09-13: 118 on-preview-ready workers and 92
+# on-loop-ready children against 20 ready paths — 447% CPU and 6.2 GiB in a
+# process tree that should be a couple of dozen.
+#
+# readyTime changes on every re-establish, so pinning it at startup makes each
+# worker own exactly one session and stand down the moment a newer one has
+# taken over.
+read_ready_state() {
+  ENCODED=$(printf '%s' "$STREAM_PATH" | sed 's#/#%2F#g')
+  curl -s -S --max-time 5 "${MTX_API}/v3/paths/get/${ENCODED}" 2>/dev/null
+}
+
+extract_ready_time() {
+  printf '%s' "$1" | sed -n 's/.*"readyTime":"\([^"]*\)".*//p' | head -n 1
+}
+
+MY_READY_TIME=""
+MY_READY_TIME=$(extract_ready_time "$(read_ready_state)")
+
+path_still_ready() {
+  BODY=$(read_ready_state) || return 0
+  [ -n "$BODY" ] || return 0
+
+  case "$BODY" in
+    *'"ready":true'*) ;;
+    *) return 1 ;;
+  esac
+
+  # Ready — but is it still OUR session? A different readyTime means the path
+  # was re-established and a newer worker is handling it; this one is surplus
+  # and must stand down immediately rather than burn a miss count it will keep
+  # resetting. Only enforced when both values are known, so an API that stops
+  # reporting readyTime degrades to the old behaviour instead of mass-exiting
+  # every worker at once.
+  if [ -n "$MY_READY_TIME" ]; then
+    CURRENT_READY_TIME=$(extract_ready_time "$BODY")
+    if [ -n "$CURRENT_READY_TIME" ] && [ "$CURRENT_READY_TIME" != "$MY_READY_TIME" ]; then
+      log "${STREAM_PATH}: path re-established (${MY_READY_TIME} -> ${CURRENT_READY_TIME}) — newer worker owns it, exiting"
+      exit 0
+    fi
+  fi
+  return 0
+}
+
+exit_when_path_is_gone() {
+  if path_still_ready; then
+    READY_MISSES=0
+    return 0
+  fi
+  READY_MISSES=$((READY_MISSES + 1))
+  if [ "$READY_MISSES" -ge "$MAX_READY_MISSES" ]; then
+    log "${STREAM_PATH}: path not ready for ${READY_MISSES} consecutive checks — exiting"
+    exit 0
+  fi
+}
+
 while :; do
+  exit_when_path_is_gone
   rm -f "$FRAME"
-  if timeout 15 ffmpeg -nostdin -hide_banner -loglevel error -y \
+  # -k for the same reason as on-loop-ready.sh: plain `timeout` sends SIGTERM
+  # and then waits indefinitely. This loop is `while :;`, so one wedged frame
+  # grab stalls this camera's snapshots permanently while holding an RTSP reader.
+  if timeout -k 10 15 ffmpeg -nostdin -hide_banner -loglevel error -y \
       -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/${STREAM_PATH}" \
       -frames:v 1 \
       -vf "scale=1200:630:force_original_aspect_ratio=increase,crop=1200:630" \

@@ -33,6 +33,15 @@ export type TankPlayerProfile = {
   profileSetupComplete?: boolean;
   freeRenameAvailable?: boolean;
   renameTicketQuantity?: number;
+  /**
+   * Season pass the viewer currently holds, or null.
+   *
+   * tank_profiles is already selected with *, so these columns were arriving
+   * and being dropped on the floor — which is why the header advertised a
+   * pass to people who had just bought one.
+   */
+  seasonPassTier?: "base" | "xl" | null;
+  seasonPassExpiresAt?: string | null;
 };
 
 export type TankSeason = {
@@ -164,13 +173,27 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
 export async function getActiveSeason(): Promise<TankSeason | null> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("tank_seasons")
       .select("id, number, name, starts_at, ends_at")
       .eq("is_active", true)
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error || !data) {
+      try {
+        const admin = createAdminClient();
+        const res = await admin
+          .from("tank_seasons")
+          .select("id, number, name, starts_at, ends_at")
+          .eq("is_active", true)
+          .maybeSingle();
+        data = res.data;
+      } catch {
+        // ignore fallback error
+      }
+    }
+
+    if (!data) return null;
 
     return {
       id: data.id,
@@ -179,6 +202,41 @@ export async function getActiveSeason(): Promise<TankSeason | null> {
       startsAt: data.starts_at,
       endsAt: data.ends_at,
     };
+  } catch {
+    return null;
+  }
+}
+
+export async function getHouseDayStartedAt(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    let { data, error } = await supabase
+      .from("tank_platform_settings")
+      .select("value")
+      .eq("key", "tank_house_day_counter_v1")
+      .maybeSingle();
+
+    if (error || !data) {
+      try {
+        const admin = createAdminClient();
+        const res = await admin
+          .from("tank_platform_settings")
+          .select("value")
+          .eq("key", "tank_house_day_counter_v1")
+          .maybeSingle();
+        data = res.data;
+      } catch {
+        // ignore fallback error
+      }
+    }
+
+    if (!data) return null;
+
+    const value = data.value as { startedAt?: unknown } | null;
+    const startedAt = value?.startedAt;
+    if (typeof startedAt !== "string") return null;
+
+    return Number.isFinite(new Date(startedAt).getTime()) ? startedAt : null;
   } catch {
     return null;
   }
@@ -248,10 +306,12 @@ export async function getActiveMissions(dailyCount = 3): Promise<TankMission[]> 
 
     let progressById = new Map<string, { progress: number; completed_at: string | null }>();
     if (user) {
+      const missionDay = new Date().toISOString().slice(0, 10);
       const { data: progress } = await supabase
         .from("tank_mission_progress")
         .select("mission_id, progress, completed_at")
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .eq("mission_day", missionDay);
       for (const row of progress ?? []) {
         progressById.set(row.mission_id, {
           progress: row.progress,

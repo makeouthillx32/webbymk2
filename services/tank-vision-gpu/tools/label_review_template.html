@@ -1,0 +1,326 @@
+<title>Tank Housemate Labels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #f2f4f3;
+    --surface: #ffffff;
+    --ink: #1a2026;
+    --muted: #5e6873;
+    --line: #d9dfdc;
+    --rec: #d23f2a;
+    --rec-soft: rgba(210, 63, 42, 0.14);
+    --named: #2e7d5b;
+    --named-soft: rgba(46, 125, 91, 0.12);
+    --chip: #e8ecea;
+    --focus: #2a6bd1;
+    --tw: 48px;
+    --th: 96px;
+    --display: "Barlow Semi Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111518; --surface: #1a1f24; --ink: #e4e8eb; --muted: #97a1aa; --line: #2b3238;
+      --rec: #ef6a52; --rec-soft: rgba(239, 106, 82, 0.18); --named: #5cc293; --named-soft: rgba(92, 194, 147, 0.14);
+      --chip: #242b31; --focus: #7aa7ff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #111518; --surface: #1a1f24; --ink: #e4e8eb; --muted: #97a1aa; --line: #2b3238;
+    --rec: #ef6a52; --rec-soft: rgba(239, 106, 82, 0.18); --named: #5cc293; --named-soft: rgba(92, 194, 147, 0.14);
+    --chip: #242b31; --focus: #7aa7ff;
+  }
+  body { background: var(--ground); color: var(--ink); font-family: var(--body); line-height: 1.45; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 0 64px; }
+  header.bar {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--ground);
+    border-bottom: 1px solid var(--line); padding-block: 14px 12px;
+  }
+  .bar-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
+  .rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--rec); margin-right: 8px; vertical-align: 3px; }
+  .stats { font-family: var(--mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--ink); font-weight: 500; }
+  .sync { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: auto; }
+  .sync.error { color: var(--rec); }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .filters button, .chips button {
+    font: 500 13px/1 var(--body); color: var(--ink); background: var(--chip); border: 1px solid transparent;
+    border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  }
+  .filters button[aria-pressed="true"] { background: var(--ink); color: var(--ground); }
+  .help { color: var(--muted); font-size: 13.5px; max-width: 70ch; margin: 12px 0 0; }
+  .help kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .notice { margin-top: 10px; padding: 8px 12px; border-left: 3px solid var(--rec); background: var(--rec-soft); font-size: 13.5px; }
+
+  section.group { border-top: 1px solid var(--line); padding-block: 22px; }
+  .g-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .g-title { font-family: var(--display); font-weight: 600; font-size: 21px; margin: 0; }
+  .g-meta { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .state { font: 600 11px/1 var(--body); letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 8px; border-radius: 4px; }
+  .state.pending { background: var(--chip); color: var(--muted); }
+  .state.named { background: var(--named-soft); color: var(--named); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 14px; }
+  .chips button[aria-pressed="true"] { background: var(--named); color: var(--surface); }
+  .chips button.skip[aria-pressed="true"] { background: var(--muted); }
+  .chips .sep { width: 1px; background: var(--line); margin-inline: 4px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, var(--tw)); gap: 4px; }
+  .tile {
+    width: var(--tw); height: var(--th); padding: 0; border: 0; border-radius: 3px; cursor: pointer; position: relative;
+    background-color: #121518; background-repeat: no-repeat;
+    background-size: calc(var(--cols) * var(--tw)) auto;
+    background-position: calc(var(--c) * -1 * var(--tw)) calc(var(--r) * -1 * var(--th));
+    outline-offset: 1px;
+  }
+  .tile[aria-pressed="true"] { outline: 2px solid var(--rec); filter: grayscale(0.85) brightness(0.55); }
+  .tile[aria-pressed="true"]::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--rec) calc(50% - 1.5px), var(--rec) calc(50% + 1.5px), transparent calc(50% + 1.5px));
+  }
+  .tile:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .more { margin-top: 10px; font: 500 13px/1 var(--body); background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+  .g-foot { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .g-foot b { color: var(--rec); font-weight: 600; }
+  .empty { color: var(--muted); padding-block: 40px; }
+  @media (max-width: 480px) { :root { --tw: 40px; --th: 80px; } h1 { font-size: 22px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="bar">
+    <div class="bar-row">
+      <h1><span class="rec-dot" aria-hidden="true"></span>Tank Housemate Labels</h1>
+      <div class="stats" id="stats"></div>
+      <div class="sync" id="sync">Connecting…</div>
+    </div>
+    <div class="filters" role="group" aria-label="Show groups">
+      <button type="button" data-filter="todo" aria-pressed="false">Needs a name</button>
+      <button type="button" data-filter="member" aria-pressed="true">Named by the archive</button>
+      <button type="button" data-filter="person" aria-pressed="false">People</button>
+      <button type="button" data-filter="dog" aria-pressed="false">Dogs</button>
+      <button type="button" data-filter="cat" aria-pressed="false">Cats</button>
+      <button type="button" data-filter="all" aria-pressed="false">Everything</button>
+    </div>
+    <p class="help">Pick who each group is. Click any crop that shows someone else to <strong>exclude just that crop</strong> — it stays out of training while the rest of the group keeps the name. Groups named by the archive are pre-filled; confirm them or fix stray crops.</p>
+    <div class="notice" id="notice" hidden></div>
+  </header>
+  <main id="groups"></main>
+</div>
+
+<script id="manifest" type="application/json">__MANIFEST__</script>
+<script>
+(() => {
+  const M = JSON.parse(document.getElementById("manifest").textContent);
+  const NAMES = {
+    person: [["tyler", "Tyler"], ["malia", "Malia"], ["joe", "Joe"], ["guest", "Guest"]],
+    dog: [["molly", "Molly"], ["olly", "Olly"], ["guest", "Visiting dog"]],
+    cat: [["james", "James"], ["kitty", "Kitty"], ["guest", "Visiting cat"]],
+  };
+  const LABEL = Object.fromEntries(Object.values(NAMES).flat());
+  LABEL.skip = "Not sure";
+  const ROOM = { "game-room": "Game Room", "game-room-2": "Game Room 2", "living-room": "Living Room", kitchen: "Kitchen", foyer: "Foyer", "makeup-room": "Makeup Room" };
+  const INITIAL_TILES = 60;
+
+  const state = {};       // groupId -> {name, excluded:Set}
+  const expanded = new Set();
+  let filter = "member";
+  let db = null;
+
+  const tileKey = (t) => `${t[1]}:${t[0]}`;
+  const current = (g) => state[g.id] || { name: g.suggested, excluded: new Set(), saved: false };
+
+  function title(g) {
+    if (g.kind === "member") return `${LABEL[g.suggested] || g.suggested} · ${ROOM[g.rooms[0]] || g.rooms[0]}`;
+    const n = g.id.replace(/^unknown-(person|dog|cat)-/, "");
+    return `Unknown ${g.class} ${n}`;
+  }
+
+  function visible(g) {
+    const s = current(g);
+    if (filter === "todo") return g.kind === "unknown" && !state[g.id]?.name;
+    if (filter === "member") return g.kind === "member";
+    if (filter === "all") return true;
+    return g.class === filter;
+  }
+
+  function renderStats() {
+    const unknown = M.groups.filter((g) => g.kind === "unknown");
+    const named = unknown.filter((g) => state[g.id]?.name && state[g.id].name !== "skip").length;
+    const confirmed = M.groups.filter((g) => g.kind === "member" && state[g.id]?.name).length;
+    const excluded = Object.values(state).reduce((n, s) => n + s.excluded.size, 0);
+    document.getElementById("stats").innerHTML =
+      `<b>${named}</b>/${unknown.length} unknown groups named · <b>${confirmed}</b>/${M.groups.length - unknown.length} archive groups confirmed · <b>${excluded}</b> crops excluded`;
+  }
+
+  function groupSection(g) {
+    const s = current(g);
+    const sec = document.createElement("section");
+    sec.className = "group";
+    sec.id = `g-${g.id}`;
+    const minutes = Math.max(1, Math.round(g.seconds / 60));
+    const rooms = g.rooms.map((r) => ROOM[r] || r).join(", ");
+    const isSet = Boolean(state[g.id]?.name);
+    sec.innerHTML = `
+      <div class="g-head">
+        <h2 class="g-title"></h2>
+        <span class="g-meta">${g.tiles.length} sightings · ${minutes} min · ${rooms}</span>
+        <span class="state ${isSet ? "named" : "pending"}">${isSet ? (s.name === "skip" ? "Skipped" : "Named") : g.kind === "member" ? "Unconfirmed" : "Needs a name"}</span>
+      </div>
+      <div class="chips" role="group"></div>
+      <div class="tiles"></div>
+      <div class="g-foot"></div>`;
+    sec.querySelector(".g-title").textContent = title(g);
+
+    const chips = sec.querySelector(".chips");
+    chips.setAttribute("aria-label", `Who is ${title(g)}`);
+    for (const [slug, label] of NAMES[g.class] || NAMES.person) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.setAttribute("aria-pressed", String(s.name === slug));
+      b.addEventListener("click", () => setName(g, slug));
+      chips.append(b);
+    }
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    chips.append(sep);
+    const skip = document.createElement("button");
+    skip.type = "button";
+    skip.className = "skip";
+    skip.textContent = "Not sure";
+    skip.setAttribute("aria-pressed", String(s.name === "skip"));
+    skip.addEventListener("click", () => setName(g, "skip"));
+    chips.append(skip);
+
+    const tiles = sec.querySelector(".tiles");
+    tiles.style.setProperty("--cols", M.cols);
+    const show = expanded.has(g.id) ? g.tiles.length : Math.min(INITIAL_TILES, g.tiles.length);
+    for (let i = 0; i < show; i++) {
+      const t = g.tiles[i];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tile";
+      b.style.backgroundImage = `url("sprites/${g.id}.jpg")`;
+      b.style.setProperty("--c", i % M.cols);
+      b.style.setProperty("--r", Math.floor(i / M.cols));
+      const key = tileKey(t);
+      const when = new Date(t[2] * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      b.title = `${when}`;
+      b.setAttribute("aria-label", `Sighting ${i + 1}, ${when}${s.excluded.has(key) ? ", excluded" : ""}`);
+      b.setAttribute("aria-pressed", String(s.excluded.has(key)));
+      b.addEventListener("click", () => toggleTile(g, key));
+      tiles.append(b);
+    }
+    if (show < g.tiles.length) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "more";
+      more.textContent = `Show all ${g.tiles.length} sightings`;
+      more.addEventListener("click", () => { expanded.add(g.id); rerender(g); });
+      sec.append(more);
+    }
+    const foot = sec.querySelector(".g-foot");
+    foot.innerHTML = s.excluded.size ? `<b>${s.excluded.size}</b> excluded from this group` : "Click a crop to exclude it";
+    return sec;
+  }
+
+  function render() {
+    const main = document.getElementById("groups");
+    main.replaceChildren();
+    const list = M.groups.filter(visible);
+    if (!list.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = filter === "todo" ? "Every unknown group has a name. Nice." : "Nothing in this view.";
+      main.append(p);
+    }
+    for (const g of list) main.append(groupSection(g));
+    renderStats();
+  }
+
+  function rerender(g) {
+    const old = document.getElementById(`g-${g.id}`);
+    if (old) old.replaceWith(groupSection(g));
+    renderStats();
+  }
+
+  // ── saving: one write at a time per group, coalescing rapid clicks ──
+  const timers = {}, inflight = {}, dirty = {};
+  function queueSave(g) {
+    dirty[g.id] = true;
+    clearTimeout(timers[g.id]);
+    timers[g.id] = setTimeout(() => flush(g), 500);
+    setSync("Saving…");
+  }
+  async function flush(g) {
+    if (!db) { setSync("Not saved — storage unavailable", true); return; }
+    if (inflight[g.id]) { await inflight[g.id]; }
+    if (!dirty[g.id]) return;
+    dirty[g.id] = false;
+    const s = state[g.id];
+    const body = { name: s.name ?? null, excluded: [...s.excluded], kind: g.kind, class: g.class, suggested: g.suggested ?? null, updatedAt: new Date().toISOString() };
+    inflight[g.id] = db.collection("labels").doc(g.id).set(body)
+      .then(() => setSync("All changes saved"))
+      .catch((e) => setSync(e?.code === "invalid_argument" ? "You can view but not save labels" : "Save failed — try that click again", true))
+      .finally(() => { inflight[g.id] = null; });
+    await inflight[g.id];
+  }
+
+  function ensure(g) {
+    if (!state[g.id]) state[g.id] = { name: null, excluded: new Set() };
+    return state[g.id];
+  }
+  function setName(g, slug) {
+    const s = ensure(g);
+    s.name = s.name === slug ? null : slug;
+    rerender(g);
+    queueSave(g);
+  }
+  function toggleTile(g, key) {
+    const s = ensure(g);
+    if (!s.name && g.kind === "member") s.name = g.suggested; // excluding a stray crop confirms the rest
+    s.excluded.has(key) ? s.excluded.delete(key) : s.excluded.add(key);
+    rerender(g);
+    queueSave(g);
+  }
+
+  function setSync(text, error = false) {
+    const el = document.getElementById("sync");
+    el.textContent = text;
+    el.classList.toggle("error", error);
+  }
+
+  document.querySelectorAll(".filters button").forEach((b) => b.addEventListener("click", () => {
+    filter = b.dataset.filter;
+    document.querySelectorAll(".filters button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    render();
+  }));
+
+  render();
+
+  (async () => {
+    db = window.claude ? await window.claude.use("db") : null;
+    if (!db) {
+      setSync("Storage unavailable", true);
+      const n = document.getElementById("notice");
+      n.textContent = "Saving is unavailable in this view, so labels you pick here will not be kept.";
+      n.hidden = false;
+      return;
+    }
+    setSync("Loading saved labels…");
+    let first = true;
+    db.collection("labels").onSnapshot((snap) => {
+      for (const d of snap.docs) {
+        const body = d.data() || {};
+        if (dirty[d.id] || inflight[d.id]) continue; // don't let an echo overwrite a click in progress
+        state[d.id] = { name: body.name ?? null, excluded: new Set(Array.isArray(body.excluded) ? body.excluded : []) };
+      }
+      if (first) { first = false; setSync("All changes saved"); }
+      render();
+    }, (e) => setSync(e?.code === "revoked" ? "Storage disconnected" : "Live sync stopped — reload to reconnect", true));
+  })();
+})();
+</script>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
+import { tokenizeTankChatBody } from "./chatBodyTokens";
 
 const SHORTCODE_PATTERN = /:([a-z0-9_-]+):/gi;
 const EMOJI_BASE_URL = "https://db.unenter.live/storage/v1/object/public/tank-emoji/32";
@@ -454,9 +455,6 @@ export function ChatGifAttachment({ gifId }: { gifId: string }) {
   );
 }
 
-const URL_OR_EMOJI_PATTERN =
-  /(https?:\/\/[^\s]+)|:([a-z0-9_-]+):|(@[a-zA-Z0-9_.-]+(?:\s+[a-zA-Z0-9_.-]+)?)|\[image(?::)?(\d+)\]|\[gif:(https?:\/\/[^\s\]]+|[a-zA-Z0-9_-]+)\]/gi;
-
 export function TankChatBody({
   body,
   text,
@@ -470,77 +468,73 @@ export function TankChatBody({
   const parts = useMemo(() => {
     if (!content) return [];
     const elements: ReactNode[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    URL_OR_EMOJI_PATTERN.lastIndex = 0;
+    const tokens = tokenizeTankChatBody(content);
 
-    while ((match = URL_OR_EMOJI_PATTERN.exec(content))) {
-      const fullMatch = match[0];
-      const urlMatch = match[1];
-      const emojiMatch = match[2];
-      const mentionMatch = match[3];
-      const imageMatch = match[4];
-      const gifMatch = match[5];
-
-      if (match.index > lastIndex) {
-        elements.push(content.slice(lastIndex, match.index));
-      }
-
-      if (urlMatch) {
+    tokens.forEach((token, index) => {
+      if (token.type === "text") {
+        elements.push(token.value);
+      } else if (token.type === "url") {
         elements.push(
           <a
-            key={`url-${match.index}`}
-            href={urlMatch}
+            key={`url-${index}`}
+            href={token.value}
             target="_blank"
             rel="noopener noreferrer"
             className="text-cyan-400 hover:text-cyan-300 underline font-black transition"
             onClick={(e) => e.stopPropagation()}
           >
-            {urlMatch}
+            {token.value}
           </a>,
         );
-      } else if (emojiMatch) {
-        const shortcode = emojiMatch.toLowerCase();
-        const url = catalog.get(shortcode);
+      } else if (token.type === "kick-emote") {
+        // Kick chat emotes arrive as literal "[emote:ID:slug]" tokens in the
+        // message body. Render the real emote image; if the fetch fails the
+        // alt text keeps the slug readable instead of invisible.
+        elements.push(
+          <img
+            key={`kick-emote-${token.id}-${index}`}
+            src={`https://files.kick.com/emotes/${token.id}/fullsize`}
+            alt={`:${token.slug}:`}
+            className="tank-chat-emoji mx-0.5 inline-block object-contain drop-shadow-sm transition hover:scale-125"
+            title={`:${token.slug}:`}
+            loading="lazy"
+          />,
+        );
+      } else if (token.type === "emoji") {
+        const url = catalog.get(token.shortcode);
         if (url) {
           elements.push(
             <img
-              key={`${shortcode}-${match.index}`}
+              key={`${token.shortcode}-${index}`}
               src={url}
-              alt={`:${shortcode}:`}
+              alt={`:${token.shortcode}:`}
               className="tank-chat-emoji mx-0.5 inline-block object-contain drop-shadow-sm transition hover:scale-125"
-              title={`:${shortcode}:`}
+              title={`:${token.shortcode}:`}
               loading="lazy"
             />,
           );
         } else {
-          elements.push(fullMatch);
+          elements.push(token.raw);
         }
-      } else if (mentionMatch) {
+      } else if (token.type === "mention") {
         elements.push(
           <span
-            key={`mention-${match.index}`}
+            key={`mention-${index}`}
             className="font-bold text-purple-300 bg-purple-950/60 px-1 py-0.2 rounded border border-purple-500/40 shadow-sm"
           >
-            {mentionMatch}
+            {token.value}
           </span>,
         );
-      } else if (imageMatch) {
+      } else if (token.type === "image") {
         elements.push(
-          <ChatImageAttachment key={`img-${match.index}`} imageId={imageMatch} />,
+          <ChatImageAttachment key={`img-${index}`} imageId={token.id} />,
         );
-      } else if (gifMatch) {
+      } else if (token.type === "gif") {
         elements.push(
-          <ChatGifAttachment key={`gif-${match.index}`} gifId={gifMatch} />,
+          <ChatGifAttachment key={`gif-${index}`} gifId={token.id} />,
         );
       }
-
-      lastIndex = match.index + fullMatch.length;
-    }
-
-    if (lastIndex < content.length) {
-      elements.push(content.slice(lastIndex));
-    }
+    });
 
     return elements;
   }, [content, catalog]);

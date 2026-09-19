@@ -5,19 +5,37 @@
 // Engineered for 50,000+ congruent viewers across iOS Safari, Android, Chrome, Firefox, Electron, Smart TVs, and WebViews.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
+import { endWhepSession, whepSessionUrl } from "./whepSession";
+import { TANK_HLS_STEADY, TANK_HLS_VIEWER } from "./hlsTuning";
+import {
+  catchUpPlaybackRate,
+  whepLatencyFromStats,
+  WHEP_SYNC_TARGET_SECONDS,
+} from "./whepLatency";
 import { detectNetworkProfile, getHydrationSafeNetworkProfile, subscribeToNetworkProfile, type NetworkProfile } from "./networkQuality";
 import { useStreamSlot, useConnectDelay, type StreamPriority } from "./streamAdmission";
 import { VideoErrorBoundary } from "./components/VideoErrorBoundary";
+import { deriveHlsUrl, deriveHlsLowUrl, deriveWhepUrl, prefersLowRung } from "./playbackUrls";
 import Hls from "hls.js";
 import { CameraOff, VolumeX, Volume2, Maximize, Loader2, Wifi, WifiOff, RefreshCw, Zap, AlertTriangle } from "lucide-react";
 import type { PlaybackProtocol } from "../contracts";
 import { ACTIVE_THEME } from "../theme";
 import { logCameraDebug } from "./cameraDebug";
-import { useInvisibleTouchTelemetry } from "./useInvisibleTouchTelemetry";
+import { hasNewDecodedPicture, readVideoPictureProbe } from "../obs/directorPlayback";
+import { useGimbalVideoDriver } from "../director/useGimbalVideoDriver";
+import type { VirtualPtzState } from "../director/ptzState";
+import { useInvisibleTouchTelemetry, type TouchEventPayload } from "./useInvisibleTouchTelemetry";
+import {
+  hlsLevelForTankQuality,
+  type TankPlayerQuality,
+} from "./playerQuality";
 
 function cameraLabelFromUrl(url: string): string {
-  const match = url.match(/cameras\/([^/?]+)/);
-  return match ? match[1] : url.slice(0, 24);
+  const match = url.match(/(?:cameras|obs)\/([^/?]+)/);
+  if (match) {
+    return match[1].replace(/-whep$/, "");
+  }
+  return url.slice(0, 24);
 }
 
 export type LiveEdgeInfo = {
@@ -57,6 +75,19 @@ export type StreamStabilityInfo = {
 };
 
 export type CameraPlayerHandle = {
+  /**
+   * The video element currently on screen, for read-only frame sampling.
+   *
+   * Exists so the director console can run detection against footage it is
+   * ALREADY decoding instead of opening a second stream per camera. Returns
+   * null while the player holds no admitted stream or has not reached
+   * readyState >= 2 — callers must treat that as "no frame this tick", never
+   * as an error.
+   *
+   * Read-only by contract: `drawImage` off a playing video cannot disturb
+   * playback. Nothing that mutates the element belongs behind this.
+   */
+  getActiveVideo: () => HTMLVideoElement | null;
   togglePlayback: () => void;
   requestFullscreen: () => void;
   setMuted: (muted: boolean) => void;
@@ -88,6 +119,17 @@ type CameraPlayerProps = {
    */
   priority?: StreamPriority;
   /**
+   * Rendered on the director wall rather than to a viewer.
+   *
+   * Two differences, both because the wall is a monitoring surface: it uses
+   * the steady buffer profile (eight tiles cannot hold the viewer profile's
+   * four seconds without one always refilling), and it never draws the
+   * buffering spinner. An operator judging which room to cut to, and a
+   * detector sampling the same element, are both served by a frame that is
+   * a little late over a spinner that is permanently up.
+   */
+  directorSurface?: boolean;
+  /**
    * Short muted clip of this camera's recent footage, looped underneath the
    * live surfaces. It is what a viewer looks at while the stream negotiates,
    * reconnects, or buffers — instead of a black rectangle. Purely cosmetic:
@@ -96,10 +138,29 @@ type CameraPlayerProps = {
    */
   prerollLoopUrl?: string | null;
   videoStyle?: CSSProperties;
+  /**
+   * The Director's programme crop. Given, the player glides both live buffers
+   * to it on the gimbal (director/useGimbalVideoDriver.ts) without re-rendering;
+   * `ptzSnapKey` (the camera id) makes a cut land its crop instead of gliding.
+   */
+  ptzTarget?: VirtualPtzState | null;
+  ptzSnapKey?: string | null;
+  cameraSlug?: string;
+  onTouchTap?: (payload: TouchEventPayload) => void;
+  quality?: TankPlayerQuality;
 };
 
 const LED_RED = "#ff3b2f";
 
+/**
+ * Whether this browser can play an HLS playlist from a plain <video src>.
+ *
+ * NOT canPlayType("application/vnd.apple.mpegurl"): Chromium returns the
+ * truthy string "maybe" for that and then fails to decode, so every branch
+ * testing it sent Chrome down the native path, assigned the .m3u8 directly,
+ * and got MEDIA_ERR_SRC_NOT_SUPPORTED — a black tile with no spinner and no
+ * retry. Only Apple browsers genuinely do native HLS.
+ */
 function isIosOrSafari(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
@@ -122,55 +183,6 @@ export function isMobileOrCellular(): boolean {
   return Boolean(isMobileUa || isTouchScreen);
 }
 
-// HLS is served from the `-hls` sibling path when transcoded, or directly from
-// `cameras/{id}/index.m3u8` for direct IRL/USB/OBS ingest.
-//
-// obs/<slug> rooms are the OPPOSITE polarity from cameras/<id>: OBS is the
-// one actively publishing the base path, so nothing can transcode it in
-// place — the base path IS the HLS-ready (AAC) content, and -whep is the
-// ADDED Opus sibling (see provisionObsWhepSibling in server/mediaGateway.ts).
-// Stripping -whep back to the bare path is therefore the correct HLS
-// fallback for a room, the mirror image of adding -hls for a camera.
-function deriveHlsUrl(url: string, direct = false): string {
-  if (/-whep\//.test(url)) {
-    return url.replace(/-whep\/(?:whep|index\.m3u8)(\?.*)?$/, "/index.m3u8$1");
-  }
-  if (direct) {
-    return url.replace(
-      /\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-      "/$1/index.m3u8",
-    );
-  }
-  return url.replace(
-    /\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-    "/$1-hls/index.m3u8",
-  );
-}
-
-// 720p rung. Only exists when TANK_HLS_LOW_RUNG=1 server-side.
-function deriveHlsLowUrl(url: string): string {
-  return url.replace(
-    /\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-    "/$1-hls-low/index.m3u8",
-  );
-}
-
-// Small screens and phones get the low rung when it's available: a 4K
-// 8.4 Mbps stream is unwatchable on cellular and pointless on a handset
-// display. Falls back to the source rung when the ladder is disabled.
-function prefersLowRung(): boolean {
-  if (typeof window === "undefined") return false;
-  const narrow = window.matchMedia?.("(max-width: 900px)")?.matches ?? false;
-  const coarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
-  return narrow || coarse;
-}
-
-function deriveWhepUrl(url: string): string {
-  return url.replace(
-    /\/(cameras\/[^/]+?)(?:-hls)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-    "/$1/whep",
-  );
-}
 
 function getIceServers(): RTCIceServer[] {
   const customTurnUrl = process.env.NEXT_PUBLIC_TANK_TURN_URL;
@@ -204,23 +216,112 @@ function getIceServers(): RTCIceServer[] {
   return servers;
 }
 
-function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs: number): Promise<void> {
+/**
+ * Wait for ICE candidates that are actually worth sending — not for gathering
+ * to finish.
+ *
+ * This used to wait for `iceGatheringState === "complete"` with a 1500 ms cap,
+ * which in practice meant EVERY connection paid the full 1500 ms. Gathering
+ * cannot complete until every configured server has answered, and the server
+ * list includes three public TURN relays (openrelay.metered.ca, one of them
+ * TURNS over TCP). A TLS handshake to a public relay does not finish in 1500 ms,
+ * so the timeout was the outcome every single time — a flat 1.5 s added to every
+ * room switch, on top of the stability gate, which is most of why switching
+ * rooms felt like it took forever.
+ *
+ * The candidate we actually need arrives almost immediately: for a viewer on the
+ * LAN a host candidate is available in single-digit milliseconds, and STUN
+ * reflexive candidates typically land within ~100-200 ms. So resolve shortly
+ * after the first candidate instead, and let gathering continue in the
+ * background.
+ *
+ * THE TRADE, stated plainly: relay candidates will usually not make it into the
+ * offer, so a viewer behind a strict UDP-filtering firewall loses the TURN path
+ * on this attempt. That is survivable specifically because the WHEP watchdog
+ * below already fails over to HLS when no frames arrive, and HLS reaches those
+ * viewers over ordinary TCP/443. Trading a rare relay connection for 1.2 s off
+ * every single switch is the right side of that bargain — but it IS a trade,
+ * not a free win.
+ */
+function waitForUsableIceCandidates(
+  pc: RTCPeerConnection,
+  opts: { graceMs: number; timeoutMs: number },
+): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const finish = () => {
       if (settled) return;
       settled = true;
       pc.removeEventListener("icegatheringstatechange", onChange);
-      clearTimeout(timer);
+      pc.removeEventListener("icecandidate", onCandidate);
+      if (graceTimer) clearTimeout(graceTimer);
+      clearTimeout(hardTimer);
       resolve();
     };
+
     const onChange = () => {
       if (pc.iceGatheringState === "complete") finish();
     };
+
+    const onCandidate = (event: RTCPeerConnectionIceEvent) => {
+      // A null candidate means gathering ended on its own.
+      if (!event.candidate) return finish();
+      // First real candidate: give siblings a brief window to arrive, then go.
+      if (!graceTimer) graceTimer = setTimeout(finish, opts.graceMs);
+    };
+
     pc.addEventListener("icegatheringstatechange", onChange);
-    const timer = setTimeout(finish, timeoutMs);
+    pc.addEventListener("icecandidate", onCandidate);
+    const hardTimer = setTimeout(finish, opts.timeoutMs);
   });
+}
+
+/**
+ * True while the container actually occupies space on the page.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The landing page renders BOTH grids and lets CSS pick one: the desktop
+ * roster is `hidden lg:flex`, the mobile grid is `block lg:hidden`. CSS hides
+ * a subtree; it does not unmount it. So on a desktop the mobile grid stayed
+ * mounted and every one of its players kept a live decoder running behind
+ * `display:none`.
+ *
+ * Measured on tank.unenter.live: 8 zero-sized video elements decoding, one of
+ * them 13,139 frames deep, alongside 14 visible ones — 22 concurrent decoders
+ * for 8 tiles a viewer could see. That is what exhausted the decode pool and
+ * left the visible tiles spinning.
+ *
+ * Deliberately keyed on box size, not on intersection: a tile scrolled out of
+ * view still has a box and keeps its stream, so scrolling never costs a
+ * reconnect. Only a genuinely hidden subtree (zero box) releases its slot.
+ */
+function useOccupiesLayout(ref: { current: HTMLElement | null }): boolean {
+  // No ResizeObserver (jsdom, SSR) means no way to observe hiding — assume
+  // visible so a missing API can never silently blank every player.
+  const [visible, setVisible] = useState(
+    () => typeof ResizeObserver === "undefined",
+  );
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setVisible(r.width > 0 && r.height > 0);
+    };
+    measure();
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+
+  return visible;
 }
 
 const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
@@ -241,15 +342,25 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       showLiveBadge = false,
       prerollLoopUrl = null,
       videoStyle,
+      ptzTarget,
+      ptzSnapKey = null,
+      cameraSlug: explicitCameraSlug,
+      onTouchTap,
+      quality,
       // Default to hero: an unmarked player is whatever the caller is showing
       // front and centre, and silently downgrading it would be worse than
       // spending a slot.
       priority = "hero",
+      directorSurface = false,
     },
     ref,
   ) {
     const videoRefA = useRef<HTMLVideoElement | null>(null);
     const videoRefB = useRef<HTMLVideoElement | null>(null);
+    const drivesPtz = ptzTarget !== undefined;
+    useGimbalVideoDriver(ptzTarget ?? null, () => (drivesPtz ? [videoRefA.current, videoRefB.current] : []), {
+      snapKey: ptzSnapKey,
+    });
 
     const [activeBuffer, setActiveBuffer] = useState<"A" | "B">("A");
     const [streamConnectedA, setStreamConnectedA] = useState(false);
@@ -300,6 +411,13 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
     useEffect(() => {
       setReconnectCount(0);
       wasConnectedRef.current = false;
+      setBufferingInfo({
+        isBuffering: false,
+        reason: "buffering",
+        detail: "",
+        stalledSince: null,
+        retryCount: 0,
+      });
     }, [playbackUrl]);
 
     useEffect(() => {
@@ -317,8 +435,30 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
     const [isLiveStable, setIsLiveStable] = useState(false);
     const [userRequestedWatch, setUserRequestedWatch] = useState(false);
 
+    // Declared here rather than beside the other element refs because the
+    // admission calculation below depends on it.
+    const playerContainerRef = useRef<HTMLDivElement | null>(null);
+    const occupiesLayout = useOccupiesLayout(playerContainerRef);
+
     const effectivePriority: StreamPriority = userRequestedWatch ? "hero" : priority;
-    const wantsStream = Boolean(playbackUrl) && playbackProtocol !== "none" && online;
+
+    // A thumbnail takes the CHEAP rung, not merely a later turn at the
+    // expensive one. Every grid tile was handed the source URL, so the public
+    // wall opened six 3840x2160 decoders to paint tiles a few hundred pixels
+    // wide -- nine times the pixels needed, and more than the decode pool has.
+    // The 720p rung is already published and already advertised by
+    // /api/tank/cameras; nothing consumed it (measured: 11 full-rung playlist
+    // fetches, zero low-rung). An explicit `quality` from the caller still
+    // wins, so the hero quality control keeps working.
+    const effectiveQuality: TankPlayerQuality =
+      quality ?? (effectivePriority === "thumbnail" ? "low" : "high");
+
+    // A player inside a display:none subtree must not hold a decoder.
+    const wantsStream =
+      Boolean(playbackUrl) &&
+      playbackProtocol !== "none" &&
+      online &&
+      occupiesLayout;
 
     // Wanting to stream and being allowed to are different things when
     // bandwidth is scarce. Everything downstream keys off hasSource, so a
@@ -349,38 +489,32 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
     // perfectly healthy cameras, which reads as "the site is broken".
     const awaitingSlot = wantsStream && (!admitted || !staggerElapsed);
 
+    // Latest measured WHEP jitter-buffer delay, in seconds. Null until the
+    // first frame is emitted — see whepLatency.ts on why that is not zero.
+    const whepLatencyRef = useRef<number | null>(null);
     const pcRefA = useRef<RTCPeerConnection | null>(null);
     const pcRefB = useRef<RTCPeerConnection | null>(null);
+    // WHEP session resource URLs, from each POST's Location header.
+    //
+    // A WHEP session ends when the client DELETEs it. This player never did,
+    // and pc.close() only drops the local end — MediaMTX holds the reader until
+    // ICE/DTLS time out tens of seconds later. Measured 2026-09-12: three
+    // cameras each carrying two webRTCSessions while only one room was being
+    // watched. Every fast room change left a live reader behind, and the cost
+    // lands on the shared MediaMTX rather than in this tab, which is why
+    // switching quickly degraded the OBS scene too.
+    const whepSessionRefA = useRef<string | null>(null);
+    const whepSessionRefB = useRef<string | null>(null);
     const hlsRefA = useRef<Hls | null>(null);
     const hlsRefB = useRef<Hls | null>(null);
-    const playerContainerRef = useRef<HTMLDivElement | null>(null);
 
-    const cameraSlug = playbackUrl ? cameraLabelFromUrl(playbackUrl) : "director";
-
-    const [scavengerHit, setScavengerHit] = useState<{
-      nx: number;
-      ny: number;
-      label: string;
-      xp: number;
-      message: string;
-    } | null>(null);
+    const cameraSlug = explicitCameraSlug || (playbackUrl ? cameraLabelFromUrl(playbackUrl) : "director");
 
     useInvisibleTouchTelemetry(playerContainerRef, {
       enabled: true,
       camSlug: cameraSlug,
       roomId: cameraSlug,
-      onHitSuccess: (res, coords) => {
-        if (res.target) {
-          setScavengerHit({
-            nx: coords.nx,
-            ny: coords.ny,
-            label: res.target.label,
-            xp: res.xpAwarded ?? res.target.xpReward,
-            message: res.message || `Found ${res.target.label}!`,
-          });
-          setTimeout(() => setScavengerHit(null), 2500);
-        }
-      },
+      onTouchTap,
     });
 
     // Live Edge calculation helper
@@ -397,9 +531,16 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         const elapsedSincePause = (isPaused && pausedAtRef.current)
           ? Math.max(0, Math.round((Date.now() - pausedAtRef.current) / 1000))
           : 0;
+        // A PLAYING WHEP tile used to report latencySec: 0 unconditionally, so
+        // the drift check below could never fire and nothing ever corrected a
+        // grid tile. A WebRTC jitter buffer grows under loss and never shrinks
+        // on its own — independently per tile — which is how six cameras end up
+        // showing six different burned-in clocks.
+        const measured = whepLatencyRef.current;
+        const liveLatency = measured !== null ? measured : 0;
         return {
-          isLive: !isPaused && elapsedSincePause <= 2,
-          latencySec: elapsedSincePause,
+          isLive: !isPaused && elapsedSincePause <= 2 && liveLatency < 2,
+          latencySec: isPaused ? elapsedSincePause : liveLatency,
           isPaused,
           seekableStart: currentTime,
           seekableEnd: currentTime,
@@ -518,6 +659,15 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
     };
 
     useImperativeHandle(ref, () => ({
+      getActiveVideo: () => {
+        const activeVideo = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
+        if (!activeVideo) return null;
+        // readyState < 2 means no decoded frame yet; handing that back would
+        // make the caller sample a blank element and report an empty room.
+        if (activeVideo.readyState < 2) return null;
+        if (!activeVideo.videoWidth || !activeVideo.videoHeight) return null;
+        return activeVideo;
+      },
       togglePlayback: () => {
         const activeVideo = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
         if (!activeVideo) return;
@@ -597,19 +747,21 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       getLiveEdgeInfo: calculateLiveEdge,
     }));
 
-    // Imperatively apply mute and volume to both video elements for WebKit compatibility
+    // Audio follows the on-air buffer: whichever buffer is active gets sound, the other is silent
     useEffect(() => {
-      if (videoRefA.current) {
-        videoRefA.current.muted = muted;
-        videoRefA.current.defaultMuted = muted;
-        videoRefA.current.volume = volume;
+      const onAir = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
+      const offAir = activeBuffer === "A" ? videoRefB.current : videoRefA.current;
+      if (offAir) {
+        offAir.muted = true;
+        offAir.defaultMuted = true;
+        offAir.volume = 0;
       }
-      if (videoRefB.current) {
-        videoRefB.current.muted = muted;
-        videoRefB.current.defaultMuted = muted;
-        videoRefB.current.volume = volume;
+      if (onAir) {
+        onAir.muted = muted;
+        onAir.defaultMuted = muted;
+        onAir.volume = volume;
       }
-    }, [muted, volume]);
+    }, [activeBuffer, muted, volume]);
 
     // Periodic stream telemetry beaconing (every 30s during active playback).
     //
@@ -726,13 +878,16 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       };
 
       const handleTimeUpdate = () => {
-        // If time is advancing normally and video is playing, clear buffering
-        if (activeVideo && !activeVideo.paused && bufferingInfo.isBuffering && bufferingInfo.reason === "buffering") {
-          setBufferingInfo((prev) => ({
-            ...prev,
-            isBuffering: false,
-            stalledSince: null,
-          }));
+        // If time is advancing normally and video is playing, clear buffering state
+        if (activeVideo && !activeVideo.paused && activeVideo.readyState >= 2) {
+          setBufferingInfo((prev) => {
+            if (!prev.isBuffering) return prev;
+            return {
+              ...prev,
+              isBuffering: false,
+              stalledSince: null,
+            };
+          });
         }
         updateLiveEdge();
       };
@@ -798,6 +953,34 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
         // 2. Micro-Drift Dynamic Speed Catchup:
         // If slightly behind live edge (1.5s to 4.0s), subtly accelerate to 1.12x so the viewer seamlessly catches up
+        // WHEP: measure, then ease back. Seeking a live WebRTC stream is not
+        // possible, so playing fractionally fast and letting the jitter buffer
+        // drain is the only gentle lever. Sampled here rather than on its own
+        // timer so it shares this tick's cadence.
+        if (activeEngine === "whep") {
+          const pc = activeBuffer === "A" ? pcRefA.current : pcRefB.current;
+          if (pc) {
+            void pc
+              .getStats()
+              .then((report) => {
+                whepLatencyRef.current = whepLatencyFromStats(
+                  report as unknown as Iterable<{ type?: string }>,
+                );
+              })
+              .catch(() => {
+                // A closed or renegotiating connection throws here. Leaving the
+                // previous reading stands is better than treating it as 0 and
+                // declaring the tile perfectly in sync.
+              });
+          }
+          if (!activeVideo.paused) {
+            const rate = catchUpPlaybackRate(whepLatencyRef.current);
+            if (Math.abs(activeVideo.playbackRate - rate) > 0.001) {
+              activeVideo.playbackRate = rate;
+            }
+          }
+        }
+
         if (!activeVideo.paused && activeEngine !== "whep") {
           if (info.latencySec > 1.5 && info.latencySec <= 4.0) {
             if (activeVideo.playbackRate !== 1.12) {
@@ -857,25 +1040,53 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
     useEffect(() => {
       if (isLiveStable || !hasSource) return;
 
-      let last = -1;
+      let lastA = -1;
+      let lastB = -1;
       const check = setInterval(() => {
-        const v = activeBuffer === "A" ? videoRefA.current : videoRefB.current;
-        if (!v) return;
-        const t = v.currentTime || 0;
-        // Two consecutive advances, so a single decoded frame on a stalled
-        // stream is not mistaken for playback.
-        if (last >= 0 && t > last + 0.05 && v.readyState >= 3 && !v.paused) {
+        const vA = videoRefA.current;
+        const vB = videoRefB.current;
+        const tA = vA?.currentTime || 0;
+        const tB = vB?.currentTime || 0;
+
+        if (vB && lastB >= 0 && tB > lastB + 0.05 && vB.readyState >= 3 && !vB.paused) {
           logCameraDebug(
             playbackUrl ? cameraLabelFromUrl(playbackUrl) : "unknown",
-            "reveal safety net: buffer is playing but was never promoted — revealing",
+            "reveal safety net: buffer B is playing but was never promoted — revealing",
           );
+          setActiveBuffer("B");
+          setStreamConnectedB(true);
+          streamConnectedBRef.current = true;
           setIsLiveStable(true);
+          setBufferingInfo({
+            isBuffering: false,
+            reason: "buffering",
+            detail: "",
+            stalledSince: null,
+            retryCount: 0,
+          });
+        } else if (vA && lastA >= 0 && tA > lastA + 0.05 && vA.readyState >= 3 && !vA.paused) {
+          logCameraDebug(
+            playbackUrl ? cameraLabelFromUrl(playbackUrl) : "unknown",
+            "reveal safety net: buffer A is playing but was never promoted — revealing",
+          );
+          setActiveBuffer("A");
+          setStreamConnectedA(true);
+          streamConnectedARef.current = true;
+          setIsLiveStable(true);
+          setBufferingInfo({
+            isBuffering: false,
+            reason: "buffering",
+            detail: "",
+            stalledSince: null,
+            retryCount: 0,
+          });
         }
-        last = t;
+        lastA = tA;
+        lastB = tB;
       }, 1000);
 
       return () => clearInterval(check);
-    }, [isLiveStable, hasSource, activeBuffer, playbackUrl]);
+    }, [isLiveStable, hasSource, playbackUrl]);
 
     // ── STAGNATION WATCHDOG ──
     //
@@ -946,6 +1157,10 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         if (!playheadStuck) {
           // Playing normally — any past failure is history.
           recoveryRef.current.attempts = 0;
+          setBufferingInfo((prev) => {
+            if (!prev.isBuffering) return prev;
+            return { ...prev, isBuffering: false, stalledSince: null };
+          });
           return;
         }
 
@@ -1055,17 +1270,22 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         }
         setConnectionFailed(false);
 
-        // ── 2-Second Live Stability Verification Gate ────────────────────
-        // Don't cut over on a raw single frame packet — verify continuous,
-        // smooth playback for at least 1.2s to eliminate false-positive stutters.
+        // ── Live Stability Verification Gate ────────────────────
+        // Resolve as soon as real decoded picture is confirmed.
         let verificationStart = performance.now();
         let initialTime = targetVideo.currentTime;
         let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+        let pollTimer: ReturnType<typeof setInterval> | null = null;
+        const baseline = readVideoPictureProbe(targetVideo);
 
         const cleanupStabilityListeners = () => {
           if (stabilityTimer) {
             clearTimeout(stabilityTimer);
             stabilityTimer = null;
+          }
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
           }
           targetVideo.removeEventListener("waiting", onStallDuringWarmup);
           targetVideo.removeEventListener("stalled", onStallDuringWarmup);
@@ -1077,7 +1297,20 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           cleanupStabilityListeners();
           setActiveBuffer(targetSlot);
           setIsLiveStable(true);
-          if (targetSlot === "A") {
+          setBufferingInfo({
+            isBuffering: false,
+            reason: "buffering",
+            detail: "",
+            stalledSince: null,
+            retryCount: 0,
+          });
+
+          // Teardown the outgoing buffer cleanly
+          const outgoingSlot = targetSlot === "A" ? "B" : "A";
+          const outgoingVideo = targetSlot === "A" ? videoRefB.current : videoRefA.current;
+          const outgoingSessionRef = targetSlot === "A" ? whepSessionRefB : whepSessionRefA;
+          endWhepSession(outgoingSessionRef);
+          if (outgoingSlot === "B") {
             if (pcRefB.current) { pcRefB.current.close(); pcRefB.current = null; }
             if (hlsRefB.current) { hlsRefB.current.destroy(); hlsRefB.current = null; }
             setStreamConnectedB(false); streamConnectedBRef.current = false;
@@ -1086,46 +1319,59 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
             if (hlsRefA.current) { hlsRefA.current.destroy(); hlsRefA.current = null; }
             setStreamConnectedA(false); streamConnectedARef.current = false;
           }
+          if (outgoingVideo) {
+            outgoingVideo.pause();
+            outgoingVideo.srcObject = null;
+            outgoingVideo.removeAttribute("src");
+          }
+
           onWatching?.();
           logCameraDebug(cameraLabel, `FRAME READY & STABLE — slot ${targetSlot} verified live`);
         };
 
         const onStallDuringWarmup = () => {
-          // Re-arm verification if buffer stalls during warmup
-          verificationStart = performance.now();
-          initialTime = targetVideo.currentTime;
-          if (stabilityTimer) clearTimeout(stabilityTimer);
-          stabilityTimer = setTimeout(deadlineReached, 1400);
-        };
-
-        const checkStabilityProgress = () => {
-          const elapsed = performance.now() - verificationStart;
-          const playheadAdvanced = targetVideo.currentTime - initialTime;
-          if (elapsed >= 1000 && playheadAdvanced >= 0.4) {
+          if (cancelled) return;
+          const currentProbe = readVideoPictureProbe(targetVideo);
+          if (hasNewDecodedPicture(baseline, currentProbe)) {
             promoteToLive();
           }
         };
 
-        // The deadline below is a backstop, not a promotion signal. It used to
-        // promote unconditionally, which meant a stream that had loaded
-        // metadata but never rendered a frame was revealed anyway — the gate
-        // "verified" nothing. Re-arm instead while the playhead is still
-        // stuck; the watchdog elsewhere is what gets a stalled element moving.
+        const checkStabilityProgress = () => {
+          if (cancelled) return;
+          const currentProbe = readVideoPictureProbe(targetVideo);
+          if (hasNewDecodedPicture(baseline, currentProbe)) {
+            promoteToLive();
+            return;
+          }
+          const elapsed = performance.now() - verificationStart;
+          const playheadAdvanced = targetVideo.currentTime - initialTime;
+          if (elapsed >= 300 && playheadAdvanced >= 0.15) {
+            promoteToLive();
+          }
+        };
+
         const deadlineReached = () => {
           if (cancelled) return;
-          if (targetVideo.currentTime - initialTime >= 0.2 || targetVideo.readyState >= 3) {
+          const currentProbe = readVideoPictureProbe(targetVideo);
+          if (
+            hasNewDecodedPicture(baseline, currentProbe) ||
+            targetVideo.currentTime - initialTime >= 0.1 ||
+            targetVideo.readyState >= 2
+          ) {
             promoteToLive();
             return;
           }
           verificationStart = performance.now();
           initialTime = targetVideo.currentTime;
-          stabilityTimer = setTimeout(deadlineReached, 1000);
+          stabilityTimer = setTimeout(deadlineReached, 600);
         };
 
         targetVideo.addEventListener("waiting", onStallDuringWarmup);
         targetVideo.addEventListener("stalled", onStallDuringWarmup);
         targetVideo.addEventListener("timeupdate", checkStabilityProgress);
-        stabilityTimer = setTimeout(deadlineReached, 1500);
+        pollTimer = setInterval(checkStabilityProgress, 100);
+        stabilityTimer = setTimeout(deadlineReached, 1200);
 
         targetVideo.removeEventListener("playing", onFrameReady);
         targetVideo.removeEventListener("play", onFrameReady);
@@ -1310,6 +1556,11 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         }
       }
 
+      // Retries across reconnect attempts, so it must NOT live inside
+      // connectHlsJs — a counter reset by its own retry is an infinite loop.
+      let hlsFatalRetries = 0;
+      const MAX_HLS_FATAL_RETRIES = 6;
+
       // Protocol 2: HLS.js with MSE (Media Source Extensions for Chrome/Firefox/Android)
       function connectHlsJs(hlsUrl: string) {
         if (cancelled || !targetVideo) return;
@@ -1330,19 +1581,17 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         if (Hls.isSupported()) {
           const hls = new Hls({
             enableWorker: true,
-            lowLatencyMode: true,
-            maxBufferLength: 4,
-            maxMaxBufferLength: 10,
-            liveSyncDurationCount: 1,
-            liveMaxLatencyDurationCount: 3,
-            maxBufferHole: 0.2,
+            // Shared with the programme source and every other viewer surface,
+            // so two rooms on screen at once are the same distance behind live.
+            ...(directorSurface ? TANK_HLS_STEADY : TANK_HLS_VIEWER),
+            maxBufferHole: 0.5,
             startFragPrefetch: true,
             testBandwidth: false,
-            fragLoadingTimeOut: 3500,
-            manifestLoadingTimeOut: 3500,
-            backBufferLength: 0,
-            highBufferWatchdogPeriod: 1,
-            nudgeOffset: 0.1,
+            fragLoadingTimeOut: 4500,
+            manifestLoadingTimeOut: 4500,
+            backBufferLength: 4,
+            highBufferWatchdogPeriod: 2,
+            nudgeOffset: 0.2,
             nudgeMaxRetry: 5,
           });
 
@@ -1359,6 +1608,12 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (cancelled || !targetVideo) return;
+            const selectedLevel = hlsLevelForTankQuality(hls.levels, effectiveQuality);
+            if (selectedLevel >= 0) {
+              hls.autoLevelCapping = selectedLevel;
+              hls.currentLevel = selectedLevel;
+              hls.nextLevel = selectedLevel;
+            }
             targetVideo.muted = muted;
             targetVideo.defaultMuted = muted;
             targetVideo.volume = volume;
@@ -1430,7 +1685,28 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                   break;
                 default:
                   logCameraDebug(cameraLabel, "hls-js: fatal unrecoverable error");
-                  setConnectionFailed(true);
+                  // A grid tile has nobody to click it. This used to stop
+                  // here forever, which is why a wall left open went black
+                  // one tile at a time and only came back when the operator
+                  // clicked each one — clicking re-runs this whole effect.
+                  //
+                  // Rebuild the player instead. Bounded, so a genuinely dead
+                  // camera still settles into the failed state rather than
+                  // reconnecting forever.
+                  if (hlsFatalRetries < MAX_HLS_FATAL_RETRIES) {
+                    hlsFatalRetries += 1;
+                    const delay = Math.min(15000, 2000 * hlsFatalRetries);
+                    logCameraDebug(
+                      cameraLabel,
+                      `hls-js: rebuilding in ${delay}ms (attempt ${hlsFatalRetries})`,
+                    );
+                    try { hls.destroy(); } catch { /* already gone */ }
+                    setTimeout(() => {
+                      if (!cancelled) connectHlsJs(hlsUrl);
+                    }, delay);
+                  } else {
+                    setConnectionFailed(true);
+                  }
                   break;
               }
             }
@@ -1460,28 +1736,24 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           pc.addEventListener("connectionstatechange", () => {
             logCameraDebug(cameraLabel, `whep: pc.connectionState=${pc.connectionState}`);
             if (pc.connectionState === "connecting") {
-              setBufferingInfo({
-                isBuffering: true,
-                reason: "reconnecting",
-                detail: "Connecting real-time WebRTC link...",
-                stalledSince: Date.now(),
-                retryCount: 0,
-              });
+              if (!hasAnyConnectedStream || targetSlot === activeBuffer) {
+                setBufferingInfo({
+                  isBuffering: true,
+                  reason: "reconnecting",
+                  detail: "Connecting real-time WebRTC link...",
+                  stalledSince: Date.now(),
+                  retryCount: 0,
+                });
+              }
             } else if (pc.connectionState === "failed") {
               logCameraDebug(cameraLabel, "whep: connection failed (UDP likely filtered), triggering immediate HLS failover");
               if (wasConnectedRef.current) {
                 wasConnectedRef.current = false;
                 setReconnectCount((n) => n + 1);
-                // Re-arm the preroll loop and the reveal safety net below it —
-                // isLiveStable otherwise has no writer that ever sets it back
-                // to false, so a stream that was live once stays "revealed"
-                // forever even while genuinely down mid-session. Matters most
-                // for IRL/SRTLA senders bonding across wifi/cellular handoffs,
-                // where a real drop-and-reconnect is routine, not exceptional.
                 setIsLiveStable(false);
               }
               const fallbackHls = deriveHlsUrl(whepUrl);
-              if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
+              if (isIosOrSafari()) {
                 connectNativeHls(fallbackHls);
               } else {
                 connectHlsJs(fallbackHls);
@@ -1492,13 +1764,15 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                 setReconnectCount((n) => n + 1);
                 setIsLiveStable(false);
               }
-              setBufferingInfo((prev) => ({
-                isBuffering: true,
-                reason: "reconnecting",
-                detail: "WebRTC disconnected • Recovering stream...",
-                stalledSince: prev.stalledSince || Date.now(),
-                retryCount: prev.retryCount + 1,
-              }));
+              if (!hasAnyConnectedStream || targetSlot === activeBuffer) {
+                setBufferingInfo((prev) => ({
+                  isBuffering: true,
+                  reason: "reconnecting",
+                  detail: "WebRTC disconnected • Recovering stream...",
+                  stalledSince: prev.stalledSince || Date.now(),
+                  retryCount: prev.retryCount + 1,
+                }));
+              }
             } else if (pc.connectionState === "connected") {
               wasConnectedRef.current = true;
               setBufferingInfo({
@@ -1525,26 +1799,28 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           pc.addTransceiver("video", { direction: "recvonly" });
           pc.addTransceiver("audio", { direction: "recvonly" });
 
+          const inboundStream = new MediaStream();
+          targetVideo.srcObject = inboundStream;
+
           pc.ontrack = (event) => {
             logCameraDebug(cameraLabel, `whep: ontrack fired, kind=${event.track.kind}`);
-            if (cancelled || !event.streams[0] || !targetVideo) return;
-            targetVideo.srcObject = event.streams[0];
-            targetVideo.muted = muted;
-            targetVideo.defaultMuted = muted;
-            targetVideo.volume = volume;
-            void targetVideo.play().catch(() => {
-              if (targetVideo) {
-                targetVideo.muted = true;
-                void targetVideo.play().catch(() => {});
-              }
-            });
+            if (cancelled || !targetVideo) return;
+            const tracks = event.streams.flatMap((stream) => stream.getTracks());
+            if (tracks.length === 0) tracks.push(event.track);
+            for (const track of tracks) {
+              if (!inboundStream.getTrackById(track.id)) inboundStream.addTrack(track);
+            }
+            targetVideo.muted = true;
+            targetVideo.defaultMuted = true;
+            void targetVideo.play().catch(() => {});
           };
 
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
 
-          // Fast ICE gathering timeout (max 1500ms)
-          await waitForIceGatheringComplete(pc, 1500);
+          // Send as soon as we have something usable; do not wait out the
+          // public TURN relays. See waitForUsableIceCandidates.
+          await waitForUsableIceCandidates(pc, { graceMs: 250, timeoutMs: 1500 });
           logCameraDebug(
             cameraLabel,
             `whep: ICE gathering state=${pc.iceGatheringState}, candidates in SDP=${
@@ -1559,11 +1835,22 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           });
           logCameraDebug(cameraLabel, `whep: POST response status=${response.status}`);
 
+          // Remember the session so it can be released. Relative Locations are
+          // legal, hence resolving against the request URL.
+          const whepSessionRef = targetSlot === "A" ? whepSessionRefA : whepSessionRefB;
+          whepSessionRef.current = whepSessionUrl(response, whepUrl);
+          // Superseded while the handshake was in flight — release immediately
+          // rather than leaving MediaMTX holding a reader nobody will read.
+          if (cancelled) {
+            endWhepSession(whepSessionRef);
+            return;
+          }
+
           if (!response.ok) {
             console.warn("[CameraPlayer] WHEP handshake rejected, falling back to HLS:", response.status);
             // Instant seamless failover to HLS
             const fallbackHls = deriveHlsUrl(whepUrl);
-            if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
+            if (isIosOrSafari()) {
               connectNativeHls(fallbackHls);
             } else {
               connectHlsJs(fallbackHls);
@@ -1602,7 +1889,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
               console.warn("[CameraPlayer] WHEP frame timeout, auto-failover to HLS");
               logCameraDebug(cameraLabel, `whep: ${firstFrameDeadlineMs}ms frame timeout, failing over to HLS`);
               const fallbackHls = deriveHlsUrl(whepUrl);
-              if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
+              if (isIosOrSafari()) {
                 connectNativeHls(fallbackHls);
               } else {
                 connectHlsJs(fallbackHls);
@@ -1613,7 +1900,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           console.warn("[CameraPlayer] WHEP error, falling back to HLS:", err);
           logCameraDebug(cameraLabel, `whep: threw — ${err instanceof Error ? err.message : String(err)}`);
           const fallbackHls = deriveHlsUrl(whepUrl);
-          if (targetVideo.canPlayType("application/vnd.apple.mpegurl")) {
+          if (isIosOrSafari()) {
             connectNativeHls(fallbackHls);
           } else {
             connectHlsJs(fallbackHls);
@@ -1623,7 +1910,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
       // ── SMART ENGINE SELECTION ──
       const isAppleDevice = isIosOrSafari();
-      const hasNativeHls = targetVideo.canPlayType("application/vnd.apple.mpegurl") !== "";
+      const hasNativeHls = isIosOrSafari();
       logCameraDebug(
         cameraLabel,
         `engine select: isAppleDevice=${isAppleDevice} hasNativeHls=${hasNativeHls} ua=${
@@ -1652,7 +1939,19 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       // Cellular networks enforce Symmetric NAT / Carrier-Grade NAT (CGNAT) which
       // drops WebRTC UDP packets and chokes on raw 10 Mbps feeds.
       // HLS over TCP/HTTPS (Port 443) passes through every mobile carrier effortlessly.
-      if (isMobile || isAppleDevice) {
+      if (effectiveQuality !== "high") {
+        const hlsTarget =
+          effectiveQuality === "low"
+            ? deriveHlsLowUrl(playbackUrl)
+            : deriveHlsUrl(playbackUrl);
+        if (hasNativeHls) {
+          connectNativeHls(hlsTarget);
+        } else if (hasHlsJs) {
+          connectHlsJs(hlsTarget);
+        } else {
+          connectNativeHls(hlsTarget);
+        }
+      } else if (isMobile || isAppleDevice) {
         const fullHls = deriveHlsUrl(playbackUrl);
         const lowHls = deriveHlsLowUrl(playbackUrl);
 
@@ -1680,12 +1979,43 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       return () => {
         cancelled = true;
         detachNativeHlsListeners?.();
+        // If this connection attempt was cancelled before it promoted to live
+        // (e.g. rapid camera cuts or director handoffs), release only the slot
+        // it was preparing. Never tear down the on-air buffer that is actively
+        // holding the live video feed for the viewer.
+        const pendingSessionRef = targetSlot === "A" ? whepSessionRefA : whepSessionRefB;
+        endWhepSession(pendingSessionRef);
+        if (targetSlot === "A" && (activeBuffer !== "A" || !streamConnectedARef.current)) {
+          if (pcRefA.current) {
+            pcRefA.current.close();
+            pcRefA.current = null;
+          }
+          if (hlsRefA.current) {
+            hlsRefA.current.destroy();
+            hlsRefA.current = null;
+          }
+          setStreamConnectedA(false);
+          streamConnectedARef.current = false;
+        } else if (targetSlot === "B" && (activeBuffer !== "B" || !streamConnectedBRef.current)) {
+          if (pcRefB.current) {
+            pcRefB.current.close();
+            pcRefB.current = null;
+          }
+          if (hlsRefB.current) {
+            hlsRefB.current.destroy();
+            hlsRefB.current = null;
+          }
+          setStreamConnectedB(false);
+          streamConnectedBRef.current = false;
+        }
       };
-    }, [hasSource, playbackUrl, playbackProtocol]);
+    }, [hasSource, playbackUrl, playbackProtocol, effectiveQuality]);
 
     // Cleanup handles on unmount
     useEffect(() => {
       return () => {
+        endWhepSession(whepSessionRefA);
+        endWhepSession(whepSessionRefB);
         if (pcRefA.current) {
           pcRefA.current.close();
           pcRefA.current = null;
@@ -1728,6 +2058,10 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
       <div
         ref={playerContainerRef}
         className="relative h-full w-full overflow-hidden bg-black select-none cursor-pointer group"
+        style={{
+          backgroundColor: "var(--tank-color-dark, #000000)",
+          backgroundImage: "var(--tank-texture-inner-panel, none)",
+        }}
         onClick={(e) => {
           if (awaitingSlot) {
             setUserRequestedWatch(true);
@@ -1816,7 +2150,7 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
         {/* Clean, unobscured video canvas — floating LIVE badges removed for pristine presentation */}
 
         {/* Clean Standard Video Buffering Spinner (Truly transparent, no container box) */}
-        {bufferingInfo.isBuffering && hasAnyConnectedStream && isLiveStable && !isOffline && (
+        {!directorSurface && bufferingInfo.isBuffering && hasAnyConnectedStream && isLiveStable && !isOffline && (
           <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none transition-opacity duration-150">
             <Loader2 className="h-10 w-10 sm:h-12 sm:w-12 animate-spin text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] stroke-[2.5]" />
           </div>
@@ -1852,7 +2186,13 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
 
         {/* Authentic Retro NO SIGNAL Screen when camera is offline or disconnected AND no preroll loop is available */}
         {isOffline && !showPrerollVideo && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-[#141517] via-[#0d0e10] to-[#080809] p-4 text-center select-none">
+          <div
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-[#141517] via-[#0d0e10] to-[#080809] p-4 text-center select-none"
+            style={{
+              backgroundColor: "var(--tank-color-dark, #080809)",
+              backgroundImage: "var(--tank-texture-inner-panel, none)",
+            }}
+          >
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.7)_100%)] opacity-80" />
 
             <div className="relative z-10 flex flex-col items-center gap-3">
@@ -1893,26 +2233,14 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
                   }
                 }}
                 className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-950/50 text-[11px] font-bold text-red-300 hover:bg-red-900/60 hover:border-red-400 transition-all active:scale-95 shadow-[0_0_10px_rgba(255,59,47,0.2)]"
-                style={{ fontFamily: ACTIVE_THEME.fonts.label }}
+                style={{
+                  fontFamily: ACTIVE_THEME.fonts.label,
+                  borderRadius: "var(--tank-border-radius, 0.5rem)",
+                }}
               >
                 <RefreshCw className="h-3 w-3" />
                 <span>Reconnect Feed</span>
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Scavenger / Waldo Hit Tactile Feedback (Zero UI until hit) ── */}
-        {scavengerHit && (
-          <div
-            className="pointer-events-none absolute z-50 -translate-x-1/2 -translate-y-1/2 animate-out fade-out zoom-out-95 duration-1000"
-            style={{ left: `${scavengerHit.nx * 100}%`, top: `${scavengerHit.ny * 100}%` }}
-          >
-            <div className="flex flex-col items-center">
-              <span className="h-12 w-12 rounded-full border-2 border-emerald-400 bg-emerald-500/20 animate-ping" />
-              <span className="mt-1 rounded-lg bg-black/95 px-2.5 py-1 font-mono text-[11px] font-black text-emerald-400 border border-emerald-500/60 shadow-[0_0_15px_rgba(52,211,153,0.5)] whitespace-nowrap">
-                🎯 {scavengerHit.label} (+{scavengerHit.xp} XP)
-              </span>
             </div>
           </div>
         )}

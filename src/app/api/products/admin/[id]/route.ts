@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { requireAdminClient } from "@/lib/require-admin";
+import { getProviderArtworkReadiness } from "@/lib/fulfillment/catalog/artwork-readiness";
 
 type Params = { params: Promise<{ id: string }> };
 
 function jsonError(status: number, code: string, message: string, details?: any) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
-}
-
-async function requireAdmin(supabase: SupabaseClient) {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return { ok: false, status: 401 as const, message: error.message };
-  if (!data.user) return { ok: false, status: 401 as const, message: "Authentication required" };
-  return { ok: true as const };
 }
 
 function normalizeImage(img: any) {
@@ -29,13 +24,14 @@ function normalizeVariant(v: any) {
 
 export async function GET(_req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
-  const gate = await requireAdmin(supabase);
+  const gate = await requireAdminClient(supabase);
   if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   const { id } = await params;
   if (!id) return jsonError(400, "INVALID_ID", "Missing product id");
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("products")
     .select(`
       *,
@@ -73,6 +69,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
     .slice()
     .sort((a: any, b: any) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
 
+  let providerArtworkReadiness = null;
+  try {
+    providerArtworkReadiness = await getProviderArtworkReadiness(admin, id);
+  } catch (readinessError) {
+    console.error("Could not load provider artwork readiness", readinessError);
+  }
+
   return NextResponse.json({
     ok: true,
     data: {
@@ -82,14 +85,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
       categories,
       tags,
       collections,
+      provider_artwork_readiness: providerArtworkReadiness,
     },
   });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
-  const gate = await requireAdmin(supabase);
+  const gate = await requireAdminClient(supabase);
   if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   const { id } = await params;
   if (!id) return jsonError(400, "INVALID_ID", "Missing product id");
@@ -109,7 +114,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   if (!Object.keys(update).length) return jsonError(400, "NO_FIELDS", "No updatable fields were provided");
 
-  const { data, error } = await supabase.from("products").update(update).eq("id", id).select("*").single();
+  const { data, error } = await admin.from("products").update(update).eq("id", id).select("*").single();
   if (error) return jsonError(500, "PRODUCT_UPDATE_FAILED", error.message, error);
 
   return NextResponse.json({ ok: true, data });
@@ -117,13 +122,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
-  const gate = await requireAdmin(supabase);
+  const gate = await requireAdminClient(supabase);
   if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   const { id } = await params;
   if (!id) return jsonError(400, "INVALID_ID", "Missing product id");
 
-  const { data, error } = await supabase.from("products").update({ status: "archived" }).eq("id", id).select("*").single();
+  const { data, error } = await admin.from("products").update({ status: "archived" }).eq("id", id).select("*").single();
   if (error) return jsonError(500, "PRODUCT_ARCHIVE_FAILED", error.message, error);
 
   return NextResponse.json({ ok: true, data });

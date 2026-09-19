@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import {
+  claimCaptures,
+  recordOutcome,
+} from "@/zones/tank/server/appearanceCaptureQueue";
+import {
   describeTelemetry,
+  isSubjectMode,
+  recordServerAppearanceStatus,
   recordTelemetry,
   normaliseTelemetryReading,
 } from "@/zones/tank/server/directorTelemetryStore";
-import type { CameraTelemetryInput, SubjectMode } from "@/zones/tank/server/directorVirtualAtlas";
+import type { CameraTelemetryInput } from "@/zones/tank/server/directorVirtualAtlas";
 
 // Where the detection layer delivers what it sees.
 //
@@ -29,21 +35,6 @@ function authorised(request: Request): boolean {
   return request.headers.get("x-tank-ingest-secret") === secret;
 }
 
-const SUBJECT_MODES: SubjectMode[] = [
-  "auto",
-  "person",
-  "speaker",
-  "feet",
-  "face",
-  "motion",
-  "crowd",
-  "group",
-  "animals",
-  "chaos",
-  "manual",
-  "rotation",
-];
-
 export async function POST(request: Request) {
   if (!authorised(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -58,7 +49,11 @@ export async function POST(request: Request) {
 
   // Accept either a bare array or {cameras, mode} so a detector can drive the
   // subject mode too without a second call.
-  const rawList = Array.isArray(body) ? body : Array.isArray(body?.cameras) ? body.cameras : null;
+  const rawList = Array.isArray(body)
+    ? body
+    : Array.isArray(body?.cameras)
+      ? body.cameras
+      : null;
   if (!rawList) {
     return NextResponse.json(
       { error: "Expected an array of readings, or { cameras: [...] }" },
@@ -66,15 +61,51 @@ export async function POST(request: Request) {
     );
   }
 
-  const inputs = rawList.map(normaliseTelemetryReading).filter(Boolean) as CameraTelemetryInput[];
+  const inputs = rawList
+    .map(normaliseTelemetryReading)
+    .filter(Boolean) as CameraTelemetryInput[];
   if (inputs.length === 0) {
-    return NextResponse.json({ error: "No readings carried a cameraId" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No readings carried a cameraId" },
+      { status: 400 },
+    );
   }
 
-  const mode = SUBJECT_MODES.includes(body?.mode) ? (body.mode as SubjectMode) : null;
-  const stored = recordTelemetry(inputs, mode);
+  const mode = isSubjectMode(body?.mode) ? body.mode : null;
+  // "server": this route is the standalone-detector path (tank-vision-worker).
+  // Recording the origin is what lets the operator console's browser detector
+  // stand down while the worker is producing, instead of both decoding every
+  // camera and overwriting each other's readings.
+  // "learner" is the live identity service (services/tank-vision-gpu): it names
+  // bodies from the operator's graded gallery and owns nothing else, so it is
+  // stored as an overlay rather than as a reading. See directorTelemetryStore.
+  const origin = body?.source === "learner" ? "learner" : "server";
+  const stored = recordTelemetry(inputs, mode, origin);
+  recordServerAppearanceStatus(body?.appearance);
 
-  return NextResponse.json({ success: true, stored, mode });
+  // Appearance-enrolment requests ride home on the telemetry response.
+  //
+  // The worker posts several times a second and is the only process holding
+  // decoded frames, so this is both the lowest-latency channel to it and the
+  // one that costs nothing: no extra socket, no second poll loop, no new
+  // authentication surface. The alternative — a queue the worker polls on its
+  // own timer — adds a request per pass to say "nothing" almost every time.
+  const captures = claimCaptures();
+
+  // And results travel back up the same pipe, so a failed capture is visible in
+  // the console instead of being a click that appeared to do nothing.
+  for (const result of Array.isArray(body?.captureResults)
+    ? body.captureResults
+    : []) {
+    if (typeof result?.id !== "string") continue;
+    recordOutcome(
+      result.id,
+      result.status === "captured" ? "captured" : "failed",
+      typeof result.detail === "string" ? result.detail.slice(0, 300) : "",
+    );
+  }
+
+  return NextResponse.json({ success: true, stored, mode, origin, captures });
 }
 
 /** Diagnostics — who is reporting, how stale, and whether the director trusts it. */

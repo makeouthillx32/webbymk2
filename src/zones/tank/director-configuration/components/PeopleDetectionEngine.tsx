@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { TANK_HLS_ANALYSIS } from "@/zones/tank/public/hlsTuning";
 import Hls from "hls.js";
+import {
+  computeLetterbox,
+  MODEL_SIZE,
+  parseYoloOutput,
+  rgbaToTensor,
+  type LetterboxInfo,
+} from "@/zones/tank/vision/decode";
+import { trackMotion, type PriorBox } from "@/zones/tank/vision/motion";
+import { getLiveVideo } from "../liveFrameRegistry";
 
 // Real person detection for the director's scoring engine.
 //
@@ -10,11 +20,24 @@ import Hls from "hls.js";
 // numbers the moment 2+ cameras report — neither of those needed building.
 // What was missing was a producer: nothing ever ran actual detection and
 // posted the result. This is that producer. It runs entirely in this staff
-// member's own browser tab against hidden video elements it creates itself
-// (not the visible CameraPlayer instances — kept separate deliberately, so a
-// frame-sampling bug here can never affect what a viewer sees), and POSTs
-// real readings to the staff-authenticated telemetry endpoint every couple
-// of seconds. Runs only while a staff member has the director-configuration
+// member's own browser tab and POSTs real readings to the staff-authenticated
+// telemetry endpoint every couple of seconds.
+//
+// FRAME SOURCE, changed 2026-09-11. This used to open its own hidden <video>
+// per camera, deliberately separate from the visible CameraPlayer instances so
+// that a frame-sampling bug could never affect what a viewer sees. That
+// reasoning is still correct for a PUBLIC page — and wrong here. On the
+// operator console the operator IS the viewer, there is no audience to
+// protect, and the cost was brutal: six visible tiles plus six hidden videos
+// meant the console decoded every camera TWICE, twelve live decodes competing
+// for one hardware decoder, which is why the director stuttered while the
+// public page running half as many stayed smooth.
+//
+// So it now samples the matrix tile that is already decoding each camera (see
+// ../liveFrameRegistry.ts) and opens a hidden video ONLY for a camera with no
+// tile on screen. Sampling is read-only — drawImage off a playing video cannot
+// disturb playback — and the footage is better besides, since the tiles carry
+// the full source rung. Runs only while a staff member has the director-configuration
 // page open, which is the same "operator's console does the work" model the
 // rest of this system already assumes (see directorTelemetryStore.ts's own
 // comments).
@@ -38,35 +61,21 @@ export type DetectionCameraInput = {
 };
 
 const TICK_MS = 2000;
-const MIN_SCORE = 0.5;
-const MAX_DETECTIONS = 20;
-const IOU_THRESHOLD = 0.45;
+/** How often to re-check whether the server-side worker is producing. */
+const SERVER_PROBE_MS = 5000;
 
 const MODEL_URL = "/models/yolov8n.onnx";
 const MODEL_INPUT_NAME = "images";
-const MODEL_SIZE = 640; // Confirmed against the exported model: input [1,3,640,640].
-const NUM_ANCHORS = 8400; // Confirmed against the exported model: output0 [1,84,8400].
-
-// COCO class indices this engine decodes, and the label each one becomes
-// downstream. The model already knows all 80 COCO classes (it's the stock
-// pretrained checkpoint) — until tonight this decoder only ever read index
-// 0 and threw the other 79 channels away. Standard COCO ordering: 0=person,
-// 15=cat, 16=dog (https://docs.ultralytics.com/datasets/detect/coco/ — this
-// is the same class order Ultralytics' own export uses, unchanged here).
-const DETECTED_CLASSES: Record<number, string> = {
-  0: "person",
-  15: "cat",
-  16: "dog",
-};
-
-type LetterboxInfo = { scale: number; padX: number; padY: number };
 
 /**
- * Resizes into the model's square input while preserving aspect ratio
- * (black-padding the rest) instead of stretching — stretching a 16:9 camera
- * frame into a square distorts people just enough to measurably hurt
- * detection accuracy. Returns what's needed to map boxes back out of the
- * padded/scaled space and onto the real video frame.
+ * Draws a video frame into the model's square input, preserving aspect ratio
+ * and black-padding the remainder.
+ *
+ * This is the only genuinely DOM-bound step in browser detection: the maths
+ * lives in the shared decoder, and all this adds is the canvas draw. The
+ * server-side worker does the same job with ffmpeg instead of a canvas and
+ * then calls the identical `rgbaToTensor` / `parseYoloOutput`, so the two
+ * observers cannot drift into disagreeing about what was in frame.
  */
 function letterboxFrame(
   video: HTMLVideoElement,
@@ -75,117 +84,22 @@ function letterboxFrame(
 ): LetterboxInfo {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  const scale = Math.min(MODEL_SIZE / vw, MODEL_SIZE / vh);
-  const nw = Math.round(vw * scale);
-  const nh = Math.round(vh * scale);
-  const padX = Math.floor((MODEL_SIZE - nw) / 2);
-  const padY = Math.floor((MODEL_SIZE - nh) / 2);
+  const info = computeLetterbox(vw, vh);
+  const nw = Math.round(vw * info.scale);
+  const nh = Math.round(vh * info.scale);
 
   canvas.width = MODEL_SIZE;
   canvas.height = MODEL_SIZE;
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, MODEL_SIZE, MODEL_SIZE);
-  ctx.drawImage(video, 0, 0, vw, vh, padX, padY, nw, nh);
+  ctx.drawImage(video, 0, 0, vw, vh, info.padX, info.padY, nw, nh);
 
-  return { scale, padX, padY };
+  return info;
 }
 
-/** RGBA canvas pixels -> planar (CHW) float32, normalized 0-1, the shape ONNX Runtime expects. */
+/** Canvas pixels -> the planar CHW float32 tensor ONNX Runtime expects. */
 function frameToTensor(ctx: CanvasRenderingContext2D): Float32Array {
-  const { data } = ctx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
-  const plane = MODEL_SIZE * MODEL_SIZE;
-  const out = new Float32Array(3 * plane);
-  for (let i = 0; i < plane; i++) {
-    const j = i * 4;
-    out[i] = data[j] / 255; // R plane
-    out[plane + i] = data[j + 1] / 255; // G plane
-    out[2 * plane + i] = data[j + 2] / 255; // B plane
-  }
-  return out;
-}
-
-type Box = { x1: number; y1: number; x2: number; y2: number; score: number; label: string };
-
-function iou(a: Box, b: Box): number {
-  const x1 = Math.max(a.x1, b.x1);
-  const y1 = Math.max(a.y1, b.y1);
-  const x2 = Math.min(a.x2, b.x2);
-  const y2 = Math.min(a.y2, b.y2);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const areaA = (a.x2 - a.x1) * (a.y2 - a.y1);
-  const areaB = (b.x2 - b.x1) * (b.y2 - b.y1);
-  const union = areaA + areaB - inter;
-  return union > 0 ? inter / union : 0;
-}
-
-/**
- * Standard greedy NMS — YOLO's raw output has many overlapping boxes per
- * real object. Scoped per-label: a person box and a dog box can legitimately
- * overlap in the same frame (someone holding a cat), so suppression only
- * competes boxes of the SAME class against each other, never across classes.
- */
-function nonMaxSuppression(boxes: Box[]): Box[] {
-  const sorted = [...boxes].sort((a, b) => b.score - a.score);
-  const kept: Box[] = [];
-  for (const box of sorted) {
-    if (kept.every((k) => k.label !== box.label || iou(k, box) < IOU_THRESHOLD)) kept.push(box);
-    if (kept.length >= MAX_DETECTIONS) break;
-  }
-  return kept;
-}
-
-/**
- * output0 is [1, 84, 8400] — channel-major, not per-anchor rows: reading
- * anchor `a` of channel `c` is `data[c * NUM_ANCHORS + a]`. Channels 0-3 are
- * box center-x/y/w/h in the padded 640-space; channels 4-83 are the 80 COCO
- * class scores, already the final per-class probability (Ultralytics' ONNX
- * export bakes that in — no separate sigmoid/objectness step needed here).
- */
-function parseYoloOutput(
-  data: Float32Array,
-  letterbox: LetterboxInfo,
-  videoWidth: number,
-  videoHeight: number,
-): Array<{ nx: number; ny: number; nw: number; nh: number; label: string; confidence: number }> {
-  const { scale, padX, padY } = letterbox;
-  const candidates: Box[] = [];
-
-  for (let a = 0; a < NUM_ANCHORS; a++) {
-    for (const [classIndex, label] of Object.entries(DETECTED_CLASSES)) {
-      const score = data[(4 + Number(classIndex)) * NUM_ANCHORS + a];
-      if (score < MIN_SCORE) continue;
-
-      const cx = data[0 * NUM_ANCHORS + a];
-      const cy = data[1 * NUM_ANCHORS + a];
-      const w = data[2 * NUM_ANCHORS + a];
-      const h = data[3 * NUM_ANCHORS + a];
-
-      // Undo the letterbox pad/scale to land back in the real frame's pixels.
-      candidates.push({
-        x1: (cx - w / 2 - padX) / scale,
-        y1: (cy - h / 2 - padY) / scale,
-        x2: (cx + w / 2 - padX) / scale,
-        y2: (cy + h / 2 - padY) / scale,
-        score,
-        label,
-      });
-    }
-  }
-
-  return nonMaxSuppression(candidates).map((b) => {
-    const x1 = Math.max(0, b.x1);
-    const y1 = Math.max(0, b.y1);
-    const x2 = Math.min(videoWidth, b.x2);
-    const y2 = Math.min(videoHeight, b.y2);
-    return {
-      nx: x1 / videoWidth,
-      ny: y1 / videoHeight,
-      nw: (x2 - x1) / videoWidth,
-      nh: (y2 - y1) / videoHeight,
-      label: b.label,
-      confidence: b.score,
-    };
-  });
+  return rgbaToTensor(ctx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data);
 }
 
 /**
@@ -195,10 +109,11 @@ function parseYoloOutput(
  * for a background hidden <video>, same reasoning CameraPlayer uses for its
  * own WHEP-to-HLS fallback derivation.
  */
-function deriveDetectionHlsUrl(playbackUrl: string): string {
+function deriveDetectionHlsUrl(playbackUrl: string, rung: "low" | "full" = "low"): string {
+  const suffix = rung === "low" ? "-hls-low" : "-hls";
   return playbackUrl.replace(
     /\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/(?:whep|index\.m3u8)(\?.*)?$/,
-    "/$1-hls/index.m3u8",
+    `/$1${suffix}/index.m3u8`,
   );
 }
 
@@ -215,7 +130,49 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
   const ortRef = useRef<any>(null);
   const loadedRef = useRef<Map<string, Loaded>>(new Map());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const prevBoxesRef = useRef<Map<string, Array<{ nx: number; ny: number; time: number }>>>(new Map());
+  const prevBoxesRef = useRef<Map<string, PriorBox[]>>(new Map());
+  // Round-robin cursor and the last reading computed for each camera.
+  //
+  // The loop used to infer EVERY camera back to back inside one tick. Six
+  // cameras at a few hundred ms each is well over a second of solid main-thread
+  // work every two seconds, in the same tab that is decoding and painting the
+  // live feeds — which is most of why the director stuttered while the public
+  // page stayed smooth. Now one camera is inferred per tick and the others
+  // re-post their last reading, which is the same decoupling the server worker
+  // uses (see services/tank-vision-worker/src/observer.ts).
+  // Whether the server-side worker is currently producing. While it is, this
+  // engine does nothing: no hidden streams, no inference, no posting. It resumes
+  // on its own if the worker goes quiet, so a dead worker degrades to the old
+  // browser-side behaviour instead of leaving the director blind.
+  const [serverDetecting, setServerDetecting] = useState(false);
+  const camerasRef = useRef<DetectionCameraInput[]>([]);
+  camerasRef.current = cameras;
+  const cursorRef = useRef(0);
+  const lastReadingRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+
+  // Is the server-side worker alive? Polled on its own slow timer — this must
+  // keep running while the engine is stood down, or it could never notice the
+  // worker dying and take back over.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/tank/director/telemetry/live", { cache: "no-store" });
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!cancelled) setServerDetecting(Boolean(body?.serverDetectionActive));
+      } catch {
+        // Unreachable telemetry is not evidence the worker is gone; leave the
+        // current decision alone rather than thrashing between producers.
+      }
+    };
+    void check();
+    const timer = setInterval(check, SERVER_PROBE_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Load the model once. Dynamic import keeps onnxruntime-web's real weight
   // out of every other page — this component only ever mounts on the
@@ -241,6 +198,10 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
           }
           return;
         }
+
+        // Re-check before the expensive part: if the worker came up while the
+        // checkpoint was downloading, there is no reason to build a session.
+        if (cancelled) return;
 
         const ort = await import("onnxruntime-web");
         // The bundler can't resolve onnxruntime-web's WASM binaries through
@@ -271,7 +232,9 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
   // adding/removing as the online camera list changes.
   useEffect(() => {
     const loaded = loadedRef.current;
-    const wantedIds = new Set(cameras.map((c) => c.id));
+    // Stood down: release every hidden stream. Holding them open would keep
+    // decoding for a detector that is not running.
+    const wantedIds = serverDetecting ? new Set<string>() : new Set(cameras.map((c) => c.id));
 
     for (const [id, entry] of loaded) {
       if (wantedIds.has(id)) continue;
@@ -281,9 +244,15 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
       loaded.delete(id);
     }
 
+    if (serverDetecting) return;
+
     for (const cam of cameras) {
       if (loaded.has(cam.id)) continue;
-      const hlsUrl = deriveDetectionHlsUrl(cam.playbackUrl);
+
+      // The matrix tile for this camera is already decoding it. Opening a
+      // second stream for the same feed is what made the console decode every
+      // camera twice; sample the tile instead and open nothing.
+      if (getLiveVideo(cam.id)) continue;
 
       const video = document.createElement("video");
       video.muted = true;
@@ -294,17 +263,46 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
 
       let hls: Hls | null = null;
       if (Hls.isSupported()) {
-        hls = new Hls({ maxBufferLength: 4, liveSyncDurationCount: 1 });
-        hls.loadSource(hlsUrl);
+        // Machine vision, not eyes: the freshest frame matters and a stutter
+        // costs nothing. Never the viewer profile — see hlsTuning.ts.
+        hls = new Hls({ ...TANK_HLS_ANALYSIS });
+
+        // Start on the LOW rung and fall back to full only if it will not load.
+        //
+        // Measured 2026-09-11: the full rung is 3840x2160 and the low rung is
+        // 1280x720 — nine times fewer pixels to decode. Detection letterboxes
+        // every frame to 640x640 before inference, so the 4K detail is thrown
+        // away immediately; decoding it was pure cost. With six hidden videos
+        // in the same tab as the visible players, that was ~50 megapixels per
+        // frame of invisible video competing with the feeds the operator is
+        // actually watching, which is why the director stuttered while the
+        // public Tank page did not.
+        //
+        // Fallback is necessary, not defensive: only 3 of 6 low rungs were
+        // ready when this was written, so a hard switch would blind half the
+        // house.
+        let usingLow = true;
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          if (!data?.fatal || !usingLow) return;
+          usingLow = false;
+          const full = deriveDetectionHlsUrl(cam.playbackUrl, "full");
+          console.warn(
+            `[PeopleDetectionEngine] low rung unavailable for ${cam.id}; falling back to full res`,
+          );
+          hls?.loadSource(full);
+          void video.play().catch(() => {});
+        });
+
+        hls.loadSource(deriveDetectionHlsUrl(cam.playbackUrl, "low"));
         hls.attachMedia(video);
       } else {
-        video.src = hlsUrl;
+        video.src = deriveDetectionHlsUrl(cam.playbackUrl, "low");
       }
       void video.play().catch(() => {});
 
       loaded.set(cam.id, { video, hls });
     }
-  }, [cameras]);
+  }, [cameras, serverDetecting]);
 
   // Full teardown on unmount — leaving hidden video elements decoding video
   // after a staff member navigates away would just burn CPU and bandwidth
@@ -323,6 +321,9 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
   // The detection loop itself.
   useEffect(() => {
     if (!modelReady) return;
+    // The worker is producing — no inference, no posting. Its readings are
+    // already in the same store this would write to.
+    if (serverDetecting) return;
     if (!canvasRef.current) canvasRef.current = document.createElement("canvas");
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -341,10 +342,25 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
         const session = sessionRef.current;
         if (!ort || !session) return;
 
-        const readings: Array<Record<string, unknown>> = [];
+        // Resolve every requested camera to a frame source, preferring the
+        // matrix tile already decoding it and falling back to this engine's own
+        // hidden video for cameras with no tile on screen.
+        const sources = camerasRef.current
+          .map((cam) => ({
+            cameraId: cam.id,
+            video: getLiveVideo(cam.id) ?? loadedRef.current.get(cam.id)?.video ?? null,
+          }))
+          .filter((entry): entry is { cameraId: string; video: HTMLVideoElement } =>
+            entry.video !== null,
+          );
+        if (sources.length === 0) return;
 
-        for (const [cameraId, entry] of loadedRef.current) {
-          const { video } = entry;
+        // One camera per tick, in rotation.
+        const index = cursorRef.current % sources.length;
+        cursorRef.current = (cursorRef.current + 1) % sources.length;
+        const due = [sources[index]];
+
+        for (const { cameraId, video } of due) {
           if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) continue;
 
           try {
@@ -356,40 +372,17 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
 
             const rawBoxes = parseYoloOutput(raw, letterbox, video.videoWidth, video.videoHeight);
             const now = Date.now();
-            const prevBoxes = prevBoxesRef.current.get(cameraId) ?? [];
 
-            const boundingBoxes = rawBoxes.map((box) => {
-              let minDistance = 999;
-              let matchedPrev: { nx: number; ny: number; time: number } | null = null;
-              for (const prev of prevBoxes) {
-                const dist = Math.hypot(box.nx - prev.nx, box.ny - prev.ny);
-                if (dist < minDistance && dist < 0.25) {
-                  minDistance = dist;
-                  matchedPrev = prev;
-                }
-              }
-
-              let velocity = 0;
-              let isMovement = false;
-              if (matchedPrev && matchedPrev.time > 0) {
-                const dtSeconds = Math.max(0.1, (now - matchedPrev.time) / 1000);
-                velocity = Number((minDistance / dtSeconds).toFixed(3));
-                isMovement = velocity >= 0.03; // > 3% normalized frame unit / s
-              }
-
-              return {
-                ...box,
-                velocity,
-                isMovement,
-              };
-            });
-
-            prevBoxesRef.current.set(
-              cameraId,
-              boundingBoxes.map((b) => ({ nx: b.nx, ny: b.ny, time: now })),
+            // Shared with the server-side observer, so both compute movement
+            // the same way — see src/zones/tank/vision/motion.ts.
+            const { boxes: boundingBoxes, nextPriors } = trackMotion(
+              rawBoxes,
+              prevBoxesRef.current.get(cameraId) ?? [],
+              now,
             );
+            prevBoxesRef.current.set(cameraId, nextPriors);
 
-            readings.push({
+            lastReadingRef.current.set(cameraId, {
               cameraId,
               // Was boundingBoxes.length — correct only while every box was a
               // person. Now that dog/cat share the same array, a pet in
@@ -406,6 +399,17 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
             console.warn(`[PeopleDetectionEngine] detection failed for ${cameraId}:`, error);
           }
         }
+
+        // Post EVERY camera's latest reading, not just the one re-inferred.
+        // The store expires a reading after TELEMETRY_TTL_MS (4s); with one
+        // camera inferred per 2s tick a six-camera house would take 12s to come
+        // round, so anything not re-posted would age out and the director would
+        // keep going blind. Re-posting is nearly free, inference is not.
+        const wanted = new Set(camerasRef.current.map((c) => c.id));
+        for (const id of lastReadingRef.current.keys()) {
+          if (!wanted.has(id)) lastReadingRef.current.delete(id);
+        }
+        const readings = [...lastReadingRef.current.values()];
 
         if (!cancelled && readings.length > 0) {
           await fetch("/api/tank/director/telemetry/live", {
@@ -425,7 +429,7 @@ export function PeopleDetectionEngine({ cameras }: { cameras: DetectionCameraInp
       cancelled = true;
       clearInterval(interval);
     };
-  }, [modelReady]);
+  }, [modelReady, serverDetecting]);
 
   return null;
 }

@@ -6,7 +6,6 @@
     "shop": "http://unt_shop:3000",
     "auth": "http://unt_auth_zone:3000",
     "labs": "http://unt_labs:3000",
-    "tank": "http://unt_tank:3000",
-    "dev.shop": "http://dev-shop:3000"
+    "tank": "http://unt_tank:3000"
   }
 }

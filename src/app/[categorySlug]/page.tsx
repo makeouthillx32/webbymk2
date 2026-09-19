@@ -24,6 +24,7 @@ import {
 } from "@/lib/research/queries";
 import dynamic from "next/dynamic";
 import { ClientInlineStaticPage } from "@/components/shop/_components/ClientInlineStaticPage";
+import { TankTokenShopSection } from "@/components/shop/TankTokenShopSection";
 
 const ResearchCatalogClient = dynamic(
   () => import("@/components/research/ResearchCatalogClient"),
@@ -456,7 +457,7 @@ export default async function CategorySlugPage({
     }
   }
 
-  return (
+  const categoryPage = (
     <CategoryPageClient
       category={category}
       subcategories={subcategories || []}
@@ -464,6 +465,17 @@ export default async function CategorySlugPage({
       breadcrumbs={breadcrumbs}
     />
   );
+
+  if (zoneCtx.zone === "shop" && category.slug === "tank") {
+    return (
+      <>
+        <TankTokenShopSection />
+        {categoryPage}
+      </>
+    );
+  }
+
+  return categoryPage;
 }
 
 // revalidate=0 tells Next.js "never cache — render fresh on every request".

@@ -3,6 +3,7 @@
 import { createServerClient as createSupabaseServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { CORE_DOMAIN } from "@/lib/multiZone";
+import { forwardedHostHeaders } from "./forwardedHost";
 
 // Production only — a bare `localhost` request can never accept a cookie
 // scoped to Domain=.unenter.live (the browser silently drops it), so this
@@ -37,6 +38,9 @@ export async function createClient() {
       // never carries over to labs.unenter.live / shop.unenter.live / etc —
       // researchers could create an account but couldn't add anything to cart
       // on a zone subdomain. Found via E2E checkout test, 2026-08-06.
+      // Without these, GoTrue builds signup links from the internal kong
+      // hostname and they are unopenable. See forwardedHost.ts.
+      global: { headers: forwardedHostHeaders(supabaseUrl) },
       cookieOptions: { name: "sb-unenter-auth-token", domain: COOKIE_DOMAIN },
       cookies: {
         getAll() {

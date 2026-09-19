@@ -83,11 +83,7 @@ export class SlidingWindowLimiter {
     const now = Date.now();
     this.cleanup(now);
 
-    const subnet = getClientSubnet(ip);
-    const key =
-      this.config.aggregateBySubnet && subnet !== "localhost"
-        ? `subnet:${subnet}`
-        : `ip:${ip}`;
+    const key = this.keyFor(ip);
     const record = this.records.get(key) || { timestamps: [] };
 
     // Check if hard blocked
@@ -110,6 +106,10 @@ export class SlidingWindowLimiter {
     // Hard block threshold exceeded
     if (count >= this.config.maxRequestsBeforeBlock) {
       record.blockedUntil = now + this.config.blockDurationMs;
+      // Start the next window EMPTY. Together with record() refusing to count
+      // while blocked, this is what stops a block from renewing itself — see
+      // the note on record().
+      record.timestamps = [];
       this.records.set(key, record);
       return {
         allowed: false,
@@ -137,14 +137,33 @@ export class SlidingWindowLimiter {
     };
   }
 
+  /**
+   * Count one request against a client.
+   *
+   * A request that is currently BLOCKED is not counted, and that is the whole
+   * reason this method has a comment.
+   *
+   * Previously every rejected request was still recorded. The block lasts 5
+   * minutes but the window is only 1 minute, so at the moment a block expired
+   * the window was full of the client's own retries from the last 60 seconds of
+   * that block — and the very next request re-blocked them for another 5
+   * minutes. Anything that keeps polling (a Tank tab doing camera, presence and
+   * chat requests; an OBS browser source; a human pressing refresh) therefore
+   * renewed its own block indefinitely. Observed 2026-09-12 as an admin who
+   * could not reach their own house console, with retryAfterMs resetting to ~5
+   * minutes on every attempt.
+   *
+   * Refusing a request must never make the hole deeper.
+   */
   public record(ip: string): void {
     const now = Date.now();
-    const subnet = getClientSubnet(ip);
-    const key =
-      this.config.aggregateBySubnet && subnet !== "localhost"
-        ? `subnet:${subnet}`
-        : `ip:${ip}`;
+    const key = this.keyFor(ip);
     const record = this.records.get(key) || { timestamps: [] };
+
+    if (record.blockedUntil && record.blockedUntil > now) {
+      this.records.set(key, record);
+      return;
+    }
 
     const cutoff = now - this.config.windowMs;
     record.timestamps = record.timestamps.filter((t) => t > cutoff);
@@ -153,13 +172,15 @@ export class SlidingWindowLimiter {
     this.records.set(key, record);
   }
 
-  public reset(ip: string): void {
+  private keyFor(ip: string): string {
     const subnet = getClientSubnet(ip);
-    const key =
-      this.config.aggregateBySubnet && subnet !== "localhost"
-        ? `subnet:${subnet}`
-        : `ip:${ip}`;
-    this.records.delete(key);
+    return this.config.aggregateBySubnet && subnet !== "localhost"
+      ? `subnet:${subnet}`
+      : `ip:${ip}`;
+  }
+
+  public reset(ip: string): void {
+    this.records.delete(this.keyFor(ip));
   }
 
   public clearAll(): void {

@@ -13,6 +13,7 @@ import { EditInventoryForm } from "./_components/EditInventoryForm";
 import GroupedInventoryTable from "./_components/GroupedInventoryTable";
 import InventoryCardGrid from "./_components/InventoryCardGrid";
 import ShippingBoxes from "./_components/ShippingBoxes";
+import { fulfillmentProviderFromOptions } from "@/lib/fulfillment/provider-metadata";
 
 export type InventoryRow = {
   inventory_id: string;
@@ -36,6 +37,8 @@ export type InventoryRow = {
   compound: string | null;
   /** The dose portion of the product title — "10mg", "6mg/3mg". */
   dose: string | null;
+  fulfillment_provider: string | null;
+  supplier_managed: boolean;
 };
 
 export type ProductGroup = {
@@ -140,6 +143,7 @@ export default function InventoryPage({
           title,
           sku,
           price_cents,
+          options,
           product_id,
           product:${cat.products} (
             id,
@@ -158,25 +162,32 @@ export default function InventoryPage({
       return;
     }
 
-    const mapped: InventoryRow[] = (data ?? []).map((r: any) => ({
-      inventory_id: r.id,
-      variant_id: r.variant_id,
-      product_id: r.variant?.product?.id ?? null,
-      product_title: r.variant?.product?.title ?? null,
-      variant_title: r.variant?.title ?? null,
-      sku: r.variant?.sku ?? null,
-      quantity: r.quantity ?? 0,
-      track_inventory: !!r.track_inventory,
-      allow_backorder: !!r.allow_backorder,
-      updated_at: r.updated_at ?? null,
-      price_cents: r.variant?.price_cents ?? null,
-      last_movement_at: null,
-      last_movement_reason: null,
-      last_movement_delta: null,
-      last_movement_note: null,
-      compound: r.variant?.product?.compound ?? null,
-      dose: splitDose(r.variant?.product?.title ?? null, r.variant?.product?.compound ?? null),
-    }));
+    const mapped: InventoryRow[] = (data ?? []).map((r: any) => {
+      const fulfillmentProvider = catalog === "shop"
+        ? fulfillmentProviderFromOptions(r.variant?.options)
+        : null;
+      return {
+        inventory_id: r.id,
+        variant_id: r.variant_id,
+        product_id: r.variant?.product?.id ?? null,
+        product_title: r.variant?.product?.title ?? null,
+        variant_title: r.variant?.title ?? null,
+        sku: r.variant?.sku ?? null,
+        quantity: r.quantity ?? 0,
+        track_inventory: !!r.track_inventory,
+        allow_backorder: !!r.allow_backorder,
+        updated_at: r.updated_at ?? null,
+        price_cents: r.variant?.price_cents ?? null,
+        last_movement_at: null,
+        last_movement_reason: null,
+        last_movement_delta: null,
+        last_movement_note: null,
+        compound: r.variant?.product?.compound ?? null,
+        dose: splitDose(r.variant?.product?.title ?? null, r.variant?.product?.compound ?? null),
+        fulfillment_provider: fulfillmentProvider,
+        supplier_managed: Boolean(fulfillmentProvider),
+      };
+    });
 
     // Movements are fetched separately: they key on variant_id with no foreign
     // key to inventory, so PostgREST cannot embed them. One ordered pull and a
@@ -222,7 +233,7 @@ export default function InventoryPage({
         if ((r.quantity ?? 0) > lowStockThreshold) return false;
       }
       if (!q) return true;
-      const hay = [r.compound ?? "", r.product_title ?? "", r.variant_title ?? "", r.sku ?? ""]
+      const hay = [r.compound ?? "", r.product_title ?? "", r.variant_title ?? "", r.sku ?? "", r.fulfillment_provider ?? "", r.supplier_managed ? "dropship supplier" : "local"]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
@@ -251,6 +262,7 @@ export default function InventoryPage({
   }, [rows, search, showOnlyTracked, showLowStock, lowStockThreshold]);
 
   const handleEdit = (row: InventoryRow) => {
+    if (row.supplier_managed) return;
     setSelected(row);
     setEditOpen(true);
   };
@@ -261,6 +273,10 @@ export default function InventoryPage({
     track_inventory: boolean;
     allow_backorder: boolean;
   }) => {
+    if (selected?.supplier_managed) {
+      setErr("Supplier-managed stock cannot be changed locally.");
+      return;
+    }
     setErr(null);
     const { error } = await supabase
       .from(cat.inventory)
@@ -285,6 +301,10 @@ export default function InventoryPage({
 
   /** Quantity lives on the inventory row. */
   const handleSaveQuantity = async (row: InventoryRow, quantity: number) => {
+    if (row.supplier_managed) {
+      setErr("Supplier-managed stock cannot be changed locally.");
+      return;
+    }
     setErr(null);
     const { error } = await supabase
       .from(cat.inventory)
@@ -317,10 +337,11 @@ export default function InventoryPage({
     setErr(null);
     const { data: variants, error: vErr } = await supabase
       .from(cat.variants)
-      .select("id");
+      .select(catalog === "shop" ? "id, options" : "id");
     if (vErr) { setErr(vErr.message); return; }
 
-    const variantIds: string[] = (variants ?? []).map((v: any) => v.id);
+    const variantRows = (variants ?? []) as any[];
+    const variantIds: string[] = variantRows.map((v: any) => v.id);
     if (!variantIds.length) return;
 
     const { data: existing, error: eErr } = await supabase
@@ -332,12 +353,18 @@ export default function InventoryPage({
     const missing = variantIds.filter((id) => !existingSet.has(id));
     if (!missing.length) { await load(); return; }
 
-    const insertRows = missing.map((id) => ({
-      variant_id: id,
-      quantity: 25,
-      track_inventory: true,
-      allow_backorder: false,
-    }));
+    const variantById = new Map(variantRows.map((variant) => [variant.id, variant]));
+    const insertRows = missing.map((id) => {
+      const provider = catalog === "shop"
+        ? fulfillmentProviderFromOptions(variantById.get(id)?.options)
+        : null;
+      return {
+        variant_id: id,
+        quantity: provider ? 0 : 25,
+        track_inventory: !provider,
+        allow_backorder: Boolean(provider),
+      };
+    });
 
     const { error: iErr } = await supabase.from(cat.inventory).insert(insertRows);
     if (iErr) { setErr(iErr.message); return; }
@@ -369,7 +396,9 @@ export default function InventoryPage({
             </div>
           </div>
           <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Manage stock per variant. Products collapse — click to expand variants.
+            {catalog === "shop"
+              ? "Local stock and supplier-managed dropship variants in one catalog."
+              : "Manage stock per variant. Products collapse — click to expand variants."}
           </p>
         </div>
 

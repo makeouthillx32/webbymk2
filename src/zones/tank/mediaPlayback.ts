@@ -1,4 +1,4 @@
-﻿import type { CameraPlayback } from "./contracts";
+import type { CameraPlayback } from "./contracts";
 
 export type PublicMediaConfig = {
   whepBaseUrl?: string;
@@ -103,12 +103,11 @@ export function getLoopObjectUrl(storagePath: string): string | null {
  * a "use server" module has to be an async server action, which this is not.
  */
 export function getCameraLoopUrl(cameraId: string): string | null {
-  const base =
-    process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!base || !cameraId) return null;
-  const safe = safePathSegment(cameraId);
-  if (!safe) return null;
-  return `${base.replace(/\/$/, "")}/storage/v1/object/public/${LOOP_BUCKET}/cameras/${safe}.mp4`;
+  return publicLoopAssetUrl("cameras", cameraId, "mp4");
+}
+
+export function getRoomLoopUrl(slug: string): string | null {
+  return publicLoopAssetUrl("rooms", slug, "mp4");
 }
 
 function publicLoopAssetUrl(folder: "cameras" | "rooms", id: string, extension: "jpg" | "mp4") {
@@ -172,6 +171,30 @@ export function buildPublicCameraPreview(
   config: PublicMediaConfig,
 ): CameraPlayback {
   return buildWhepOnlyPlayback(cameraPreviewMediaPath(cameraId), online, config);
+}
+
+/**
+ * Existing 720p HLS rung used by fixed-camera roster/director thumbnails.
+ *
+ * Unlike the dedicated 360p WHEP preview used by IRL cameras, this rung is
+ * already produced by the fixed-camera normalization process whenever
+ * TANK_HLS_LOW_RUNG is enabled. Exposing it here prevents a 200px admin tile
+ * from opening and decoding the full 4K WHEP source.
+ */
+export function buildPublicCameraLowPreview(
+  cameraId: string,
+  online: boolean,
+  config: PublicMediaConfig,
+): CameraPlayback {
+  const path = cameraHlsLowMediaPath(cameraId);
+  const hlsUrl = publicMediaUrl(config.hlsBaseUrl, path, "index.m3u8");
+  return {
+    status: !hlsUrl ? "unconfigured" : online ? "ready" : "standby",
+    path,
+    preferred: hlsUrl ? "hls" : "coming-soon",
+    ...(hlsUrl ? { hlsUrl } : {}),
+    audioPolicy: "none",
+  };
 }
 
 export function buildObsRoomPreview(

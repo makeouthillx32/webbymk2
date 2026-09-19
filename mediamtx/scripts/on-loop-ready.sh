@@ -69,6 +69,15 @@ release_slot() {
 }
 
 cleanup() {
+  # Kill the encode FIRST. Releasing the slot while ffmpeg is still running
+  # would let another hook start a second encode alongside the one this script
+  # is abandoning, which is how a single flapping camera ended up with a dozen
+  # live ffmpeg processes against it.
+  if [ -n "${CLIP_PID:-}" ]; then
+    kill "$CLIP_PID" 2>/dev/null || true
+    # TERM is enough for `timeout`, which passes it on and then escalates to
+    # KILL on its own via -k. No second kill needed here.
+  fi
   release_slot
   rm -f "$CLIP_FILE" "$TELEMETRY_FILE" "$META_FILE" 2>/dev/null || true
 }
@@ -76,6 +85,7 @@ trap cleanup EXIT INT TERM
 
 acquire_slot() {
   while :; do
+    exit_when_path_is_gone
     SLOT=1
     while [ "$SLOT" -le "$MAX_ENCODERS" ]; do
       DIR="${WORK_ROOT}/slot-${SLOT}"
@@ -154,22 +164,65 @@ previous_storage_path() {
   sed -n 's/.*"storage_path":"\(cameras\/[a-zA-Z0-9_\/-]*\.mp4\)".*/\1/p' "$META_FILE" | head -n 1
 }
 
+# How long after SIGTERM before we stop asking nicely.
+#
+# `timeout N` sends SIGTERM and then WAITS - for as long as it takes. That is
+# not a timeout, and on 2026-09-12 it left a clip encode alive 327 seconds into
+# a 165-second limit, holding ~425 MB, a CUDA context and an RTSP reader on a
+# live camera. Every such hang is permanent: the refresh loop starts a new
+# encode every REFRESH_SECONDS per camera, so they accumulate.
+#
+# The cause was the encode wedging inside the WSL2 GPU paravirt driver
+# (/proc/<pid>/wchan = dxgvmb_send_sync_msg). ffmpeg catches SIGTERM but could
+# not act on it while stuck in that call. SIGKILL DOES reap it - verified by
+# hand, though it took ~10s to unwind - and `timeout` never sends SIGKILL
+# unless -k says to. Hence this.
+#
+# 20s because the unwind is not instant, and killing a healthy-but-slow encode
+# early would only churn the clip for no reason.
+KILL_GRACE_SECONDS="${TANK_CLIP_KILL_GRACE_SECONDS:-20}"
+
+# Pid of the encode currently running, so cleanup() can reach it. Empty when
+# nothing is encoding. Declared here because this script runs under `set -u`.
+CLIP_PID=""
+
+# Run the encode in the BACKGROUND and remember its pid.
+#
+# It used to run in the foreground, which meant the exit trap had no way to
+# reach it: when MediaMTX tore this hook down (a path going away, a reload, a
+# restart) the script exited and its ffmpeg carried on as an orphan. Orphans
+# reparent to PID 1 — which in this container is mediamtx itself, a Go binary
+# that never calls wait() — so each one became a permanent zombie AND, until it
+# finished, kept burning a GPU/CPU slot for a clip nobody would ever collect.
+#
+# Measured 2026-09-13: 966 processes in the container, 561 of them defunct
+# ffmpeg, host CPU at 88% with the operator "not even doing anything".
+#
+# on-preview-ready.sh next door has always done it this way. This is the same
+# pattern, not a new invention.
 capture_clip() {
   rm -f "$CLIP_FILE"
   if [ "$INPUT_IS_PREVIEW" = "1" ]; then
-    timeout $((CLIP_SECONDS + 45)) ffmpeg -nostdin -hide_banner -loglevel error -y \
+    timeout -k "$KILL_GRACE_SECONDS" $((CLIP_SECONDS + 45)) ffmpeg -nostdin -hide_banner -loglevel error -y \
       -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/${STREAM_PATH}" \
       -t "$CLIP_SECONDS" -map 0:v:0 -an -c:v copy \
-      -movflags +faststart "$CLIP_FILE" 2>/dev/null
+      -movflags +faststart "$CLIP_FILE" 2>/dev/null &
   else
-    timeout $((CLIP_SECONDS + 45)) ffmpeg -nostdin -hide_banner -loglevel error -y \
+    timeout -k "$KILL_GRACE_SECONDS" $((CLIP_SECONDS + 45)) ffmpeg -nostdin -hide_banner -loglevel error -y \
       -hwaccel cuda -hwaccel_output_format cuda \
       -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/${STREAM_PATH}" \
       -t "$CLIP_SECONDS" -map 0:v:0 -an -vf "scale_cuda=-2:480" \
       -c:v h264_nvenc -preset p4 -rc vbr -cq 30 -b:v 600k \
       -maxrate 800k -bufsize 1200k -g 48 -keyint_min 24 -no-scenecut 1 \
-      -movflags +faststart "$CLIP_FILE" 2>/dev/null
+      -movflags +faststart "$CLIP_FILE" 2>/dev/null &
   fi
+  CLIP_PID=$!
+  # `wait` on a specific pid returns that child's status, so the caller still
+  # sees success or failure exactly as it did when this ran in the foreground.
+  wait "$CLIP_PID"
+  CLIP_STATUS=$?
+  CLIP_PID=""
+  return "$CLIP_STATUS"
 }
 
 validate_clip() {
@@ -233,7 +286,91 @@ publish_clip() {
 START_HASH=$(printf '%s' "$CAMERA_ID" | cksum | awk '{print $1}')
 sleep $((START_HASH % 30))
 
+# ── Self-termination ────────────────────────────────────────────────────────
+# MediaMTX does not reliably stop runOnReady hooks when a path stops being
+# ready. Measured on this container 2026-09-10: 260 of these workers alive
+# against 6 ready camera paths, accumulated over ~30h of receiver reconnects,
+# plus 255 stale files left in the clip workdir. Nothing in the Tank codebase
+# deletes a MediaMTX path, so no teardown call was ever going to reap them.
+#
+# So each worker decides for itself. It asks MediaMTX whether its own path is
+# still ready and exits once it clearly is not. Exiting runs the EXIT trap,
+# which releases the encode slot and removes this worker's temp files.
+#
+# A failed or empty API read counts as "still ready" on purpose: a blip in the
+# control API must never take down workers for paths that are serving fine.
+# Several consecutive misses are required so a brief reconnect does not kill a
+# live worker either.
+MTX_API="${MTX_API_URL:-http://127.0.0.1:9997}"
+READY_MISSES=0
+MAX_READY_MISSES="${TANK_HOOK_MAX_READY_MISSES:-3}"
+
+# THE SESSION THIS WORKER OWNS.
+#
+# "Is my path ready?" was not enough, and the gap is the whole leak. MediaMTX
+# re-fires runOnReady on EVERY publisher reconnect, so a camera that drops and
+# comes back gets a second worker while the first is mid-sleep. The first then
+# asks "is my path ready?", sees the NEW session's true, resets its miss count
+# and lives forever. Every reconnect left one behind, permanently.
+#
+# Measured on this container 2026-09-13: 118 on-preview-ready workers and 92
+# on-loop-ready children against 20 ready paths — 447% CPU and 6.2 GiB in a
+# process tree that should be a couple of dozen.
+#
+# readyTime changes on every re-establish, so pinning it at startup makes each
+# worker own exactly one session and stand down the moment a newer one has
+# taken over.
+read_ready_state() {
+  ENCODED=$(printf '%s' "$STREAM_PATH" | sed 's#/#%2F#g')
+  curl -s -S --max-time 5 "${MTX_API}/v3/paths/get/${ENCODED}" 2>/dev/null
+}
+
+extract_ready_time() {
+  printf '%s' "$1" | sed -n 's/.*"readyTime":"\([^"]*\)".*//p' | head -n 1
+}
+
+MY_READY_TIME=""
+MY_READY_TIME=$(extract_ready_time "$(read_ready_state)")
+
+path_still_ready() {
+  BODY=$(read_ready_state) || return 0
+  [ -n "$BODY" ] || return 0
+
+  case "$BODY" in
+    *'"ready":true'*) ;;
+    *) return 1 ;;
+  esac
+
+  # Ready — but is it still OUR session? A different readyTime means the path
+  # was re-established and a newer worker is handling it; this one is surplus
+  # and must stand down immediately rather than burn a miss count it will keep
+  # resetting. Only enforced when both values are known, so an API that stops
+  # reporting readyTime degrades to the old behaviour instead of mass-exiting
+  # every worker at once.
+  if [ -n "$MY_READY_TIME" ]; then
+    CURRENT_READY_TIME=$(extract_ready_time "$BODY")
+    if [ -n "$CURRENT_READY_TIME" ] && [ "$CURRENT_READY_TIME" != "$MY_READY_TIME" ]; then
+      log "${STREAM_PATH}: path re-established (${MY_READY_TIME} -> ${CURRENT_READY_TIME}) — newer worker owns it, exiting"
+      exit 0
+    fi
+  fi
+  return 0
+}
+
+exit_when_path_is_gone() {
+  if path_still_ready; then
+    READY_MISSES=0
+    return 0
+  fi
+  READY_MISSES=$((READY_MISSES + 1))
+  if [ "$READY_MISSES" -ge "$MAX_READY_MISSES" ]; then
+    log "${STREAM_PATH}: path not ready for ${READY_MISSES} consecutive checks — exiting"
+    exit 0
+  fi
+}
+
 while :; do
+  exit_when_path_is_gone
   STABLE_AT=""
   if ! source_is_stable; then
     post_attempt "skipped_unstable" "source_not_stable"

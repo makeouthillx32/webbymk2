@@ -74,8 +74,8 @@ export function deriveNpmUpstream(
   }
 
   // proxyPort > 0 means the env runs a proxy (e.g. unt_proxy at :3080)
-  // proxyPort = 0 means route directly to the zone container port
-  const port = (env.proxyPort ?? 0) > 0 ? env.proxyPort : 3000;
+  // proxyPort = 0 means route directly to the zone container port (using zone.port if specified)
+  const port = (env.proxyPort ?? 0) > 0 ? env.proxyPort : (zone.port ?? 3000);
   return { host, port };
 }
 

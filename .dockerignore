@@ -87,8 +87,32 @@ automations
 Architecture
 users
 memory
-services
 logs
+
+# Worker services build from the REPO ROOT context (unlike tank-audio-worker,
+# which uses its own directory), because they import the shared decoder and
+# detection catalog from src/zones/tank/ by relative path rather than keeping a
+# second copy. A bare `services` exclusion made every COPY in
+# services/tank-vision-worker/Dockerfile fail. Same shape as the zones block
+# below: exclude the files, keep the directory chain traversable, re-include
+# only what an image actually needs.
+services/**
+!services/**/
+!services/tank-vision-worker/src
+!services/tank-vision-worker/src/**
+!services/tank-vision-worker/package.json
+!services/tank-vision-worker/tsconfig.json
+!services/tank-vision-worker/bun.lock
+# The OSNet-AIN re-id model: names people from the graded gallery (galleryNaming.ts).
+!services/tank-vision-worker/models
+!services/tank-vision-worker/models/osnet_ain_x1_0.onnx
+# The AI-mode learner: its python package and tools only. Its weights, graded
+# gallery, run state and .venv are bind-mounted, never shipped in the image.
+!services/tank-vision-gpu/tank_vision
+!services/tank-vision-gpu/tank_vision/**
+!services/tank-vision-gpu/tools
+!services/tank-vision-gpu/tools/**
+services/tank-vision-gpu/**/__pycache__/**
 *.tsbuildinfo
 
 # ── Non-app repo cruft — host-only tooling, vendored clones, dumps, scratch ──

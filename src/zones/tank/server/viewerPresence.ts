@@ -226,7 +226,11 @@ async function broadcastPresenceIfChanged(snapshot: PresenceSnapshot): Promise<v
       // results for whoever was subscribed at that moment. This is a plain
       // custom broadcast, unrelated to Supabase Presence — renaming it is a
       // full fix, not a workaround.
-      await channel.httpSend("presence_update", snapshot);
+      await channel.send({
+        type: "broadcast",
+        event: "presence_update",
+        payload: snapshot,
+      });
     } finally {
       await admin.removeChannel(channel);
     }

@@ -29,9 +29,7 @@ import { CameraDirectoryClient } from "./CameraDirectoryClient";
 import { useTankRealtimeChat } from "./useTankRealtimeChat";
 import { TankChatBody } from "./TankChatEmoji";
 import { CameraPlayer } from "./CameraPlayer";
-import { clientToNormalizedVideoCoords } from "./viewportCoordinateMapper";
 import { HouseRosterOverlay } from "./components/HouseRosterOverlay";
-import { claimInteractiveTargetTap } from "../server/interactiveTargetActions";
 
 export function RoomExperience({
   room,
@@ -46,44 +44,7 @@ export function RoomExperience({
   const [following, setFollowing] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [isRosterOpen, setIsRosterOpen] = useState(false);
-  const [tapParticles, setTapParticles] = useState<Array<{ id: string; x: number; y: number; text: string }>>([]);
   const sectionRef = React.useRef<HTMLElement | null>(null);
-
-  const handleRoomTap = async (e: React.MouseEvent<HTMLElement>) => {
-    if (!sectionRef.current) return;
-    const rect = sectionRef.current.getBoundingClientRect();
-    const { isInsideVideo, globalNx, globalNy } = clientToNormalizedVideoCoords(
-      e.clientX,
-      e.clientY,
-      rect,
-      16 / 9,
-      "cover",
-    );
-    if (!isInsideVideo) return;
-
-    const particleId = `${Date.now()}_${Math.random()}`;
-    const localX = e.clientX - rect.left;
-    const localY = e.clientY - rect.top;
-
-    try {
-      const hitResult = await claimInteractiveTargetTap({
-        camSlug: selected.slug,
-        roomId: room.slug,
-        nx: globalNx,
-        ny: globalNy,
-      });
-
-      if (!hitResult.hit || !hitResult.target) return;
-      const text = `+${hitResult.xpAwarded ?? 0} XP ${hitResult.target.kind === "trash" ? "🧹" : "🎯"}`;
-      setTapParticles((prev) => [...prev.slice(-8), { id: particleId, x: localX, y: localY, text }]);
-    } catch {
-      return;
-    }
-
-    setTimeout(() => {
-      setTapParticles((prev) => prev.filter((p) => p.id !== particleId));
-    }, 1200);
-  };
   const isDirector = room.slug === "director";
 
   // Live overlay: the room/camera cards below are static identity only —
@@ -142,9 +103,12 @@ export function RoomExperience({
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!chatInput.trim() || sending) return;
-    const ok = await postMessage(chatInput);
-    if (ok) setChatInput("");
+    const text = chatInput.trim();
+    if (!text || sending) return;
+    setChatInput("");
+    await postMessage(text, undefined, (failedText) => {
+      setChatInput((current) => (current ? `${failedText} ${current}` : failedText));
+    });
   };
 
   return (
@@ -152,8 +116,7 @@ export function RoomExperience({
       <div className="min-w-0">
         <section
           ref={sectionRef as any}
-          onClick={handleRoomTap}
-          className={`relative aspect-video max-h-[74vh] w-full overflow-hidden cursor-pointer ${
+          className={`relative aspect-video max-h-[74vh] w-full overflow-hidden ${
             heroLive
               ? "bg-gradient-to-br from-cyan-500/35 via-blue-950/60 to-slate-950"
               : "bg-slate-950"
@@ -165,34 +128,12 @@ export function RoomExperience({
               playbackUrl={selected.playbackUrl}
               playbackProtocol={selected.playbackProtocol || "webrtc"}
               online={heroLive}
+              cameraSlug={isDirector ? "director" : selected.slug}
+              prerollLoopUrl={selected.recentClipUrl ?? null}
               className="absolute inset-0 h-full w-full object-cover"
             />
           )}
-
-          {/* Floating Tap Particles */}
-          {tapParticles.map((p) => (
-            <div
-              key={p.id}
-              className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2 font-black font-mono text-sm text-amber-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] animate-bounce"
-              style={{ left: p.x, top: p.y }}
-            >
-              {p.text}
-            </div>
-          ))}
-          {heroLive && (
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_30%,rgba(255,255,255,.2),transparent_16%),radial-gradient(circle_at_68%_55%,rgba(45,212,191,.22),transparent_18%),linear-gradient(110deg,transparent_30%,rgba(255,255,255,.05)_50%,transparent_70%)]" />
-          )}
-          <div className="absolute left-4 top-4 flex gap-2">
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-black uppercase tracking-wider text-white ${heroLive ? "bg-red-600" : "bg-slate-700"}`}
-            >
-              {heroLive && (
-                <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
-              )}
-              {heroLive ? "Live" : "No signal"}
-            </span>
-          </div>
-          <div className="absolute inset-0 grid place-items-center">
+          <div className={`absolute inset-0 grid place-items-center ${heroLive && selected?.playbackUrl ? "pointer-events-none opacity-0" : ""}`}>
             <div className="rounded-2xl border border-white/15 bg-black/25 p-5 text-center text-white backdrop-blur-sm">
               {heroLive ? (
                 <Radio className="mx-auto h-8 w-8 opacity-85" />

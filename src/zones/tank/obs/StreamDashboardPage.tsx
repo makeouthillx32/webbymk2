@@ -39,6 +39,10 @@ type ObsRoomCredentials = {
   isLive: boolean;
   serverUrl: string;
   obsStreamKey: string;
+  directorProgram?: {
+    serverUrl: string;
+    obsStreamKey: string;
+  } | null;
 };
 
 type LoadState =
@@ -130,6 +134,7 @@ function StreamKeysTab({
 }) {
   const [urlRevealed, setUrlRevealed] = useState(false);
   const [keyRevealed, setKeyRevealed] = useState(false);
+  const [directorKeyRevealed, setDirectorKeyRevealed] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const downloadProfile = useCallback(() => {
@@ -138,6 +143,14 @@ function StreamKeysTab({
       "",
       `Server URL: ${state.room.serverUrl}`,
       `Stream Key: ${state.room.obsStreamKey}`,
+      ...(state.room.directorProgram
+        ? [
+            "",
+            "Director Program Ingest (Admin Only — Master Feed):",
+            `  Server URL: ${state.room.directorProgram.serverUrl}`,
+            `  Stream Key: ${state.room.directorProgram.obsStreamKey}`,
+          ]
+        : []),
       "",
       "Recommended encoding:",
       ...RECOMMENDED_ENCODING.map((row) => `  ${row.label}: ${row.value}`),
@@ -197,6 +210,44 @@ function StreamKeysTab({
       <p className="-mt-3 text-[10px] text-white/40">
         Resetting generates a new key immediately — OBS will need it updated right away, the old one stops working.
       </p>
+
+      {state.room.directorProgram && (
+        <div className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-purple-400" />
+              <p className="text-sm font-bold text-white">Director Program Stream Key (Admin Only)</p>
+            </div>
+            <span className="rounded border border-purple-500/40 bg-purple-500/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-purple-300">
+              Master Feed · No Extra Room
+            </span>
+          </div>
+          <p className="mb-3 text-xs text-purple-200/70">
+            Streams directly into the master Director program feed (<code className="rounded bg-black/40 px-1 py-0.5 font-mono text-[11px] text-purple-300">obs/director</code>) without spawning an extra room tile in All Rooms. Use this in OBS when broadcasting the curated Director feed.
+          </p>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+              <p className="mb-1 text-[10px] font-black uppercase tracking-wider text-white/50">Director Stream Key</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 truncate rounded border border-white/10 bg-black/60 px-3 py-2 text-xs font-mono text-purple-200">
+                  {directorKeyRevealed
+                    ? state.room.directorProgram.obsStreamKey
+                    : "•".repeat(Math.min(40, Math.max(20, state.room.directorProgram.obsStreamKey.length)))}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => setDirectorKeyRevealed((v) => !v)}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10"
+                  aria-label={directorKeyRevealed ? "Hide Director Stream Key" : "Show Director Stream Key"}
+                >
+                  {directorKeyRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+                <CopyIconButton value={state.room.directorProgram.obsStreamKey} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
         <p className="mb-1 text-sm font-bold text-white">Recommended Encoding Settings</p>

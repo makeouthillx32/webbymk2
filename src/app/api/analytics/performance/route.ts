@@ -1,6 +1,7 @@
 // app/api/analytics/performance/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/admin';
+import { requireAdmin } from '@/lib/require-admin';
 
 interface PerformancePayload {
   sessionId: string;
@@ -35,7 +36,7 @@ function validateMetric(type: string, value: number): boolean {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const payload: PerformancePayload = await request.json();
     
     // Validate required fields

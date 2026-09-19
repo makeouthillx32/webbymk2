@@ -10,6 +10,7 @@ const APP_AUTH_COOKIE_NAMES = [
   "userDisplayName",
   "userPermissions",
   "rememberMe",
+  "authAt",
   "lastPage",
   "tank_participant_v1",
   "tank_voter_client_id",

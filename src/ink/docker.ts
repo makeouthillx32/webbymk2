@@ -808,14 +808,15 @@ export async function pullAndUp(
     onLine?.("If the image is not cached locally, Docker will fail during startup.");
   }
 
-  // Core safety: `--no-deps` so recreating the stateless `app` container never
-  // drags in / recreates its dependencies (unt_db Postgres, kong). The core
-  // stack's data services are long-lived and must survive an app redeploy
-  // untouched. Zones have no such dependencies, so this only matters for core.
-  const upArgs = zone.key === "unenter"
-    ? ["up", "-d", "--no-build", "--no-deps", "--force-recreate", zone.service]
-    : ["up", "-d", "--no-build", "--force-recreate", zone.service];
-  onLine?.(`Starting ${zone.service} (force-recreate${zone.key === "unenter" ? ", no-deps" : ""})...`);
+  // `--no-deps` for EVERY service: a deploy recreates exactly the one container
+  // it built. Zones do have dependencies -- tank depends_on mediamtx and the
+  // vision learner -- and without --no-deps `up --force-recreate tank` tried to
+  // recreate those too, hit "container name /unt_mediamtx already in use", and
+  // left core's unt_app renamed and stopped: unenter.live down for ~5 min on a
+  // Tank deploy (2026-09-19, and at least once before). Data services and
+  // stream relays are long-lived; a zone redeploy must never touch them.
+  const upArgs = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", zone.service];
+  onLine?.(`Starting ${zone.service} (force-recreate, no-deps)...`);
   const upCode = await composeRun(upArgs, onLine, file, dockerUrl);
   // Explicit terminal line: `docker compose up` ends on "Container … Starting/
   // Started", so a successful op would otherwise auto-dismiss with "Starting"
@@ -867,7 +868,7 @@ export async function pullAndUp(
 export async function reloadProxy(onLine?: (l: string) => void): Promise<number> {
   onLine?.("Recreating proxy (unt_proxy)...");
   return composeRun(
-    ["up", "-d", "--no-build", "--force-recreate", PROXY.service],
+    ["up", "-d", "--no-build", "--no-deps", "--force-recreate", PROXY.service],
     onLine,
   );
 }
@@ -899,7 +900,7 @@ export async function rebuildProxy(
 
   onLine?.("Recreating proxy container (unt_proxy)...");
   return composeRun(
-    ["up", "-d", "--no-build", "--force-recreate", PROXY.service],
+    ["up", "-d", "--no-build", "--no-deps", "--force-recreate", PROXY.service],
     onLine,
   );
 }

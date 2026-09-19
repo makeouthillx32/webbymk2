@@ -59,6 +59,17 @@ function boxTitle(box: Box, memberLabel?: string | null, isPrimary?: boolean): s
   }
 
   if (raw !== "person") return (box.label || "object").toUpperCase();
+
+  // Per-box identity, same as the pet branch above. This was ignored for
+  // people: the detector resolves an individual and attaches `targetName`, and
+  // this function threw it away, so a correctly identified resident still
+  // rendered as UNKNOWN PERSON. Only the single "primary" box could ever carry
+  // a name, and only via the separate per-camera targetMemberDetected field.
+  //
+  // Safe to trust now that resolveDetection declines whenever more than one
+  // subject of a class is in frame — it will not hand back a name it cannot
+  // attribute to this specific body.
+  if (box.targetName) return `${box.targetName.toUpperCase()}${confSuffix}`;
   if (isPrimary && memberLabel) return `${memberLabel.toUpperCase()}${confSuffix}`;
   return `UNKNOWN PERSON${confSuffix}`;
 }

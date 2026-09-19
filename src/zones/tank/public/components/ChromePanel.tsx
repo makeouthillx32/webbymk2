@@ -28,13 +28,14 @@ export function ChromePanel({
 }: ChromePanelProps) {
   return (
     <div
-      className={`relative overflow-hidden rounded ${className}`}
+      className={`relative overflow-hidden ${className}`}
       style={{
-        backgroundColor: "#6e737b",
-        backgroundImage: "var(--tank-panel-texture, url(https://db.unenter.live/storage/v1/object/public/site-assets/tank-theme/fishtank-arcade/images/light-aluminum-comp.webp))",
+        backgroundColor: "var(--tank-color-secondary, #6e737b)",
+        backgroundImage: "var(--tank-texture-panel, var(--tank-panel-texture, url(https://db.unenter.live/storage/v1/object/public/site-assets/tank-theme/fishtank-arcade/images/light-aluminum-comp.webp)))",
         backgroundRepeat: "repeat",
         backgroundSize: "auto",
-        border: "3px outset hsla(300,5%,79%,.75)",
+        border: "var(--tank-border-width, 3px) var(--tank-border-style, outset) hsla(300,5%,79%,.75)",
+        borderRadius: "var(--tank-border-radius, 0.5rem)",
         outline: "2px solid rgba(0,0,0,.5)",
         boxShadow:
           "-2px 2px 1px rgba(0,0,0,.75), inset 0 0 4px #cbc6cb, 4px 4px 0 rgba(0,0,0,.75)",
@@ -53,7 +54,7 @@ export function ChromePanel({
       <div
         className="pointer-events-none absolute inset-0 z-0 opacity-20 mix-blend-multiply"
         style={{
-          backgroundImage: `url(${ACTIVE_THEME.images.metalTexture})`,
+          backgroundImage: `var(--tank-texture-metal, url(${ACTIVE_THEME.images.metalTexture}))`,
         }}
       />
 
@@ -88,6 +89,7 @@ export function ChromePanel({
         className={`relative z-10 ${
           withScrews ? "px-3 py-2 sm:px-6 sm:py-4" : ""
         } ${contentClassName}`}
+        style={withScrews ? { padding: "var(--tank-panel-padding, 1rem)" } : undefined}
       >
         {children}
       </div>

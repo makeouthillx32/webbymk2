@@ -30,11 +30,12 @@ import {
   provisionMediaMtxCamera,
   teardownCameraPreview,
 } from "./mediaGateway";
+import { buildPublicCameraLowPreview } from "../mediaPlayback";
 import {
   normalizeManagerCameraMedia,
   type ManagerCamera,
 } from "./receiverContract";
-import { deriveRooms } from "./roomProjection";
+import { deriveOfflineRoomKeys, deriveRooms } from "./roomProjection";
 import { liveObsRoomsAsCameras } from "./obsRoomProjection";
 import { cameras as fixtureCameras } from "../fixtures";
 import { attachRecentCameraClips } from "./cameraClipMetadata";
@@ -151,10 +152,28 @@ function mapEventToSceneAction(eventType: StreamIngestEventType): CameraSceneAct
   }
 }
 
+/**
+ * The receiver manager answers telemetry in ~2.3s under normal load, and
+ * this budget was 1000ms — so EVERY call aborted, every time. The catch at
+ * the call site turns any failure into `receiverOnline: false,
+ * reason: "Telemetry unavailable"`, which is the gate that decides whether
+ * MediaMTX camera paths get provisioned at all.
+ *
+ * The result was a deadlock the house could not escape on its own: no
+ * telemetry -> not ready -> no path provisioned -> nothing pulls from the
+ * receiver -> the manager sees no bytes and restarts the receiver -> repeat.
+ * Every camera went black and stayed black until this call could finish.
+ *
+ * Budgeted well above the observed worst case (5s) rather than trimmed to
+ * the average: being slow here costs a late sample, while being early costs
+ * the entire video pipeline.
+ */
+const TELEMETRY_TIMEOUT_MS = 8000;
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${managerBaseUrl}${path}`, {
     cache: "no-store",
-    signal: AbortSignal.timeout(1000),
+    signal: AbortSignal.timeout(TELEMETRY_TIMEOUT_MS),
   });
   if (!response.ok)
     throw new Error(`Receiver manager returned ${response.status}`);
@@ -174,10 +193,17 @@ async function projectCamera(
     telemetry = await getJson<ManagerTelemetry>(
       `/api/cameras/${encodeURIComponent(camera.id)}/telemetry`,
     );
-  } catch {
+  } catch (error) {
+    console.warn(
+      `[receiverManager] telemetry failed for ${camera.id} — treating as not ready:`,
+      error instanceof Error ? error.message : error,
+    );
     telemetry = {
       online: false,
       receiverOnline: false,
+      // Distinguishable in logs from a genuinely offline camera: this state
+      // blocks path provisioning, so a silent version of it is a total
+      // outage that looks like "the cameras are down".
       reason: "Telemetry unavailable",
     };
   }
@@ -252,7 +278,13 @@ async function projectCamera(
     sources: audioSources,
     probe: telemetryAudioProbe(telemetry),
   });
-  const publicPlayback = getPublicCameraPlayback(camera.id, online);
+  // Keep delivery URLs stable for the whole lifecycle grace window. Using the
+  // one raw telemetry sample here meant a single 1s manager timeout removed
+  // the URL, forced every mounted player to tear down, then restored it on the
+  // next poll. Presence already owns that debounce, so delivery must follow it.
+  const deliveryAvailable =
+    lifecycle.presence !== "standby" && lifecycle.presence !== "retired";
+  const publicPlayback = getPublicCameraPlayback(camera.id, deliveryAvailable);
   const playbackUrl = publicPlayback.whepUrl ?? publicPlayback.hlsUrl ?? null;
   const playbackProtocol = publicPlayback.whepUrl
     ? "whep" as const
@@ -260,8 +292,12 @@ async function projectCamera(
       ? "hls" as const
       : "none" as const;
   const publicPreview = camera.type === "srtla"
-    ? getPublicCameraPreview(camera.id, online)
-    : null;
+    ? getPublicCameraPreview(camera.id, deliveryAvailable)
+    : process.env.TANK_HLS_LOW_RUNG === "1"
+      ? buildPublicCameraLowPreview(camera.id, deliveryAvailable, {
+          hlsBaseUrl: process.env.TANK_HLS_PUBLIC_BASE_URL,
+        })
+      : null;
 
   // Auto-provision this camera with the media gateway whenever it's online
   // and enabled — any camera the SRT Receiver Manager reports gets the same
@@ -272,12 +308,47 @@ async function projectCamera(
     const videoOutPort = Number(camera.videoOutPort);
     // Belabox-style mobile encoders standardize on multi-second SRT
     // latency specifically for bonded cellular links — see
-    // buildManagerSrtSource's latencyMs doc. Wired cameras keep the
-    // library default; a bonded phone gets real retransmit headroom.
-    const latencyMs = camera.type === "srtla" ? 4000 : undefined;
+    // buildManagerSrtSource's latencyMs doc. A bonded phone gets real
+    // retransmit headroom.
+    //
+    // Wired cameras USED to pass undefined here, taking SRT's 120ms default,
+    // on the reasoning that a LAN link does not lose packets. That reasoning
+    // holds for NETWORK loss and misses the loss actually happening: the
+    // receive buffer overruns while this box is pinned near 100% CPU, and
+    // 120ms is nowhere near enough to ride out a scheduling stall. Measured
+    // 2026-09-13 with all six cameras wired and healthy: 4,080 non-monotonic
+    // DTS warnings in five minutes (~13/sec), 223 dropped and 39 corrupt —
+    // which is exactly what the vertical smearing on the broadcast was.
+    //
+    // A second of buffer is imperceptible on a 24/7 house stream and is the
+    // difference between absorbing a stall and shredding the GOP.
+    const wiredLatencyMs = Number(process.env.TANK_SRT_WIRED_LATENCY_MS ?? 1000);
+    const latencyMs =
+      camera.type === "srtla"
+        ? 4000
+        : Number.isFinite(wiredLatencyMs) && wiredLatencyMs > 0
+          ? wiredLatencyMs
+          : undefined;
+    // PULL THE RECEIVER DIRECTLY, NOT VIA THE HOST.
+    //
+    // MediaMTX sits on the `unenter` network; the receivers were created on
+    // `srt-receiver-manager_default`, with no DNS between them. Every camera
+    // therefore hair-pinned out to host.docker.internal and back in through
+    // Docker Desktop's userland UDP proxy — roughly 60 Mbps of SRT through
+    // the slowest path available on this host.
+    //
+    // That proxy is where the pipeline actually broke: "Input/output error"
+    // and "Connection timed out" on the srt:// input, with only about three
+    // of six cameras ever sustaining at once. Container-to-container on the
+    // shared network is a plain bridge hop with none of that.
+    //
+    // Falls back to the host path when the receiver is not reachable by name,
+    // so a receiver created outside the shared network still works.
+    const directHost = `srt-receiver-${camera.id}`;
+    const useDirect = process.env.TANK_SRT_DIRECT !== "0";
     const srtSource = buildManagerSrtSource({
-      lanHost: mediaGatewaySrtHost,
-      videoOutPort,
+      lanHost: useDirect ? directHost : mediaGatewaySrtHost,
+      videoOutPort: useDirect ? 4000 : videoOutPort,
       streamUser: typeof camera.streamUser === "string" ? camera.streamUser : "",
       streamKey: typeof camera.streamKey === "string" ? camera.streamKey : "",
       latencyMs,
@@ -426,8 +497,12 @@ async function projectCamera(
     sceneAction: mapEventToSceneAction(lifecycle.ingestEventType),
     playbackUrl,
     playbackProtocol,
-    previewUrl: publicPreview?.whepUrl ?? null,
-    previewProtocol: publicPreview?.whepUrl ? "whep" : "none",
+    previewUrl: publicPreview?.whepUrl ?? publicPreview?.hlsUrl ?? null,
+    previewProtocol: publicPreview?.whepUrl
+      ? "whep"
+      : publicPreview?.hlsUrl
+        ? "hls"
+        : "none",
     audioMode: mediaScope.audioMode,
     audioStatus: audio.status,
     audioWarning: audio.warning,
@@ -490,7 +565,8 @@ function applyRoomAudioInputOverride(
 
 let cachedSnapshot: CameraDirectorySnapshot | null = null;
 let cachedAt = 0;
-const CACHE_TTL_MS = 2500;
+const CACHE_TTL_MS = 5000;
+let snapshotRefreshInFlight: Promise<CameraDirectorySnapshot> | null = null;
 
 let lastSnapshotErrorLogAt = 0;
 
@@ -499,6 +575,25 @@ export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnaps
   if (cachedSnapshot && now - cachedAt < CACHE_TTL_MS) {
     return cachedSnapshot;
   }
+
+  // Page SSR, the public camera API, the health API and the permanent Director
+  // worker can all arrive just after the TTL expires. Before this guard each
+  // caller started its own config + N telemetry + DB reads and its own set of
+  // MediaMTX provisioning checks. Besides hammering both backends, concurrent
+  // provisioning calls could observe the same old config and both rewrite it,
+  // tearing down live readers. One process gets one refresh.
+  if (snapshotRefreshInFlight) return snapshotRefreshInFlight;
+
+  const refresh = refreshCameraDirectorySnapshot(now);
+  snapshotRefreshInFlight = refresh;
+  try {
+    return await refresh;
+  } finally {
+    if (snapshotRefreshInFlight === refresh) snapshotRefreshInFlight = null;
+  }
+}
+
+async function refreshCameraDirectorySnapshot(now: number): Promise<CameraDirectorySnapshot> {
 
   try {
     const config = await getJson<ManagerConfig>("/api/config");
@@ -535,10 +630,14 @@ export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnaps
       gracePeriodSeconds: STREAM_DISCONNECT_GRACE_SECONDS,
       cameras,
       rooms: deriveRooms(cameras, roomPresentation),
+      // Kept alongside the cameras so the public projection can drop the
+      // cameras of switched-off rooms — deriveRooms has already removed the
+      // rooms themselves by this point.
+      offlineRoomKeys: deriveOfflineRoomKeys(roomPresentation),
       audioSources,
     };
     cachedSnapshot = snapshot;
-    cachedAt = now;
+    cachedAt = Date.now();
     return snapshot;
   } catch (err: any) {
     const errorMsg = err?.message || (typeof err === "string" ? err : "Timeout / unreachable");
@@ -546,6 +645,22 @@ export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnaps
       console.warn(`[receiverManager] getCameraDirectorySnapshot falling back to fixtures (${errorMsg})`);
       lastSnapshotErrorLogAt = now;
     }
+
+    // Never replace a real directory with fixtures because one refresh timed
+    // out. That changed camera count, removed playback URLs and made every
+    // mounted player reconnect. Preserve the last known real contract and
+    // retry after the normal TTL; the lifecycle layer will reconcile genuine
+    // disconnects when the manager answers again.
+    if (cachedSnapshot?.source === "receiver-manager") {
+      const staleSnapshot: CameraDirectorySnapshot = {
+        ...cachedSnapshot,
+        warning: "Receiver directory refresh delayed; showing last known camera state.",
+      };
+      cachedSnapshot = staleSnapshot;
+      cachedAt = Date.now();
+      return staleSnapshot;
+    }
+
     const fallbackCameras: DiscoveredCamera[] = fixtureCameras.map((c) => ({
       id: c.id,
       slug: c.slug,
@@ -587,7 +702,7 @@ export async function getCameraDirectorySnapshot(): Promise<CameraDirectorySnaps
       warning: "Receiver directory is temporarily reconnecting.",
     };
     cachedSnapshot = fallback;
-    cachedAt = now;
+    cachedAt = Date.now();
     return fallback;
   }
 }

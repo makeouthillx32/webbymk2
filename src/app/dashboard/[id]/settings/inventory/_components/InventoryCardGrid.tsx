@@ -18,6 +18,7 @@
 
 import React, { useMemo, useState } from "react";
 import type { InventoryRow, ProductGroup } from "../page";
+import { fulfillmentProviderLabel } from "@/lib/fulfillment/provider-metadata";
 
 function money(cents: number | null | undefined): string {
   if (cents == null) return "—";
@@ -168,6 +169,7 @@ function ProductCard({
   const totals = useMemo(() => {
     const tracked = group.variants.filter((v) => v.track_inventory);
     return {
+      tracked: tracked.length,
       units: tracked.reduce((n, v) => n + (v.quantity ?? 0), 0),
       out: tracked.filter((v) => (v.quantity ?? 0) <= 0).length,
       low: tracked.filter(
@@ -187,9 +189,12 @@ function ProductCard({
           {group.product_title}
         </h3>
         <div className="inv-card__stats">
+          {group.variants.some((variant) => variant.supplier_managed) && (
+            <span className="inv-pill">Supplier managed</span>
+          )}
           {totals.out > 0 && <span className="inv-pill inv-pill--out">{totals.out} out</span>}
           {totals.low > 0 && <span className="inv-pill inv-pill--low">{totals.low} low</span>}
-          <span className="inv-pill">{totals.units} units</span>
+          {totals.tracked > 0 && <span className="inv-pill">{totals.units} units</span>}
         </div>
       </header>
 
@@ -246,12 +251,18 @@ function ProductCard({
                   value={v.price_cents == null ? null : v.price_cents / 100}
                   onCommit={(n) => onSavePrice(v, Math.round(n * 100))}
                 />
-                <EditableNumber
-                  title="Stock on hand"
-                  width={62}
-                  value={qty}
-                  onCommit={(n) => onSaveQuantity(v, Math.round(n))}
-                />
+                {v.supplier_managed ? (
+                  <span className="inv-pill" title="Availability is managed by the fulfillment supplier">
+                    {fulfillmentProviderLabel(v.fulfillment_provider)}
+                  </span>
+                ) : (
+                  <EditableNumber
+                    title="Stock on hand"
+                    width={62}
+                    value={qty}
+                    onCommit={(n) => onSaveQuantity(v, Math.round(n))}
+                  />
+                )}
               </div>
 
               <div className="inv-row__meta">

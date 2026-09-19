@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createClient } from "@supabase/supabase-js";
+import { forwardedHostHeaders } from "./forwardedHost";
 
 export function createAdminClient() {
   let url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://db.unenter.live";
@@ -46,5 +47,8 @@ export function createAdminClient() {
   }
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
+    // The admin client is what sends invites and password resets, so it needs
+    // the same correction as the cookie client. See forwardedHost.ts.
+    global: { headers: forwardedHostHeaders(url) },
   });
 }

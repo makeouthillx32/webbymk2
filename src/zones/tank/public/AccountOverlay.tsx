@@ -1,13 +1,23 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { LogOut, Shield, User, X, KeyRound, UserPlus, AlertCircle, CheckCircle2, Sparkles, Mail, Send, ArrowLeft } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { ChromePanel } from "./components/ChromePanel";
 import { ConsoleButton } from "./components/ConsoleButton";
 import { drainClientChatStorage, clearTankSessionCookies } from "./useTankRealtimeChat";
 import { recordTankAuthSignIn } from "../server/actions";
-import { registerTankUser, resendTankVerification, checkEmailVerified } from "../server/authActions";
+import {
+  registerTankUser,
+  resendTankVerification,
+  checkEmailVerified,
+  sendTankPasswordReset,
+} from "../server/authActions";
+import {
+  clearPendingVerification,
+  readPendingVerification,
+  rememberPendingVerification,
+} from "./pendingVerification";
 import { ACTIVE_THEME } from "../theme";
 import { buildGlobalLogoutUrl, buildOAuthStartUrl } from "@/lib/authRedirect";
 import { resolveTankDisplayName } from "../identity";
@@ -78,6 +88,48 @@ export function AccountOverlay({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  /**
+   * Put the verify screen back for someone who signed up and then left.
+   *
+   * Without this they are stranded: cannot sign in (unverified), cannot
+   * register (address taken), and the screen with the resend button is gone.
+   * Only runs when signed out, and only after confirming with the server that
+   * the address is still unverified — a hint left over from a signup they
+   * already completed must not drag them back into a finished flow.
+   */
+  useEffect(() => {
+    let active = true;
+    const pending = readPendingVerification();
+    if (!pending) return;
+
+    void (async () => {
+      const supabase = createClient();
+      const { data } = await supabase.auth.getUser();
+      if (!active) return;
+      if (data.user) {
+        clearPendingVerification();
+        return;
+      }
+
+      const res = await checkEmailVerified(pending.email);
+      if (!active) return;
+      if (res.verified) {
+        clearPendingVerification();
+        return;
+      }
+
+      setEmail(pending.email);
+      setTab("verify");
+      setSuccessMsg(
+        `You signed up as ${pending.email} but never confirmed it. Check your inbox, or send a fresh link below.`,
+      );
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(() => {
     let active = true;
     const supabase = createClient();
@@ -114,33 +166,65 @@ export function AccountOverlay({
 
   const [isVerifiedLive, setIsVerifiedLive] = useState(false);
 
+  // Everything the watcher below needs WITHOUT re-subscribing when it changes.
+  //
+  // This is the whole bug, and it is worth spelling out. The watcher used to
+  // depend on [tab, email, password, isVerifiedLive, onAuthSuccess, onClose].
+  // The last two are props, and TankExperience passes them as inline arrows:
+  //
+  //     <AccountOverlay onClose={() => setAccountOpen(false)} ... />
+  //
+  // so they are a NEW function identity on every parent render — and that page
+  // re-renders constantly off live camera telemetry, presence and chat. The
+  // effect therefore tore down and re-ran several times a second: clearInterval
+  // before the 2s poll could ever fire, and removeChannel before the realtime
+  // subscription finished connecting. Both halves of "automatically detect when
+  // you verify" were dead, which is why a verified account sat on the waiting
+  // screen forever.
+  //
+  // Refs keep the latest values available without putting them in the dep array,
+  // so the watcher subscribes ONCE per (tab, email) and survives parent renders.
+  const onAuthSuccessRef = useRef(onAuthSuccess);
+  const onCloseRef = useRef(onClose);
+  const passwordRef = useRef(password);
+  const isVerifiedLiveRef = useRef(isVerifiedLive);
+  useEffect(() => {
+    onAuthSuccessRef.current = onAuthSuccess;
+    onCloseRef.current = onClose;
+    passwordRef.current = password;
+    isVerifiedLiveRef.current = isVerifiedLive;
+  });
+
   // Live background verification watcher: seamlessly logs user in when email is confirmed in another tab/device
   useEffect(() => {
-    if (tab !== "verify" || !email.trim() || isVerifiedLive) return;
+    if (tab !== "verify" || !email.trim() || isVerifiedLiveRef.current) return;
 
     let active = true;
     const cleanEmail = email.toLowerCase().trim();
     const supabase = createClient();
 
     const completeVerificationLogin = async () => {
-      if (!active || isVerifiedLive) return;
+      if (!active || isVerifiedLiveRef.current) return;
       setIsVerifiedLive(true);
+      // Verified for real — the hint has done its job and must not reappear.
+      clearPendingVerification();
       setSuccessMsg("Account verified! Activating console...");
 
       try {
-        if (password) {
+        const currentPassword = passwordRef.current;
+        if (currentPassword) {
           markAuthNavigationIntent();
           const { data, error: signErr } = await supabase.auth.signInWithPassword({
             email: cleanEmail,
-            password,
+            password: currentPassword,
           });
           if (!signErr && data.user) {
             await recordTankAuthSignIn();
             clearAuthNavigationIntent();
-            if (onAuthSuccess) {
-              onAuthSuccess();
+            if (onAuthSuccessRef.current) {
+              onAuthSuccessRef.current();
             } else {
-              onClose();
+              onCloseRef.current();
             }
             return;
           }
@@ -154,18 +238,18 @@ export function AccountOverlay({
       if (userData?.user) {
         await recordTankAuthSignIn();
         clearAuthNavigationIntent();
-        if (onAuthSuccess) {
-          onAuthSuccess();
+        if (onAuthSuccessRef.current) {
+          onAuthSuccessRef.current();
         } else {
-          onClose();
+          onCloseRef.current();
         }
         return;
       }
 
-      if (onAuthSuccess) {
-        onAuthSuccess();
+      if (onAuthSuccessRef.current) {
+        onAuthSuccessRef.current();
       } else {
-        onClose();
+        onCloseRef.current();
       }
     };
 
@@ -191,7 +275,11 @@ export function AccountOverlay({
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, [tab, email, password, isVerifiedLive, onAuthSuccess, onClose]);
+    // Deliberately ONLY [tab, email]. See the refs above — adding the callbacks
+    // or password back here re-creates the interval on every parent render and
+    // silently disables the whole watcher.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, email]);
 
   const handleOAuthSignIn = (provider: "google" | "facebook") => {
     setBusy(true);
@@ -249,6 +337,7 @@ export function AccountOverlay({
           email: email.trim(),
           origin: typeof window !== "undefined" ? window.location.origin : "https://tank.unenter.live",
         });
+        rememberPendingVerification(email.trim());
         setTab("verify");
         setSuccessMsg(`Waiting for you to verify your account, an email was sent to ${email.trim()}.`);
         return;
@@ -275,6 +364,7 @@ export function AccountOverlay({
         origin: typeof window !== "undefined" ? window.location.origin : "https://tank.unenter.live",
       });
       setBusy(false);
+      rememberPendingVerification(email.trim());
       setTab("verify");
       setSuccessMsg(`Waiting for you to verify your account, an email was sent to ${email.trim()}.`);
       return;
@@ -337,6 +427,8 @@ export function AccountOverlay({
     }
 
     if (res.needsVerification) {
+      // So a refresh, a closed tab or a visit tomorrow still finds its way back.
+      rememberPendingVerification(email.trim());
       setTab("verify");
       setSuccessMsg(`Verification email dispatched to ${email.trim()}! Please verify to chat.`);
     } else {
@@ -347,6 +439,38 @@ export function AccountOverlay({
         onClose();
       }
     }
+  };
+
+  /**
+   * "Signed up but never got the email?"
+   *
+   * Sends a fresh link from the address alone and drops them on the verify
+   * screen, where the live watcher takes over. Deliberately does not ask
+   * whether the account exists first: answering that to an unauthenticated
+   * caller turns this box into a way to test which addresses have accounts.
+   * The message below is the same either way.
+   */
+  const handleStuckUnverified = async () => {
+    const target = email.trim();
+    if (!target) {
+      setError("Enter the email you signed up with, then tap this again.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setSuccessMsg(null);
+    const res = await resendTankVerification({
+      email: target,
+      origin: typeof window !== "undefined" ? window.location.origin : "https://tank.unenter.live",
+    });
+    setBusy(false);
+    rememberPendingVerification(target);
+    setTab("verify");
+    setSuccessMsg(
+      res.success
+        ? `If ${target} has an unverified Tank account, a fresh link is on its way.`
+        : `If ${target} has an unverified Tank account, a fresh link is on its way.`,
+    );
   };
 
   const handleResendVerification = async () => {
@@ -380,14 +504,19 @@ export function AccountOverlay({
     setError(null);
     setSuccessMsg(null);
 
-    const supabase = createClient();
-    const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.trim());
+    // Tank's own action, not supabase.auth.resetPasswordForEmail(): that sends
+    // GoTrue's default template from unenter.live and lands on the core site,
+    // so a viewer who only knows Tank got mail from a domain they have never
+    // heard of. This sends Tank's email and lands on Tank's reset page.
+    const res = await sendTankPasswordReset({ email: email.trim() });
 
     setBusy(false);
-    if (resetErr) {
-      setError(resetErr.message);
+    if (!res.success) {
+      setError(res.error || "Could not send the reset link.");
     } else {
-      setSuccessMsg("Password reset link sent! Check your inbox.");
+      // Same wording whether or not the account exists — confirming that to an
+      // unauthenticated caller turns this box into an address checker.
+      setSuccessMsg(res.message || "If that address has an account, a reset link is on its way.");
     }
   };
 
@@ -649,6 +778,20 @@ export function AccountOverlay({
                       <KeyRound className="h-3.5 w-3.5" />
                       {busy ? "Authenticating..." : "Sign In to Tank"}
                     </ConsoleButton>
+
+                    {/* The way back for someone who signed up and never finished.
+                        Needs only the address — no password — because that group
+                        often never got far enough to be sure of one, and on a new
+                        device there is no stored hint to restore the screen for
+                        them. Without this their only route was asking staff. */}
+                    <button
+                      type="button"
+                      onClick={handleStuckUnverified}
+                      disabled={busy}
+                      className="w-full pt-1 text-center text-[10px] font-bold uppercase tracking-wider text-[#5a5442] underline decoration-dotted underline-offset-2 hover:text-[#241f14] disabled:opacity-50"
+                    >
+                      Signed up but never got the email?
+                    </button>
                   </form>
                 )}
 

@@ -1,51 +1,56 @@
 // src/zones/tank/server/directorPolicyHierarchy.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Hardened Director Policy Hierarchy & Override Timeline Engine
+// Hardened Director Policy Hierarchy & Decoupled Chaos Orchestration Engine
 //
 // Resolves director decisions across a strict 4-level priority stack:
 // Level 1: Staff / Admin Hard Lock (attentionLock)
-// Level 2: Active Chat Item / Viewer Bounty Trigger (itemOverride with TTL)
-// Level 3: Operator Active Mode (SubjectMode: group, animals, speaker, etc.)
+// Level 2: Active Chaos Items / Viewer Bounties (decoupled room, detection, framing, chaos hop)
+// Level 3: Operator Active Mode & Local Room Lock
 // Level 4: Autonomous Scorer / Ambient Round-Robin Fallback
+//
+// Architecture:
+// All capability layers (Room Selection, Detection Style, Framing Mode, Kinematics)
+// are independently decoupled so items can knock individual layers off their rocker,
+// yet are unified in runtime orchestration.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { SubjectMode } from "./directorVirtualAtlas";
+import type { SubjectMode, FramingMode } from "./directorVirtualAtlas";
 import type { DirectorAttentionLock } from "../director/directorMetrics";
+import {
+  CHAOS_DIRECTOR_CATALOG,
+  type TrackingSpeed,
+  type DirectorItemOverride,
+  type DecoupledDirectorPolicy,
+  type DirectorPolicyDecision,
+  type ChaosDirectorItemDefinition,
+} from "../director/chaosDirectorCatalog";
 
-export type DirectorItemOverride = {
-  active: boolean;
-  itemSlug: string;
-  itemName: string;
-  targetMode?: SubjectMode;
-  targetCameraId?: string;
-  targetRoomKey?: string;
-  triggeredBy: string;
-  startedAt: number;
-  expiresAt: number;
-  durationSeconds: number;
+export {
+  CHAOS_DIRECTOR_CATALOG,
+  type TrackingSpeed,
+  type DirectorItemOverride,
+  type DecoupledDirectorPolicy,
+  type DirectorPolicyDecision,
+  type ChaosDirectorItemDefinition,
 };
 
-export type DirectorPolicyDecision = {
-  effectiveMode: SubjectMode;
-  activeOverrideType: "ADMIN_LOCK" | "ITEM_OVERRIDE" | "OPERATOR_MODE" | "AUTO_HEURISTIC";
-  activeOverrideReason: string;
-  timeRemainingSeconds?: number;
-  targetCameraId?: string;
-  targetRoomKey?: string;
-};
-
-// Global in-memory item override state
-let g_activeItemOverride: DirectorItemOverride | null = null;
+// In-memory active items store
+let g_activeItemOverrides: DirectorItemOverride[] = [];
 
 /**
- * Applies a time-bound item override onto the Director (e.g. Cat Laser, Room Spotlight, Mutiny).
+ * Applies a decoupled or compound item override onto the Director.
  */
 export function applyDirectorItemOverride(params: {
   itemSlug: string;
   itemName: string;
   targetMode?: SubjectMode;
-  targetCameraId?: string;
+  targetDetectionMode?: SubjectMode;
+  targetFramingMode?: FramingMode;
   targetRoomKey?: string;
+  targetCameraId?: string;
+  targetSpeed?: TrackingSpeed;
+  chaosHopIntervalMs?: number;
+  overrideRoomLock?: boolean;
   triggeredBy: string;
   durationSeconds?: number;
   now?: number;
@@ -53,45 +58,169 @@ export function applyDirectorItemOverride(params: {
   const now = params.now ?? Date.now();
   const duration = params.durationSeconds ?? 45;
   const expiresAt = now + duration * 1000;
+  const targetMode = params.targetDetectionMode ?? params.targetMode;
 
   const override: DirectorItemOverride = {
+    id: `item-${params.itemSlug}-${now}-${Math.random().toString(36).slice(2, 6)}`,
     active: true,
     itemSlug: params.itemSlug,
     itemName: params.itemName,
-    targetMode: params.targetMode,
-    targetCameraId: params.targetCameraId,
+    targetMode,
+    targetDetectionMode: targetMode,
+    targetFramingMode: params.targetFramingMode,
     targetRoomKey: params.targetRoomKey,
+    targetCameraId: params.targetCameraId,
+    targetSpeed: params.targetSpeed,
+    chaosHopIntervalMs: params.chaosHopIntervalMs,
+    overrideRoomLock: params.overrideRoomLock,
     triggeredBy: params.triggeredBy,
     startedAt: now,
     expiresAt,
     durationSeconds: duration,
   };
 
-  g_activeItemOverride = override;
+  // Remove any stale overrides of the exact same slug
+  g_activeItemOverrides = g_activeItemOverrides.filter(
+    (o) => o.expiresAt > now && o.itemSlug !== params.itemSlug
+  );
+  g_activeItemOverrides.push(override);
+
   return override;
 }
 
 /**
- * Retrieves the currently active item override, checking for expiration.
+ * Triggers a pre-configured item from the Chaos Director Catalog.
+ */
+export function triggerChaosCatalogItem(
+  slug: string,
+  options?: {
+    targetRoomKey?: string;
+    targetCameraId?: string;
+    triggeredBy?: string;
+    durationSeconds?: number;
+    now?: number;
+  }
+): DirectorItemOverride | null {
+  const def = CHAOS_DIRECTOR_CATALOG.find((item) => item.slug === slug);
+  if (!def) return null;
+
+  return applyDirectorItemOverride({
+    itemSlug: def.slug,
+    itemName: def.name,
+    targetDetectionMode: def.targetDetectionMode,
+    targetFramingMode: def.targetFramingMode,
+    targetRoomKey: options?.targetRoomKey ?? def.targetRoomKey,
+    targetCameraId: options?.targetCameraId,
+    targetSpeed: def.targetSpeed,
+    chaosHopIntervalMs: def.chaosHopIntervalMs,
+    overrideRoomLock: def.overrideRoomLock,
+    triggeredBy: options?.triggeredBy ?? "Viewer",
+    durationSeconds: options?.durationSeconds ?? def.defaultDurationSeconds,
+    now: options?.now,
+  });
+}
+
+/**
+ * Retrieves all currently active item overrides.
+ */
+export function getActiveItemOverrides(now = Date.now()): DirectorItemOverride[] {
+  g_activeItemOverrides = g_activeItemOverrides.filter((o) => o.active && now < o.expiresAt);
+  return [...g_activeItemOverrides];
+}
+
+/**
+ * Backwards-compatible single active item retriever (returns highest-priority/most recent item).
  */
 export function getActiveItemOverride(now = Date.now()): DirectorItemOverride | null {
-  if (!g_activeItemOverride || !g_activeItemOverride.active) return null;
-  if (now >= g_activeItemOverride.expiresAt) {
-    g_activeItemOverride = null;
-    return null;
-  }
-  return g_activeItemOverride;
+  const active = getActiveItemOverrides(now);
+  return active.length > 0 ? active[active.length - 1] : null;
 }
 
 /**
- * Explicitly clears the active item override.
+ * Computes the merged decoupled policy across all active item overrides.
+ */
+export function getActiveDecoupledPolicy(now = Date.now()): DecoupledDirectorPolicy {
+  const active = getActiveItemOverrides(now);
+  if (active.length === 0) {
+    return {
+      hasActiveOverride: false,
+      activeOverrides: [],
+      effectiveDetectionMode: null,
+      effectiveFramingMode: null,
+      effectiveRoomKey: null,
+      effectiveCameraId: null,
+      effectiveSpeed: null,
+      chaosHopIntervalMs: null,
+      overrideRoomLock: false,
+      timeRemainingSeconds: 0,
+      reason: "No active item overrides",
+    };
+  }
+
+  // Aggregate across active items (later items take precedence for conflicting slots)
+  let detectionMode: SubjectMode | null = null;
+  let framingMode: FramingMode | null = null;
+  let roomKey: string | null = null;
+  let cameraId: string | null = null;
+  let speed: TrackingSpeed | null = null;
+  let chaosHopIntervalMs: number | null = null;
+  let overrideRoomLock = false;
+  let maxExpiresAt = 0;
+
+  const names: string[] = [];
+
+  for (const item of active) {
+    if (item.targetDetectionMode || item.targetMode) {
+      detectionMode = (item.targetDetectionMode ?? item.targetMode) as SubjectMode;
+    }
+    if (item.targetFramingMode) {
+      framingMode = item.targetFramingMode;
+    }
+    if (item.targetRoomKey) {
+      roomKey = item.targetRoomKey;
+    }
+    if (item.targetCameraId) {
+      cameraId = item.targetCameraId;
+    }
+    if (item.targetSpeed) {
+      speed = item.targetSpeed;
+    }
+    if (item.chaosHopIntervalMs) {
+      chaosHopIntervalMs = item.chaosHopIntervalMs;
+    }
+    if (item.overrideRoomLock) {
+      overrideRoomLock = true;
+    }
+    maxExpiresAt = Math.max(maxExpiresAt, item.expiresAt);
+    names.push(`${item.itemName} (@${item.triggeredBy})`);
+  }
+
+  const timeRemainingSeconds = Math.max(0, Math.floor((maxExpiresAt - now) / 1000));
+
+  return {
+    hasActiveOverride: true,
+    activeOverrides: active,
+    effectiveDetectionMode: detectionMode,
+    effectiveFramingMode: framingMode,
+    effectiveRoomKey: roomKey,
+    effectiveCameraId: cameraId,
+    effectiveSpeed: speed,
+    chaosHopIntervalMs,
+    overrideRoomLock,
+    timeRemainingSeconds,
+    reason: `Active Items: ${names.join(", ")}`,
+  };
+}
+
+/**
+ * Clears all active item overrides.
  */
 export function clearItemOverride(): void {
-  g_activeItemOverride = null;
+  g_activeItemOverrides = [];
 }
 
 /**
- * Resolves the effective Director mode and active target according to the 4-tier hierarchy.
+ * Resolves the effective Director decision according to the 4-tier hierarchy.
  */
 export function resolveEffectiveDirectorDecision(params: {
   attentionLock?: DirectorAttentionLock | null;
@@ -120,17 +249,23 @@ export function resolveEffectiveDirectorDecision(params: {
     }
   }
 
-  // ── LEVEL 2: Active Chat Item / Viewer Bounty Override ──
-  const item = params.itemOverride ?? getActiveItemOverride(now);
-  if (item && item.active && now < item.expiresAt) {
-    const remaining = Math.max(0, Math.floor((item.expiresAt - now) / 1000));
+  // ── LEVEL 2: Active Chaos Items & Viewer Overrides ──
+  const decoupledPolicy = getActiveDecoupledPolicy(now);
+  const singleItem = params.itemOverride ?? (decoupledPolicy.hasActiveOverride ? decoupledPolicy.activeOverrides[decoupledPolicy.activeOverrides.length - 1] : null);
+
+  if (singleItem && singleItem.active && now < singleItem.expiresAt) {
+    const remaining = Math.max(0, Math.floor((singleItem.expiresAt - now) / 1000));
     return {
-      effectiveMode: item.targetMode ?? "auto",
+      effectiveMode: (singleItem.targetDetectionMode ?? singleItem.targetMode ?? decoupledPolicy.effectiveDetectionMode ?? "auto") as SubjectMode,
       activeOverrideType: "ITEM_OVERRIDE",
-      activeOverrideReason: `Item Trigger: ${item.itemName} used by @${item.triggeredBy}`,
+      activeOverrideReason: `Item Trigger: ${singleItem.itemName} used by @${singleItem.triggeredBy}`,
       timeRemainingSeconds: remaining,
-      targetCameraId: item.targetCameraId,
-      targetRoomKey: item.targetRoomKey,
+      targetCameraId: singleItem.targetCameraId ?? decoupledPolicy.effectiveCameraId ?? undefined,
+      targetRoomKey: singleItem.targetRoomKey ?? decoupledPolicy.effectiveRoomKey ?? undefined,
+      targetFramingMode: singleItem.targetFramingMode ?? decoupledPolicy.effectiveFramingMode ?? undefined,
+      targetSpeed: singleItem.targetSpeed ?? decoupledPolicy.effectiveSpeed ?? undefined,
+      chaosHopIntervalMs: singleItem.chaosHopIntervalMs ?? decoupledPolicy.chaosHopIntervalMs ?? undefined,
+      overrideRoomLock: singleItem.overrideRoomLock ?? decoupledPolicy.overrideRoomLock,
     };
   }
 

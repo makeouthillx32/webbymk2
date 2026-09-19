@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/utils/supabase/admin";
 import { applyDirectorItemOverride } from "./directorPolicyHierarchy";
+import { tryFireOverlayFx } from "./overlayFxStore";
 import type { ChatMessage, ChatMessageType } from "../contracts";
 import type { ItemRarity } from "../itemRarity";
 import { TANK_ITEM_CATALOG, TANK_ITEM_ICONS, getTankItemIcon } from "../tankItemCatalog";
@@ -55,6 +56,35 @@ export const ITEM_ACTION_DEFINITIONS: Record<string, ItemActionDefinition> = {
     actionText: "inserts dual launch keys into the console and arms the house event trigger!",
     rewardXp: 50,
     rewardTokens: 30,
+  },
+  // Chaos items — the use effect is the overlay fx (see overlayFxStore); the
+  // actionText is what the chat card says while the overlays re-skin.
+  "chrome-spray": {
+    slug: "chrome-spray",
+    rarity: "rare",
+    name: "Chrome Spray Paint",
+    iconUrl: "/images/tank-items/battery.png",
+    actionText: "spray-paints the console chrome! The overlays go full brushed aluminium! 🎨",
+    rewardXp: 25,
+    rewardTokens: 10,
+  },
+  "welding-torch": {
+    slug: "welding-torch",
+    rarity: "epic",
+    name: "Welding Torch",
+    iconUrl: "/images/tank-items/lightsaber.png",
+    actionText: "welds a riveted plate over the overlays! Heavy metal on air! 🔥",
+    rewardXp: 40,
+    rewardTokens: 20,
+  },
+  "grease-gun": {
+    slug: "grease-gun",
+    rarity: "uncommon",
+    name: "Grease Gun",
+    iconUrl: "/images/tank-items/boxing-gloves.png",
+    actionText: "greases every panel until the overlays go dark metal! Slick. 🛠️",
+    rewardXp: 15,
+    rewardTokens: 8,
   },
   "love-letter": {
     slug: "love-letter",
@@ -234,7 +264,7 @@ export const ITEM_ACTION_DEFINITIONS: Record<string, ItemActionDefinition> = {
   },
 };
 
-const FLAVOR_RNG_ACTIONS = [
+export const FLAVOR_RNG_ACTIONS = [
   { text: "farts noisily, a proud smile appearing on their face.", xp: 6, tokens: 0 },
   { text: "trips over the living room carpet and somehow gains a little XP.", xp: 8, tokens: 0 },
   { text: "stares intensely into camera 1 trying to communicate telepathically.", xp: 5, tokens: 0 },
@@ -669,6 +699,25 @@ export async function executeItemUsage(
 
     await awardProfileRewards(admin, userId, itemDef.rewardXp, itemDef.rewardTokens);
 
+    // Chaos items: if the catalog entry carries overlayFx, attempt to re-skin
+    // the HUD/VU overlays. Failure is deliberately NOT fatal — the item is
+    // already consumed and the chat card still goes out, so a disabled
+    // kill-switch or an active cooldown degrades to "used a normal item",
+    // never to a dead button.
+    const chaosFx = TANK_ITEM_CATALOG[itemDef.slug]?.overlayFx;
+    if (chaosFx) {
+      try {
+        await tryFireOverlayFx({
+          userId,
+          triggeredBy: userName,
+          texture: chaosFx.texture,
+          durationSec: chaosFx.durationSec,
+        });
+      } catch (err) {
+        console.error("[ItemUse] overlay fx failed:", err);
+      }
+    }
+
     // Apply Director Item Overrides
     if (itemDef.slug === "pet-whistle" || itemDef.slug === "cat-laser") {
       applyDirectorItemOverride({
@@ -960,11 +1009,15 @@ async function saveAndBroadcast(
     };
 
     const channel = admin.channel(`room:${roomId}:chat`);
-    await channel.send({
-      type: "broadcast",
-      event: "new_message",
-      payload: chatMsg,
-    });
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "new_message",
+        payload: chatMsg,
+      });
+    } finally {
+      await admin.removeChannel(channel);
+    }
 
     return chatMsg;
   } catch (err) {

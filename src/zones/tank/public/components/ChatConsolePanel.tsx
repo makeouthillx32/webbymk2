@@ -69,8 +69,10 @@ import {
   type PinnedChatMessage,
   type PinDurationHours,
 } from "../../server/chatPins";
+import { isSystemPillMessage } from "../chatMessagePresentation";
 
 export type MobileChatSize = "hidden" | "half" | "full";
+export type DesktopChatSize = "hidden" | "full";
 
 /**
  * Normalizes chat message timestamp to the client's local browser timezone.
@@ -138,6 +140,8 @@ export type ChatConsolePanelProps = {
   activeChatRoomKey?: string;
   mobileSize?: MobileChatSize;
   onMobileSizeChange?: (size: MobileChatSize) => void;
+  desktopSize?: DesktopChatSize;
+  onDesktopSizeChange?: (size: DesktopChatSize) => void;
   className?: string;
   currentUserRole?: "viewer" | "member" | "moderator" | "admin";
   currentUserId?: string;
@@ -195,6 +199,8 @@ export function ChatConsolePanel({
   activeChatRoomKey,
   mobileSize = "half",
   onMobileSizeChange,
+  desktopSize = "full",
+  onDesktopSizeChange,
   className = "",
   currentUserRole = "member",
   currentUserId,
@@ -599,6 +605,11 @@ export function ChatConsolePanel({
     else if (mobileSize === "half") onMobileSizeChange("hidden");
   };
 
+  const handleDesktopMinusClick = () => {
+    if (!onDesktopSizeChange) return;
+    onDesktopSizeChange("hidden");
+  };
+
   // Moderator actions
   const handleDeleteMessage = async (messageId: string) => {
     if (!isStaff || modBusyId) return;
@@ -665,7 +676,7 @@ export function ChatConsolePanel({
     <>
       {/* Sleek Mini Opener Pill when Chat is Hidden */}
       {mobileSize === "hidden" && (
-        <div className="fixed inset-x-2 bottom-[3.8rem] z-30 flex duration-200 animate-in slide-in-from-bottom-2 md:hidden">
+        <div className="fixed inset-x-2 bottom-[3.8rem] z-30 flex duration-200 animate-in slide-in-from-bottom-2 lg:hidden">
           <button
             type="button"
             onClick={() => onMobileSizeChange?.("half")}
@@ -692,7 +703,7 @@ export function ChatConsolePanel({
             : mobileSize === "half"
               ? "fixed inset-x-0 bottom-[3.5rem] z-30 h-[48dvh] max-h-[48vh] translate-y-0 px-2 pb-1 opacity-100 lg:static lg:h-full lg:max-h-none lg:min-h-full lg:p-0 landscape:bottom-0 landscape:h-[35dvh] landscape:max-h-[35vh]"
               : "pointer-events-none fixed inset-x-0 bottom-[3.5rem] z-10 h-0 translate-y-full px-2 opacity-0 lg:pointer-events-auto lg:static lg:flex lg:h-full lg:max-h-none lg:min-h-full lg:translate-y-0 lg:p-0 lg:opacity-100 landscape:bottom-0"
-        }`}
+        } ${desktopSize === "hidden" ? "lg:hidden" : ""} ${className}`}
       >
         <ChromePanel
           withScrews
@@ -724,7 +735,13 @@ export function ChatConsolePanel({
                   onClick={() => setRoomDropdownOpen((prev) => !prev)}
                   className="flex items-center gap-1 rounded bg-[#1f2021] px-2 py-0.5 text-[10px] font-bold text-white shadow transition hover:bg-black active:scale-95"
                 >
-                  <Globe2 className="h-3 w-3 text-orange-400" />
+                  {chatScope === "click" ? (
+                    <Users className="h-3 w-3 text-orange-400" />
+                  ) : chatScope === "room" ? (
+                    <MessageSquare className="h-3 w-3 text-orange-400" />
+                  ) : (
+                    <Globe2 className="h-3 w-3 text-orange-400" />
+                  )}
                   <span className="max-w-[90px] truncate sm:max-w-[120px]">
                     {chatScope === "global" ? "GLOBAL" : roomTitle}
                   </span>
@@ -733,7 +750,7 @@ export function ChatConsolePanel({
 
                 {/* Dropdown Menu */}
                 {roomDropdownOpen && (
-                  <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-md border border-black/60 bg-[#17191e] p-1 shadow-2xl backdrop-blur-md">
+                  <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-black/60 bg-[#17191e] p-1 shadow-2xl backdrop-blur-md">
                     <button
                       type="button"
                       onClick={() => {
@@ -844,25 +861,29 @@ export function ChatConsolePanel({
                 </button>
               )}
 
-              {/* Mobile Size Buttons (+ / -) */}
-              <div className="flex items-center gap-1 md:hidden">
-                <button
-                  type="button"
-                  onClick={handlePlusClick}
-                  disabled={mobileSize === "full"}
-                  className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95 disabled:opacity-30"
-                  title="Expand Chat"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleMinusClick}
-                  className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95"
-                  title="Collapse Chat"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
+              {/* Mobile: full = minus, half = plus + minus. Hidden uses the
+                  restore pill above, which contains only plus. */}
+              <div className="flex items-center gap-1 lg:hidden">
+                {mobileSize !== "full" && (
+                  <button type="button" onClick={handlePlusClick} className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95" title="Expand Chat" aria-label="Expand chat">
+                    <Plus className="h-3 w-3" />
+                  </button>
+                )}
+                {mobileSize !== "hidden" && (
+                  <button type="button" onClick={handleMinusClick} className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95" title="Collapse Chat" aria-label="Collapse chat">
+                    <Minus className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Desktop has two states: open shows minus; closed is restored
+                  by the reserved plus control outside this panel. */}
+              <div className="hidden items-center gap-1 lg:flex">
+                {desktopSize !== "hidden" && (
+                  <button type="button" onClick={handleDesktopMinusClick} className="grid h-7 w-7 place-items-center rounded border border-red-950/70 bg-[#d94339] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.3)] transition hover:bg-[#ef5146] active:translate-y-px" title="Collapse Chat" aria-label="Collapse desktop chat">
+                    <Minus className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1072,14 +1093,7 @@ export function ChatConsolePanel({
                 }
 
                 // 0b. Seamless In-Line System / Event / Console Message (Centered pill in the middle of feed)
-                if (
-                  message.messageType === "system" ||
-                  message.messageType === "announcement" ||
-                  !message.userId ||
-                  message.user === "CONSOLE" ||
-                  message.user === "SYSTEM" ||
-                  message.role === "system"
-                ) {
+                if (isSystemPillMessage(message)) {
                   return (
                     <div
                       key={message.id}

@@ -2,6 +2,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { isPassActive } from "../seasonPass";
 
 export type PromotableRole = "member" | "moderator" | "admin";
 
@@ -71,6 +72,16 @@ export type PlatformUserSummary = {
   xp: number;
   tokens: number;
   level: number;
+  /**
+   * Season pass the member currently holds, or null.
+   *
+   * Staff need to see who is paying before they answer them — the room was
+   * showing role and token balance but nothing about membership, so a
+   * Season Pass XL holder was indistinguishable from a lurker.
+   */
+  seasonPassTier: "base" | "xl" | null;
+  seasonPassStatus: string | null;
+  seasonPassExpiresAt: string | null;
   createdAt: string;
 };
 
@@ -127,7 +138,7 @@ export async function listAllPlatformUsers(): Promise<PlatformUserSummary[]> {
     const [{ data: tankProfiles }, { data: profiles }, authSnapshots] = await Promise.all([
       admin
         .from("tank_profiles")
-        .select("user_id, display_name, xp, tokens, level, auth_provider, verified_via, email_verified, created_at")
+        .select("user_id, display_name, xp, tokens, level, auth_provider, verified_via, email_verified, created_at, season_pass_active, season_pass_tier, season_pass_status, season_pass_expires_at")
         .order("created_at", { ascending: false }),
       admin
         .from("profiles")
@@ -166,6 +177,16 @@ export async function listAllPlatformUsers(): Promise<PlatformUserSummary[]> {
           tank.email_verified ??
           (provider !== "email" || verifiedVia !== "unverified");
 
+        // A lapsed pass must not read as a paying member: season_pass_active
+        // is flipped false by the webhook on cancel/past_due, and isPassActive
+        // re-checks the expiry on top of it.
+        const holdsPass =
+          Boolean(tank.season_pass_active) &&
+          isPassActive({
+            tier: (tank.season_pass_tier as "base" | "xl" | null) ?? null,
+            expiresAt: tank.season_pass_expires_at ?? null,
+          });
+
         return {
           id: tank.user_id,
           email: coreProfile?.email || null,
@@ -182,6 +203,11 @@ export async function listAllPlatformUsers(): Promise<PlatformUserSummary[]> {
           xp: tank.xp || 0,
           tokens: tank.tokens || 0,
           level: tank.level || 1,
+          seasonPassTier: holdsPass
+            ? ((tank.season_pass_tier as "base" | "xl" | null) ?? null)
+            : null,
+          seasonPassStatus: tank.season_pass_status ?? null,
+          seasonPassExpiresAt: tank.season_pass_expires_at ?? null,
           createdAt: tank.created_at || coreProfile?.created_at || new Date().toISOString(),
         };
       })

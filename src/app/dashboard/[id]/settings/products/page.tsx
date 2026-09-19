@@ -11,6 +11,7 @@ import ErrorAlert from "./_components/ErrorAlert";
 import ProductsSearchBar from "./_components/ProductsSearchBar";
 import ProductActionBar from "./_components/ProductActionBar";
 import ProductsTable, { ProductRow } from "./_components/ProductsTable";
+import VendorCatalogSync from "./_components/VendorCatalogSync";
 
 import CreateProductModal from "./_components/CreateProductModal";
 import ProductModal from "./_components/ProductModal";
@@ -85,7 +86,15 @@ export default function ProductsPage() {
     if (!q) return products;
 
     return products.filter((p) =>
-      [p.title, p.slug, p.badge ?? "", p.status ?? ""]
+      [
+        p.title,
+        p.slug,
+        p.badge ?? "",
+        p.status ?? "",
+        p.fulfillment_provider ?? "",
+        p.fulfillment_source ?? "",
+        ...(p.tags ?? []),
+      ]
         .join(" ")
         .toLowerCase()
         .includes(q)
@@ -105,6 +114,8 @@ export default function ProductsPage() {
     <>
       <ShowcaseSection title="Products">
         <div className="products-page space-y-6">
+          <VendorCatalogSync onProductsChanged={() => fetchProducts("refresh")} />
+
           <div className="products-header flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <ProductsSearchBar
               searchQuery={searchQuery}

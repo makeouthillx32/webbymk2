@@ -420,11 +420,15 @@ export async function sendSystemConsoleAnnouncement(
     });
 
     const channel = admin.channel(`room:${roomId}:chat`);
-    await channel.send({
-      type: "broadcast",
-      event: "new_message",
-      payload: msg,
-    });
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "new_message",
+        payload: msg,
+      });
+    } finally {
+      await admin.removeChannel(channel);
+    }
 
     return msg;
   } catch {

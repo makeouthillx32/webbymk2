@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     // can't even JSON.parse() ("Unexpected end of JSON input"), instead of
     // the graceful JSON error this route already returns for every other
     // failure mode. Found via E2E checkout test, 2026-08-06.
-    const { stripe } = createCommerceStripe("shop");
+    const { stripe, mode } = createCommerceStripe("shop");
     const supabase = await createServerClient();
     const body = await request.json();
 
@@ -304,9 +304,28 @@ export async function POST(request: NextRequest) {
       id: string;
       order_number: string;
       stripe_payment_intent_id: string | null;
+      stripe_mode: string | null;
       total_cents: number;
       discount_reservation_id: string | null;
     }) => {
+      if (existing.stripe_mode && existing.stripe_mode !== mode) {
+        if (existing.discount_reservation_id) {
+          await supabase.rpc("release_discount_reservation", {
+            p_reservation_id: existing.discount_reservation_id,
+          });
+        }
+        await supabase
+          .from("orders")
+          .update({
+            payment_status: "failed",
+            payment_error_code: "STRIPE_MODE_CHANGED",
+            payment_error_message: "Checkout payment mode changed before payment completed.",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id)
+          .eq("payment_status", "pending");
+        return null;
+      }
       if (!existing.stripe_payment_intent_id) return null;
 
       let existingPI;
@@ -383,6 +402,7 @@ export async function POST(request: NextRequest) {
           promo_code: resolved_promo_code,
           discount_reservation_id,
           total_cents,
+          stripe_mode: mode,
           shipping_address,
           shipping_method_name,
           customer_id: customerId,
@@ -410,7 +430,7 @@ export async function POST(request: NextRequest) {
 
     const { data: existingPending } = await supabase
       .from("orders")
-      .select("id, order_number, stripe_payment_intent_id, total_cents, discount_reservation_id")
+      .select("id, order_number, stripe_payment_intent_id, stripe_mode, total_cents, discount_reservation_id")
       .eq("cart_id", cart_id)
       .eq("order_source", "web")
       .eq("payment_status", "pending")
@@ -440,6 +460,7 @@ export async function POST(request: NextRequest) {
         promo_code: resolved_promo_code,
         discount_reservation_id,
         total_cents,
+        stripe_mode: mode,
         shipping_address,
         shipping_method_name,
         customer_id: customerId,
@@ -456,7 +477,7 @@ export async function POST(request: NextRequest) {
       if (orderError?.code === "23505") {
         const { data: winner } = await supabase
           .from("orders")
-          .select("id, order_number, stripe_payment_intent_id, total_cents, discount_reservation_id")
+          .select("id, order_number, stripe_payment_intent_id, stripe_mode, total_cents, discount_reservation_id")
           .eq("cart_id", cart_id)
           .eq("order_source", "web")
           .eq("payment_status", "pending")

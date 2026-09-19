@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Video } from "lucide-react";
 import type {
   DynamicAtlasLayout,
@@ -9,10 +9,12 @@ import type {
   DetectionCategoryFilters,
 } from "../../../server/directorVirtualAtlas";
 import type { DiscoveredCamera } from "../../../contracts";
-import { CameraPlayer } from "../../../public/CameraPlayer";
+import { CameraPlayer, type CameraPlayerHandle } from "../../../public/CameraPlayer";
+import { registerLiveVideo, unregisterLiveVideo } from "../../liveFrameRegistry";
 import { HoverViewportReticle } from "./HoverViewportReticle";
 import { CanvasDetectionOverlay } from "./CanvasDetectionOverlay";
 import { CLASS_COLORS } from "../../detectionTheme";
+import { deriveDirectorHlsUrl } from "../../../obs/directorPlayback";
 
 type VirtualCanvasProps = {
   atlasLayout: DynamicAtlasLayout;
@@ -144,7 +146,8 @@ export function VirtualCanvas({
               }`}
             >
               {/* Real Video Footage (Full Canvas View) */}
-              <CameraPlayer
+              <MatrixTilePlayer
+                cameraId={tile.cameraId}
                 online={online}
                 playbackUrl={liveCam?.playbackUrl ?? null}
                 playbackProtocol={liveCam?.playbackProtocol ?? "none"}
@@ -251,3 +254,75 @@ export function VirtualCanvas({
   );
 }
 export default VirtualCanvas;
+
+/**
+ * One matrix tile's player, which also publishes its decoded frames.
+ *
+ * Split out purely so each tile can own a ref and an effect — hooks cannot run
+ * inside the tiles.map() callback above. Registering here is what lets
+ * PeopleDetectionEngine sample the footage this tile is already decoding
+ * instead of opening a second stream for the same camera.
+ */
+function MatrixTilePlayer({
+  cameraId,
+  online,
+  playbackUrl,
+  playbackProtocol,
+  priority,
+}: {
+  cameraId: string;
+  online: boolean;
+  playbackUrl: string | null;
+  playbackProtocol: string;
+  priority: "hero" | "thumbnail";
+}) {
+  const handleRef = useRef<CameraPlayerHandle | null>(null);
+
+  // A thumbnail tile takes the CHEAP rung, not merely a later turn at the
+  // expensive one.
+  //
+  // `priority` already staggered connections and gated admission, but every
+  // tile still received the 4K WHEP url — so this wall opened six 3840x2160
+  // WebRTC decoders in one tab and then wondered why none of them produced a
+  // picture. Measured on the programme source alone: 16% of frames dropped
+  // with zero corrupted frames, which is starvation, not bad data.
+  //
+  // 720p HLS costs a fraction of that and is the right trade for a preview
+  // tile: nobody directs off a 200px thumbnail's latency. The lead tile keeps
+  // WHEP so the shot being judged stays live and full quality.
+  const lowRungUrl = useMemo(() => {
+    if (priority === "hero" || !playbackUrl) return null;
+    const hls = deriveDirectorHlsUrl(playbackUrl);
+    if (!hls) return null;
+    // Hand over the FULL rung and let CameraPlayer pick the rung for the
+    // priority it was given. This used to downgrade here, gated on
+    // NEXT_PUBLIC_TANK_HLS_LOW_RUNG — a variable defined nowhere, so the gate
+    // was always false and the "cheap rung" this comment promises was never
+    // actually taken. Rung selection now lives in one place (see
+    // effectiveQuality in CameraPlayer) and is driven by the server flag that
+    // decides whether the rung exists at all.
+    return hls;
+  }, [priority, playbackUrl]);
+
+  const effectiveUrl = lowRungUrl ?? playbackUrl;
+  const effectiveProtocol = lowRungUrl ? "hls" : playbackProtocol;
+
+  useEffect(() => {
+    const getter = () => handleRef.current?.getActiveVideo() ?? null;
+    registerLiveVideo(cameraId, getter);
+    return () => unregisterLiveVideo(cameraId, getter);
+  }, [cameraId]);
+
+  return (
+    <CameraPlayer
+      ref={handleRef}
+      online={online}
+      playbackUrl={effectiveUrl}
+      playbackProtocol={effectiveProtocol as never}
+      priority={priority}
+      // Monitoring surface: steadier buffer, and no spinner over the frame
+      // the operator is judging and the detector is sampling.
+      directorSurface
+    />
+  );
+}

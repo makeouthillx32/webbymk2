@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   User,
   Settings,
+  Sparkles,
   Bell,
   CreditCard,
   Key,
@@ -14,18 +15,17 @@ import {
   ChevronRight,
   Home,
   Shield,
+  ShoppingBag,
   Video,
+  Minus,
 } from "lucide-react";
-import { ChromePanel } from "./ChromePanel";
-import { ConsoleButton } from "./ConsoleButton";
-import { ACTIVE_THEME } from "../../theme";
-import type { TankClanSummary, TankPlayerProfile } from "../../server/gamification";
-import { getLevelForXp } from "../../xpLevels";
+import type { TankPlayerProfile } from "../../server/gamification";
 
 export type ProfilePanelProps = {
   initialProfile: (TankPlayerProfile & { avatarUrl?: string | null; nameColor?: string | null }) | null;
-  userClan: TankClanSummary | null;
   signedIn: boolean;
+  merchHref: string;
+  onClaimDaily?: () => void;
   onOpenSettings: () => void;
   onOpenSignIn: () => void;
   onOpenProfile: () => void;
@@ -35,13 +35,15 @@ export type ProfilePanelProps = {
   onOpenHelp?: () => void;
   onOpenAppeals?: () => void;
   onSignOut: () => void;
+  onCollapseRail: () => void;
   unreadNotificationsCount?: number;
 };
 
 export function ProfilePanel({
   initialProfile,
-  userClan,
   signedIn,
+  merchHref,
+  onClaimDaily,
   onOpenSettings,
   onOpenSignIn,
   onOpenProfile,
@@ -51,6 +53,7 @@ export function ProfilePanel({
   onOpenHelp,
   onOpenAppeals,
   onSignOut,
+  onCollapseRail,
   unreadNotificationsCount = 0,
 }: ProfilePanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -89,65 +92,81 @@ export function ProfilePanel({
 
   return (
     <div className="relative w-full" ref={menuRef}>
-      <ChromePanel withScrews className="w-full" contentClassName="!px-6 !py-4 space-y-3">
-        {/* Clickable Avatar & User Nameplate */}
+      <div
+        className="flex w-fit max-w-full items-center gap-1 border border-black/60 bg-[#202328]/90 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,.16),0_4px_12px_rgba(0,0,0,.55)] backdrop-blur-sm"
+        style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+        role="toolbar"
+        aria-label="Tank quick actions"
+      >
         <button
           type="button"
           onClick={handleClickNameplate}
-          className={`group flex w-full items-center gap-3 rounded-lg p-1 text-left transition-all hover:bg-black/10 active:scale-[0.98] ${
-            menuOpen ? "bg-black/15 ring-1 ring-yellow-400/50" : ""
+          className={`group relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden border bg-black/80 shadow transition hover:border-yellow-400 active:scale-95 ${
+            menuOpen ? "border-yellow-400 ring-1 ring-yellow-400/50" : "border-white/20"
           }`}
+          style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
           title={signedIn ? "Click to open user menu" : "Click to Sign In"}
+          aria-label={signedIn ? "Open profile menu" : "Sign in"}
         >
-          <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg border-2 border-[#7a8576] bg-black/80 shadow-md group-hover:border-yellow-400 group-hover:shadow-[0_0_8px_rgba(250,204,21,0.6)]">
             {initialProfile?.avatarUrl ? (
               <img
                 src={initialProfile.avatarUrl}
                 alt="Avatar"
-                className="h-full w-full object-contain p-0.5 drop-shadow-sm"
+                className="h-full w-full object-cover"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src =
                     "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png";
                 }}
               />
             ) : (
-              <User className="h-6 w-6 text-slate-400" />
+              <User className="h-4 w-4 text-slate-300" />
             )}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p
-              className="truncate text-xs font-black uppercase tracking-wide group-hover:underline"
-              style={{
-                color: initialProfile?.nameColor || "#241f14",
-                fontFamily: ACTIVE_THEME.fonts.label,
-              }}
-            >
-              {signedIn ? initialProfile?.displayName ?? "Viewer" : "Guest (Sign In)"}
-            </p>
-            {signedIn ? (
-              <p className="text-[10px] font-bold" style={{ color: "#4c4630" }}>
-                LVL {initialProfile ? getLevelForXp(initialProfile.xp ?? 0) : 1}
-                {userClan ? ` · [${userClan.tag}]` : ""}
-              </p>
-            ) : (
-              <p className="text-[10px] font-semibold text-slate-600">Spectator Mode</p>
-            )}
-          </div>
+          {unreadNotificationsCount > 0 && (
+            <span className="absolute right-0 top-0 h-2 w-2 rounded-full bg-[#ff3b2f] shadow-[0_0_5px_#ff3b2f]" />
+          )}
         </button>
 
-        {/* Buttons */}
-        <div className="flex gap-2">
-          <ConsoleButton className="flex-1" onClick={onOpenSettings}>
-            <Settings className="h-3.5 w-3.5" />
-            Settings
-          </ConsoleButton>
-          {!signedIn && (
-            <ConsoleButton variant="orange" className="flex-1" onClick={onOpenSignIn}>
-              Sign in
-            </ConsoleButton>
-          )}
-        </div>
-      </ChromePanel>
+        <button
+            type="button"
+            onClick={onClaimDaily}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-amber-900/80 bg-[#e9ae20] text-[#241500] shadow-[inset_0_1px_0_rgba(255,255,255,.45)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Daily bonus"
+            aria-label="Daily bonus"
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+          <Link
+            href={merchHref}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-orange-950/80 bg-[#f28c18] text-[#241500] shadow-[inset_0_1px_0_rgba(255,255,255,.45)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Merch"
+            aria-label="Merch"
+          >
+            <ShoppingBag className="h-4 w-4" />
+          </Link>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-white/15 bg-[#4e5964] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.25)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-white/15" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={onCollapseRail}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-red-950/80 bg-[#d94339] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.3)] transition hover:bg-[#ef5146] active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Hide panels"
+            aria-label="Hide panels"
+          >
+            <Minus className="h-4 w-4" strokeWidth={3} />
+          </button>
+      </div>
 
       {/* ═══════════ TANK DROPDOWN MENU ═══════════ */}
       {menuOpen && signedIn && (

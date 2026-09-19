@@ -190,6 +190,19 @@ const nextConfig = {
     ];
   },
 
+  // ── Rewrites ───────────────────────────────────────────────────────────────
+  async rewrites() {
+    return [
+      // Expose the SPIFFE trust domain JWKS at the standard well-known path.
+      // External services verifying our JWT-SVIDs can discover public keys via:
+      //   GET https://unenter.live/.well-known/spiffe/jwks.json
+      {
+        source:      "/.well-known/spiffe/jwks.json",
+        destination: "/api/auth/agent/jwks",
+      },
+    ];
+  },
+
   // ── Redirects ──────────────────────────────────────────────────────────────
   async redirects() {
     return [
@@ -199,6 +212,30 @@ const nextConfig = {
         destination: "/:path+",
         permanent:   true,
       },
+      {
+        source:      "/archive",
+        destination: "/archives",
+        permanent:   true,
+      },
+      ...(zone === "tank"
+        ? [
+            {
+              source: "/rooms/:slug",
+              destination: "/",
+              permanent: true,
+            },
+            {
+              source: "/room/:slug",
+              destination: "/",
+              permanent: true,
+            },
+            {
+              source: "/rooms",
+              destination: "/",
+              permanent: true,
+            },
+          ]
+        : []),
     ];
   },
 

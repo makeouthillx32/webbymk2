@@ -38,6 +38,45 @@ function getStorageKey(roomId: string, userId?: string | null) {
   return `tank_chat_storage_guest_${roomId}`;
 }
 
+/**
+ * Where a guest's messages accumulate before they sign in.
+ *
+ * sessionStorage, not localStorage: it must survive the full page load of the
+ * sign-in round trip (auth.unenter.live and back) so a guest who signs in keeps
+ * what they said beforehand, but must not outlive the tab.
+ *
+ * The subtlety that makes the lifecycle work: this buffer is WRITTEN on every
+ * guest message and READ only at the moment of sign-in. A guest who merely
+ * refreshes never reads it, so their chat clears exactly as intended — while
+ * the same messages are still there to be reclaimed if they log in instead.
+ */
+function guestBufferKey(roomId: string) {
+  return `tank_chat_guest_buffer_${roomId}`;
+}
+
+function saveGuestBuffer(roomId: string, messages: ChatMessage[]) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      guestBufferKey(roomId),
+      JSON.stringify(messages.slice(-MAX_CHAT_DOM_MESSAGES)),
+    );
+  } catch {}
+}
+
+/** Read and immediately consume the guest buffer — claimed once, at sign-in. */
+function takeGuestBuffer(roomId: string): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(guestBufferKey(roomId));
+    sessionStorage.removeItem(guestBufferKey(roomId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readRoomCacheIndex(): string[] {
   try {
     const raw = safeStorage.getItem(ROOM_CACHE_INDEX_KEY);
@@ -145,7 +184,18 @@ function saveClientStorageMessages(roomId: string, messages: ChatMessage[], user
   } catch {}
 }
 
-async function fetchChatHistory(roomId: string): Promise<ChatMessage[]> {
+type FetchedHistory = { messages: ChatMessage[]; withheld: boolean };
+
+/**
+ * Server-stored history. Only used to REFRESH what is already on screen and to
+ * deliver scoped rooms — never to populate a room on load. See the load effect.
+ *
+ * `withheld` is the server saying "you are not signed in, so you get nothing"
+ * rather than "this room is empty". Callers must tell those apart: merging an
+ * empty result would erase a guest's live session, because mergeHistory
+ * REPLACES the visible set rather than adding to it.
+ */
+async function fetchChatHistory(roomId: string): Promise<FetchedHistory> {
   const response = await fetch(
     `/api/tank/chat/messages?roomId=${encodeURIComponent(roomId)}`,
     {
@@ -155,10 +205,31 @@ async function fetchChatHistory(roomId: string): Promise<ChatMessage[]> {
   const json = await response.json();
   if (!response.ok || !json.success)
     throw new Error(json.error || "Failed to load chat.");
-  return Array.isArray(json.messages) ? json.messages : [];
+  return {
+    messages: Array.isArray(json.messages) ? json.messages : [],
+    withheld: json.historyWithheld === true,
+  };
 }
 
-function mergeHistory(current: ChatMessage[], history: ChatMessage[]) {
+/**
+ * Copy reaction state onto messages already on screen, introducing nothing.
+ *
+ * A reaction event must not be an excuse to re-populate the room. mergeHistory
+ * would swap the whole visible set for the server's copy, which would drag back
+ * every message the viewer was never present for — the exact behaviour the
+ * lifecycle exists to prevent.
+ */
+export function syncReactions(current: ChatMessage[], history: ChatMessage[]): ChatMessage[] {
+  if (history.length === 0) return current;
+  const byId = new Map(history.map((m) => [m.id, m]));
+  return current.map((message) => {
+    const fresh = byId.get(message.id);
+    if (!fresh) return message;
+    return { ...message, reactions: fresh.reactions };
+  });
+}
+
+export function mergeHistory(current: ChatMessage[], history: ChatMessage[]) {
   const pending = current.filter(
     (message) => message.pending || message.failed,
   );
@@ -210,29 +281,51 @@ export function useTankRealtimeChat(
 
   // Sync messages to local client storage as new messages stream in
   useEffect(() => {
-    if (messages.length > 0 && roomId) {
+    if (messages.length === 0 || !roomId) return;
+    if (currentUserId) {
       saveClientStorageMessages(roomId, messages, currentUserId);
+    } else {
+      // Guests do not get a durable cache — only the per-tab buffer that a
+      // later sign-in can claim.
+      saveGuestBuffer(roomId, messages);
     }
   }, [messages, roomId, currentUserId]);
 
   // When room changes or user identity changes or on reload: load cached messages and fetch recent history
   useEffect(() => {
     if (!roomId) return;
-    const cached = loadClientStorageMessages(roomId, currentUserId);
-    if (cached && cached.length > 0) {
-      setMessages(cached);
-    } else {
-      setMessages(EMPTY_MESSAGES);
-    }
 
     let active = true;
+
+    // A guest starts with what was buffered in this tab; a member restores cached messages
+    if (!currentUserId) {
+      const carried = takeGuestBuffer(roomId);
+      setMessages(carried.length > 0 ? carried : EMPTY_MESSAGES);
+      setLoadingHistory(false);
+    } else {
+      const cached = loadClientStorageMessages(roomId, currentUserId) ?? [];
+      const carried = takeGuestBuffer(roomId);
+      const restored = carried.length > 0 ? mergeHistory(cached, carried) : cached;
+      setMessages(restored.length > 0 ? restored : EMPTY_MESSAGES);
+      if (restored.length > 0) {
+        saveClientStorageMessages(roomId, restored, currentUserId);
+      }
+    }
+
     setLoadingHistory(true);
-    fetchChatHistory(roomId)
-      .then((history) => {
-        if (active) {
+    void fetchChatHistory(roomId)
+      .then(({ messages: history, withheld }) => {
+        if (!active) return;
+        if (withheld) {
+          setLoadingHistory(false);
+          return;
+        }
+        if (history.length > 0) {
           setMessages((current) => {
             const next = mergeHistory(current, history);
-            saveClientStorageMessages(roomId, next, currentUserId);
+            if (currentUserId) {
+              saveClientStorageMessages(roomId, next, currentUserId);
+            }
             return next;
           });
         }
@@ -252,12 +345,11 @@ export function useTankRealtimeChat(
     const handleLogout = (targetUserId?: string | null) => {
       drainClientChatStorage(targetUserId || currentUserId);
       setMessages(EMPTY_MESSAGES);
-      // Fetch fresh public room history for guest
-      void fetchChatHistory(roomId)
-        .then((history) => {
-          setMessages(history);
-        })
-        .catch(() => {});
+      // Deliberately NOT re-fetching. This used to immediately pull the room's
+      // whole history straight back in ("fresh public room history for guest"),
+      // so signing out cleared the chat and then instantly undid it — the chat
+      // an admin had just signed away from was on screen again a moment later.
+      // Signing out starts an empty room that accumulates live from here.
     };
 
     const supabase = createClient();
@@ -311,7 +403,11 @@ export function useTankRealtimeChat(
           },
           () => {
             void fetchChatHistory(roomId)
-              .then((history) => {
+              .then(({ messages: history, withheld }) => {
+                // Scoped rooms deliver via refetch, so a full merge is correct
+                // here — but never against a withheld (signed-out) response,
+                // which would blank the room.
+                if (withheld) return;
                 setMessages((current) => mergeHistory(current, history));
               })
               .catch(() => {});
@@ -362,8 +458,9 @@ export function useTankRealtimeChat(
       .on("broadcast", { event: "reaction_changed" }, ({ payload }) => {
         if (!payload?.messageId) return;
         void fetchChatHistory(roomId)
-          .then((history) => {
-            setMessages((current) => mergeHistory(current, history));
+          .then(({ messages: history, withheld }) => {
+            if (withheld) return;
+            setMessages((current) => syncReactions(current, history));
           })
           .catch(() => {});
       })
@@ -391,15 +488,16 @@ export function useTankRealtimeChat(
   }, []);
 
   const postMessage = useCallback(
-    async (body: string, replyTo?: ChatMessage) => {
+    async (
+      body: string,
+      replyTo?: ChatMessage,
+      onFailure?: (failedText: string, errorMsg: string) => void,
+    ): Promise<boolean> => {
       const trimmed = body.trim();
       if (!trimmed) return false;
 
-      // Optimistic send. The old flow awaited seven server round trips — auth,
-      // ban check, automod config, XP read+write, insert, broadcast — before
-      // the message appeared and before the input was even cleared, so typing
-      // felt like it stalled on every line. The row now renders instantly and
-      // the server reconciles it under clientNonce.
+      // Optimistic send. The row renders immediately so chat feels responsive,
+      // and reconciles when the server answers under clientNonce.
       const nonce =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
@@ -438,74 +536,66 @@ export function useTankRealtimeChat(
           : next;
       });
 
-      // Deliberately NOT awaited by the caller's UI path: the input clears on
-      // the synchronous return above. `sending` is still exposed for anyone who
-      // wants a subtle in-flight hint, but it no longer gates typing.
       setSending(true);
-      void fetch("/api/tank/chat/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          roomId,
-          body: trimmed,
-          clientNonce: nonce,
-          replyToMessageId: replyTo?.id,
-        }),
-      })
-        .then(async (response) => {
-          let result: { success?: boolean; error?: string; message?: ChatMessage } = {};
-          try {
-            result = await response.json();
-          } catch {
-            result = {
-              success: false,
-              error:
-                response.status >= 500
-                  ? "Server temporarily unavailable. Tap to retry."
-                  : "Failed to send message.",
-            };
-          }
-          if (!response.ok && !result.error) {
-            result.error = "Failed to send message.";
-          }
-          return result;
-        })
-        .then((result) => {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.clientNonce === nonce);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            if (result.success && result.message) {
-              // Broadcast may have already reconciled this row; replacing an
-              // identical message is harmless and keeps the two paths simple.
-              next[idx] = result.message;
-            } else {
-              // Keep the row and mark it failed rather than deleting it — the
-              // user's text is the one thing they cannot get back.
-              next[idx] = { ...next[idx], pending: false, failed: true };
-            }
-            return next;
-          });
-          if (!result.success)
-            setError(result.error ?? "Failed to send message.");
-        })
-        .catch((err) => {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.clientNonce === nonce);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            next[idx] = { ...next[idx], pending: false, failed: true };
-            return next;
-          });
-          setError(
-            err instanceof Error && err.name === "AbortError"
-              ? "Request timed out."
-              : "Connection issue. Failed to send message."
-          );
-        })
-        .finally(() => setSending(false));
+      try {
+        const response = await fetch("/api/tank/chat/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            roomId,
+            body: trimmed,
+            clientNonce: nonce,
+            replyToMessageId: replyTo?.id,
+          }),
+        });
 
-      return true;
+        let result: { success?: boolean; error?: string; message?: ChatMessage } = {};
+        try {
+          result = await response.json();
+        } catch {
+          result = {
+            success: false,
+            error:
+              response.status >= 500
+                ? "Server temporarily unavailable. Tap to retry."
+                : "Failed to send message.",
+          };
+        }
+        if (!response.ok && !result.error) {
+          result.error = "Failed to send message.";
+        }
+
+        if (result.success && result.message) {
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.clientNonce === nonce);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = result.message!;
+            return next;
+          });
+          return true;
+        } else {
+          // If message send failed (slow mode, permission, word filter, rate limit):
+          // Don't release optimistic message into feed — roll it back.
+          setMessages((prev) => prev.filter((m) => m.clientNonce !== nonce));
+          const errorMsg = result.error ?? "Failed to send message.";
+          setError(errorMsg);
+          onFailure?.(trimmed, errorMsg);
+          return false;
+        }
+      } catch (err) {
+        // Network / timeout error: roll back optimistic message and notify
+        setMessages((prev) => prev.filter((m) => m.clientNonce !== nonce));
+        const errorMsg =
+          err instanceof Error && err.name === "AbortError"
+            ? "Request timed out."
+            : "Connection issue. Failed to send message.";
+        setError(errorMsg);
+        onFailure?.(trimmed, errorMsg);
+        return false;
+      } finally {
+        setSending(false);
+      }
     },
     [roomId, identity],
   );
@@ -522,8 +612,8 @@ export function useTankRealtimeChat(
         setError(json.error || "Failed to react.");
         return false;
       }
-      const history = await fetchChatHistory(roomId);
-      setMessages((current) => mergeHistory(current, history));
+      const { messages: history, withheld } = await fetchChatHistory(roomId);
+      if (!withheld) setMessages((current) => syncReactions(current, history));
       return true;
     },
     [roomId],

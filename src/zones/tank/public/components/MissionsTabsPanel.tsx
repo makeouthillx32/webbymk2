@@ -25,6 +25,7 @@ import type { ChatMessage } from "../../contracts";
 import { votePollAction } from "../../server/pollSystem";
 import type { PollView } from "../../server/pollContract";
 import { TankChatBody } from "../TankChatEmoji";
+import { PanelCollapseButton } from "./PanelCollapseButton";
 
 export type SidebarTab = "missions" | "logs" | "poll";
 
@@ -33,7 +34,6 @@ export type MissionsTabsPanelProps = {
   onTabChange: (tab: SidebarTab) => void;
   missions: TankMission[];
   messages: ChatMessage[];
-  onCompleteMission?: (id: string) => void;
   /**
    * Logs is a staff-only dispatch view (see
    * vault/Core/tank-desktop-viewer-ux-audit-2026-08-27.md) — it duplicates
@@ -41,6 +41,8 @@ export type MissionsTabsPanelProps = {
    * for ordinary viewers. Missions and Poll stay visible to everyone.
    */
   isStaff?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 };
 
 // Helper: map mission title / category to a gamified icon
@@ -66,8 +68,9 @@ export function MissionsTabsPanel({
   onTabChange,
   missions = [],
   messages = [],
-  onCompleteMission,
   isStaff = false,
+  expanded = true,
+  onExpandedChange,
 }: MissionsTabsPanelProps) {
   // Live daily countdown timer (resets at midnight UTC)
   const [timeLeft, setTimeLeft] = useState("02:14:38");
@@ -147,18 +150,20 @@ export function MissionsTabsPanel({
   return (
     <ChromePanel
       withScrews
-      className="flex flex-1 flex-col overflow-hidden shadow-2xl"
-      contentClassName="!p-0 flex flex-1 flex-col"
+      className={`w-full overflow-hidden shadow-2xl ${
+        expanded ? "flex min-h-0 flex-1 flex-col" : "shrink-0"
+      }`}
+      contentClassName={
+        expanded ? "!p-0 flex min-h-0 flex-1 flex-col" : "!p-0"
+      }
     >
       {/* ═══════════ TOP HARDWARE TABS SWITCHER (EFFORTLESS HITBOXES) ═══════════ */}
-      <div 
-        className="flex items-center gap-1.5 border-b-2 border-black/90 bg-[#252830] px-3 pt-2 pb-1.5 shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)]"
-        style={{
-          backgroundImage: `url(${ACTIVE_THEME.images.metalTexture})`,
-          backgroundRepeat: "repeat",
-        }}
+      <div
+        className="flex min-h-9 items-center gap-1.5 border-b border-black/40 px-4 py-1"
       >
-        {(
+        {expanded ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {(
           [
             { id: "missions" as const, label: "Missions", count: missions.length },
             ...(isStaff
@@ -166,19 +171,25 @@ export function MissionsTabsPanel({
               : []),
             { id: "poll" as const, label: "Poll", count: activePoll ? 1 : null },
           ] as const
-        ).map((tab) => {
+          ).map((tab) => {
           const isActive = sidebarTab === tab.id;
           return (
             <button
               key={tab.id}
               type="button"
               onClick={() => onTabChange(tab.id)}
-              className={`group relative flex h-8 flex-1 items-center justify-center gap-1.5 rounded-t px-2 text-[10px] font-black uppercase tracking-wider transition-all select-none active:translate-y-[1px] ${
+              className={`group relative flex h-7 flex-1 items-center justify-center gap-1.5 border px-2 text-[10px] font-black uppercase tracking-wider transition-all select-none active:translate-y-[1px] ${
                 isActive
-                  ? "border-t border-x border-black/90 bg-gradient-to-b from-[#f26d4b] via-[#e55936] to-[#c84423] text-white shadow-[0_2px_6px_rgba(242,109,75,0.4),inset_0_1px_1px_rgba(255,255,255,0.6)]"
-                  : "border border-black/60 bg-[#17191e]/90 text-slate-300 hover:bg-[#20232a] hover:text-white"
+                  ? "border-black/70 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_1px_3px_rgba(0,0,0,0.5)]"
+                  : "border-black/40 bg-black/15 text-[#241f14] hover:bg-black/25"
               }`}
-              style={{ fontFamily: ACTIVE_THEME.fonts.label }}
+              style={{
+                fontFamily: ACTIVE_THEME.fonts.label,
+                borderRadius: "var(--tank-border-radius, 0.25rem)",
+                ...(isActive
+                  ? { backgroundColor: "var(--tank-color-primary, #ff4d00)" }
+                  : { color: "var(--tank-color-text-dark, #241f14)" }),
+              }}
             >
               {/* Active illuminated dot */}
               {isActive && (
@@ -188,7 +199,9 @@ export function MissionsTabsPanel({
               {tab.count !== null && tab.count > 0 && (
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[8px] font-black ${
-                    isActive ? "bg-black/40 text-white" : "bg-black/70 text-amber-300"
+                    isActive
+                      ? "bg-black/40 text-white"
+                      : "bg-black/60 text-[var(--tank-color-link,#ff4d00)]"
                   }`}
                 >
                   {tab.count}
@@ -196,17 +209,33 @@ export function MissionsTabsPanel({
               )}
             </button>
           );
-        })}
+          })}
+          </div>
+        ) : (
+          <span
+            className="flex-1 text-[10px] font-black uppercase tracking-widest text-[#241f14]"
+            style={{ fontFamily: ACTIVE_THEME.fonts.label }}
+          >
+            Missions & Poll
+          </span>
+        )}
+        {onExpandedChange && (
+          <PanelCollapseButton
+            title="Missions & Poll"
+            expanded={expanded}
+            onExpandedChange={onExpandedChange}
+          />
+        )}
       </div>
 
       {/* ═══════════ INNER GAMIFIED TEXTURED RECESSED CONSOLE CAVITY ═══════════ */}
-      <div
-        className="relative flex flex-1 flex-col overflow-hidden p-3 text-slate-200"
+      {expanded && <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-slate-200"
         style={{
-          // Flat solid cavity, matching every sibling panel's inner content
-          // area (InventoryOverlay, ChatConsolePanel, etc. — none of them
-          // tile a pattern image here, this one used to be the outlier).
-          backgroundColor: "#111317",
+          backgroundColor: "var(--tank-color-dark, #111317)",
+          backgroundImage: "var(--tank-texture-dark-panel, none)",
+          backgroundRepeat: "repeat",
+          color: "var(--tank-color-text-light, #e2e8f0)",
           boxShadow: "inset 0 4px 14px rgba(0,0,0,0.9), inset 0 -2px 6px rgba(0,0,0,0.8)",
         }}
       >
@@ -263,8 +292,7 @@ export function MissionsTabsPanel({
                   return (
                     <div
                       key={mission.id}
-                      onClick={() => onCompleteMission?.(mission.id)}
-                      className={`group relative flex items-center justify-between gap-2 rounded border p-2.5 shadow-md transition-all cursor-pointer select-none ${
+                      className={`group relative flex items-center justify-between gap-2 rounded border p-2.5 shadow-md transition-all select-none ${
                         isDone
                           ? "border-emerald-500/30 bg-black/60 opacity-80 hover:opacity-100"
                           : "border-black/90 bg-[#1e2128]/90 hover:border-yellow-400/70 hover:bg-[#262a33] shadow-[inset_0_1px_2px_rgba(255,255,255,0.08),0_2px_4px_rgba(0,0,0,0.7)] active:scale-[0.99]"
@@ -332,7 +360,7 @@ export function MissionsTabsPanel({
               <div className="flex items-center justify-between text-[9px] font-bold">
                 <span className="flex items-center gap-1 text-amber-400">
                   <Flame className="h-3 w-3 text-orange-500 fill-orange-500 animate-pulse" />
-                  Streak: <strong className="text-white">3 Days</strong> (1.2x XP)
+                  New directives <strong className="text-white">every UTC day</strong>
                 </span>
                 <span className="text-slate-400">
                   {completedCount}/{missions.length} Complete
@@ -512,7 +540,7 @@ export function MissionsTabsPanel({
             )}
           </div>
         )}
-      </div>
+      </div>}
     </ChromePanel>
   );
 }

@@ -46,19 +46,28 @@ export async function GET(
   }
 
   // RLS decides visibility. A row the caller may not see comes back empty.
+  let stored: string | null = null;
   const { data: segment } = await supabase
     .from("tank_archive_segments")
     .select("storage_path, cold_path, tier")
     .eq("id", id)
     .maybeSingle();
 
-  if (!segment) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (segment) {
+    stored = (segment as any).cold_path || (segment as any).storage_path;
+  } else {
+    const { data: archiveRow } = await supabase
+      .from("tank_archives")
+      .select("storage_path")
+      .eq("id", id)
+      .maybeSingle();
+    if (archiveRow?.storage_path) {
+      stored = archiveRow.storage_path;
+    }
   }
 
-  const stored = (segment as any).cold_path || (segment as any).storage_path;
   if (!stored) {
-    return NextResponse.json({ error: "Segment has no file" }, { status: 404 });
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const file = resolveWithinArchive(stored);

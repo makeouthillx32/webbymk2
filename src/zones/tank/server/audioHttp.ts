@@ -130,13 +130,17 @@ async function announceQueuedAudio(input: {
   if (!data) return;
   const channel = admin.channel(`room:${input.roomKey}:chat`);
   try {
-    await channel.httpSend("new_message", {
+    await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: {
       id: data.id,
       user: "HOUSE",
       body: input.body,
       time: new Date(data.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       messageType: "house_event",
       metadata: { audioRequestId: input.requestId },
+    },
     });
   } finally {
     await admin.removeChannel(channel);

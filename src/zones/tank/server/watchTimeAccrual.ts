@@ -97,37 +97,15 @@ export async function recordWatchHeartbeat(
       { onConflict: "user_id" },
     );
 
-    // 3. Update mission progress if any active missions relate to watching
+    // 3. Watching advances only the watch mission. The former loop advanced
+    // every active mission (chat, inventory, scavenger hunt, etc.) from a
+    // watch heartbeat and bypassed the atomic reward function entirely.
     try {
-      const { data: activeMissions } = await admin
-        .from("tank_missions")
-        .select("id, target_count")
-        .eq("is_active", true);
-
-      if (activeMissions && activeMissions.length > 0) {
-        for (const mission of activeMissions) {
-          const { data: progressRow } = await admin
-            .from("tank_mission_progress")
-            .select("progress, completed_at")
-            .eq("user_id", user.id)
-            .eq("mission_id", mission.id)
-            .maybeSingle();
-
-          if (!progressRow?.completed_at) {
-            const nextProgress = (progressRow?.progress ?? 0) + safeSeconds;
-            const isCompleted = nextProgress >= mission.target_count;
-            await admin.from("tank_mission_progress").upsert(
-              {
-                user_id: user.id,
-                mission_id: mission.id,
-                progress: nextProgress,
-                completed_at: isCompleted ? new Date().toISOString() : null,
-              },
-              { onConflict: "user_id,mission_id" },
-            );
-          }
-        }
-      }
+      await admin.rpc("tank_record_mission_progress", {
+        p_user_id: user.id,
+        p_mission_key: "watch_live_camera",
+        p_increment: 1,
+      });
     } catch {}
 
     // 4. Bump progress on any active Drop campaigns (global, or targeted at

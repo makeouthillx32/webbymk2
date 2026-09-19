@@ -30,13 +30,6 @@ export type ArchiveDay = {
   totalBytes: number;
 };
 
-export type ArchiveBrowseData = {
-  seasons: ArchiveSeasonOption[];
-  rooms: ArchiveRoomOption[];
-  days: ArchiveDay[];
-  segments: SignedSegment[];
-};
-
 function seasonSlug(number: number): string {
   return `s${String(number).padStart(2, "0")}`;
 }
@@ -80,17 +73,45 @@ export async function getArchiveRooms(): Promise<ArchiveRoomOption[]> {
   }
 }
 
+export type DayRoomFootage = {
+  slug: string;
+  name: string;
+  kind: "fixed-247" | "irl" | "user-stream";
+  kindLabel: string;
+  segmentCount: number;
+  totalSeconds: number;
+  formattedDuration: string;
+  activeWindow: string;
+  is24Hour: boolean;
+  hasMasterArchive: boolean;
+  isRecordingLive?: boolean;
+};
+
+export type ArchiveBrowseData = {
+  seasons: ArchiveSeasonOption[];
+  rooms: ArchiveRoomOption[];
+  days: ArchiveDay[];
+  selectedDate: string | null;
+  roomsOnDay: DayRoomFootage[];
+  selectedRoom: string | null;
+  segments: SignedSegment[];
+};
+
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds <= 0) return "0m";
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.round((totalSeconds % 3600) / 60);
+  if (h >= 1) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${Math.max(1, m)}m`;
+}
+
 /**
  * Every calendar day in the season, each flagged with whether footage exists.
- *
- * The strip deliberately shows the whole season rather than only days that
- * recorded: a gap is information ("the cameras were down that day"), and a
- * picker that silently omits dates makes missing footage look like it was never
- * supposed to be there. Days without footage render disabled.
+ * If roomSlug is omitted, checks whether ANY room recorded footage on that date.
  */
 export async function getArchiveDays(
   season: ArchiveSeasonOption | undefined,
-  roomSlug: string,
+  roomSlug?: string,
 ): Promise<ArchiveDay[]> {
   if (!season) return [];
 
@@ -101,10 +122,6 @@ export async function getArchiveDays(
   const rawEnd = season.endsAt ? new Date(season.endsAt) : new Date();
   const end = Number.isNaN(rawEnd.getTime()) ? new Date() : rawEnd;
 
-  // One row per day from the roll-up view rather than every segment row for
-  // the whole season — a busy room is ~144 segments/day, so scanning them just
-  // to count days got expensive fast. The view also carries duration and
-  // completeness, which the strip needs anyway.
   const summaries = new Map<string, {
     segmentCount: number;
     totalSeconds: number;
@@ -112,26 +129,38 @@ export async function getArchiveDays(
     isStreamable: boolean;
     totalBytes: number;
   }>();
+
   try {
     const supabase = await createClient();
-    // RLS is inherited by the view, so a signed-out visitor gets nothing here
-    // for the same reason they get nothing from the segments table.
-    const { data } = await supabase
+    let query = supabase
       .from("tank_archive_days")
-      .select("recorded_date, segment_count, total_seconds, is_complete, is_streamable, total_bytes")
-      .eq("room_slug", roomSlug)
-      .limit(1000);
+      .select("recorded_date, segment_count, total_seconds, is_complete, is_streamable, total_bytes, room_slug")
+      .limit(2000);
+
+    if (roomSlug) {
+      query = query.eq("room_slug", roomSlug);
+    }
+
+    const { data } = await query;
 
     for (const row of data ?? []) {
       const d = (row as any).recorded_date as string;
       if (!d) continue;
-      summaries.set(d, {
-        segmentCount: Number((row as any).segment_count) || 0,
-        totalSeconds: Number((row as any).total_seconds) || 0,
-        isComplete: Boolean((row as any).is_complete),
-        isStreamable: Boolean((row as any).is_streamable),
-        totalBytes: Number((row as any).total_bytes) || 0,
-      });
+      const prev = summaries.get(d);
+      if (!prev) {
+        summaries.set(d, {
+          segmentCount: Number((row as any).segment_count) || 0,
+          totalSeconds: Number((row as any).total_seconds) || 0,
+          isComplete: Boolean((row as any).is_complete),
+          isStreamable: Boolean((row as any).is_streamable),
+          totalBytes: Number((row as any).total_bytes) || 0,
+        });
+      } else {
+        prev.segmentCount += Number((row as any).segment_count) || 0;
+        prev.totalSeconds += Number((row as any).total_seconds) || 0;
+        prev.totalBytes += Number((row as any).total_bytes) || 0;
+        if (Boolean((row as any).is_streamable)) prev.isStreamable = true;
+      }
     }
   } catch {
     // Fall through: the strip still renders, every day just shows as empty.
@@ -151,8 +180,6 @@ export async function getArchiveDays(
       hasFootage: (summary?.segmentCount ?? 0) > 0,
       segmentCount: summary?.segmentCount ?? 0,
       totalSeconds: summary?.totalSeconds ?? 0,
-      // A day with no footage is trivially "not still recording", but only
-      // today can ever be incomplete.
       isComplete: summary ? summary.isComplete : key < isoDate(new Date()),
       isStreamable: summary?.isStreamable ?? false,
       totalBytes: summary?.totalBytes ?? 0,
@@ -165,10 +192,177 @@ export async function getArchiveDays(
 }
 
 /**
- * Everything the Archives page needs for one (season, room, date) selection.
- *
- * Signed URLs are minted only for the requested day — never for the whole
- * season — so a listing request can't hand out a bulk set of playable links.
+ * Returns all rooms that recorded footage on a given date, with categorization:
+ * - fixed-247: 24/7 IP cameras (showing 24h continuous footage or live REC)
+ * - irl: mobile/IRL cameras (showing active duration and time window)
+ * - user-stream: user streams & OBS guest rooms (showing broadcast session length)
+ */
+export async function getRoomsOnDay(date: string): Promise<DayRoomFootage[]> {
+  const supabase = await createClient();
+  const today = isoDate(new Date());
+  const isToday = date === today;
+
+  const FIXED_HOUSE_SLUGS = new Set([
+    "living-room",
+    "kitchen",
+    "foyer",
+    "game-room",
+    "game-room-2",
+    "makeup-room",
+    "courtyard",
+    "patio",
+    "basement",
+  ]);
+
+  // 1. Query tank_archive_days for this date
+  const { data: dayRows } = await supabase
+    .from("tank_archive_days")
+    .select("room_slug, segment_count, total_seconds, first_segment_at, last_segment_at, is_complete")
+    .eq("recorded_date", date);
+
+  // 2. Query tank_archives for any consolidated masters for this date
+  const { data: masterRows } = await supabase
+    .from("tank_archives")
+    .select("room_slug, duration_seconds, storage_path")
+    .eq("recorded_date", date);
+
+  const masterMap = new Map<string, any>();
+  for (const m of masterRows ?? []) {
+    if (m.room_slug) masterMap.set(m.room_slug, m);
+  }
+
+  // 3. Query camera registry and room titles to resolve room details & tags
+  const [roomsRes, camsRes] = await Promise.all([
+    supabase.from("tank_rooms").select("slug, title, tags"),
+    supabase.from("tank_camera_registry").select("room_scope, name, tags"),
+  ]);
+
+  const roomTitleMap = new Map<string, string>();
+  const roomTagsMap = new Map<string, string[]>();
+
+  for (const r of roomsRes.data ?? []) {
+    if (r.slug) {
+      roomTitleMap.set(r.slug, r.title || r.slug);
+      roomTagsMap.set(r.slug, r.tags || []);
+    }
+  }
+
+  for (const c of camsRes.data ?? []) {
+    if (c.room_scope && c.room_scope !== "unscoped") {
+      if (!roomTitleMap.has(c.room_scope)) {
+        roomTitleMap.set(c.room_scope, c.name);
+      }
+      const existingTags = roomTagsMap.get(c.room_scope) || [];
+      roomTagsMap.set(c.room_scope, [...existingTags, ...(c.tags || [])]);
+    }
+  }
+
+  const results: DayRoomFootage[] = [];
+  const seenRooms = new Set<string>();
+
+  for (const row of dayRows ?? []) {
+    const slug = row.room_slug;
+    if (!slug || NON_CAMERA_ROOMS.has(slug) || seenRooms.has(slug)) continue;
+    seenRooms.add(slug);
+
+    const tags = roomTagsMap.get(slug) || [];
+    const name = roomTitleMap.get(slug) || slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const hasMaster = masterMap.has(slug);
+
+    const isFixed = FIXED_HOUSE_SLUGS.has(slug) || tags.includes("fixed");
+    const isIrl = slug.includes("irl") || tags.includes("irl") || tags.includes("mobile") || tags.includes("roaming");
+    const isUserStream = tags.includes("obs") || slug.startsWith("user-") || slug.startsWith("obs-");
+
+    let kind: "fixed-247" | "irl" | "user-stream" = "fixed-247";
+    let kindLabel = "24/7 IP CAMERA";
+
+    if (isIrl) {
+      kind = "irl";
+      kindLabel = "IRL / MOBILE CAM";
+    } else if (isUserStream) {
+      kind = "user-stream";
+      kindLabel = "LIVE STREAM ROOM";
+    } else if (isFixed) {
+      kind = "fixed-247";
+      kindLabel = "24/7 IP CAMERA";
+    } else {
+      kind = "user-stream";
+      kindLabel = "EVENT ROOM";
+    }
+
+    const totalSeconds = Number(row.total_seconds) || (hasMaster ? 86400 : 0);
+    const segmentCount = Number(row.segment_count) || 0;
+
+    let formattedDuration = "";
+    let activeWindow = "";
+    const is24Hour = kind === "fixed-247";
+
+    if (is24Hour) {
+      if (isToday) {
+        formattedDuration = `REC Live (${formatDuration(totalSeconds)})`;
+        activeWindow = "All Day (24/7 Ongoing)";
+      } else {
+        formattedDuration = "24h Continuous Footage";
+        activeWindow = "All Day (24/7)";
+      }
+    } else {
+      formattedDuration = `Active: ${formatDuration(totalSeconds)}`;
+      if (row.first_segment_at && row.last_segment_at) {
+        const startStr = new Date(row.first_segment_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const endStr = new Date(row.last_segment_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        activeWindow = `${startStr} – ${endStr}`;
+      } else {
+        activeWindow = `${segmentCount} recordings`;
+      }
+    }
+
+    results.push({
+      slug,
+      name,
+      kind,
+      kindLabel,
+      segmentCount,
+      totalSeconds,
+      formattedDuration,
+      activeWindow,
+      is24Hour,
+      hasMasterArchive: hasMaster,
+      isRecordingLive: isToday,
+    });
+  }
+
+  // Also include any rooms that exist in tank_archives for this day but might not have raw segments in tank_archive_days
+  for (const [mSlug, mRow] of masterMap.entries()) {
+    if (!seenRooms.has(mSlug) && !NON_CAMERA_ROOMS.has(mSlug)) {
+      seenRooms.add(mSlug);
+      const name = roomTitleMap.get(mSlug) || mSlug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      results.push({
+        slug: mSlug,
+        name,
+        kind: "fixed-247",
+        kindLabel: "24/7 IP CAMERA",
+        segmentCount: 1,
+        totalSeconds: mRow.duration_seconds || 86400,
+        formattedDuration: "24h Continuous Footage",
+        activeWindow: "All Day (24/7)",
+        is24Hour: true,
+        hasMasterArchive: true,
+        isRecordingLive: false,
+      });
+    }
+  }
+
+  // Sort: fixed-247 first (sorted by name), then IRL, then user-stream
+  return results.sort((a, b) => {
+    if (a.kind === "fixed-247" && b.kind !== "fixed-247") return -1;
+    if (a.kind !== "fixed-247" && b.kind === "fixed-247") return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * Everything the Archives page needs for one (season, date, room) selection.
+ * Follows the Days -> Rooms on Day -> Footage hierarchy.
  */
 export async function getArchiveBrowseData(params: {
   season?: string;
@@ -179,15 +373,36 @@ export async function getArchiveBrowseData(params: {
 
   const season =
     seasons.find((s) => s.slug === params.season) ?? seasons[seasons.length - 1] ?? undefined;
-  const roomSlug = rooms.find((r) => r.slug === params.room)?.slug ?? rooms[0]?.slug ?? "";
 
-  const days = roomSlug ? await getArchiveDays(season, roomSlug) : [];
+  // 1. Days across the entire broadcast
+  const days = await getArchiveDays(season);
 
+  // 2. Resolve selectedDate: explicit param, or newest day with footage, or today
+  const latestDayWithFootage = days.filter((d) => d.hasFootage).pop()?.date;
+  const selectedDate = params.date || latestDayWithFootage || isoDate(new Date());
+
+  // 3. Resolve rooms active on this selected day
+  const roomsOnDay = selectedDate ? await getRoomsOnDay(selectedDate) : [];
+
+  // 4. Resolve selectedRoom: explicit param if valid on that day, or first room on that day, or fallback
+  const validRoomOnDay = roomsOnDay.find((r) => r.slug === params.room);
+  const selectedRoom = validRoomOnDay?.slug ?? roomsOnDay[0]?.slug ?? params.room ?? rooms[0]?.slug ?? "";
+
+  // 5. Mint signed segment links for the selected room and date
   let segments: SignedSegment[] = [];
-  if (params.date && roomSlug) {
-    const raw = await getRoomArchiveDay(roomSlug, params.date);
+  if (selectedDate && selectedRoom) {
+    const raw = await getRoomArchiveDay(selectedRoom, selectedDate);
     segments = await signArchiveSegments(raw);
   }
 
-  return { seasons, rooms, days, segments };
+  return {
+    seasons,
+    rooms,
+    days,
+    selectedDate,
+    roomsOnDay,
+    selectedRoom,
+    segments,
+  };
 }
+

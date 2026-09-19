@@ -7,7 +7,7 @@ import {
   type PilotConnectionType,
 } from "./manualPilotStore";
 import { tickServerDirector } from "./serverDirectorEngine";
-import type { VirtualPtzState } from "../director-configuration/components/NavigationController";
+import type { VirtualPtzState } from "../director/ptzState";
 
 const CONNECTION_TYPES = new Set<PilotConnectionType>([
   "browser_web",

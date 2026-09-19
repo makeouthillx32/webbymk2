@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { requireAdminClient } from "@/lib/require-admin";
+import { reconcileProviderArtworkVariants } from "@/lib/fulfillment/catalog/artwork-readiness";
 
 type Params = {
   params: Promise<{ id: string; imageId: string }>;
@@ -8,14 +10,6 @@ type Params = {
 
 function jsonError(status: number, code: string, message: string, details?: any) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
-}
-
-// TODO: Replace with your real role gating (admin/catalog manager)
-async function requireAdmin(supabase: SupabaseClient) {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return { ok: false, status: 401 as const, message: error.message };
-  if (!data.user) return { ok: false, status: 401 as const, message: "Authentication required" };
-  return { ok: true as const };
 }
 
 /**
@@ -34,8 +28,9 @@ async function requireAdmin(supabase: SupabaseClient) {
 export async function PATCH(req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
 
-  const gate = await requireAdmin(supabase);
+  const gate = await requireAdminClient(supabase);
   if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   const { id: productId, imageId } = await params;
 
@@ -75,7 +70,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   // Scoped update (ownership enforced)
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("product_images")
     .update(update)
     .eq("id", imageId)
@@ -93,6 +88,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     );
   }
 
+  try {
+    await reconcileProviderArtworkVariants(admin, productId);
+  } catch (reconcileError) {
+    console.error("Image updated but provider variant readiness reconciliation failed", reconcileError);
+  }
+
   return NextResponse.json({ ok: true, data });
 }
 
@@ -102,15 +103,16 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const supabase = await createServerClient();
 
-  const gate = await requireAdmin(supabase);
+  const gate = await requireAdminClient(supabase);
   if (!gate.ok) return jsonError(gate.status, "UNAUTHORIZED", gate.message);
+  const admin = createAdminClient();
 
   const { id: productId, imageId } = await params;
 
   if (!productId) return jsonError(400, "INVALID_ID", "Missing product id");
   if (!imageId) return jsonError(400, "INVALID_IMAGE_ID", "Missing image id");
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("product_images")
     .delete()
     .eq("id", imageId)
@@ -126,6 +128,12 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       status === 404 ? "Image not found for this product" : error.message,
       error
     );
+  }
+
+  try {
+    await reconcileProviderArtworkVariants(admin, productId);
+  } catch (reconcileError) {
+    console.error("Image deleted but provider variant readiness reconciliation failed", reconcileError);
   }
 
   return NextResponse.json({ ok: true, data });

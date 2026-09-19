@@ -39,6 +39,11 @@ import { cameras as fixtureCameras } from "../../../fixtures";
 import { VirtualCanvas } from "../VirtualCanvas";
 import { defaultOverlayVisibility } from "../../overlayRegistry";
 import type { HouseMember } from "../../../server/houseMembers";
+import { useServerDirector } from "../../../director/useServerDirector";
+import { ChaosWorkshopPanel } from "../ChaosWorkshop/ChaosWorkshopPanel";
+import { useRotationRoster } from "@/zones/tank/director/useRotationRoster";
+import type { ServerDirectorState } from "../../../server/serverDirectorEngine";
+import type { RotationRoster } from "../../../server/rotationRoster";
 
 // The three enrolled housemates. Placeholder identities until real enrolment
 // exists — swap detectorLabel for whatever the enrolment pipeline emits, and
@@ -61,7 +66,6 @@ import {
 } from "../CinematographyMatrix";
 import { TouchDesignerBridge } from "../TouchDesignerBridge";
 import { LiveProgramMonitor } from "../LiveProgramMonitor";
-import { PeopleDetectionEngine, type DetectionCameraInput } from "../PeopleDetectionEngine";
 import {
   stepFocusEngine,
   DEFAULT_FOCUS_ENGINE_STATE,
@@ -79,19 +83,216 @@ import {
   DEFAULT_ANIMAL_FRAMING_STATE,
   type AnimalFramingState,
 } from "../../../director/animalFramingEngine";
+import { PredictiveRadarPanel } from "../PredictiveRadar";
+import {
+  calculatePotentialNextRoom,
+  extractModeCandidates,
+  type TrackingSpeed,
+} from "../../../director/aiTrackingFraming";
+import {
+  DEFAULT_GIMBAL_SMOOTHNESS,
+  aimToPtz,
+  initialFramingAim,
+  stepFramingAim,
+  type FramingAimState,
+} from "../../../director/gimbal";
 
-export function DirectorWorkspace() {
+const GIMBAL_SMOOTHNESS_STORAGE_KEY = "tank.director.gimbalSmoothness";
+
+export type DirectorWorkspaceProps = {
+  initialServerDirector?: Partial<ServerDirectorState> | null;
+  initialMode?: SubjectMode | null;
+  initialRoster?: RotationRoster | null;
+};
+
+export function DirectorWorkspace({
+  initialServerDirector,
+  initialMode,
+  initialRoster,
+}: DirectorWorkspaceProps = {}) {
   const { snapshot, liveById, isOnline } = useTankCameras();
+  const serverDirector = useServerDirector({ initialState: initialServerDirector });
 
-  // Mode defaults to Audio Detection ("speaker") as Mode #1
-  const [subjectMode, setSubjectMode] = useState<SubjectMode>("speaker");
+  const [directorState, setDirectorState] = useState<DirectorViewportState>({
+    activeCameraId: initialServerDirector?.activeCameraId || "cam-1786768240090",
+    activeCameraSlug: initialServerDirector?.activeRoomKey || "game-room",
+    subjectMode: initialMode || "speaker",
+    framingMode: "camera",
+    motionCurve: "snap",
+    viewportX: 0,
+    viewportY: 0,
+    viewportWidth: 3840,
+    viewportHeight: 2160,
+    zoomFactor: 1,
+    currentScore: 100,
+    shotStartedAt: Date.now(),
+    challengerId: null,
+    challengerSince: null,
+    scores: [],
+    rotationCameraIds: initialRoster?.cameraIds || [],
+    rotationIntervalMs: initialRoster?.intervalMs || 170_000,
+    rotationIndex: 0,
+    rotationSlotStartedAt: null,
+  });
+
+  // Mode defaults to server mode if pre-hydrated, otherwise audio detection ("speaker")
+  const [subjectMode, setSubjectMode] = useState<SubjectMode>(initialMode || "speaker");
+  const [followMember, setFollowMember] = useState<string | null>(null);
+  const [followable, setFollowable] = useState<Array<{ slug: string; displayName: string; kind: "person" | "pet"; guest?: boolean }> | undefined>(undefined);
+  const [enrollment, setEnrollment] = useState<{ slug: string; name: string; startedAt: string; kind?: "guest" | "member" } | null>(null);
+  const [modeAttached, setModeAttached] = useState(Boolean(initialMode));
+  const [modeAttachError, setModeAttachError] = useState<string | null>(null);
+  // Why this browser cannot change the director right now (null = it can).
+  // Refused changes used to fail silently and the 5 s resync put the server's
+  // mode back, which read as "it keeps going back to Dog" (2026-09-19).
+  const [controlDenial, setControlDenial] = useState<ControlDenial | null>(null);
+  const [modeRejected, setModeRejected] = useState<string | null>(null);
+
+  // Connection barrier: true until initial mode and central server state are confirmed
+  const isConnecting = !modeAttached && !Boolean(initialMode);
+
+  const pilotIdRef = useRef<string | null>(null);
+  const pendingCameraRef = useRef<{ cameraId: string; expiresAt: number } | null>(null);
+  const manualPilotPayloadRef = useRef<{
+    activeCameraId: string;
+    activeRoomKey: string;
+    ptzState: VirtualPtzState;
+  }>({
+    activeCameraId: directorState.activeCameraId,
+    activeRoomKey: "director",
+    ptzState: { zoomFactor: 1, panOffsetX: 0, panOffsetY: 0, zoomSpeed: 5, speedMode: "fine" },
+  });
+
+  // ── Mode sync with the REAL director ─────────────────────────────────────
+  // Adopts the live durable mode so the console opens showing what the 24/7
+  // director is ACTUALLY doing rather than its own default.
+  useEffect(() => {
+    let cancelled = false;
+    const attach = async () => {
+      try {
+        const res = await fetch("/api/tank/director/mode", { cache: "no-store" });
+        if (!res.ok) throw new Error("Director mode endpoint unavailable");
+        const body = await res.json();
+        const serverMode = body?.operatorMode ?? body?.effectiveMode;
+        if (cancelled || !serverMode) return;
+        setFollowMember(typeof body?.followMember === "string" ? body.followMember : null);
+        if (Array.isArray(body?.followable)) setFollowable(body.followable);
+        setEnrollment(body?.enrollment ?? null);
+        if (typeof body?.canControl === "boolean") {
+          setControlDenial(body.canControl ? null : ((body?.denial as ControlDenial | undefined) ?? "signed-out"));
+        }
+        setSubjectMode(serverMode as SubjectMode);
+        setDirectorState((prev) =>
+          prev.subjectMode === (serverMode as SubjectMode)
+            ? prev
+            : { ...prev, subjectMode: serverMode as SubjectMode }
+        );
+        setModeAttached(true);
+        setModeAttachError(null);
+      } catch {
+        if (!cancelled) setModeAttachError("Server Director unavailable");
+      }
+    };
+    void attach();
+    const retry = window.setInterval(attach, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(retry);
+    };
+  }, [setDirectorState]);
+
+  // Start or finish an enrollment. The server answers with the mode it settled
+  // on: Enroll while a session runs, Follow Member on the new guest after.
+  const sendEnrollment = useCallback(async (payload: Record<string, unknown>) => {
+    try {
+      const response = await fetch("/api/tank/director/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        const denial = denialFromResponse(response.status, body);
+        if (denial) setControlDenial(denial);
+        throw new Error(body?.error ?? "Director rejected the enrollment");
+      }
+      setEnrollment(body?.enrollment ?? null);
+      setFollowMember(typeof body?.followMember === "string" ? body.followMember : null);
+      const savedMode = body?.operatorMode ?? body?.effectiveMode;
+      if (savedMode) {
+        setSubjectMode(savedMode as SubjectMode);
+        setDirectorState((prev) => (prev.subjectMode === savedMode ? prev : { ...prev, subjectMode: savedMode as SubjectMode }));
+      }
+      setModeAttachError(null);
+    } catch (error) {
+      setModeAttachError(error instanceof Error ? error.message : "Enrollment failed");
+    }
+  }, [setDirectorState]);
+
+  // The rotation roster is server state; this panel is a client of it.
+  const rotationRoster = useRotationRoster(15_000, initialRoster);
+
+  const selectSubjectMode = useCallback((mode: SubjectMode, member?: string) => {
+    // Enroll needs a name before the director can act on it: show the name box
+    // first, and only tell the server once there is a guest to follow.
+    if (mode === "enroll" && !enrollment) {
+      setSubjectMode(mode);
+      return;
+    }
+    const previousMode = subjectMode;
+    setSubjectMode(mode);
+    if (member !== undefined) setFollowMember(member);
+    setDirectorState((prev) => (prev.subjectMode === mode ? prev : { ...prev, subjectMode: mode }));
+    setModeRejected(null);
+    void (async () => {
+      try {
+        const response = await fetch("/api/tank/director/mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // followMember is only sent when a member was picked, so changing
+          // modes never forgets who Follow Member was following.
+          body: JSON.stringify(member === undefined ? { mode } : { mode, followMember: member }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          // Put the real mode back at once and say why, rather than showing
+          // the pick until the next resync silently undoes it.
+          const denial = denialFromResponse(response.status, body);
+          if (denial) setControlDenial(denial);
+          setSubjectMode(previousMode);
+          setDirectorState((prev) => (prev.subjectMode === previousMode ? prev : { ...prev, subjectMode: previousMode }));
+          setModeRejected(body?.error ?? `The director refused ${mode} (HTTP ${response.status})`);
+          return;
+        }
+        setControlDenial(null);
+        setFollowMember(typeof body?.followMember === "string" ? body.followMember : null);
+        const savedMode = body?.operatorMode ?? body?.effectiveMode;
+        if (savedMode) {
+          setSubjectMode(savedMode as SubjectMode);
+          setDirectorState((prev) =>
+            prev.subjectMode === (savedMode as SubjectMode)
+              ? prev
+              : { ...prev, subjectMode: savedMode as SubjectMode }
+          );
+        }
+        setModeAttached(true);
+        setModeAttachError(null);
+      } catch {
+        setSubjectMode(previousMode);
+        setDirectorState((prev) => (prev.subjectMode === previousMode ? prev : { ...prev, subjectMode: previousMode }));
+        setModeRejected("Could not reach the director — your change was not saved");
+      }
+    })();
+  }, [enrollment, setDirectorState, subjectMode]);
   const [framingMode, setFramingMode] = useState<FramingMode>("camera");
   const [motionCurve, setMotionCurve] = useState<MotionCurve>("snap");
   const [showDetectionBoxes, setShowDetectionBoxes] = useState<boolean>(true);
   const [detectionFilters, setDetectionFilters] = useState<DetectionCategoryFilters>(DEFAULT_DETECTION_FILTERS);
   const [gamepadConnected, setGamepadConnected] = useState<boolean>(false);
   const [autoSimulateAudio, setAutoSimulateAudio] = useState<boolean>(true);
-  const [aiFocusEnabled, setAiFocusEnabled] = useState<boolean>(true);
+  // Off by default: its zoom-in / inspect / zoom-out / 5 s-wide cycle outranked
+  // the chosen framing and made the shot bounce (Molly, 2026-09-19).
+  const [aiFocusEnabled, setAiFocusEnabled] = useState<boolean>(false);
   const [focusState, setFocusState] = useState<FocusEngineState>(DEFAULT_FOCUS_ENGINE_STATE);
   const [groupFramingState, setGroupFramingState] = useState<GroupFramingState>(DEFAULT_GROUP_FRAMING_STATE);
   const [animalFramingState, setAnimalFramingState] = useState<AnimalFramingState>(DEFAULT_ANIMAL_FRAMING_STATE);
@@ -102,10 +303,54 @@ export function DirectorWorkspace() {
     zoomSpeed: 5,
     speedMode: "fine",
   });
+  const [trackingSpeed, setTrackingSpeed] = useState<TrackingSpeed>("standard");
+  const [gimbalSmoothness, setGimbalSmoothness] = useState<number>(DEFAULT_GIMBAL_SMOOTHNESS);
+  useEffect(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(GIMBAL_SMOOTHNESS_STORAGE_KEY));
+      if (saved >= 1 && saved <= 10) setGimbalSmoothness(saved);
+    } catch {
+      // Storage blocked: the default dial is fine.
+    }
+  }, []);
+  const changeGimbalSmoothness = useCallback((level: number) => {
+    setGimbalSmoothness(level);
+    try {
+      window.localStorage.setItem(GIMBAL_SMOOTHNESS_STORAGE_KEY, String(level));
+    } catch {
+      // Not remembered this time; still applied.
+    }
+  }, []);
+  const [isRoomLocked, setIsRoomLocked] = useState<boolean>(false);
+  const [aiPtzState, setAiPtzState] = useState<VirtualPtzState>({
+    zoomFactor: 1,
+    panOffsetX: 0,
+    panOffsetY: 0,
+    zoomSpeed: 5,
+    speedMode: "fine",
+  });
 
   // Extract REAL cameras from live platform snapshot or real fixtures
   const realCameras = useMemo(() => {
-    const discovered = snapshot?.cameras ?? [];
+    // Only cameras that survived deriveRooms().
+    //
+    // snapshot.cameras is the UNFILTERED directory; snapshot.rooms is the same
+    // set after room visibility policy. Reading .cameras directly meant the
+    // matrix — and the rotation roster built from it — kept showing an OBS room
+    // that had no publisher, because projectObsRoomCamera() marks every OBS
+    // room publicVisible:true and lets deriveRooms() do the dropping under
+    // "live-only". The public site reads rooms and was correct; this surface
+    // read cameras and was not.
+    //
+    // Filtering by room membership rather than re-testing presence here keeps
+    // deriveRooms() the single owner of that policy, and picks up the
+    // tank_rooms.is_offline kill-switch for free — this surface ignored that
+    // too. Safe as a complete partition: /api/tank/cameras is already
+    // publicVisible-filtered, and deriveRooms groups every publicVisible
+    // camera by roomScope, so anything absent from a room was dropped on
+    // purpose.
+    const liveCameraIds = new Set((snapshot?.rooms ?? []).flatMap((room) => room.cameraIds));
+    const discovered = (snapshot?.cameras ?? []).filter((c) => liveCameraIds.has(c.id));
     if (discovered.length > 0) {
       return discovered.map((c) => ({
         id: c.id,
@@ -277,26 +522,8 @@ export function DirectorWorkspace() {
     return () => clearInterval(id);
   }, [simulateDetection, realCameras, subjectMode]);
 
-  // Real cameras with something to actually decode a frame from — this is
-  // what makes the director's scoring engine see real numbers instead of
-  // nothing, which is the one missing piece behind serverDirectorEngine.ts's
-  // detection branch never firing. Toggleable because it's real inference
-  // work running in this tab; an admin who wants the tab quiet can turn it
-  // off without losing the manual simulate toggle above.
-  const [realDetectionEnabled, setRealDetectionEnabled] = useState(true);
-  const detectionCameras = useMemo<DetectionCameraInput[]>(() => {
-    if (!realDetectionEnabled) return [];
-    const out: DetectionCameraInput[] = [];
-    for (const cam of realCameras) {
-      const live = liveById.get(cam.id);
-      if (!live || !live.playbackUrl) continue;
-      if (live.presence !== "online" && live.presence !== "degraded") continue;
-      out.push({ id: cam.id, playbackUrl: live.playbackUrl });
-    }
-    return out;
-  }, [realDetectionEnabled, realCameras, liveById]);
-
   const [liveTelemetry, setLiveTelemetry] = useState<CameraTelemetryInput[]>([]);
+  const [serverDetectionActive, setServerDetectionActive] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -304,7 +531,10 @@ export function DirectorWorkspace() {
         const res = await fetch("/api/tank/director/telemetry/live", { cache: "no-store" });
         if (res.ok) {
           const json = await res.json();
-          if (!cancelled && Array.isArray(json?.telemetry)) setLiveTelemetry(json.telemetry);
+          if (!cancelled) {
+            if (Array.isArray(json?.telemetry)) setLiveTelemetry(json.telemetry);
+            setServerDetectionActive(Boolean(json?.serverDetectionActive));
+          }
         }
       } catch {
         // A missed poll just means the canvas shows last-known state for one
@@ -320,9 +550,10 @@ export function DirectorWorkspace() {
   }, []);
 
   const mergedTelemetry = useMemo(() => {
+    if (!simulateDetection) return liveTelemetry;
     const liveById2 = new Map(liveTelemetry.map((t) => [t.cameraId, t]));
     return inputs.map((local) => liveById2.get(local.cameraId) ?? local);
-  }, [inputs, liveTelemetry]);
+  }, [inputs, liveTelemetry, simulateDetection]);
 
   // realCameras[0] is always Game Room — it's first in config.json's fixed
   // camera order, which is DB/config authoring order, not "most relevant
@@ -338,33 +569,57 @@ export function DirectorWorkspace() {
   const defaultActiveId = firstOnlineCamera?.id ?? "cam-1786768240090";
   const defaultActiveSlug = firstOnlineCamera?.slug ?? "cam0";
 
-  const [directorState, setDirectorState] = useState<DirectorViewportState>({
-    activeCameraId: defaultActiveId,
-    activeCameraSlug: defaultActiveSlug,
-    subjectMode: "speaker",
-    framingMode: "camera",
-    motionCurve: "snap",
-    viewportX: 0,
-    viewportY: 0,
-    viewportWidth: 3840,
-    viewportHeight: 2160,
-    zoomFactor: 1,
-    currentScore: 100,
-    shotStartedAt: Date.now(),
-    challengerId: null,
-    challengerSince: null,
-    scores: [],
-    rotationCameraIds: [],
-    // 2:50 per slot — the operator's own stated metric for a rotation between
-    // a couple of spotlighted streamers.
-    rotationIntervalMs: 170_000,
-    rotationIndex: 0,
-    rotationSlotStartedAt: null,
-  });
+  // The configurator is a client of the central Director, never its clock.
+  // Realtime + the server-state poll in useServerDirector keep this monitor on
+  // the same camera as the OBS overlay even after the page is refreshed or no
+  // operator has had the console open for hours.
+  useEffect(() => {
+    if (!serverDirector.activeCameraId || simulateDetection) return;
+
+    // Operator Room Lock protection: Keep active camera pinned and ignore background cuts
+    if (isRoomLocked) return;
+
+    // Anti-rubberband protection: If user clicked a camera in manual mode,
+    // ignore stale polling ticks from the previous room until the server
+    // acknowledges the target camera or the 3-second safety window elapses.
+    if (pendingCameraRef.current) {
+      if (Date.now() < pendingCameraRef.current.expiresAt) {
+        if (serverDirector.activeCameraId !== pendingCameraRef.current.cameraId) {
+          return;
+        }
+      }
+      pendingCameraRef.current = null;
+    }
+
+    const serverCamera = realCameras.find((camera) => camera.id === serverDirector.activeCameraId);
+    const serverTile = atlasLayout.tiles.find((tile) => tile.cameraId === serverDirector.activeCameraId);
+    setDirectorState((previous) => {
+      if (
+        previous.activeCameraId === serverDirector.activeCameraId &&
+        previous.activeCameraSlug === (serverCamera?.slug ?? serverTile?.slug ?? previous.activeCameraSlug)
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        activeCameraId: serverDirector.activeCameraId,
+        activeCameraSlug: serverCamera?.slug ?? serverTile?.slug ?? previous.activeCameraSlug,
+        viewportX: serverTile?.xMin ?? previous.viewportX,
+        viewportY: serverTile?.yMin ?? previous.viewportY,
+        shotStartedAt: Date.now(),
+      };
+    });
+  }, [
+    atlasLayout.tiles,
+    realCameras,
+    serverDirector.activeCameraId,
+    simulateDetection,
+    isRoomLocked,
+  ]);
 
   // ═══════════ REAL-TIME AUDIO SIMULATION ENGINE (AUTO-DELEGATION) ═══════════
   useEffect(() => {
-    if (!autoSimulateAudio || subjectMode !== "speaker") return;
+    if (!simulateDetection || !autoSimulateAudio || subjectMode !== "speaker") return;
 
     const interval = setInterval(() => {
       setInputs((prev) => {
@@ -392,23 +647,32 @@ export function DirectorWorkspace() {
     }, 400);
 
     return () => clearInterval(interval);
-  }, [autoSimulateAudio, subjectMode]);
+  }, [autoSimulateAudio, simulateDetection, subjectMode]);
 
   // Re-evaluate on mode, telemetry or canvas layout change
   useEffect(() => {
+    if (!simulateDetection) return;
     const timer = setInterval(() => {
-      setDirectorState((prev) =>
-        evaluateDirectorStep(
+      setDirectorState((prev) => {
+        const next = evaluateDirectorStep(
           { ...prev, subjectMode, framingMode, motionCurve },
           inputs,
           atlasLayout.tiles,
           Date.now()
-        )
-      );
+        );
+        if (isRoomLocked) {
+          return {
+            ...next,
+            activeCameraId: prev.activeCameraId,
+            activeCameraSlug: prev.activeCameraSlug,
+          };
+        }
+        return next;
+      });
     }, 150);
 
     return () => clearInterval(timer);
-  }, [subjectMode, framingMode, motionCurve, inputs, atlasLayout]);
+  }, [subjectMode, framingMode, motionCurve, inputs, atlasLayout, simulateDetection, isRoomLocked]);
 
   const currentActiveTile = useMemo(() => {
     return (
@@ -421,6 +685,71 @@ export function DirectorWorkspace() {
   const activeLiveCam = useMemo(() => {
     return liveById.get(directorState.activeCameraId);
   }, [liveById, directorState.activeCameraId]);
+
+  manualPilotPayloadRef.current = {
+    activeCameraId: directorState.activeCameraId,
+    activeRoomKey: activeLiveCam?.roomScope || currentActiveTile.slug || "director",
+    ptzState: manualPtzState,
+  };
+
+  const dispatchPilotClaim = useCallback(
+    async (
+      targetCameraId: string,
+      targetRoomKey: string,
+      ptz: VirtualPtzState = manualPtzState,
+      action: "claim" | "release" = "claim"
+    ) => {
+      pilotIdRef.current ??=
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `director-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const pilotId = pilotIdRef.current;
+
+      try {
+        await fetch("/api/tank/director/pilot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            pilotId,
+            connectionType: "browser_web",
+            activeCameraId: targetCameraId,
+            activeRoomKey: targetRoomKey,
+            ptzState: ptz,
+            forceTakeover: true,
+          }),
+          keepalive: action === "release",
+        });
+      } catch {
+        // Next heartbeat retries
+      }
+    },
+    [manualPtzState]
+  );
+
+  const handleSelectCamera = useCallback(
+    (cameraId: string, slug: string, xMin: number, yMin: number) => {
+      // 1. Lock out stale ticks for 3 seconds while cut propagates to central server
+      pendingCameraRef.current = { cameraId, expiresAt: Date.now() + 3000 };
+
+      // 2. Put local UI into manual mode immediately
+      selectSubjectMode("manual");
+      setDirectorState((prev) => ({
+        ...prev,
+        activeCameraId: cameraId,
+        activeCameraSlug: slug,
+        subjectMode: "manual",
+        viewportX: xMin,
+        viewportY: yMin,
+        shotStartedAt: Date.now(),
+      }));
+
+      // 3. Immediately dispatch pilot claim to central server so broadcast cuts immediately
+      const targetRoomKey = liveById.get(cameraId)?.roomScope || slug || "director";
+      void dispatchPilotClaim(cameraId, targetRoomKey, manualPtzState, "claim");
+    },
+    [dispatchPilotClaim, liveById, manualPtzState, selectSubjectMode, setDirectorState]
+  );
 
   // 1. Audio Speech Trigger
   const handleTriggerSpeech = (targetCamId: string, peakDb: number) => {
@@ -484,6 +813,7 @@ export function DirectorWorkspace() {
   // Directional Snapping Handler
   const handleSnapDirection = useCallback(
     (direction: "up" | "down" | "left" | "right") => {
+      if (isConnecting) return;
       const { cols, rows } = atlasLayout.grid;
       const curCol = currentActiveTile?.col ?? 0;
       const curRow = currentActiveTile?.row ?? 0;
@@ -502,19 +832,10 @@ export function DirectorWorkspace() {
         currentActiveTile;
 
       if (targetTile && targetTile.cameraId !== directorState.activeCameraId) {
-        setSubjectMode("manual");
-        setDirectorState((prev) => ({
-          ...prev,
-          activeCameraId: targetTile.cameraId,
-          activeCameraSlug: targetTile.slug,
-          subjectMode: "manual",
-          viewportX: targetTile.xMin,
-          viewportY: targetTile.yMin,
-          shotStartedAt: Date.now(),
-        }));
+        handleSelectCamera(targetTile.cameraId, targetTile.slug, targetTile.xMin, targetTile.yMin);
       }
     },
-    [atlasLayout, currentActiveTile, directorState.activeCameraId]
+    [atlasLayout, currentActiveTile, directorState.activeCameraId, isConnecting, handleSelectCamera]
   );
 
   // Keyboard Navigation Listener
@@ -655,79 +976,190 @@ export function DirectorWorkspace() {
     return () => clearInterval(interval);
   }, [aiFocusEnabled, subjectMode, directorState.activeCameraId, mergedTelemetry]);
 
-  // Active virtual PTZ state derived from Group Mode or Focus Mode
-  const activePtzState = useMemo(() => {
-    if (subjectMode === "manual") {
-      return manualPtzState;
+  // ═══════════ AUTONOMOUS AI PTZ ADVANCED FRAMING ENGINE ═══════════
+  // Decides WHERE to aim, once per telemetry reading; the gimbal in every
+  // renderer does the moving (director/gimbal.ts). It used to re-aim at the raw
+  // box and setState every 80 ms, re-rendering this whole workspace ~12x a
+  // second and bouncing the shot whenever a box wobbled or went missing.
+  const framingAimRef = useRef<{ cameraId: string; state: FramingAimState }>({ cameraId: "", state: initialFramingAim() });
+  useEffect(() => {
+    const activeCamId = directorState.activeCameraId;
+    if (subjectMode === "manual") return;
+    if (framingAimRef.current.cameraId !== activeCamId) {
+      // A new room is a new picture: aim fresh, never carry the old crop over.
+      framingAimRef.current = { cameraId: activeCamId, state: initialFramingAim() };
     }
-    if (focusState.phase !== "IDLE_WIDE") {
-      return focusState.currentPtz;
+    const activeInput = mergedTelemetry.find((i) => i.cameraId === activeCamId);
+    const candidates = extractModeCandidates(activeInput, subjectMode, followMember);
+    const next = stepFramingAim(framingAimRef.current.state, candidates, framingMode, Date.now());
+    framingAimRef.current.state = next;
+    const ptz = aimToPtz(next.aim, trackingSpeed);
+    setAiPtzState((prev) =>
+      prev.zoomFactor === ptz.zoomFactor &&
+      prev.panOffsetX === ptz.panOffsetX &&
+      prev.panOffsetY === ptz.panOffsetY &&
+      prev.speedMode === ptz.speedMode
+        ? prev
+        : ptz,
+    );
+  }, [subjectMode, framingMode, trackingSpeed, directorState.activeCameraId, mergedTelemetry, followMember]);
+
+  // Active virtual PTZ state derived from Focus Mode, Group Mode, Animal Mode, or Advanced AI Framing
+  // The framing the operator chose always wins. AI Focus's inspect cycle is a
+  // readout now, never the shot: it overrode Full Camera itself.
+  const activePtzState = useMemo(() => {
+    const withGimbal = (ptz: VirtualPtzState) => ({ ...ptz, smoothness: gimbalSmoothness });
+    if (subjectMode === "manual") {
+      return withGimbal(manualPtzState);
+    }
+    if (framingMode === "camera" || framingMode === "wide") {
+      return undefined;
     }
     if (subjectMode === "group" && groupFramingState.calibrationPhase !== "WIDE") {
-      return groupFramingState.currentPtz;
+      return withGimbal(groupFramingState.currentPtz);
     }
     if (subjectMode === "animals" && animalFramingState.calibrationPhase !== "WIDE") {
-      return animalFramingState.currentPtz;
+      return withGimbal(animalFramingState.currentPtz);
     }
-    return undefined;
-  }, [focusState, subjectMode, groupFramingState, animalFramingState, manualPtzState]);
+    return withGimbal(aiPtzState);
+  }, [subjectMode, groupFramingState, animalFramingState, manualPtzState, framingMode, aiPtzState, gimbalSmoothness]);
 
-  const pilotIdRef = useRef<string | null>(null);
-  const manualPilotPayloadRef = useRef({
+  // The staff monitor used to be the only place that knew the final AI crop.
+  // Publish that composed frame as a short lease so the public Director and
+  // OBS browser source render the exact same shot. Camera selection remains
+  // server-owned; this endpoint cannot cut rooms or claim manual control.
+  const latestProgramFramingRef = useRef({
     activeCameraId: directorState.activeCameraId,
     activeRoomKey: activeLiveCam?.roomScope || currentActiveTile.slug || "director",
-    ptzState: manualPtzState,
+    ptzState: activePtzState ?? {
+      zoomFactor: 1,
+      panOffsetX: 0,
+      panOffsetY: 0,
+      zoomSpeed: 5,
+      speedMode: "fine" as const,
+    },
   });
-  manualPilotPayloadRef.current = {
+  latestProgramFramingRef.current = {
     activeCameraId: directorState.activeCameraId,
     activeRoomKey: activeLiveCam?.roomScope || currentActiveTile.slug || "director",
-    ptzState: manualPtzState,
+    ptzState: activePtzState ?? {
+      zoomFactor: 1,
+      panOffsetX: 0,
+      panOffsetY: 0,
+      zoomSpeed: 5,
+      speedMode: "fine",
+    },
   };
 
-  // Manual Pilot is a short server lease, not browser-local UI state. Keep it
-  // alive only while the operator is in manual mode; the server Director and
-  // OBS compositor then consume the same camera/PTZ decision for every viewer.
   useEffect(() => {
-    if (subjectMode !== "manual" || !manualPilotPayloadRef.current.activeCameraId) return;
+    if (!modeAttached || subjectMode === "manual" || isRoomLocked || simulateDetection || controlDenial) return;
+    let stopped = false;
+    let inFlight = false;
+    let lastSignature = "";
+    let lastSentAt = 0;
 
-    pilotIdRef.current ??=
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `director-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const pilotId = pilotIdRef.current;
-    let active = true;
-
-    const syncPilot = async (action: "claim" | "release") => {
-      const payload = manualPilotPayloadRef.current;
+    const publish = async () => {
+      if (stopped || inFlight) return;
+      const payload = latestProgramFramingRef.current;
+      if (!payload.activeCameraId) return;
+      const ptz = payload.ptzState;
+      const signature = [
+        payload.activeCameraId,
+        ptz.zoomFactor.toFixed(2),
+        Math.round(ptz.panOffsetX),
+        Math.round(ptz.panOffsetY),
+      ].join(":");
+      const now = Date.now();
+      // Moving shots publish at ~5.5 fps; a steady shot heartbeats once per
+      // second so its 2.5s server lease never expires while this compositor is
+      // still authoritative.
+      if (signature === lastSignature && now - lastSentAt < 1_000) return;
+      inFlight = true;
       try {
-        await fetch("/api/tank/director/pilot", {
+        const response = await fetch("/api/tank/director/program-framing", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action,
-            pilotId,
-            connectionType: "browser_web",
-            activeCameraId: payload.activeCameraId,
-            activeRoomKey: payload.activeRoomKey,
-            ptzState: payload.ptzState,
-          }),
-          keepalive: action === "release",
+          body: JSON.stringify(payload),
         });
-      } catch {
-        // The next heartbeat retries; lease expiry safely returns to auto mode.
+        if (response.ok) {
+          lastSignature = signature;
+          lastSentAt = Date.now();
+        } else if (response.status === 401 || response.status === 403) {
+          // Signed out or not staff: every retry would be refused the same way
+          // (it was posting a 403 every 180 ms). Stop and show why.
+          const body = await response.json().catch(() => ({}));
+          setControlDenial(denialFromResponse(response.status, body) ?? "signed-out");
+          stopped = true;
+          window.clearInterval(timer);
+        }
+      } finally {
+        inFlight = false;
       }
     };
 
-    void syncPilot("claim");
+    void publish();
+    const timer = window.setInterval(() => void publish(), 180);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [modeAttached, subjectMode, isRoomLocked, simulateDetection, controlDenial]);
+
+  // Manual Pilot or Operator Room Lock holds a server lease on the active camera.
+  // When locked, the server keeps this camera pinned and streams the active PTZ crop.
+  useEffect(() => {
+    if ((subjectMode !== "manual" && !isRoomLocked) || !manualPilotPayloadRef.current.activeCameraId) return;
+
+    let active = true;
     const heartbeat = window.setInterval(() => {
-      if (active) void syncPilot("claim");
+      if (active) {
+        const payload = manualPilotPayloadRef.current;
+        void dispatchPilotClaim(
+          payload.activeCameraId,
+          payload.activeRoomKey,
+          activePtzState || payload.ptzState,
+          "claim"
+        );
+      }
     }, 1_000);
+
     return () => {
       active = false;
       window.clearInterval(heartbeat);
-      void syncPilot("release");
+      // NOTE: Do not eagerly release lease on component unmount/refresh. The 8s lease TTL
+      // ensures clean automatic expiration without causing sudden camera cuts during page reloads.
     };
-  }, [subjectMode]);
+  }, [subjectMode, isRoomLocked, dispatchPilotClaim, activePtzState]);
+
+  const activeRoomName = activeLiveCam?.name || currentActiveTile.cameraName || "Director Feed";
+  const predictiveRadar = useMemo(() => {
+    return calculatePotentialNextRoom({
+      activeCameraId: directorState.activeCameraId,
+      activeRoomName,
+      subjectMode,
+      framingMode,
+      speedMode: trackingSpeed,
+      inputs: mergedTelemetry,
+      cameras: realCameras,
+      isRoomLocked,
+      shotStartedAt: directorState.shotStartedAt,
+      challengerId: directorState.challengerId,
+      challengerSince: directorState.challengerSince,
+    });
+  }, [
+    directorState.activeCameraId,
+    activeRoomName,
+    subjectMode,
+    framingMode,
+    trackingSpeed,
+    mergedTelemetry,
+    realCameras,
+    isRoomLocked,
+    directorState.shotStartedAt,
+    directorState.challengerId,
+    directorState.challengerSince,
+  ]);
+
 
     const handleAdjustFeet = (camId: string, delta: number) => {
     setInputs((prev) => {
@@ -757,40 +1189,24 @@ export function DirectorWorkspace() {
     });
   };
 
-  const handleSelectCamera = (cameraId: string, slug: string, xMin: number, yMin: number) => {
-    setSubjectMode("manual");
-    setDirectorState((prev) => ({
-      ...prev,
-      activeCameraId: cameraId,
-      activeCameraSlug: slug,
-      subjectMode: "manual",
-      viewportX: xMin,
-      viewportY: yMin,
-      shotStartedAt: Date.now(),
-    }));
-  };
-
   // ── Rotation roster: spotlight one or two operator-picked cameras/rooms
   // (a specific moderator's or admin's OBS stream, IRL, whatever) on a
   // fixed timer, instead of leaving selection to the heuristic scorer.
+  // These three used to mutate React state and stop there, so the roster died
+  // on refresh and the server — the thing that actually cuts — never saw it.
+  // They now go through the durable roster; the local mirror below only exists
+  // so the rest of this component keeps rendering off one shape.
   const toggleRotationCamera = (cameraId: string) => {
-    setDirectorState((prev) => {
-      const already = prev.rotationCameraIds.includes(cameraId);
-      const rotationCameraIds = already
-        ? prev.rotationCameraIds.filter((id) => id !== cameraId)
-        : [...prev.rotationCameraIds, cameraId];
-      return { ...prev, rotationCameraIds };
-    });
+    rotationRoster.toggleCamera(cameraId);
   };
 
   const setRotationIntervalSeconds = (seconds: number) => {
-    const clamped = Math.max(10, Math.round(seconds));
-    setDirectorState((prev) => ({ ...prev, rotationIntervalMs: clamped * 1000 }));
+    rotationRoster.setIntervalSeconds(seconds);
   };
 
   const startRotation = () => {
-    if (directorState.rotationCameraIds.length === 0) return;
-    setSubjectMode("rotation");
+    if (rotationRoster.roster.cameraIds.length === 0) return;
+    selectSubjectMode("rotation");
     setDirectorState((prev) => ({
       ...prev,
       subjectMode: "rotation",
@@ -801,18 +1217,12 @@ export function DirectorWorkspace() {
   };
 
   const stopRotation = () => {
-    setSubjectMode("manual");
+    selectSubjectMode("manual");
     setDirectorState((prev) => ({ ...prev, subjectMode: "manual" }));
   };
 
   return (
     <div className="space-y-6">
-      {/* Runs real person detection in this tab against hidden video
-          elements and posts to the real telemetry store — see
-          PeopleDetectionEngine's own comment for why this is separate from
-          the visible CameraPlayer tiles above. Renders nothing itself. */}
-      <PeopleDetectionEngine cameras={detectionCameras} />
-
       {/* Top Breadcrumb & Return to House */}
       <div className="flex items-center justify-between">
         <Link
@@ -844,18 +1254,16 @@ export function DirectorWorkspace() {
                 : "● AI Focus Ready"
               : "○ AI Focus Off"}
           </button>
-          <button
-            type="button"
-            onClick={() => setRealDetectionEnabled((v) => !v)}
-            className={`rounded px-2.5 py-1 text-[10px] font-black uppercase tracking-wide transition ${
-              realDetectionEnabled
+          <span
+            className={`rounded px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+              serverDetectionActive
                 ? "bg-emerald-500 text-black"
-                : "bg-black/10 text-[#241f14] hover:bg-black/20"
+                : "border border-amber-600/50 bg-amber-500/15 text-amber-900"
             }`}
-            title="Real person detection, running in this tab against the live feeds"
+            title="Read-only health from the 24/7 Tank vision worker"
           >
-            {realDetectionEnabled ? `● Real Detection (${detectionCameras.length})` : "○ Real Detection Off"}
-          </button>
+            {serverDetectionActive ? "● Server Vision Attached" : "○ Server Vision Waiting"}
+          </span>
           <span className="text-xs font-mono font-bold text-slate-500">
             Route: tank.unenter.live/director-configuration · {realCameras.length} Real Feeds Attached
           </span>
@@ -865,6 +1273,28 @@ export function DirectorWorkspace() {
       {/* Main Studio Workstation Chassis */}
       <ChromePanel withScrews className="w-full">
         <div className="space-y-6 font-sans p-3">
+          {/* Connection Barrier HUD Notice */}
+          {isConnecting && (
+            <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-3.5 flex items-center justify-between gap-3 animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="grid h-7 w-7 place-items-center rounded bg-amber-500 text-black font-black text-xs shadow">
+                  ⚡
+                </div>
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wider text-amber-300">
+                    Connecting to 24/7 Central Director Control Plane
+                  </p>
+                  <p className="text-[10px] font-mono text-amber-200/70">
+                    Syncing authoritative server mode, rotation roster, and active broadcast camera… Controls locked until sync is established.
+                  </p>
+                </div>
+              </div>
+              <span className="text-[9px] font-mono uppercase tracking-widest text-amber-400 font-black border border-amber-400/40 rounded px-2 py-0.5">
+                INITIALIZING HANDSHAKE
+              </span>
+            </div>
+          )}
+
           {/* Header Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/15 pb-4">
             <div className="flex items-center gap-3">
@@ -951,11 +1381,14 @@ export function DirectorWorkspace() {
                     <button
                       key={cam.id}
                       type="button"
+                      disabled={isConnecting}
                       onClick={() => {
                         const tile = atlasLayout.tiles.find((t) => t.cameraId === cam.id);
                         if (tile) handleSelectCamera(tile.cameraId, tile.slug, tile.xMin, tile.yMin);
                       }}
                       className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-black transition-all ${
+                        isConnecting ? "opacity-50 cursor-not-allowed " : ""
+                      }${
                         isLead
                           ? "bg-[#241f14] text-orange-400 border border-orange-500 shadow-md"
                           : "bg-white/80 text-[#4c4630] border border-black/15 hover:bg-white"
@@ -1206,11 +1639,39 @@ export function DirectorWorkspace() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             {/* Left 7 Cols: Cinematography Mode Selectors */}
             <div className="lg:col-span-7 space-y-4">
-              <SubjectModeSelector
-                subjectMode={subjectMode}
-                onSelectMode={setSubjectMode}
-              />
-
+              {controlDenial && <ControlDenialBanner denial={controlDenial} />}
+              {modeRejected && !controlDenial && (
+                <p role="alert" className="rounded-md border border-red-500/60 bg-red-950/60 px-3 py-2 text-[11px] font-bold text-red-200">
+                  {modeRejected}
+                </p>
+              )}
+              {modeAttached ? (
+                <div aria-disabled={Boolean(controlDenial)} className={controlDenial ? "pointer-events-none select-none opacity-40" : undefined}>
+                <SubjectModeSelector
+                  subjectMode={subjectMode}
+                  onSelectMode={(mode) => selectSubjectMode(mode)}
+                  followMember={followMember}
+                  onSelectFollowMember={(slug) => selectSubjectMode("member", slug)}
+                  followable={followable}
+                  enrollment={enrollment}
+                  onStartEnrollment={(name, member) =>
+                    void sendEnrollment(member ? { mode: "enroll", enrollMember: member } : { mode: "enroll", enrollName: name })
+                  }
+                  onFinishEnrollment={() => void sendEnrollment({ finishEnrollment: true })}
+                />
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-700/60 bg-[#16171d] px-4 py-5 text-center">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-400">
+                    Attaching to 24/7 Server Director
+                  </p>
+                  <p className="mt-1 text-[10px] font-mono text-slate-400">
+                    {modeAttachError
+                      ? `${modeAttachError} · retrying`
+                      : "Reading the durable programme mode…"}
+                  </p>
+                </div>
+              )}
               {/* ═══ ROTATION ROSTER — spotlight specific people/rooms on a timer ═══ */}
               <div className="rounded-xl border border-black/80 bg-[#16171d] p-3.5 space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -1219,12 +1680,12 @@ export function DirectorWorkspace() {
                   </p>
                   <span
                     className={`rounded px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-                      directorState.subjectMode === "rotation"
-                        ? "bg-emerald-500 text-black"
+                      subjectMode === "rotation" || directorState.subjectMode === "rotation"
+                        ? "bg-emerald-500 text-black animate-pulse"
                         : "bg-slate-800 text-slate-400"
                     }`}
                   >
-                    {directorState.subjectMode === "rotation" ? "Live" : "Idle"}
+                    {subjectMode === "rotation" || directorState.subjectMode === "rotation" ? "Live" : "Idle"}
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400">
@@ -1232,9 +1693,24 @@ export function DirectorWorkspace() {
                   stream — and the director will cycle through exactly them on
                   a fixed timer, ignoring the auto-scorer entirely.
                 </p>
+                {/* The roster is durable server state, so it has to be able to
+                    say when it is NOT attached — an operator editing a roster
+                    the 24/7 director never received is the exact failure this
+                    panel used to have silently. */}
+                {rotationRoster.error ? (
+                  <p className="rounded border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-[10px] font-bold text-amber-400">
+                    {rotationRoster.error}
+                  </p>
+                ) : (
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">
+                    {rotationRoster.attached
+                      ? "Saved on the 24/7 server director · survives refresh"
+                      : "Attaching to the server director…"}
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                   {realCameras.map((cam) => {
-                    const picked = directorState.rotationCameraIds.includes(cam.id);
+                    const picked = rotationRoster.roster.cameraIds.includes(cam.id);
                     return (
                       <button
                         key={cam.id}
@@ -1260,11 +1736,11 @@ export function DirectorWorkspace() {
                     type="number"
                     min={10}
                     step={5}
-                    value={Math.round(directorState.rotationIntervalMs / 1000)}
+                    value={Math.round(rotationRoster.roster.intervalMs / 1000)}
                     onChange={(e) => setRotationIntervalSeconds(Number(e.target.value) || 170)}
                     className="w-20 rounded border border-slate-700 bg-black/50 px-2 py-1 text-[11px] font-mono text-slate-200"
                   />
-                  {directorState.subjectMode === "rotation" ? (
+                  {subjectMode === "rotation" || directorState.subjectMode === "rotation" ? (
                     <button
                       type="button"
                       onClick={stopRotation}
@@ -1276,7 +1752,7 @@ export function DirectorWorkspace() {
                     <button
                       type="button"
                       onClick={startRotation}
-                      disabled={directorState.rotationCameraIds.length === 0}
+                      disabled={rotationRoster.roster.cameraIds.length === 0}
                       className="ml-auto rounded-md bg-emerald-600 px-3 py-1 text-[10px] font-black uppercase text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Start Rotation
@@ -1289,6 +1765,10 @@ export function DirectorWorkspace() {
                 <FramingModeSelector
                   framingMode={framingMode}
                   onSelectFraming={setFramingMode}
+                  speedMode={trackingSpeed === "sport" ? "sport" : "fine"}
+                  onSelectSpeed={(s) => setTrackingSpeed(s === "sport" ? "sport" : "standard")}
+                  smoothness={gimbalSmoothness}
+                  onSmoothnessChange={changeGimbalSmoothness}
                 />
                 <MotionKinematicsSelector
                   motionCurve={motionCurve}
@@ -1305,6 +1785,18 @@ export function DirectorWorkspace() {
                 activeLiveCam={activeLiveCam}
                 ptzState={activePtzState}
               />
+              <PredictiveRadarPanel
+                prediction={predictiveRadar}
+                onToggleRoomLock={() => setIsRoomLocked((prev) => !prev)}
+                activeRoomName={activeRoomName}
+                trackingSpeed={trackingSpeed}
+                framingMode={framingMode}
+                activeChaosItem={serverDirector.activeChaosItem}
+              />
+              <ChaosWorkshopPanel
+                activeChaosItem={serverDirector.activeChaosItem}
+                activeRoomKey={activeRoomName}
+              />
               <TouchDesignerBridge />
             </div>
           </div>
@@ -1314,3 +1806,43 @@ export function DirectorWorkspace() {
   );
 }
 export default DirectorWorkspace;
+
+type ControlDenial = "signed-out" | "not-staff" | "unavailable";
+
+function denialFromResponse(status: number, body: unknown): ControlDenial | null {
+  const denial = (body as { denial?: unknown } | null)?.denial;
+  if (denial === "signed-out" || denial === "not-staff" || denial === "unavailable") return denial;
+  if (status === 401) return "signed-out";
+  if (status === 403) return "not-staff";
+  return null;
+}
+
+/**
+ * Shown above the controls whenever this browser cannot change the director,
+ * with the one action that fixes it. The controls below are locked meanwhile.
+ */
+function ControlDenialBanner({ denial }: { denial: ControlDenial }) {
+  const signInHref =
+    typeof window === "undefined"
+      ? "https://auth.unenter.live/sign-in"
+      : `https://auth.unenter.live/sign-in?next=${encodeURIComponent(window.location.href)}`;
+  const copy =
+    denial === "signed-out"
+      ? { title: "You're signed out", detail: "Changes can't reach the director until you sign in again." }
+      : denial === "not-staff"
+        ? { title: "This account isn't Tank staff", detail: "Sign in with a staff account to control the director." }
+        : { title: "Can't confirm your staff access", detail: "The account check failed. It retries every few seconds." };
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/70 bg-red-950/70 px-4 py-3">
+      <div>
+        <p className="text-xs font-black uppercase tracking-wider text-red-200">{copy.title}</p>
+        <p className="mt-0.5 text-[11px] text-red-100/80">{copy.detail} Controls are locked meanwhile.</p>
+      </div>
+      {denial !== "unavailable" && (
+        <a href={signInHref} className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-black uppercase tracking-wider text-white hover:bg-red-400">
+          Sign in
+        </a>
+      )}
+    </div>
+  );
+}

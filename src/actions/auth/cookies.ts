@@ -13,7 +13,22 @@ const APP_AUTH_COOKIE_NAMES = [
   "userPermissions",
   "rememberMe",
   "lastPage",
+  "authAt",
 ] as const;
+
+/**
+ * Epoch SECONDS of the last real authentication, used by the per-zone session
+ * freshness gate (see src/lib/auth/sessionPolicy.ts). Written here because
+ * populateUserCookies is the one choke point every sign-in path goes through.
+ *
+ * Not signed, deliberately. It gates whether a zone asks you to sign in again,
+ * not what you are allowed to do — RLS and the server-side role checks run
+ * regardless and never read this. Forging it lets the legitimate holder of an
+ * already-valid session skip a re-auth prompt; an attacker who could set it
+ * would need the browser, and would therefore already have the session cookie
+ * itself. If this ever gates something real, sign it.
+ */
+export const AUTH_AT_COOKIE = "authAt";
 
 // "remember" no longer gates duration — it was 30 days vs 24 hours, which
 // meant anyone who didn't tick the box got logged out (or at least lost
@@ -82,6 +97,7 @@ export const populateUserCookies = async (userId: string, remember = false) => {
     store.set("userRole", role, cookieOptions);
     store.set("userRoleUserId", userId, cookieOptions);
     store.set("rememberMe", remember.toString(), cookieOptions);
+    store.set(AUTH_AT_COOKIE, String(Math.floor(Date.now() / 1000)), cookieOptions);
 
     if (profileData?.display_name) {
       store.set("userDisplayName", profileData.display_name, cookieOptions);

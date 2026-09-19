@@ -1,10 +1,13 @@
 // app/api/analytics/devices/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
+import { requireAdmin } from '@/lib/require-admin';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    // Admin-only: this returns site-wide analytics across all visitors.
+    const gate = await requireAdmin();
+    if (gate.error) return gate.error;
+    const supabase = gate.admin;
     
     // Get query parameters
     const { searchParams } = new URL(request.url);

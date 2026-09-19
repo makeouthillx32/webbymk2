@@ -172,7 +172,11 @@ export async function banUser(params: {
     // Broadcast user_banned event to all rooms
     const channel = adminSupabase.channel("tank:chat_moderation");
     try {
-      await channel.httpSend("user_banned", { userId: params.userId, userName: params.userName });
+      await channel.send({
+        type: "broadcast",
+        event: "user_banned",
+        payload: { userId: params.userId, userName: params.userName },
+      });
     } finally {
       await adminSupabase.removeChannel(channel);
     }
@@ -289,7 +293,11 @@ export async function deleteChatMessageDb(messageId: string, roomId: string, del
     // Broadcast deletion in real time to all active room viewers
     const channel = adminSupabase.channel(`room:${roomId}:chat`);
     try {
-      await channel.httpSend("delete_message", { messageId, deletedBy });
+      await channel.send({
+        type: "broadcast",
+        event: "delete_message",
+        payload: { messageId, deletedBy },
+      });
     } finally {
       await adminSupabase.removeChannel(channel);
     }
@@ -310,7 +318,11 @@ export async function purgeChatRoomDb(roomId: string, deletedBy: string) {
     if (error) return { success: false, error: error.message };
     const channel = admin.channel(`room:${roomId}:chat`);
     try {
-      await channel.httpSend("purge_room", { roomId });
+      await channel.send({
+        type: "broadcast",
+        event: "purge_room",
+        payload: { roomId },
+      });
     } finally {
       await admin.removeChannel(channel);
     }

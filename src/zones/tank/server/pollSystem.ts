@@ -152,13 +152,21 @@ export async function createPollAction(params: {
 
     // Broadcast poll to all connected chat clients in real-time
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("new_poll", newPoll);
+    await channel.send({
+      type: "broadcast",
+      event: "new_poll",
+      payload: newPoll,
+    });
 
     // Also send an official CONSOLE announcement in chat stream
     const announcement = await persistHouseLine(
       `📊 LIVE POLL STARTED: "${question}" — Open House Poll from the action menu to vote. (⏱️ ${durationMinutes === "indefinite" ? "Open" : `${durationMinutes}m`})`,
     );
-    if (announcement) await channel.httpSend("new_message", announcement);
+    if (announcement) await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: announcement,
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true, poll: newPoll };
@@ -194,9 +202,21 @@ export async function votePollAction(params: {
     if (error || !data) return { success: false, error: error?.message || "Vote failed." };
     const poll = data as ActivePoll;
 
+    if (identity.kind === "member") {
+      await adminSupabase.rpc("tank_record_mission_progress", {
+        p_user_id: identity.voterKey,
+        p_mission_key: "vote_house_poll",
+        p_increment: 1,
+      });
+    }
+
     // Broadcast updated vote counts
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("poll_updated", projectPollForViewer(poll, null));
+    await channel.send({
+      type: "broadcast",
+      event: "poll_updated",
+      payload: projectPollForViewer(poll, null),
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true, poll: projectPollForViewer(poll, voterKey) };
@@ -244,12 +264,20 @@ export async function endPollAction(pollId: string): Promise<{ success: boolean;
     }
 
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("poll_ended", { pollId, winner: winningOption, totalVotes: poll.totalVotes });
+    await channel.send({
+      type: "broadcast",
+      event: "poll_ended",
+      payload: { pollId, winner: winningOption, totalVotes: poll.totalVotes },
+    });
 
     const announcement = await persistHouseLine(
       `🏆 POLL CONCLUDED: "${poll.question}" ➔ WINNER: "${winningOption.text}" with ${winningOption.votes}/${poll.totalVotes} votes!`,
     );
-    if (announcement) await channel.httpSend("new_message", announcement);
+    if (announcement) await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: announcement,
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true };

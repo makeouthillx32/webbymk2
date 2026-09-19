@@ -127,7 +127,36 @@ export async function handleChatMessagesGet(request: NextRequest) {
     }
     return NextResponse.json({ success: true, results: result.results });
   }
-  return NextResponse.json({ success: true, messages: await getRecentChatMessages(roomId) });
+  // Stored history is a SIGNED-IN benefit, not a public payload.
+  //
+  // A guest joins a live chat and sees it from the moment they arrive; a member
+  // gets their history back. Serving the database to anonymous callers meant a
+  // guest could reload and repopulate the entire room — and that a signed-out
+  // admin's client immediately re-fetched everything it had just cleared.
+  //
+  // Gated HERE, on the server, rather than by having the client decline to ask.
+  // A client-side rule is a suggestion: the endpoint would still hand the full
+  // room history to anyone who called it directly.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const isOverlay =
+    request.nextUrl.searchParams.get("overlay") === "1" ||
+    request.nextUrl.searchParams.get("overlay") === "true";
+  const isPublicRoom = !roomId.startsWith("click:") && !roomId.startsWith("dm:");
+
+  if (!user && !(isOverlay && isPublicRoom)) {
+    // Not an error — an empty history is the correct answer for a guest, and a
+    // 401 here would make the chat panel render a failure state instead of a
+    // fresh room.
+    return NextResponse.json({ success: true, messages: [], historyWithheld: true });
+  }
+
+  const messages = await getRecentChatMessages(roomId);
+  const messagesToReturn = (!user && isOverlay) ? messages.slice(-25) : messages;
+  return NextResponse.json({ success: true, messages: messagesToReturn });
 }
 
 export async function handleChatMessagesPost(request: NextRequest) {
@@ -205,11 +234,15 @@ export async function handleChatReactionPost(request: NextRequest) {
     const admin = createAdminClient();
     const channel = admin.channel(`room:${message.room_id}:chat`);
     try {
-      await channel.httpSend("reaction_changed", {
+      await channel.send({
+        type: "broadcast",
+        event: "reaction_changed",
+        payload: {
         messageId: input.messageId,
         reaction: input.reaction,
         userId: user.id,
         active: !existing,
+      },
       });
     } finally {
       await admin.removeChannel(channel);

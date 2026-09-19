@@ -36,6 +36,11 @@ export type ObsRoomCredentials = ObsRoom & {
   obsStreamKey: string;
   /** Where viewers watch once signal arrives. */
   playbackPath: string;
+  /** Available conditionally for administrators only when TANK_DIRECTOR_PROGRAM_STREAM_KEY is configured. */
+  directorProgram?: {
+    serverUrl: string;
+    obsStreamKey: string;
+  } | null;
 };
 
 function mapRow(row: Record<string, any>): ObsRoom {
@@ -69,7 +74,12 @@ function rtmpServerUrl(): string {
   return process.env.TANK_RTMP_PUBLIC_URL || "rtmp://media.tank.unenter.live:1935";
 }
 
-function buildCredentials(room: ObsRoom, streamKey: string): ObsRoomCredentials {
+export function buildCredentials(
+  room: ObsRoom,
+  streamKey: string,
+  role?: string,
+): ObsRoomCredentials {
+  const directorProgramKey = process.env.TANK_DIRECTOR_PROGRAM_STREAM_KEY;
   return {
     ...room,
     streamKey,
@@ -80,6 +90,14 @@ function buildCredentials(room: ObsRoom, streamKey: string): ObsRoomCredentials 
     serverUrl: `${rtmpServerUrl()}/${OBS_PATH_PREFIX}`,
     obsStreamKey: `${room.slug}?user=${room.slug}&pass=${streamKey}`,
     playbackPath: `${OBS_PATH_PREFIX}/${room.slug}`,
+    ...(role === "admin" && directorProgramKey
+      ? {
+          directorProgram: {
+            serverUrl: `${rtmpServerUrl()}/${OBS_PATH_PREFIX}`,
+            obsStreamKey: `${DIRECTOR_PROGRAM_SLUG}?user=${DIRECTOR_PROGRAM_SLUG}&pass=${directorProgramKey}`,
+          },
+        }
+      : {}),
   };
 }
 
@@ -119,7 +137,7 @@ export async function getOrCreateMyObsRoom(): Promise<
     .maybeSingle();
 
   if (existing) {
-    return { success: true, room: buildCredentials(mapRow(existing), existing.stream_key) };
+    return { success: true, room: buildCredentials(mapRow(existing), existing.stream_key, role) };
   }
 
   const displayName = profile?.display_name || user.email?.split("@")[0] || "staff";
@@ -151,7 +169,7 @@ export async function getOrCreateMyObsRoom(): Promise<
     return { success: false, error: error?.message ?? "Could not create room." };
   }
 
-  return { success: true, room: buildCredentials(mapRow(data), streamKey) };
+  return { success: true, room: buildCredentials(mapRow(data), streamKey, role) };
 }
 
 /** Issues a fresh key, immediately invalidating the old one. */
@@ -163,6 +181,13 @@ export async function rotateMyStreamKey(): Promise<
   if (!user) return { success: false, error: "You must be signed in." };
 
   const admin = createAdminClient();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const role = profile?.role || "user";
   const streamKey = generateStreamKey();
 
   const { data, error } = await admin
@@ -173,7 +198,7 @@ export async function rotateMyStreamKey(): Promise<
     .single();
 
   if (error || !data) return { success: false, error: error?.message ?? "No room to rotate." };
-  return { success: true, room: buildCredentials(mapRow(data), streamKey) };
+  return { success: true, room: buildCredentials(mapRow(data), streamKey, role) };
 }
 
 /**

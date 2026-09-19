@@ -1,5 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { getCommercePublishableKey, getCommerceStripeMode } from "./commerce";
+import {
+  eventPaymentLane,
+  getCommercePublishableKey,
+  getCommerceStripeMode,
+} from "./commerce";
 
 const watched = [
   "STRIPE_COMMERCE_MODE",
@@ -53,5 +57,11 @@ describe("Stripe payment lane modes", () => {
     process.env.STRIPE_SHOP_MODE = "live";
     process.env.NEXT_PUBLIC_STRIPE_LIVE_PUBLISHABLE_KEY = "pk_test_wrong_mode";
     expect(() => getCommercePublishableKey("shop")).toThrow("does not match live mode");
+  });
+
+  test("reads Tank lane metadata from current and legacy invoice payloads", () => {
+    expect(eventPaymentLane({ data: { object: { metadata: { payment_lane: "tank" } } } } as any)).toBe("tank");
+    expect(eventPaymentLane({ data: { object: { subscription_details: { metadata: { payment_lane: "tank" } } } } } as any)).toBe("tank");
+    expect(eventPaymentLane({ data: { object: { parent: { subscription_details: { metadata: { payment_lane: "tank" } } } } } } as any)).toBe("tank");
   });
 });

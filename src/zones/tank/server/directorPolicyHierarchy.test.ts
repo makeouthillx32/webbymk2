@@ -104,4 +104,63 @@ describe("Hardened Director Policy Hierarchy & Override Timeline", () => {
     expect(expiredDecision.effectiveMode).toBe("speaker");
     expect(getActiveItemOverride(startTime + 35000)).toBeNull();
   });
+
+  it("handles decoupled overrides where room and detection mode are independent", () => {
+    const now = 400000;
+    // Item 1: Changes room to Kitchen only
+    applyDirectorItemOverride({
+      itemSlug: "kitchen-spotlight",
+      itemName: "Kitchen Spotlight",
+      targetRoomKey: "kitchen",
+      triggeredBy: "Chef",
+      durationSeconds: 60,
+      now,
+    });
+
+    // Item 2: Changes detection style to dog only
+    applyDirectorItemOverride({
+      itemSlug: "dog-whistle",
+      itemName: "Dog Whistle",
+      targetDetectionMode: "dog",
+      triggeredBy: "DogLover",
+      durationSeconds: 45,
+      now,
+    });
+
+    const policy = resolveEffectiveDirectorDecision({
+      operatorMode: "speaker",
+      now: now + 5000,
+    });
+
+    expect(policy.activeOverrideType).toBe("ITEM_OVERRIDE");
+    expect(policy.effectiveMode).toBe("dog");
+    expect(policy.targetRoomKey).toBe("kitchen");
+  });
+
+  it("triggers chaos cyclone item with rapid room hopping and room lock override", () => {
+    const now = 500000;
+    applyDirectorItemOverride({
+      itemSlug: "chaos-cyclone",
+      itemName: "Chaos Cyclone",
+      targetDetectionMode: "chaos",
+      targetSpeed: "sport",
+      chaosHopIntervalMs: 4000,
+      overrideRoomLock: true,
+      triggeredBy: "ChaosAgent",
+      durationSeconds: 30,
+      now,
+    });
+
+    const policy = resolveEffectiveDirectorDecision({
+      operatorMode: "group",
+      now: now + 1000,
+    });
+
+    expect(policy.activeOverrideType).toBe("ITEM_OVERRIDE");
+    expect(policy.effectiveMode).toBe("chaos");
+    expect(policy.targetSpeed).toBe("sport");
+    expect(policy.chaosHopIntervalMs).toBe(4000);
+    expect(policy.overrideRoomLock).toBe(true);
+  });
 });
+
