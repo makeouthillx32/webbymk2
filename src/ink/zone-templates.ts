@@ -715,6 +715,10 @@ export function genZonesCompose(zones: Zone[]): string {
         NEXT_PUBLIC_OWNER_EMAIL:
     container_name: ${z.container}
     restart: unless-stopped
+    # A ceiling, not a reservation: zones use 0.4-0.9 GB. One runaway zone must
+    # not be able to push the Docker VM into swap (camera receivers start
+    # dropping off the network when it does, 2026-09-19).
+    mem_limit: \${UNAXIS_ZONE_MEM_LIMIT:-2g}
     env_file: ${envFilePath}
     environment:
       NEXT_PUBLIC_ZONE: "${z.key}"

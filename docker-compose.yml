@@ -542,6 +542,8 @@ services:
       context: ./mediamtx
       dockerfile: Dockerfile.nvenc
     container_name: unt_mediamtx
+    # Ceiling: 5-6 GB for six GPU transcoders; a leaking relay must not take the VM with it.
+    mem_limit: 10g
     # WHY THIS EXISTS — measured 2026-09-12.
     #
     # mediamtx.yml points webrtcICEServers2 at turn:media.tank.unenter.live:3478.
@@ -743,6 +745,8 @@ services:
       context: .
       dockerfile: services/tank-vision-worker/Dockerfile
     container_name: unt_tank_vision
+    # Ceiling (uses ~1.4 GB incl. the naming process).
+    mem_limit: 3g
     restart: unless-stopped
     environment:
       SUPABASE_URL: ${SUPABASE_INTERNAL_URL:-http://kong:8000}
@@ -823,6 +827,8 @@ services:
         limits:
           # Offline work must always lose to live work: the box has 32 threads.
           cpus: "4"
+          # Ceiling: ~0.3 GB idle, ~4 GB while enrolling.
+          memory: 6g
         reservations:
           devices:
             - driver: nvidia

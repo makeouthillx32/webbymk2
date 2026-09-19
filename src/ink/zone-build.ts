@@ -353,6 +353,20 @@ async function spawnDocker(
   return timedOut ? DOCKER_IDLE_TIMEOUT_CODE : code;
 }
 
+/**
+ * Stop (not remove) the buildkitd container once a build is over.
+ *
+ * Left running, it sat idle holding 1.6-2.7 GB of the Docker VM after every
+ * build (2026-09-19) -- memory the cameras needed. Stopping frees all of it and
+ * keeps the build cache on its state volume; buildx starts the container again
+ * by itself on the next `--builder unaxis-net` build. Best-effort: a failure
+ * here never fails the build.
+ */
+export async function parkBuildxBuilder(onLine: (l: string) => void): Promise<void> {
+  const code = await spawnDocker(["stop", "-t", "5", "buildx_buildkit_unaxis-net0"], () => {});
+  if (code === 0) onLine(`--- build worker parked (memory freed, cache kept; restarts on next build) ---`);
+}
+
 /** Force-remove the unaxis-net buildx builder + its stale buildkitd container. Same as `unaxis builder-reset`. */
 async function resetBuildxBuilder(onLine: (l: string) => void): Promise<void> {
   onLine(`--- auto-recovery: resetting wedged buildx builder "unaxis-net" ---`);
@@ -791,6 +805,7 @@ export async function buildZone(
   } finally {
     dockerCfg.cleanup();
     restoreDockerignore();
+    await parkBuildxBuilder(onLine).catch(() => {});
   }
 }
 
