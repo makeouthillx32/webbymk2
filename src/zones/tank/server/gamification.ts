@@ -115,7 +115,7 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
     } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const [{ data: tankData }, { data: mainProfile }, { data: renameTicket }] = await Promise.all([
+    const [{ data: tankData }, { data: mainProfile }, { data: renameTicket }, { data: savedSettings }] = await Promise.all([
       supabase
         .from("tank_profiles")
         .select("xp, level, tokens, display_name, display_name_confirmed_at, free_rename_used_at")
@@ -132,6 +132,7 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
         .eq("user_id", user.id)
         .eq("tank_inventory_items.slug", "rename-ticket")
         .maybeSingle(),
+      supabase.from("tank_user_settings").select("settings").eq("user_id", user.id).maybeSingle(),
     ]);
 
     const meta = user.user_metadata || {};
@@ -158,7 +159,12 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
         "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png",
       nameColor: meta.name_color || "#ff3b2f",
       bio: meta.bio || "",
-      settings: (meta.tank_settings as Record<string, unknown>) || null,
+      // tank_user_settings; the metadata copy is the pre-2026-09-19 location,
+      // kept as a fallback until every session has refreshed.
+      settings:
+        (savedSettings?.settings as Record<string, unknown> | undefined) ||
+        (meta.tank_settings as Record<string, unknown>) ||
+        null,
       role,
       emailVerified: Boolean(user.email_confirmed_at || user.confirmed_at),
       profileSetupComplete: Boolean(tankData?.display_name_confirmed_at),

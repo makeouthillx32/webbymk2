@@ -1257,7 +1257,9 @@ export function TankExperience({
         await Promise.all([
           supabase
             .from("tank_profiles")
-            .select("*")
+            // Explicit columns: the browser may not read billing fields
+            // (stripe_*), so "*" would be refused (20260922 migration).
+            .select("avatar_url, display_name, level, tokens, xp")
             .eq("user_id", user.id)
             .maybeSingle(),
           supabase

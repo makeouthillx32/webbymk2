@@ -1195,25 +1195,17 @@ export async function saveTankUserSettings(
   try {
     const admin = createAdminClient();
 
-    // 1. Persist to auth user_metadata for cross-device instant sync
-    await admin.auth.admin.updateUserById(user.id, {
-      user_metadata: {
-        ...user.user_metadata,
-        tank_settings: settings,
-      },
-    });
-
-    // 2. Persist to tank_profiles table
-    await admin
-      .from("tank_profiles")
+    // Settings live in tank_user_settings (owner-read, server-written). They
+    // used to go into auth user_metadata, which Supabase copies into the session
+    // cookie twice -- ~1.7 KB per request, over the 4 KB header limit -- and into
+    // tank_profiles.settings, a column that never existed (2026-09-19 migration).
+    const { error: saveError } = await admin
+      .from("tank_user_settings")
       .upsert(
-        {
-          user_id: user.id,
-          settings: settings,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
+        { user_id: user.id, settings, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
       );
+    if (saveError) throw new Error(saveError.message);
 
     return { success: true };
   } catch (err) {
