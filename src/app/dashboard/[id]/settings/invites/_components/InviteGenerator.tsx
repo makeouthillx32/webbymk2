@@ -53,6 +53,7 @@ export default function InviteGenerator({ defaultRole = "member" }: { defaultRol
         <option value="member">Member</option>
         <option value="researcher">Researcher</option>
         <option value="affiliate">Affiliate</option>
+        <option value="marketing">Marketing</option>
         <option value="admin">Admin</option>
       </select>
 

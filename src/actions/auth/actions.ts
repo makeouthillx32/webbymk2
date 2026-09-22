@@ -3,11 +3,13 @@
 import { redirect } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { encodedRedirect } from "@/utils/utils";
 import { sendNotification } from "@/lib/notifications";
 import { authLogger } from "@/lib/authLogger";
 
-import type { ProfileUpsertRow } from "./types";
+import type { ProfileUpsertRow, ValidRole } from "./types";
+import { VALID_ROLES } from "./types";
 import { getAndClearLastPage, populateUserCookies, clearAuthCookies } from "./cookies";
 import { CORE_DOMAIN } from "@/lib/multiZone";
 import { RESEARCHER_ROLES } from "@/lib/research/requireResearcherRole";
@@ -89,20 +91,57 @@ export const signUpAction = async (formData: FormData) => {
   const userId = data.user.id;
   const displayName = `${firstName} ${lastName}`.trim();
 
+  // ── Invite resolution ─────────────────────────────────────────
+  // The sign-up form passes through whatever `invite` code was in the URL
+  // (see app/(auth-pages)/sign-up/page.tsx) as a hidden field, but this
+  // action used to never read it — every signup got "member" regardless of
+  // an admin having minted an invite for a different role. invites/roles
+  // are RLS-locked to service_role (2026-08-10 lockdown), so this needs the
+  // admin client, not the cookie-bound one. A missing/invalid/expired code
+  // just falls through to the "member" default rather than blocking signup.
+  const inviteCode = formData.get("invite")?.toString().trim() || "";
+  let assignedRole: ValidRole = "member";
+  const admin = createAdminClient();
+
+  if (inviteCode) {
+    const { data: inviteRow } = await admin
+      .from("invites")
+      .select("role_id, expires_at")
+      .eq("code", inviteCode)
+      .single();
+
+    if (inviteRow && (!inviteRow.expires_at || new Date(inviteRow.expires_at) >= new Date())) {
+      const { data: roleRow } = await admin
+        .from("roles")
+        .select("role")
+        .eq("id", inviteRow.role_id)
+        .single();
+      // Only accept roles this action actually knows how to grant — an
+      // invite for e.g. "moderator"/"affiliate" (valid in the roles table
+      // and profiles_role_check, but not a signup-grantable tier here)
+      // falls back to "member" rather than widening what signup can hand out.
+      if (roleRow?.role && (VALID_ROLES as readonly string[]).includes(roleRow.role)) {
+        assignedRole = roleRow.role as ValidRole;
+      }
+    }
+  }
+
   // ── Profile upsert ────────────────────────────────────────────
   // auth_user_id and email are required for role checks, order linkage,
   // admin UI, and the customers identity system.
-  // role: "member" — the baseline tier for every new account regardless of
-  // entry point. Was "researcher" (ToS acceptance alone granted research-
-  // compound checkout eligibility), which over-permissioned anyone signing
-  // up anywhere on the platform, Tank included. Researcher access is now a
-  // deliberate opt-in upgrade: requestResearcherAccessAction below, gated
-  // by src/lib/research/requireResearcherRole.ts.
+  // role: assignedRole — "member" for everyone by default. Was "researcher"
+  // (ToS acceptance alone granted research-compound checkout eligibility),
+  // which over-permissioned anyone signing up anywhere on the platform, Tank
+  // included. Researcher access is now a deliberate opt-in upgrade:
+  // requestResearcherAccessAction below, gated by
+  // src/lib/research/requireResearcherRole.ts. An invite code can still
+  // raise this above "member" (e.g. admin, marketing) — that's the one
+  // legitimate way to skip the default.
   const payload: ProfileUpsertRow = {
     id: userId,
     auth_user_id: userId, // ← same as id for email/password signups
     email: email.toLowerCase().trim(),
-    role: "member",
+    role: assignedRole,
     display_name: displayName,
     first_name: firstName,
     last_name: lastName,
@@ -116,6 +155,12 @@ export const signUpAction = async (formData: FormData) => {
   if (profileUpsertError) {
     console.error("[Auth] ❌ Profile upsert failed:", profileUpsertError.message);
     return encodedRedirect("error", "/sign-up", profileUpsertError.message);
+  }
+
+  // Consume the invite now that its role has actually been applied —
+  // mirrors the delete step in api/apply-invite/route.ts.
+  if (inviteCode && assignedRole !== "member") {
+    await admin.from("invites").delete().eq("code", inviteCode);
   }
 
   // ── Customers upsert ──────────────────────────────────────────

@@ -59,3 +59,51 @@ export async function requireAdmin() {
 
   return { admin, userId: user.id };
 }
+
+// Widened form of requireAdmin()/requireAdminClient() for routes that a
+// non-admin role should also reach — e.g. "marketing" editing landing/blog
+// content or sending mail as an identity, never billing/orders/users/infra.
+// Those stay on the strict admin-only guards above.
+export async function requireRoleClient(supabase: SupabaseClient, allowedRoles: string[]) {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) {
+    return { ok: false as const, status: 401 as const, message: error?.message ?? "Authentication required" };
+  }
+
+  const admin = createAdminClient();
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", data.user.id)
+    .single();
+
+  if (profileError || !profile || !allowedRoles.includes(profile.role)) {
+    return { ok: false as const, status: 403 as const, message: `Requires one of: ${allowedRoles.join(", ")}` };
+  }
+
+  return { ok: true as const, user: data.user, role: profile.role };
+}
+
+export async function requireRole(allowedRoles: string[]) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
+  }
+
+  const admin = createAdminClient();
+  const { data: profile, error } = await admin
+    .from("profiles")
+    .select("id, role")
+    .eq("id", user.id)
+    .single();
+
+  if (error || !profile || !allowedRoles.includes(profile.role)) {
+    return { error: NextResponse.json({ error: `Requires one of: ${allowedRoles.join(", ")}` }, { status: 403 }) };
+  }
+
+  return { admin, userId: user.id, role: profile.role };
+}

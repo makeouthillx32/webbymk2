@@ -11,13 +11,14 @@ import { generatePassword } from "./generatePassword";
 
 type Box = { email: string; name?: string; disabled?: boolean };
 
-// The four mail branches the app knows about (src/lib/mail/identities.ts).
+// The mail branches the app knows about (src/lib/mail/identities.ts).
 // "Set up standard mailboxes" creates whichever of these don't exist yet.
 const STANDARD_MAILBOXES: { local: string; name: string }[] = [
   { local: "support", name: "unenter.live Support" },
   { local: "labs", name: "Unenter Labs" },
   { local: "admin", name: "unenter.live Admin" },
   { local: "auth", name: "unenter.live Auth" },
+  { local: "marketing", name: "unenter.live Marketing" },
 ];
 
 type SetupResult = {
@@ -159,7 +160,7 @@ export function BoxesPanel() {
           type="button"
           disabled={settingUp}
           onClick={setupStandardMailboxes}
-          title="Creates support@, labs@, admin@, and auth@unenter.live — skips any that already exist"
+          title="Creates support@, labs@, admin@, auth@, and marketing@unenter.live — skips any that already exist"
           className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius)] border border-[hsl(var(--border))] px-3 text-sm hover:bg-[hsl(var(--muted))] disabled:opacity-50"
         >
           <Sparkles className="h-3.5 w-3.5" />

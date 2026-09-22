@@ -33,7 +33,7 @@
 // mailbox exists.
 import type { SmtpCredentials } from "./client";
 
-export type MailBranch = "support" | "labs" | "admin" | "auth" | "tank";
+export type MailBranch = "support" | "labs" | "admin" | "auth" | "tank" | "marketing";
 
 export interface MailIdentity {
   branch: MailBranch;
@@ -82,6 +82,14 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
         mailbox: process.env.MAIL_FROM_TANK || "tank@mail.unenter.live",
         displayName: "Tank",
         credentials: creds(process.env.MAIL_SMTP_USER_TANK, process.env.MAIL_SMTP_PASS_TANK),
+      };
+    case "marketing":
+      return {
+        branch,
+        address: process.env.MAIL_SEND_FROM_MARKETING || "marketing@unenter.live",
+        mailbox: process.env.MAIL_FROM_MARKETING || "marketing@mail.unenter.live",
+        displayName: "unenter.live Marketing",
+        credentials: creds(process.env.MAIL_SMTP_USER_MARKETING, process.env.MAIL_SMTP_PASS_MARKETING),
       };
     case "auth":
       // GoTrue sends these itself via docker-compose's SMTP_USER/SMTP_PASS —

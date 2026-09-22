@@ -1,11 +1,22 @@
 // src/app/api/mail/send/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { createClient } from "@/utils/supabase/server";
+import { requireRoleClient } from "@/lib/require-admin";
 import { sendMail } from "@/lib/mail/client";
 import { getMailIdentity, formatFrom, MailBranch } from "@/lib/mail/identities";
 
 export async function POST(req: NextRequest) {
   try {
+    // Was unguarded — anyone could POST here and send mail as support@/
+    // admin@/labs@/tank@ unauthenticated. Fixed 2026-09-22 alongside adding
+    // the "marketing" identity, since send-as-an-identity is exactly the
+    // capability that role needs and this was the point that needed a real
+    // check instead of none at all.
+    const authClient = await createClient();
+    const gate = await requireRoleClient(authClient, ["admin", "marketing"]);
+    if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
+
     const body = await req.json();
     const {
       threadId,
@@ -27,6 +38,7 @@ export async function POST(req: NextRequest) {
     if (mailbox.includes("admin")) branch = "admin";
     else if (mailbox.includes("labs")) branch = "labs";
     else if (mailbox.includes("tank")) branch = "tank";
+    else if (mailbox.includes("marketing")) branch = "marketing";
 
     const identity = getMailIdentity(branch);
     const from = formatFrom(identity);

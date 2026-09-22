@@ -1,9 +1,18 @@
 // src/app/api/mail/threads/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { createClient } from "@/utils/supabase/server";
+import { requireRoleClient } from "@/lib/require-admin";
 
 export async function GET(req: NextRequest) {
   try {
+    // Was unguarded — anyone with the URL could read every mail thread
+    // across every mailbox (support/admin/labs/tank/marketing), no session
+    // required. Fixed 2026-09-22 alongside the marketing role/mailbox work.
+    const authClient = await createClient();
+    const gate = await requireRoleClient(authClient, ["admin", "marketing"]);
+    if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
+
     const url = new URL(req.url);
     const mailbox = url.searchParams.get("mailbox") || "support@unenter.live";
     const folder = url.searchParams.get("folder") || "inbox";

@@ -27,7 +27,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { requireAdminClient } from "@/lib/require-admin";
+import { requireRoleClient } from "@/lib/require-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,7 +64,7 @@ function publicUrl(path: string): string {
 export async function GET() {
   try {
     const supabase = await createClient();
-    const gate = await requireAdminClient(supabase);
+    const gate = await requireRoleClient(supabase, ["admin", "marketing"]);
     if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
 
     const admin = createAdminClient();
@@ -103,7 +103,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const gate = await requireAdminClient(supabase);
+    const gate = await requireRoleClient(supabase, ["admin", "marketing"]);
     if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
 
     const form = await request.formData().catch(() => null);
@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const gate = await requireAdminClient(supabase);
+    const gate = await requireRoleClient(supabase, ["admin", "marketing"]);
     if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
 
     const slot = new URL(request.url).searchParams.get("slot");

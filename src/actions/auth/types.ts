@@ -1,7 +1,7 @@
 // "researcher" = a member who accepted the research-use ToS at sign-up.
 // Practically the same tier as "member" everywhere except it's what
 // research-checkout gates on — see src/lib/research/requireResearcherRole.ts.
-export const VALID_ROLES = ["admin", "member", "guest", "researcher"] as const;
+export const VALID_ROLES = ["admin", "member", "guest", "researcher", "marketing"] as const;
 export type ValidRole = (typeof VALID_ROLES)[number];
 
 export type CookieOptions = {

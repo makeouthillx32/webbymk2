@@ -1,12 +1,18 @@
 // src/app/api/mail/threads/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { createClient } from "@/utils/supabase/server";
+import { requireRoleClient } from "@/lib/require-admin";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authClient = await createClient();
+    const gate = await requireRoleClient(authClient, ["admin", "marketing"]);
+    if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
+
     const { id } = await params;
     const supabase = createAdminClient();
 
@@ -41,6 +47,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authClient = await createClient();
+    const gate = await requireRoleClient(authClient, ["admin", "marketing"]);
+    if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: gate.status });
+
     const { id } = await params;
     const body = await req.json();
     const supabase = createAdminClient();

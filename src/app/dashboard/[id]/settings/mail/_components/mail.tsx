@@ -17,6 +17,7 @@ import {
   Shield,
   FlaskConical,
   Tv,
+  Megaphone,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -51,6 +52,11 @@ const REAL_ACCOUNTS = [
     label: "Tank Relay",
     email: "tank@unenter.live",
     icon: <Tv className="h-4 w-4" />,
+  },
+  {
+    label: "unenter.live Marketing",
+    email: "marketing@unenter.live",
+    icon: <Megaphone className="h-4 w-4" />,
   },
 ];
 
@@ -165,6 +171,12 @@ export function Mail({
                 icon: MessagesSquare,
                 variant: "ghost",
                 onClick: () => setMailbox("labs@unenter.live"),
+              },
+              {
+                title: "Marketing",
+                icon: Megaphone,
+                variant: "ghost",
+                onClick: () => setMailbox("marketing@unenter.live"),
               },
             ]}
           />
