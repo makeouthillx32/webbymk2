@@ -1750,7 +1750,11 @@ export function TankExperience({
         ),
         previewUrl: null,
         previewProtocol: undefined,
-        recentClipUrl: null,
+        // The room that is on air right now -- which is what the Director IS
+        // showing. Without it the Director tile had nothing to draw and sat
+        // blank while its live player queued for a connection slot behind the
+        // hero; every room tile shows its loop instantly (2026-09-22).
+        recentClipUrl: directorSourceCamera.recentClipUrl ?? null,
       }
     : undefined;
   const heroOnline = heroCameraOnline;
