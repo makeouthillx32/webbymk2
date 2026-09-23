@@ -315,7 +315,7 @@ export default function LabsAccountPortal({
 
   const selectedOrder = initialOrders.find((o) => o.id === selectedOrderId || o.order_number === selectedOrderId);
 
-  const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(" ") || profile.display_name || "Tyler Burns";
+  const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(" ") || profile.display_name || "there";
 
   async function handleAcceptTerms() {
     setIsAcceptingTerms(true);
@@ -547,7 +547,7 @@ export default function LabsAccountPortal({
       {/* ── Top Header ────────────────────────────────────────── */}
       <div className="mb-8 border-b border-[hsl(var(--border))] pb-6">
         <h1 className="text-3xl font-bold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">
-          Welcome {profile.first_name || "Tyler"}!
+          Welcome {profile.first_name || profile.display_name || "there"}!
         </h1>
         <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
           Manage your Unenter Labs research account, active orders, third-party analytical COAs, compound waitlist, and fulfillment details.

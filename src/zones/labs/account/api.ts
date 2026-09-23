@@ -144,14 +144,18 @@ export async function POST(request: NextRequest) {
     }
 
     const nickname = sanitize(body.nickname) || "Facility";
-    const fullName = sanitize(body.full_name) || "Tyler Burns";
+    const fullName = sanitize(body.full_name);
     const line1 = sanitize(body.line1);
     const city = sanitize(body.city);
     const state = sanitize(body.state);
     const postalCode = sanitize(body.postal_code);
     const country = sanitize(body.country) || "US";
 
-    if (!line1 || !city || !state || !postalCode) {
+    // full_name used to silently default to a hardcoded placeholder name
+    // ("Tyler Burns") when omitted — for a real shipping address that means
+    // a real package could ship labeled with a stranger's name instead of
+    // failing loudly. Require it like the other address fields instead.
+    if (!fullName || !line1 || !city || !state || !postalCode) {
       return NextResponse.json({ error: "missing_required_address_fields" }, { status: 400 });
     }
 
