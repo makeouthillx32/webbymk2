@@ -15,11 +15,24 @@ import { useTheme } from "@/app/provider";
 type FooterLink = { name: string; href: string; external?: boolean };
 type FooterSection = { title: string; links: FooterLink[] };
 
+// Labs' own domain doesn't mount (auth-pages) at all — /sign-in and
+// /sign-up both 404 there (confirmed live, 2026-09-23: same "Category Not
+// Found" catch-all every unknown labs.unenter.live path hits). Auth only
+// exists on auth.unenter.live, same as middleware's own cross-zone
+// redirect for protected routes — so account links here need an absolute
+// URL to that host, not a relative path that resolves back onto labs.
+const AUTH_HOST = "auth.unenter.live";
+
 export default function Footer() {
   const session = useLoginSession();
   const { themeType } = useTheme();
   const pathname = usePathname();
-  const signInHref = `/sign-in?next=${encodeURIComponent(pathname || "/")}`;
+  const returnTo =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${pathname || "/"}`
+      : `https://labs.unenter.live${pathname || "/"}`;
+  const signInHref = `https://${AUTH_HOST}/sign-in?next=${encodeURIComponent(returnTo)}`;
+  const signUpHref = `https://${AUTH_HOST}/sign-up?next=${encodeURIComponent(returnTo)}`;
 
   const userId = session?.user?.id;
   const isMember = !!userId;
@@ -60,7 +73,7 @@ export default function Footer() {
           title: "Account",
           links: [
             { name: "Sign In", href: signInHref },
-            { name: "Create Account", href: "/sign-up" },
+            { name: "Create Account", href: signUpHref },
           ],
         },
         ...base,
@@ -81,7 +94,7 @@ export default function Footer() {
     ];
 
     return member;
-  }, [isMember, signInHref]);
+  }, [isMember, signInHref, signUpHref]);
 
   return (
     <footer
