@@ -19,6 +19,8 @@ const STANDARD_MAILBOXES: { local: string; name: string }[] = [
   { local: "admin", name: "unenter.live Admin" },
   { local: "auth", name: "unenter.live Auth" },
   { local: "marketing", name: "unenter.live Marketing" },
+  { local: "shop", name: "unenter.live Shop" },
+  { local: "tank", name: "Tank" },
 ];
 
 type SetupResult = {
@@ -102,11 +104,11 @@ export function BoxesPanel() {
     window.alert(`Password reset. New password:\n\n${newPassword}`);
   };
 
-  // Must be the domain actually registered on poste.io (Admin → Virtual
-  // domains) — bare unenter.live has no MX and isn't a registered mail
-  // domain there; only mail.unenter.live is. Creating a box under the wrong
-  // domain fails/no-ops against poste.io's admin API.
-  const domain = "mail.unenter.live";
+  // unenter.live has a correct MX record (mail.unenter.live) and is now
+  // also registered as a poste.io virtual domain (2026-09-22) — real
+  // mailboxes live here directly. mail.unenter.live's own older mailboxes
+  // (support@/admin@/labs@) still exist separately and still work.
+  const domain = "unenter.live";
 
   const setupStandardMailboxes = async () => {
     setSettingUp(true);
@@ -164,7 +166,7 @@ export function BoxesPanel() {
           type="button"
           disabled={settingUp}
           onClick={setupStandardMailboxes}
-          title="Creates support@, labs@, admin@, auth@, and marketing@unenter.live — skips any that already exist"
+          title="Creates support@, labs@, admin@, auth@, marketing@, shop@, and tank@unenter.live — skips any that already exist"
           className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius)] border border-[hsl(var(--border))] px-3 text-sm hover:bg-[hsl(var(--muted))] disabled:opacity-50"
         >
           <Sparkles className="h-3.5 w-3.5" />

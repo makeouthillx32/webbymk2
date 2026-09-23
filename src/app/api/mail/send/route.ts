@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     else if (mailbox.includes("labs")) branch = "labs";
     else if (mailbox.includes("tank")) branch = "tank";
     else if (mailbox.includes("marketing")) branch = "marketing";
+    else if (mailbox.includes("shop")) branch = "shop";
 
     const identity = getMailIdentity(branch);
     const from = formatFrom(identity);

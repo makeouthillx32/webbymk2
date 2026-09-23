@@ -58,6 +58,11 @@ const REAL_ACCOUNTS = [
     email: "marketing@unenter.live",
     icon: <Megaphone className="h-4 w-4" />,
   },
+  {
+    label: "unenter.live Shop",
+    email: "shop@unenter.live",
+    icon: <ShoppingCart className="h-4 w-4" />,
+  },
 ];
 
 interface MailProps {
@@ -177,6 +182,12 @@ export function Mail({
                 icon: Megaphone,
                 variant: "ghost",
                 onClick: () => setMailbox("marketing@unenter.live"),
+              },
+              {
+                title: "Shop",
+                icon: ShoppingCart,
+                variant: "ghost",
+                onClick: () => setMailbox("shop@unenter.live"),
               },
             ]}
           />

@@ -18,22 +18,22 @@
 //     domain-authenticated, which today is only the root `unenter.live`, NOT
 //     the `mail.unenter.live` subdomain (Brevo validates the exact sending
 //     domain, doesn't inherit from the parent — confirmed via a live send
-//     that Brevo rejected with "sender ... is not valid"). Adding
-//     mail.unenter.live as its own authenticated domain in Brevo would need
-//     a brevo-code TXT at the bare "mail" name, which collides with the
-//     existing CNAME there (mail -> unenter.asuscomm.com) — same
-//     CNAME-exclusivity wall that blocked SPF earlier. Root-domain From it is.
-//   `mailbox` — the real, receiving mailbox on poste.io (mail.unenter.live).
-//     unenter.live has no MX of its own, so `address` can't receive replies.
-//     Callers should pass `replyTo: identity.mailbox` so customer replies
-//     still land somewhere real instead of bouncing.
+//     that Brevo rejected with "sender ... is not valid"). Root-domain From
+//     it is.
+//   `mailbox` — the real, receiving mailbox for replyTo. unenter.live is now
+//     also a registered poste.io domain with real mailboxes (2026-09-22 —
+//     it already had a correct MX record pointing at mail.unenter.live; the
+//     only missing piece was poste.io itself not knowing the domain), so
+//     `address` and `mailbox` are now the same address for every branch
+//     below. mail.unenter.live's mailboxes (support@/admin@/labs@) still
+//     exist and still work — just no longer the default reply-to target.
 //
 // Create each poste.io mailbox from Dashboard → Admin → Mail before relying
 // on one — getMailIdentity() only reads env vars, it doesn't check the
 // mailbox exists.
 import type { SmtpCredentials } from "./client";
 
-export type MailBranch = "support" | "labs" | "admin" | "auth" | "tank" | "marketing";
+export type MailBranch = "support" | "labs" | "admin" | "auth" | "tank" | "marketing" | "shop";
 
 export interface MailIdentity {
   branch: MailBranch;
@@ -55,7 +55,7 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
       return {
         branch,
         address: process.env.MAIL_SEND_FROM_SUPPORT || "support@unenter.live",
-        mailbox: process.env.MAIL_FROM_SUPPORT || "support@mail.unenter.live",
+        mailbox: process.env.MAIL_FROM_SUPPORT || "support@unenter.live",
         displayName: "unenter.live",
         credentials: creds(process.env.MAIL_SMTP_USER_SUPPORT, process.env.MAIL_SMTP_PASS_SUPPORT),
       };
@@ -63,7 +63,7 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
       return {
         branch,
         address: process.env.MAIL_SEND_FROM_LABS || "labs@unenter.live",
-        mailbox: process.env.MAIL_FROM_LABS || "labs@mail.unenter.live",
+        mailbox: process.env.MAIL_FROM_LABS || "labs@unenter.live",
         displayName: "Unenter Labs",
         credentials: creds(process.env.MAIL_SMTP_USER_LABS, process.env.MAIL_SMTP_PASS_LABS),
       };
@@ -71,7 +71,7 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
       return {
         branch,
         address: process.env.MAIL_SEND_FROM_ADMIN || "admin@unenter.live",
-        mailbox: process.env.MAIL_FROM_ADMIN || "admin@mail.unenter.live",
+        mailbox: process.env.MAIL_FROM_ADMIN || "admin@unenter.live",
         displayName: "unenter.live Admin",
         credentials: creds(process.env.MAIL_SMTP_USER_ADMIN, process.env.MAIL_SMTP_PASS_ADMIN),
       };
@@ -79,7 +79,7 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
       return {
         branch,
         address: process.env.MAIL_SEND_FROM_TANK || "tank@unenter.live",
-        mailbox: process.env.MAIL_FROM_TANK || "tank@mail.unenter.live",
+        mailbox: process.env.MAIL_FROM_TANK || "tank@unenter.live",
         displayName: "Tank",
         credentials: creds(process.env.MAIL_SMTP_USER_TANK, process.env.MAIL_SMTP_PASS_TANK),
       };
@@ -87,9 +87,17 @@ export function getMailIdentity(branch: MailBranch): MailIdentity {
       return {
         branch,
         address: process.env.MAIL_SEND_FROM_MARKETING || "marketing@unenter.live",
-        mailbox: process.env.MAIL_FROM_MARKETING || "marketing@mail.unenter.live",
+        mailbox: process.env.MAIL_FROM_MARKETING || "marketing@unenter.live",
         displayName: "unenter.live Marketing",
         credentials: creds(process.env.MAIL_SMTP_USER_MARKETING, process.env.MAIL_SMTP_PASS_MARKETING),
+      };
+    case "shop":
+      return {
+        branch,
+        address: process.env.MAIL_SEND_FROM_SHOP || "shop@unenter.live",
+        mailbox: process.env.MAIL_FROM_SHOP || "shop@unenter.live",
+        displayName: "unenter.live Shop",
+        credentials: creds(process.env.MAIL_SMTP_USER_SHOP, process.env.MAIL_SMTP_PASS_SHOP),
       };
     case "auth":
       // GoTrue sends these itself via docker-compose's SMTP_USER/SMTP_PASS —
