@@ -13,6 +13,7 @@ export const NAV_DATA = [
         title: "Dashboard",
         url: "/",
         icon: Icons.HomeIcon,
+        roles: ["admin", "marketing"],
         items: [],
       },
       {
@@ -27,9 +28,17 @@ export const NAV_DATA = [
       // Renamed from "Content": it manages the CORE zone's presentation, the
       // same way Shop and Labs manage theirs. Shop/Labs landings moved to their
       // own zones; Pages moved out because the page engine serves every zone.
+      //
+      // `roles` (here and below): which profiles.role values see this item in
+      // the sidebar. Omitted = admin-only (the default — every item was
+      // admin-only until the marketing role existed, so absence must stay the
+      // safe/restrictive choice). Keep this in sync with the actual API-level
+      // guards (requireRole calls) — showing a nav item whose route 403s is
+      // worse than not showing it.
       {
         title: "Home",
         icon: Icons.HomeIcon,
+        roles: ["admin", "marketing"],
         items: [
           {
             title: "Landing",
@@ -64,6 +73,7 @@ export const NAV_DATA = [
         title: "Pages",
         url: "/settings/static-pages",
         icon: Icons.Table,
+        roles: ["admin", "marketing"],
         items: [],
       },
 
@@ -71,6 +81,7 @@ export const NAV_DATA = [
       {
         title: "Blog",
         icon: Icons.Table,
+        roles: ["admin", "marketing"],
         items: [
           {
             title: "Posts",
@@ -254,6 +265,7 @@ export const NAV_DATA = [
             title: "Mail",
             url: "/settings/mail",
             icon: Icons.MessageIcon,
+            roles: ["admin", "marketing"],
           },
         ],
       },
