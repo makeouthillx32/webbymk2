@@ -44,7 +44,9 @@ export async function POST(req: NextRequest) {
     const identity = getMailIdentity(branch);
     const from = formatFrom(identity);
 
-    // Send email through Brevo relay via sendMail
+    // Send email through Brevo relay via sendMail. logToInbox: false — this
+    // route does its own thread-aware bookkeeping below (reuses threadId for
+    // replies instead of always starting a new thread).
     const sendResult = await sendMail({
       to,
       from,
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
       html: `<div style="font-family: sans-serif; white-space: pre-wrap;">${text}</div>`,
       replyTo: identity.mailbox,
       credentials: identity.credentials,
+      logToInbox: false,
     });
 
     if (!sendResult.sent) {
