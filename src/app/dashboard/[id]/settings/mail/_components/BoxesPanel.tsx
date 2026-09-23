@@ -102,7 +102,11 @@ export function BoxesPanel() {
     window.alert(`Password reset. New password:\n\n${newPassword}`);
   };
 
-  const domain = "unenter.live";
+  // Must be the domain actually registered on poste.io (Admin → Virtual
+  // domains) — bare unenter.live has no MX and isn't a registered mail
+  // domain there; only mail.unenter.live is. Creating a box under the wrong
+  // domain fails/no-ops against poste.io's admin API.
+  const domain = "mail.unenter.live";
 
   const setupStandardMailboxes = async () => {
     setSettingUp(true);
