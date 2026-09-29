@@ -25,6 +25,7 @@ import {
 import { resolveCameraAudio } from "./audioPolicy";
 import {
   buildManagerSrtSource,
+  type CameraSubstreamSource,
   getPublicCameraPlayback,
   getPublicCameraPreview,
   provisionMediaMtxCamera,
@@ -60,8 +61,20 @@ const managerBaseUrl =
 // for both fixed cameras despite the manager's ports being alive and
 // listening on the host). Always use host.docker.internal for this pull;
 // never the manager-reported lanHost.
-const mediaGatewaySrtHost =
-  process.env.SRT_MANAGER_MEDIA_HOST ?? "host.docker.internal";
+function resolveMediaGatewaySrtHost(): string {
+  if (process.env.SRT_MANAGER_MEDIA_HOST) return process.env.SRT_MANAGER_MEDIA_HOST;
+  if (process.env.SRT_MANAGER_INTERNAL_URL) {
+    try {
+      const u = new URL(process.env.SRT_MANAGER_INTERNAL_URL);
+      if (u.hostname && u.hostname !== "host.docker.internal" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") {
+        return u.hostname;
+      }
+    } catch {}
+  }
+  return "host.docker.internal";
+}
+
+const mediaGatewaySrtHost = resolveMediaGatewaySrtHost();
 
 let lastProvisionWarningAt = 0;
 
@@ -169,6 +182,71 @@ function mapEventToSceneAction(eventType: StreamIngestEventType): CameraSceneAct
  * the entire video pipeline.
  */
 const TELEMETRY_TIMEOUT_MS = 8000;
+
+// ── Camera sub-stream sources ───────────────────────────────────────────────
+// The manager owns the camera password; this asks it for a camera's
+// sub-stream source over the shared secret. Provisioning is a synchronous poll,
+// so this answers from cache and refreshes in the background.
+//
+// Sticky on failure: a manager blip must not flip a camera back to the GPU
+// rung (that restarts its whole pipeline). Only a 404 — the sub-stream turned
+// off in the manager — clears a known source.
+const SUBSTREAM_REFRESH_MS = 10 * 60_000;
+const SUBSTREAM_RETRY_MS = 60_000;
+const substreamSources = new Map<string, {
+  value: CameraSubstreamSource | null;
+  fetchedAt: number;
+  ok: boolean;
+  inFlight: boolean;
+}>();
+
+function cameraSubstreamSource(cameraId: string): CameraSubstreamSource | null {
+  const entry = substreamSources.get(cameraId);
+  const age = entry ? Date.now() - entry.fetchedAt : Infinity;
+  const due = !entry || age > (entry.ok ? SUBSTREAM_REFRESH_MS : SUBSTREAM_RETRY_MS);
+  if (due && !entry?.inFlight) void refreshSubstreamSource(cameraId);
+  return entry?.value ?? null;
+}
+
+async function refreshSubstreamSource(cameraId: string): Promise<void> {
+  const previous = substreamSources.get(cameraId);
+  substreamSources.set(cameraId, {
+    value: previous?.value ?? null,
+    fetchedAt: previous?.fetchedAt ?? 0,
+    ok: previous?.ok ?? false,
+    inFlight: true,
+  });
+  const secret = process.env.TANK_ARCHIVE_INGEST_SECRET;
+  let value = previous?.value ?? null;
+  let ok = false;
+  try {
+    if (!secret) throw new Error("TANK_ARCHIVE_INGEST_SECRET is not set");
+    const response = await fetch(
+      `${managerBaseUrl}/api/cameras/${encodeURIComponent(cameraId)}/rtsp/low-source`,
+      {
+        cache: "no-store",
+        headers: { "x-tank-ingest-secret": secret },
+        // The manager may run one real camera login to verify the source.
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    if (response.status === 404) {
+      value = null;
+      ok = true;
+    } else if (response.ok) {
+      const body = (await response.json()) as { url?: unknown; sar?: unknown };
+      if (typeof body.url === "string" && body.url.startsWith("rtsp://")) {
+        value = { url: body.url, sar: typeof body.sar === "string" ? body.sar : null };
+        ok = true;
+      }
+    } else {
+      console.warn(`[receiverManager] sub-stream source for ${cameraId}: manager returned ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(`[receiverManager] sub-stream source for ${cameraId}:`, error instanceof Error ? error.message : error);
+  }
+  substreamSources.set(cameraId, { value, fetchedAt: Date.now(), ok, inFlight: false });
+}
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${managerBaseUrl}${path}`, {
@@ -345,7 +423,16 @@ async function projectCamera(
     // Falls back to the host path when the receiver is not reachable by name,
     // so a receiver created outside the shared network still works.
     const directHost = `srt-receiver-${camera.id}`;
-    const useDirect = process.env.TANK_SRT_DIRECT !== "0";
+    const isRemoteHost =
+      mediaGatewaySrtHost !== "host.docker.internal" &&
+      mediaGatewaySrtHost !== "127.0.0.1" &&
+      mediaGatewaySrtHost !== "localhost";
+    const useDirect =
+      process.env.TANK_SRT_DIRECT === "1"
+        ? true
+        : process.env.TANK_SRT_DIRECT === "0"
+          ? false
+          : !isRemoteHost;
     const srtSource = buildManagerSrtSource({
       lanHost: useDirect ? directHost : mediaGatewaySrtHost,
       videoOutPort: useDirect ? 4000 : videoOutPort,
@@ -386,6 +473,13 @@ async function projectCamera(
       // decode of the identical stream worked — so SRTLA sources skip the
       // GPU decode path specifically, not just get forced onto H.264.
       const forceSoftwareDecode = camera.type === "srtla";
+      // A camera with a chosen sub-stream hands Tank the low rung ready-made
+      // (see "Camera sub-streams" in mediaGateway.ts). Until its source is
+      // known — the first poll, or the manager unreachable — the rung is
+      // decoded out of the 4K main stream as before.
+      const lowRungSource = camera.type === "rtsp" && camera.lowSubstream === true
+        ? cameraSubstreamSource(camera.id)
+        : null;
 
       provisionMediaMtxCamera(camera.id, srtSource, {
         transcodeAudio,
@@ -393,6 +487,7 @@ async function projectCamera(
         forceVideoTranscode,
         forceSoftwareDecode,
         previewRung: camera.type === "srtla",
+        lowRungSource,
       }).then((result) => {
         // provisionMediaMtxCamera mostly REPORTS failure in its resolved
         // {ok, error} rather than rejecting — a bare .catch() here never

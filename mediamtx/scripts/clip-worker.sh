@@ -67,14 +67,15 @@ sb_upsert() {
 }
 
 # ── discovery ───────────────────────────────────────────────────────────────
-# Fixed cameras encode from their own 4K path (GPU downscale to 480p); OBS
-# preview paths are already small enough to copy. Anything else is skipped.
+# Fixed cameras encode from their 720p -hls-low rung when it is live (GPU
+# downscale to 480p), and fall back to the 4K main path only when it is not;
+# OBS preview paths are already small enough to copy. Anything else is skipped.
 ready_paths() {
   curl -s -S --max-time 10 "${MTX_API}/v3/paths/list" 2>/dev/null \
     | tr '{' '\n' \
     | grep '"ready":true' \
     | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' \
-    | grep -E '^(cameras/[a-zA-Z0-9_-]+|previews/obs-[a-z0-9-]+)$'     | grep -vE -- '-(hls|hls-low|archive|preview|whep)$'
+    | grep -E '^(cameras/[a-zA-Z0-9_-]+|previews/obs-[a-z0-9-]+)$'     | grep -vE -- '-(hls|hls-low|archive|preview|whep|sub)$'
 }
 
 camera_id_for() {
@@ -104,6 +105,24 @@ source_is_stable() {
 }
 
 # ── capture / validate / publish ────────────────────────────────────────────
+# The clip is 480p, so decoding the 4K main path for it threw away 97% of
+# every decoded frame — and with six 120s clips due every 600s this worker is
+# busy nearly nonstop, so that was a permanent seventh 4K NVDEC stream on top
+# of the six live ingests. The -hls-low rung already carries the same picture
+# at 720p: one ninth of the pixels to decode for an identical 480p result.
+#
+# That rung is decoded on the CPU, not NVDEC: cuvidCreateDecoder rejects the
+# NVENC-produced 720p stream with CUDA_ERROR_INVALID_VALUE (the 4K camera
+# stream decodes fine), and a 720p software decode is cheap anyway. NVENC
+# still does the encode.
+clip_source() {
+  if curl -s -S --max-time 5 "${MTX_API}/v3/paths/get/$1-hls-low" 2>/dev/null | grep -q '"ready":true'; then
+    echo "$1-hls-low"
+  else
+    echo "$1"
+  fi
+}
+
 capture_clip() {
   SP="$1"; CF="$2"
   rm -f "$CF"
@@ -115,10 +134,16 @@ capture_clip() {
         -movflags +faststart "$CF" 2>/dev/null &
       ;;
     *)
+      SRC=$(clip_source "$SP")
+      case "$SRC" in
+        *-hls-low) DECODE=""; SCALE="scale=-2:480" ;;
+        *)         DECODE="-hwaccel cuda -hwaccel_output_format cuda"; SCALE="scale_cuda=-2:480" ;;
+      esac
+      # $DECODE is intentionally unquoted: empty, or two flag/value pairs.
       timeout -k "$KILL_GRACE_SECONDS" $((CLIP_SECONDS + 45)) ffmpeg -nostdin -hide_banner -loglevel error -y \
-        -hwaccel cuda -hwaccel_output_format cuda \
-        -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/${SP}" \
-        -t "$CLIP_SECONDS" -map 0:v:0 -an -vf "scale_cuda=-2:480" \
+        $DECODE \
+        -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/${SRC}" \
+        -t "$CLIP_SECONDS" -map 0:v:0 -an -vf "$SCALE" \
         -c:v h264_nvenc -preset p4 -rc vbr -cq 30 -b:v 600k \
         -maxrate 800k -bufsize 1200k -g 48 -keyint_min 24 -no-scenecut 1 \
         -movflags +faststart "$CF" 2>/dev/null &

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   archiveCodec,
+  buildManagerSrtSource,
   buildObsWhepSiblingCommand,
+  buildSubstreamLowRungCommand,
+  buildSubstreamPullCommand,
   buildPreviewSiblingCommand,
   encoderTuning,
   hwDecodeFlags,
@@ -83,6 +86,8 @@ describe("OBS WHEP delivery sibling", () => {
     const command = buildObsWhepSiblingCommand("obs/admin", "obs/admin-whep");
 
     expect(command).toContain("-hwaccel cuda");
+    expect(command).toContain("-fflags +genpts+discardcorrupt");
+    expect(command).toContain("-avoid_negative_ts make_zero");
     expect(command).toContain("scale_cuda=-2:1080");
     expect(command).toContain("-c:v h264_nvenc");
     expect(command).toContain("-g 60");
@@ -233,5 +238,123 @@ describe("IRL normalization topology", () => {
     expect(preview).toContain("-r 12");
     expect(preview).toContain("-b:v 450k");
     expect(preview).toContain("-an");
+  });
+});
+
+// A MediaMTX API stand-in that records every path config written to it.
+function recordingMediaMtx(tracks: string[]) {
+  const configured = new Map<string, Record<string, unknown>>();
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input.toString());
+    const match = url.pathname.match(/\/v3\/config\/paths\/(?:get|patch|add)\/(.+)$/);
+    const path = match ? decodeURIComponent(match[1]) : "";
+    if (url.pathname.startsWith("/v3/paths/get/")) return Response.json({ ready: true, tracks });
+    if (url.pathname.includes("/config/paths/get/")) {
+      return configured.has(path) ? Response.json(configured.get(path)) : new Response("missing", { status: 404 });
+    }
+    if (url.pathname.includes("/config/paths/patch/")) return new Response("missing", { status: 404 });
+    if (url.pathname.includes("/config/paths/add/")) {
+      configured.set(path, JSON.parse(String(init?.body ?? "{}")));
+      return new Response(null, { status: 200 });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+  return configured;
+}
+
+describe("fixed-camera low rung", () => {
+  // Measured 2026-09-27: decoding six 4K main streams to make this rung held
+  // the NVDEC engine at 40-70% around the clock.
+  const source = {
+    url: "rtsp://admin:p%40ss@192.168.50.65:554/cam/realmonitor?channel=1&subtype=1",
+    sar: "40/33",
+  };
+
+  test("the -sub pull copies video, stamps the aspect, and quotes the source", () => {
+    const command = buildSubstreamPullCommand(source, "cameras/cam-fixed-sub");
+    expect(command).toBe(`/bin/sh /scripts/camera-substream.sh cameras/cam-fixed-sub 40/33 "${source.url}"`);
+    // Anything but N/D would be passed to ffmpeg's bitstream filter verbatim.
+    expect(buildSubstreamPullCommand({ ...source, sar: "40/33,evil" }, "p")).toContain(" p none ");
+    expect(buildSubstreamPullCommand({ ...source, sar: null }, "p")).toContain(" p none ");
+  });
+
+  test("an SRT source gets no RTSP-only input options", () => {
+    // -rtsp_transport before an srt:// input is an unknown option and ffmpeg
+    // refuses to start — the rung would never come up.
+    const srt = buildManagerSrtSource({ lanHost: "h", videoOutPort: 4000, streamUser: "u", streamKey: "k" })!;
+    const command = buildSubstreamLowRungCommand(srt, "cameras/cam-fixed", "cameras/cam-fixed-hls-low");
+    expect(command.slice(0, command.indexOf(" -i "))).not.toContain("-rtsp_transport");
+  });
+
+  test("video comes from the sub-stream, audio from the main path", () => {
+    // Dahua sub-streams have no audio, and the vision worker measures
+    // loudness on this rung for the director's audio-peak mode.
+    const command = buildSubstreamLowRungCommand(
+      "rtsp://127.0.0.1:8554/cameras/cam-fixed-sub", "cameras/cam-fixed", "cameras/cam-fixed-hls-low");
+    expect(command).toContain("-i rtsp://127.0.0.1:8554/cameras/cam-fixed ");
+    expect(command).toContain("-map 0:v:0 -map 1:a:0?");
+    expect(command).toContain("-c:a aac");
+    // The main path's audio is already normalised; no second loudnorm pass.
+    expect(command).not.toContain("loudnorm");
+    expect(command).toMatch(/rtsp:\/\/127\.0\.0\.1:8554\/cameras\/cam-fixed-hls-low$/);
+  });
+
+  test("without a sub-stream the rung is still decoded from the main stream", async () => {
+    process.env.TANK_HW_ENCODER = "nvenc";
+    process.env.TANK_HLS_LOW_RUNG = "1";
+    process.env.MEDIAMTX_API_URL = "http://mediamtx.test:9997";
+    const configured = recordingMediaMtx(["H264", "G711"]);
+
+    const result = await provisionMediaMtxCamera("cam-fixed-a", "srt://receiver.test:9000?mode=caller", {
+      transcodeAudio: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const main = String(configured.get("cameras/cam-fixed-a")?.runOnInit ?? "");
+    expect(main).toContain("-hwaccel cuda");
+    expect(main).toContain("scale_cuda=-2:720");
+    expect(main).toContain("rtsp://127.0.0.1:8554/cameras/cam-fixed-a-hls-low");
+    expect(configured.get("cameras/cam-fixed-a-hls-low")?.runOnInit).toBe("");
+    expect(configured.has("cameras/cam-fixed-a-sub")).toBe(false);
+  });
+
+  test("with a sub-stream nothing is decoded and the rung is a copy", async () => {
+    process.env.TANK_HW_ENCODER = "nvenc";
+    process.env.TANK_HLS_LOW_RUNG = "1";
+    process.env.MEDIAMTX_API_URL = "http://mediamtx.test:9997";
+    const configured = recordingMediaMtx(["H264", "G711"]);
+
+    const result = await provisionMediaMtxCamera("cam-fixed-b", "srt://receiver.test:9000?mode=caller", {
+      transcodeAudio: true,
+      lowRungSource: source,
+    });
+
+    expect(result.ok).toBe(true);
+    const main = String(configured.get("cameras/cam-fixed-b")?.runOnInit ?? "");
+    const sub = configured.get("cameras/cam-fixed-b-sub");
+    const low = configured.get("cameras/cam-fixed-b-hls-low");
+    const lowCmd = String(low?.runOnInit ?? "");
+
+    // The main ingest becomes a remux: no decoder, no GPU scale, no encode.
+    expect(main).not.toContain("-hwaccel");
+    expect(main).not.toContain("h264_nvenc");
+    expect(main).not.toContain("-hls-low");
+    expect(main).toContain("-c:v copy");
+    expect(main).toContain("-c:a libopus");
+
+    // The camera's own stream lands in -sub first, restarted if it drops.
+    expect(String(sub?.runOnInit)).toContain("camera-substream.sh cameras/cam-fixed-b-sub 40/33");
+    expect(sub?.runOnInitRestart).toBe(true);
+
+    // The rung waits for both of its inputs, then copies.
+    expect(lowCmd).toContain("/scripts/await-source.sh cameras/cam-fixed-b-sub /bin/sh /scripts/await-source.sh cameras/cam-fixed-b ffmpeg");
+    expect(lowCmd).toContain(`-i "rtsp://127.0.0.1:8554/cameras/cam-fixed-b-sub"`);
+    expect(lowCmd).toContain("-c:v copy");
+    expect(lowCmd).toContain("-c:a aac");
+    expect(lowCmd).not.toContain("-hwaccel");
+    expect(lowCmd).not.toContain("h264_nvenc");
+    // The camera password stays in the -sub stage only.
+    expect(lowCmd).not.toContain("p%40ss");
+    expect(low?.runOnInitRestart).toBe(true);
   });
 });

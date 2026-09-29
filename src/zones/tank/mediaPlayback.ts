@@ -52,6 +52,13 @@ export function cameraHlsLowMediaPath(cameraId: string) {
   return `${cameraMediaPath(cameraId)}-hls-low`;
 }
 
+// The camera's own low-res sub-stream, pulled straight from the camera and
+// copied (never decoded) — the video source of -hls-low when the camera has
+// one. Internal only; nothing plays it directly.
+export function cameraSubMediaPath(cameraId: string) {
+  return `${cameraMediaPath(cameraId)}-sub`;
+}
+
 // Tiny video-only rung used by room cards. User OBS and IRL contributions can
 // arrive at 4K; decoding that contribution for a 200px thumbnail wastes the
 // viewer's bandwidth, battery, and hardware decoder budget. This sibling is
