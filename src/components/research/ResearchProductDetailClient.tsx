@@ -668,6 +668,19 @@ export default function ResearchProductDetailClient({
             <AlertTriangle size={13} className="text-amber-500 shrink-0" />
             For laboratory research use only. Strictly not for human or veterinary administration.
           </p>
+          {!hasLabReports && (
+            <div className="mt-3 rounded-xl border border-[hsl(var(--destructive)/0.45)] bg-[hsl(var(--destructive)/0.12)] p-3 text-xs text-[hsl(var(--destructive))]">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                <div>
+                  <strong className="block font-bold">No published Certificate of Analysis on file</strong>
+                  <span className="mt-1 block leading-relaxed">
+                    This product may be fulfilled from an inventory batch that does not yet have a published COA. Review this status before purchasing.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

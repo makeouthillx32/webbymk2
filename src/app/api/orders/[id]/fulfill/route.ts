@@ -42,6 +42,7 @@ export async function PATCH(
     package_preset,
     package_weight_oz,
     allocations,
+    acknowledge_missing_coa = false,
   } = body;
 
   // 1. Call transactional atomic procedure
@@ -56,6 +57,7 @@ export async function PATCH(
     p_package_preset: package_preset?.trim() || null,
     p_package_weight_oz: typeof package_weight_oz === 'number' ? package_weight_oz : null,
     p_allocations: allocations && typeof allocations === 'object' ? allocations : null,
+    p_acknowledge_missing_coa: Boolean(acknowledge_missing_coa),
   });
 
   if (rpcError) {

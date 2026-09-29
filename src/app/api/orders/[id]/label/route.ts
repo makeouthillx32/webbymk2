@@ -7,8 +7,9 @@
 //   2. Shipping address must be complete.
 //   3. Every research order item must be allocated to a physical production batch.
 //   4. Batch must be active/released and unexpired.
-//   5. Batch must have an approved, published COA on file.
-//   6. Label creation records label_created_at, staff audit, and packaging preset,
+//   5. Missing COAs require an explicit staff acknowledgement and remain in the audit trail.
+//   6. Live postage requires an explicit paid-purchase confirmation.
+//   7. Label creation records label_created_at, staff audit, and packaging preset,
 //      keeping "label created" strictly distinct from "shipped / handed to carrier".
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -42,6 +43,8 @@ interface PackageDimensions {
   widthIn: number;
   heightIn: number;
   presetName?: string;
+  acknowledgeMissingCoa?: boolean;
+  confirmPostagePurchase?: boolean;
 }
 
 export async function POST(
@@ -59,12 +62,30 @@ export async function POST(
     const { id } = await params;
 
     const body = await request.json() as PackageDimensions;
-    const { weightLb, lengthIn, widthIn, heightIn, presetName } = body;
+    const {
+      weightLb,
+      lengthIn,
+      widthIn,
+      heightIn,
+      presetName,
+      acknowledgeMissingCoa = false,
+      confirmPostagePurchase = false,
+    } = body;
 
     if (!weightLb || !lengthIn || !widthIn || !heightIn) {
       return NextResponse.json(
         { error: 'Missing required package dimensions: weightLb, lengthIn, widthIn, heightIn' },
         { status: 400 }
+      );
+    }
+
+    if (!isMockMode() && !confirmPostagePurchase) {
+      return NextResponse.json(
+        {
+          error: 'Paid postage purchase must be explicitly confirmed before generating a live label.',
+          code: 'POSTAGE_PURCHASE_CONFIRMATION_REQUIRED',
+        },
+        { status: 422 }
       );
     }
 
@@ -140,6 +161,7 @@ export async function POST(
     }
 
     const researchItems = (orderItems ?? []).filter((i) => !!i.research_product_id);
+    const missingCoaWarnings: Array<{ item_id: string; batch_id: string; batch_number: string }> = [];
     for (const item of researchItems) {
       const b = item.research_batches as any;
       if (!item.allocated_batch_id || !b) {
@@ -172,6 +194,16 @@ export async function POST(
         );
       }
 
+      if (b.remaining_quantity != null && b.remaining_quantity < item.quantity) {
+        return NextResponse.json(
+          {
+            error: `Batch ${b.batch_number} has ${b.remaining_quantity} units remaining, but ${item.quantity} are required.`,
+            code: 'INSUFFICIENT_BATCH_INVENTORY',
+          },
+          { status: 422 }
+        );
+      }
+
       // Verify Published COA exists for this batch
       const { count: coaCount } = await admin
         .from('research_lab_reports')
@@ -180,14 +212,23 @@ export async function POST(
         .eq('published_status', 'published');
 
       if (!coaCount || coaCount === 0) {
+        missingCoaWarnings.push({
+          item_id: item.id,
+          batch_id: b.id,
+          batch_number: b.batch_number,
+        });
+      }
+    }
+
+    if (missingCoaWarnings.length > 0 && !acknowledgeMissingCoa) {
         return NextResponse.json(
           {
-            error: `Quality release blocked: Batch ${b.batch_number} does not have an approved, published COA on file.`,
-            code: 'COA_NOT_PUBLISHED',
+            error: `${missingCoaWarnings.length} allocated batch${missingCoaWarnings.length === 1 ? ' does' : 'es do'} not have a published COA. Staff acknowledgement is required to continue.`,
+            code: 'COA_ACKNOWLEDGEMENT_REQUIRED',
+            warnings: missingCoaWarnings,
           },
           { status: 422 }
         );
-      }
     }
 
     const mailClass = resolveMailClass(order.shipping_method_name);
@@ -236,6 +277,8 @@ export async function POST(
         postage_cents: 0,
         package_preset: presetName ?? 'Custom',
         weight_oz: weightLb * 16,
+        quality_warnings: missingCoaWarnings,
+        missing_coa_acknowledged: missingCoaWarnings.length > 0 ? acknowledgeMissingCoa : false,
       };
 
       await admin
@@ -260,6 +303,7 @@ export async function POST(
           'X-Postage':         '0',
           'X-Label-Cached':    'false',
           'X-Mock-Mode':       'true',
+          'X-Quality-Warning': missingCoaWarnings.length > 0 ? 'MISSING_COA_ACKNOWLEDGED' : '',
         },
       });
     }
@@ -369,6 +413,8 @@ export async function POST(
       postage_cents: Math.round(postage * 100),
       package_preset: presetName ?? 'Custom',
       weight_oz: weightLb * 16,
+      quality_warnings: missingCoaWarnings,
+      missing_coa_acknowledged: missingCoaWarnings.length > 0 ? acknowledgeMissingCoa : false,
     };
 
     if (trackingNumber) {
@@ -397,6 +443,7 @@ export async function POST(
         'X-Tracking-URL':    trackingUrl,
         'X-Label-Cached':    'false',
         'X-Mock-Mode':       'false',
+        'X-Quality-Warning': missingCoaWarnings.length > 0 ? 'MISSING_COA_ACKNOWLEDGED' : '',
       },
     });
 

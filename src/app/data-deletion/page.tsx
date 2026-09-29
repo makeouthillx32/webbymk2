@@ -29,7 +29,7 @@ export default function DataDeletionPage() {
                   Option 1: In-App Account Deletion
                 </h2>
                 <p className="mb-2">
-                  1. Log in to your account on <Link href="https://unenter.live" className="text-primary underline">unenter.live</Link> or <Link href="https://tank.unenter.live" className="text-primary underline">tank.unenter.live</Link>.
+                  1. Log in to your account on <Link href="https://www.unenter.live" className="text-primary underline">unenter.live</Link> or <Link href="https://tank.unenter.live" className="text-primary underline">tank.unenter.live</Link>.
                 </p>
                 <p className="mb-2">
                   2. Open your <strong>Account Profile / Settings</strong> overlay.

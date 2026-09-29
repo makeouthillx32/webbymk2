@@ -16,18 +16,20 @@ export async function GET() {
   const guard = await requireAdmin();
   if ("error" in guard) return guard.error;
 
-  // join roles on role_id to get the actual role name
+  // invites.role_id stores the role name directly ("admin", "marketing", …)
+  // — roles.id IS the role name too (it's a self-mapping text lookup table,
+  // not a surrogate key), so joining roles!role_id(role) just to decode
+  // role_id back to itself was a no-op fetch on every page load. Also drops
+  // stale rows from before the 2026-08-10 role-ladder migration that carry
+  // no role_id/inviter_id at all — they can never be redeemed and only
+  // clutter this list.
   const { data, error } = await guard.admin
     .from("invites")
     .select(
       `
       code,
       role_id,
-      roles!role_id (
-        role
-      ),
       created_at,
-      max_uses,
       expires_at,
       inviter_id,
       profiles!inviter_id (
@@ -35,6 +37,7 @@ export async function GET() {
       )
     `
     )
+    .not("role_id", "is", null)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -46,13 +49,11 @@ export async function GET() {
 
   const invites = (data ?? []).map((i) => ({
     code: i.code,
-    role: (i.roles as any)?.[0]?.role ?? i.role_id, // decoded role name
+    role: i.role_id,
     inviter: {
       name: i.inviter_id, // still fallback to UUID
       avatar: (i.profiles as any)?.[0]?.avatar_url || defaultAvatarUrl,
     },
-    uses: 0,
-    max_uses: i.max_uses,
     expires_at: i.expires_at,
   }));
 

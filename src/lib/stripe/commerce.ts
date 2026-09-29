@@ -91,12 +91,32 @@ export function eventPaymentLane(event: Stripe.Event): PaymentLane | undefined {
  * when they post to the same URL. Try only explicitly configured secrets and
  * require the signed event's livemode flag to agree with that secret.
  */
-export function constructCommerceWebhookEvent(body: string, signature: string): VerifiedWebhook {
+export async function constructCommerceWebhookEvent(body: string, signature: string): Promise<VerifiedWebhook> {
   const candidates: Array<{
     mode: CommerceStripeMode;
     signingSecret: string | undefined;
     expectedLane?: PaymentLane;
   }> = [
+    {
+      mode: "live",
+      signingSecret: process.env.STRIPE_SHOP_LIVE_WEBHOOK_SECRET,
+      expectedLane: "shop",
+    },
+    {
+      mode: "test",
+      signingSecret: process.env.STRIPE_SHOP_WEBHOOK_SECRET,
+      expectedLane: "shop",
+    },
+    {
+      mode: "live",
+      signingSecret: process.env.STRIPE_LABS_LIVE_WEBHOOK_SECRET,
+      expectedLane: "labs",
+    },
+    {
+      mode: "test",
+      signingSecret: process.env.STRIPE_LABS_WEBHOOK_SECRET,
+      expectedLane: "labs",
+    },
     {
       mode: "live",
       signingSecret: process.env.STRIPE_TANK_LIVE_WEBHOOK_SECRET,
@@ -116,8 +136,8 @@ export function constructCommerceWebhookEvent(body: string, signature: string): 
     if (!candidate.signingSecret) continue;
 
     try {
-      const verifier = new Stripe(keyForMode(candidate.mode));
-      const event = verifier.webhooks.constructEvent(body, signature, candidate.signingSecret);
+      const verifier = new Stripe(keyForMode(candidate.mode, candidate.expectedLane));
+      const event = await verifier.webhooks.constructEventAsync(body, signature, candidate.signingSecret);
       if (event.livemode !== (candidate.mode === "live")) {
         throw new Error("Stripe event mode does not match its signing secret");
       }

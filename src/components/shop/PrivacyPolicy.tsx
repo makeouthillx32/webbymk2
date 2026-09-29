@@ -9,20 +9,20 @@ export default function PrivacyPolicy() {
       <p className="font-semibold">Last Revised: May 5, 2023</p>
 
       <p>
-        At <strong>Desert Area Resources and Training</strong> ("<strong>DART</strong>"), we respect your data and privacy.
+        At <strong>Unenter</strong>, we respect your data and privacy.
       </p>
 
       <h2>Overview</h2>
       <p>
-        This DART Privacy Notice describes the types of personal information that DART collects, how we use it, how and when it may be shared, and the rights and choices you have with respect to your information. It also explains how we communicate with you and how you can make requests or submit inquiries to us about your information. Our goal is to help you understand how we use your information to improve our products, services, marketing, and interactions with you, as part of our commitment to maintaining your trust. Thank you for taking the time to read and understand our data and privacy related practices.
+        This Unenter Privacy Notice describes the types of personal information that Unenter collects, how we use it, how and when it may be shared, and the rights and choices you have with respect to your information. It also explains how we communicate with you and how you can make requests or submit inquiries to us about your information. Our goal is to help you understand how we use your information to improve our products, services, marketing, and interactions with you, as part of our commitment to maintaining your trust. Thank you for taking the time to read and understand our data and privacy related practices.
       </p>
       <p>
-        By continuing to use DART Services, you are consenting to the practices described in this Privacy Notice.
+        By continuing to use Unenter Services, you are consenting to the practices described in this Privacy Notice.
       </p>
 
       <h2>1. Applicability and Scope</h2>
       <p>
-        This Privacy Notice ("Notice") applies to the websites and applications owned or operated by DART that direct the user to this Notice ("DART Services").
+        This Privacy Notice ("Notice") applies to the websites and applications owned or operated by Unenter that direct the user to this Notice ("Unenter Services").
       </p>
 
       <h2>2. Updates to this Privacy Notice</h2>
@@ -31,7 +31,7 @@ export default function PrivacyPolicy() {
       </p>
 
       <h2>3. Information We Collect</h2>
-      <p>When you visit and use DART Services, we may collect the following categories of information:</p>
+      <p>When you visit and use Unenter Services, we may collect the following categories of information:</p>
       <ul>
         <li>
           <strong>Identifiers</strong> – information that can be used to identify you, such as your name, phone number, address, email address, IP address, birthday (day & month), and demographic data.
@@ -81,7 +81,7 @@ export default function PrivacyPolicy() {
       <h2>5. How We Disclose Your Information</h2>
       <p>We share your data as needed to fulfill the above purposes and as permitted by law:</p>
       <ul>
-        <li><strong>Within DART</strong> – for management and operations</li>
+        <li><strong>Within Unenter</strong> – for management and operations</li>
         <li><strong>Service Providers & Partners</strong> – payment processing, hosting, analytics, marketing, etc., under contractual restrictions</li>
         <li><strong>Legal & Safety</strong> – to protect rights, comply with laws, or investigate fraud</li>
       </ul>
@@ -114,10 +114,8 @@ export default function PrivacyPolicy() {
       <h2>11. Contact Us</h2>
       <p>If you have questions or requests regarding your information, please contact us at:</p>
       <address>
-        Desert Area Resources and Training (DART)<br />
-        123 Main Street<br />
-        Anytown, CA 12345<br />
-        Email: <a href="mailto:privacy@dart.org">privacy@dart.org</a>
+        Unenter<br />
+        Email: <a href="mailto:support@unenter.live">support@unenter.live</a>
       </address>
     </div>
   );

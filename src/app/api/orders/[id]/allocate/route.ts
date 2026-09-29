@@ -90,6 +90,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       .select(`
         id,
         product_id,
+        variant_id,
         batch_number,
         status,
         is_current_shipping,
@@ -133,6 +134,17 @@ export async function GET(req: NextRequest, { params }: Params) {
     return b && b.status !== "active";
   });
 
+  const availableBatchesForItem = (item: any) =>
+    (batchesByProduct[item.research_product_id] || []).filter(
+      (batch: any) => !batch.variant_id || !item.research_variant_id || batch.variant_id === item.research_variant_id
+    );
+
+  const missingCoaItems = researchItems.filter((item: any) => {
+    if (!item.allocated_batch_id) return false;
+    const batch = availableBatchesForItem(item).find((candidate: any) => candidate.id === item.allocated_batch_id);
+    return !batch?.research_lab_reports?.some((report: any) => report.published_status === "published");
+  });
+
   const canGenerateLabel =
     isPaid &&
     isAddressValid &&
@@ -146,7 +158,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       order,
       items: (items ?? []).map((item) => ({
         ...item,
-        available_batches: item.research_product_id ? (batchesByProduct[item.research_product_id] || []) : [],
+        available_batches: item.research_product_id ? availableBatchesForItem(item) : [],
       })),
       readiness: {
         is_paid: isPaid,
@@ -156,6 +168,8 @@ export async function GET(req: NextRequest, { params }: Params) {
         unallocated_count: unallocatedItems.length,
         expired_count: expiredBatches.length,
         unreleased_count: unreleasedBatches.length,
+        missing_coa_count: missingCoaItems.length,
+        requires_coa_acknowledgement: missingCoaItems.length > 0,
         can_generate_label: canGenerateLabel,
       },
     },
@@ -182,8 +196,57 @@ export async function POST(req: NextRequest, { params }: Params) {
     return jsonError(400, "INVALID_INPUT", "allocations object mapping order_item_id to batch_id is required");
   }
 
-  // Update each order item
-  for (const [itemId, batchId] of Object.entries(allocations)) {
+  const entries = Object.entries(allocations).filter(([, batchId]) => Boolean(batchId));
+  const itemIds = entries.map(([itemId]) => itemId);
+  const batchIds = entries.map(([, batchId]) => String(batchId));
+
+  const { data: items, error: itemsError } = itemIds.length
+    ? await admin
+        .from("order_items")
+        .select("id, order_id, research_product_id, research_variant_id, quantity")
+        .eq("order_id", orderId)
+        .in("id", itemIds)
+    : { data: [], error: null };
+
+  if (itemsError) return jsonError(500, "ITEMS_FETCH_FAILED", itemsError.message);
+  if ((items ?? []).length !== itemIds.length) {
+    return jsonError(400, "INVALID_ALLOCATION_ITEM", "One or more order items do not belong to this order");
+  }
+
+  const { data: batches, error: batchesError } = batchIds.length
+    ? await admin
+        .from("research_batches")
+        .select("id, product_id, variant_id, status, expiration_date, remaining_quantity")
+        .in("id", batchIds)
+    : { data: [], error: null };
+
+  if (batchesError) return jsonError(500, "BATCHES_FETCH_FAILED", batchesError.message);
+  const itemById = new Map((items ?? []).map((item: any) => [item.id, item]));
+  const batchById = new Map((batches ?? []).map((batch: any) => [batch.id, batch]));
+
+  for (const [itemId, rawBatchId] of entries) {
+    const batchId = String(rawBatchId);
+    const item: any = itemById.get(itemId);
+    const batch: any = batchById.get(batchId);
+    if (!batch || batch.product_id !== item.research_product_id) {
+      return jsonError(400, "INVALID_BATCH", "Selected batch does not belong to the order item's research product");
+    }
+    if (batch.variant_id && item.research_variant_id && batch.variant_id !== item.research_variant_id) {
+      return jsonError(400, "VARIANT_BATCH_MISMATCH", "Selected batch does not match the ordered variant");
+    }
+    if (batch.status !== "active") {
+      return jsonError(422, "BATCH_NOT_RELEASED", "Only active batches can be allocated");
+    }
+    if (batch.expiration_date && new Date(batch.expiration_date) < new Date()) {
+      return jsonError(422, "BATCH_EXPIRED", "Expired batches cannot be allocated");
+    }
+    if (batch.remaining_quantity != null && batch.remaining_quantity < item.quantity) {
+      return jsonError(422, "INSUFFICIENT_BATCH_INVENTORY", "Selected batch does not have enough remaining inventory");
+    }
+  }
+
+  // Persist only after every allocation validates.
+  for (const [itemId, batchId] of entries) {
     if (batchId) {
       const { error } = await admin
         .from("order_items")

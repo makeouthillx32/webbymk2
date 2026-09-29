@@ -19,19 +19,43 @@ export default function ContactPage() {
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedTicket, setSubmittedTicket] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!fullName || !email || !message) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
 
-    // Simulate ticketing dispatch and mailto fallback
-    setTimeout(() => {
+    try {
+      const fullSubject = orderOrLot
+        ? `[${category}] ${subject} (${orderOrLot})`
+        : `[${category}] ${subject}`;
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: fullName,
+          email,
+          subject: fullSubject,
+          message,
+          branch: "labs",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSubmitError(data?.error || "Something went wrong sending your inquiry. Please try again.");
+        setIsSubmitting(false);
+        return;
+      }
       const ticketId = `UNENTER-CARE-${Math.floor(100000 + Math.random() * 900000)}`;
       setSubmittedTicket(ticketId);
+    } catch {
+      setSubmitError("Something went wrong sending your inquiry. Please try again.");
+    } finally {
       setIsSubmitting(false);
-    }, 600);
+    }
   }
 
   return (
@@ -294,6 +318,10 @@ export default function ContactPage() {
                       className="w-full rounded-lg border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3.5 py-2.5 text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--ring))]"
                     />
                   </div>
+
+                  {submitError && (
+                    <p className="text-xs font-semibold text-[hsl(var(--destructive))]">{submitError}</p>
+                  )}
 
                   <div className="pt-2">
                     <button

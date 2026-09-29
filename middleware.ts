@@ -179,6 +179,7 @@ function limiterFor(request: NextRequest): SlidingWindowLimiter {
 function shouldCheckShield(request: NextRequest, normalizedHost: string, clientIp: string): boolean {
   const path = request.nextUrl.pathname;
   if (
+    path === "/api/webhooks/stripe" ||
     path.startsWith("/_next") ||
     path.startsWith("/api/shield") ||
     path.startsWith("/__status-api") ||
@@ -277,6 +278,7 @@ export async function middleware(request: NextRequest) {
   const isStatic =
     url.pathname.startsWith("/_next") ||
     /\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|woff2|ttf|mp3|mp4|m3u8|ts)$/i.test(url.pathname);
+  const isSignedStripeWebhook = url.pathname === "/api/webhooks/stripe";
 
   // Trusted sources are exempt outright — see isTrustedSourceIp. Signed-in
   // sessions get a far higher ceiling than anonymous traffic: an operator with
@@ -285,7 +287,12 @@ export async function middleware(request: NextRequest) {
   // must never be locked out of it.
   const limiter = limiterFor(request);
 
-  if (!isStatic && !url.pathname.startsWith("/api/shield") && !isTrustedSourceIp(clientIp)) {
+  if (
+    !isStatic &&
+    !isSignedStripeWebhook &&
+    !url.pathname.startsWith("/api/shield") &&
+    !isTrustedSourceIp(clientIp)
+  ) {
     limiter.record(clientIp);
     const rateStatus = limiter.check(clientIp);
     if (rateStatus.isBlocked) {

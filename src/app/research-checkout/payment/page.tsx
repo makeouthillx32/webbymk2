@@ -1,7 +1,7 @@
 ﻿// app/research-checkout/payment/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useResearchCart } from "@/components/Layouts/overlays/research-cart/research-cart-context";
@@ -13,8 +13,17 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ChevronLeft, Lock, ShieldCheck, Copy, Check, AlertTriangle, CreditCard } from "lucide-react";
 import { useStripeLane } from "@/lib/stripe/useStripeLane";
+import { calcPackageProtectionCents } from "@/lib/research/checkoutTotals";
 
-function StripePaymentForm({ orderId, totalFormatted }: { orderId: string; totalFormatted: string }) {
+function StripePaymentForm({
+  orderId,
+  totalFormatted,
+  disabled = false,
+}: {
+  orderId: string;
+  totalFormatted: string;
+  disabled?: boolean;
+}) {
   const stripe = useStripe();
   const elements = useElements();
 
@@ -55,10 +64,10 @@ function StripePaymentForm({ orderId, totalFormatted }: { orderId: string; total
         type="submit"
         size="lg"
         className="w-full h-12 font-bold tracking-wide rounded-xl bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow-md hover:opacity-90 active:scale-[0.99] transition"
-        disabled={!stripe || isProcessing}
+        disabled={!stripe || isProcessing || disabled}
       >
         <Lock className="w-4 h-4 mr-2" />
-        {isProcessing ? "Processing Payment..." : `Pay Now — ${totalFormatted}`}
+        {isProcessing ? "Processing Payment..." : disabled ? "Updating total..." : `Pay Now — ${totalFormatted}`}
       </Button>
 
       <p className="text-xs text-center text-[hsl(var(--muted-foreground))]">
@@ -78,6 +87,19 @@ export default function ResearchCheckoutPaymentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [checkoutData, setCheckoutData] = useState<any>(null);
+  // Server-authoritative amounts from create-payment-intent — subtotal,
+  // shipping, tax, discount, package protection and the exact total Stripe
+  // will charge. The page used to compute its own total (no tax) while the
+  // server charged with tax, so the button and the charge disagreed.
+  const [serverTotals, setServerTotals] = useState<{
+    subtotal_cents: number;
+    shipping_cents: number;
+    tax_cents: number;
+    discount_cents: number;
+    package_protection_cents: number;
+    total_cents: number;
+  } | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Billing address state
   const [sameAsShipping, setSameAsShipping] = useState(true);
@@ -138,12 +160,20 @@ export default function ResearchCheckoutPaymentPage() {
     });
   }, [cart, cartLoading, isSignedIn, router]);
 
+  // Re-runs when the protection toggle changes: the server reuses the pending
+  // order and updates the PaymentIntent amount, so what Stripe charges always
+  // matches what's displayed. Previously the PaymentIntent was created once,
+  // before the toggle mattered, and never told about it.
   useEffect(() => {
     if (!checkoutData || !cart?.id) return;
     createPaymentIntent();
-  }, [checkoutData, cart]);
+  }, [checkoutData, cart, packageProtection]);
+
+  const syncSeq = useRef(0);
 
   const createPaymentIntent = async () => {
+    const seq = ++syncSeq.current;
+    setIsSyncing(true);
     try {
       const response = await fetch("/api/research-checkout/create-payment-intent", {
         method: "POST",
@@ -151,14 +181,17 @@ export default function ResearchCheckoutPaymentPage() {
         body: JSON.stringify({
           cart_id: cart?.id,
           ...checkoutData,
+          package_protection: packageProtection,
         }),
       });
 
       const data = await response.json();
+      if (seq !== syncSeq.current) return; // a newer toggle superseded this response
 
       if (data.success && data.payment_intent) {
         setClientSecret(data.payment_intent.client_secret);
         setStripeOrderId(data.order.id);
+        if (data.breakdown) setServerTotals(data.breakdown);
       } else {
         // Stripe error is non-fatal if user wants to pay with Zelle
         console.warn("Stripe PI init warning:", data.error);
@@ -166,20 +199,24 @@ export default function ResearchCheckoutPaymentPage() {
     } catch (err: any) {
       console.warn("Failed to initialize Stripe payment intent:", err.message);
     } finally {
-      setLoading(false);
+      if (seq === syncSeq.current) {
+        setIsSyncing(false);
+        setLoading(false);
+      }
     }
   };
 
-  // Financial calculations
-  const subtotalCents = subtotal;
-  const shippingCents = checkoutData?.shipping_rate_data?.price_cents ?? 0;
-  // Package protection formula: $2.00 for orders <= $100, or 3% of subtotal for orders > $100
-  const protectionCents = packageProtection
-    ? subtotalCents <= 10000
-      ? 200
-      : Math.round(subtotalCents * 0.03)
-    : 0;
-  const totalCents = subtotalCents + shippingCents + protectionCents;
+  // Financial calculations. Subtotal, shipping, tax and discount come from the
+  // server once it has answered; package protection uses the same shared
+  // formula the server does (lib/research/checkoutTotals.ts), so the total
+  // below is exactly what Stripe charges — including tax, which this page
+  // used to leave out.
+  const subtotalCents = serverTotals?.subtotal_cents ?? subtotal;
+  const shippingCents = serverTotals?.shipping_cents ?? checkoutData?.shipping_rate_data?.price_cents ?? 0;
+  const discountCents = serverTotals?.discount_cents ?? 0;
+  const taxCents = serverTotals?.tax_cents ?? null;
+  const protectionCents = calcPackageProtectionCents(subtotalCents, discountCents, packageProtection);
+  const totalCents = subtotalCents + shippingCents + (taxCents ?? 0) - discountCents + protectionCents;
   const totalFormatted = `$${(totalCents / 100).toFixed(2)}`;
 
   const handleCopyZelle = () => {
@@ -453,7 +490,7 @@ export default function ResearchCheckoutPaymentPage() {
                     <div className="mt-5 pt-4 border-t border-[hsl(var(--border))]">
                       {clientSecret && stripeOrderId && stripeLane.stripe ? (
                         <Elements stripe={stripeLane.stripe} options={{ clientSecret }}>
-                          <StripePaymentForm orderId={stripeOrderId} totalFormatted={totalFormatted} />
+                          <StripePaymentForm orderId={stripeOrderId} totalFormatted={totalFormatted} disabled={isSyncing} />
                         </Elements>
                       ) : stripeLane.error ? (
                         <div className="py-6 text-center text-xs text-destructive">{stripeLane.error}</div>
@@ -620,6 +657,24 @@ export default function ResearchCheckoutPaymentPage() {
                   </span>
                 </div>
 
+                {discountCents > 0 && (
+                  <div className="flex justify-between text-[hsl(var(--muted-foreground))]">
+                    <span>Discount</span>
+                    <span className="text-[hsl(var(--primary))] font-semibold tabular-nums">
+                      -${(discountCents / 100).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+
+                {taxCents !== null && (
+                  <div className="flex justify-between text-[hsl(var(--muted-foreground))]">
+                    <span>Tax</span>
+                    <span className="text-[hsl(var(--card-foreground))] font-semibold tabular-nums">
+                      ${(taxCents / 100).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+
                 {packageProtection && (
                   <div className="flex justify-between text-[hsl(var(--muted-foreground))]">
                     <span>Package Protection</span>
@@ -630,7 +685,7 @@ export default function ResearchCheckoutPaymentPage() {
                 )}
 
                 <div className="pt-3 border-t border-[hsl(var(--border))] flex justify-between text-base font-extrabold text-[hsl(var(--card-foreground))]">
-                  <span>Total</span>
+                  <span>{taxCents === null ? "Total (before tax)" : "Total"}</span>
                   <span className="text-[hsl(var(--primary))] tabular-nums">{totalFormatted}</span>
                 </div>
               </div>

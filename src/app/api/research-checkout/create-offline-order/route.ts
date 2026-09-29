@@ -4,8 +4,12 @@
 // Auth-only: records order in 'orders' and 'order_items' with status='pending',
 // payment_status='pending', and payment_method='zelle'.
 import { createServerClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { requireResearcherRole } from "@/lib/research/requireResearcherRole";
 import { NextRequest, NextResponse } from "next/server";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
+import { calcPackageProtectionCents } from "@/lib/research/checkoutTotals";
+import { closeResearchCart } from "@/lib/research/closeResearchCart";
 
 export const dynamic = "force-dynamic";
 
@@ -133,6 +137,58 @@ export async function POST(request: NextRequest) {
     const taxRate = taxData?.reduce((sum, t) => sum + Number(t.rate), 0) || 0;
     const tax_cents = Math.round((subtotal_cents + shipping_cents) * taxRate);
 
+    // ── Supersede the pending card order ────────────────────────────
+    // The payment page creates a pending card order + PaymentIntent on load
+    // even when the customer ends up choosing Zelle. orders_pending_research_
+    // cart_uidx allows ONE pending research order per cart, so without this
+    // the insert below fails with a unique violation whenever the card order
+    // was created first — i.e. always. Cancel the dead PaymentIntent and
+    // release its discount hold (same cleanup create-payment-intent does for
+    // a dead PI), unless a card payment is genuinely in flight.
+    const { data: stalePending } = await supabase
+      .from("orders")
+      .select("id, stripe_payment_intent_id, discount_reservation_id")
+      .eq("research_cart_id", cart_id)
+      .eq("order_source", "research")
+      .eq("payment_status", "pending");
+
+    if (stalePending && stalePending.length > 0) {
+      const { stripe } = createCommerceStripe("labs");
+
+      for (const stale of stalePending) {
+        if (stale.stripe_payment_intent_id) {
+          try {
+            const pi = await stripe.paymentIntents.retrieve(stale.stripe_payment_intent_id);
+            if (["processing", "succeeded"].includes(pi.status)) {
+              return NextResponse.json(
+                { error: "A card payment for this cart is already in progress. Please wait for it to finish." },
+                { status: 409 }
+              );
+            }
+            if (pi.status !== "canceled") await stripe.paymentIntents.cancel(stale.stripe_payment_intent_id);
+          } catch (err) {
+            console.error("Failed to cancel superseded PaymentIntent:", err);
+          }
+        }
+
+        if (stale.discount_reservation_id) {
+          try {
+            await supabase.rpc("release_discount_reservation", {
+              p_reservation_id: stale.discount_reservation_id,
+            });
+          } catch (releaseErr) {
+            console.error("Failed to release discount reservation on superseded order:", releaseErr);
+          }
+        }
+
+        await supabase
+          .from("orders")
+          .update({ payment_status: "failed", updated_at: new Date().toISOString() })
+          .eq("id", stale.id)
+          .eq("payment_status", "pending");
+      }
+    }
+
     // ── Discount ──────────────────────────────────────────────────
     let discount_cents = 0;
     let resolved_promo_code: string | null = null;
@@ -167,16 +223,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Package Protection calculation ────────────────────────────
-    // Formula: $2.00 for orders <= $100, or 3% for orders > $100 (after discounts, before shipping and tax)
-    let package_protection_cents = 0;
-    if (hasProtection) {
-      const baseForProtection = Math.max(0, subtotal_cents - discount_cents);
-      if (baseForProtection <= 10000) {
-        package_protection_cents = 200; // $2.00
-      } else {
-        package_protection_cents = Math.round(baseForProtection * 0.03);
-      }
-    }
+    // Shared with the card route — see lib/research/checkoutTotals.ts.
+    const package_protection_cents = calcPackageProtectionCents(subtotal_cents, discount_cents, hasProtection);
 
     const total_cents = subtotal_cents + shipping_cents + tax_cents - discount_cents + package_protection_cents;
 
@@ -213,7 +261,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .insert({
         order_number,
-        cart_id,
+        research_cart_id: cart_id,
         profile_id: authUserId,
         auth_user_id: authUserId,
         user_id: authUserId,
@@ -273,11 +321,8 @@ export async function POST(request: NextRequest) {
       console.error("Offline order items insertion error:", itemsError);
     }
 
-    // ── Clear research_cart_items for this cart ───────────────────
-    await supabase
-      .from("research_cart_items")
-      .delete()
-      .eq("cart_id", cart_id);
+    // ── Close the cart (clear items + mark converted) ─────────────
+    await closeResearchCart(createAdminClient(), cart_id, authUserId);
 
     return NextResponse.json({
       success: true,

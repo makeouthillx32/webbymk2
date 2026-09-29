@@ -12,9 +12,11 @@ import { AdminOrder, FulfillmentStatus, PaymentStatus } from '@/lib/orders/types
 
 interface OrdersManagerProps {
   initialOrders: AdminOrder[];
+  /** 'labs' = a research-only list (Labs Orders tab): the customer-type filter has nothing left to split. */
+  scope?: 'all' | 'labs';
 }
 
-export function OrdersManager({ initialOrders }: OrdersManagerProps) {
+export function OrdersManager({ initialOrders, scope = 'all' }: OrdersManagerProps) {
   const [orders, setOrders]             = useState<AdminOrder[]>(initialOrders);
   const [selectedIds, setSelectedIds]   = useState<string[]>([]);
   const [editingOrder, setEditingOrder] = useState<AdminOrder | null>(null);
@@ -148,6 +150,7 @@ export function OrdersManager({ initialOrders }: OrdersManagerProps) {
           fulfillmentFilter={fulfillmentFilter}
           paymentFilter={paymentFilter}
           customerTypeFilter={customerTypeFilter}
+          hideCustomerType={scope === 'labs'}
           searchQuery={searchQuery}
           onFulfillmentFilter={setFulfillmentFilter}
           onPaymentFilter={setPaymentFilter}

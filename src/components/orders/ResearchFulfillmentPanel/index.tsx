@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { AdminOrder } from "@/lib/orders/types";
 import toast from "react-hot-toast";
+import { SHIPPING_PACKAGE_PRESETS, getShippingPackagePreset } from "@/lib/shipping/packagePresets";
 
 interface Props {
   order: AdminOrder;
@@ -44,6 +45,8 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
     order.package_weight_oz ? String(order.package_weight_oz) : "14"
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [acknowledgeMissingCoa, setAcknowledgeMissingCoa] = useState(false);
+  const [confirmedPostagePurchase, setConfirmedPostagePurchase] = useState(false);
 
   // Load allocation and pre-flight state from /api/orders/[id]/allocate
   const loadPreflight = async () => {
@@ -136,7 +139,8 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
     isAddressValid &&
     unallocatedItems.length === 0 &&
     invalidBatches.length === 0 &&
-    missingCoas.length === 0 &&
+    (missingCoas.length === 0 || acknowledgeMissingCoa) &&
+    confirmedPostagePurchase &&
     parseFloat(packageWeightOz) > 0;
 
   // Handle USPS Label Purchase
@@ -147,6 +151,7 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
 
     const weightOz = parseFloat(packageWeightOz) || 14;
     const weightLb = Math.max(0.1, weightOz / 16);
+    const preset = getShippingPackagePreset(selectedPreset);
 
     try {
       const res = await fetch(`/api/orders/${order.id}/label`, {
@@ -154,10 +159,12 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           weightLb,
-          lengthIn: 8,
-          widthIn: 6,
-          heightIn: 6,
+          lengthIn: preset?.lengthIn ?? 8,
+          widthIn: preset?.widthIn ?? 6,
+          heightIn: preset?.heightIn ?? 6,
           presetName: selectedPreset,
+          acknowledgeMissingCoa,
+          confirmPostagePurchase: true,
         }),
       });
 
@@ -208,6 +215,7 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
           package_preset: selectedPreset,
           package_weight_oz: parseFloat(packageWeightOz) || null,
           allocations,
+          acknowledge_missing_coa: acknowledgeMissingCoa,
         }),
       });
 
@@ -289,7 +297,7 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
                   <td><code>${item.sku || "—"}</code></td>
                   <td><strong>${item.quantity}×</strong></td>
                   <td><code>${batch ? batch.batch_number : "UNALLOCATED"}</code></td>
-                  <td>${coa ? `${coa.purity_pct}% HPLC (COA #${coa.coa_number || coa.id.slice(0,8)})` : "Verified Batch"}</td>
+                  <td>${coa ? `${coa.purity_pct}% HPLC (COA #${coa.coa_number || coa.id.slice(0,8)})` : "WARNING — NO PUBLISHED COA ON FILE"}</td>
                 </tr>
               `;
             }).join("")}
@@ -410,7 +418,7 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
       </div>
 
       {/* Blocking Alert if any check fails */}
-      {(!isPaid || unallocatedItems.length > 0 || invalidBatches.length > 0 || missingCoas.length > 0) && (
+      {(!isPaid || unallocatedItems.length > 0 || invalidBatches.length > 0) && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 flex items-start gap-3 text-xs text-amber-800 dark:text-amber-300">
           <AlertCircle size={17} className="shrink-0 mt-0.5 text-amber-600" />
           <div className="space-y-1">
@@ -418,7 +426,29 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
             {!isPaid && <div>• Order is unpaid (Status: {order.payment_status}). Cannot purchase USPS postage until payment clears.</div>}
             {unallocatedItems.length > 0 && <div>• {unallocatedItems.length} research compound{unallocatedItems.length > 1 ? "s require" : " requires"} a physical production batch allocation below.</div>}
             {invalidBatches.length > 0 && <div>• One or more assigned batches are expired or quarantined.</div>}
-            {missingCoas.length > 0 && <div>• Assigned batches require an approved, published Certificate of Analysis.</div>}
+          </div>
+        </div>
+      )}
+
+      {missingCoas.length > 0 && (
+        <div className="rounded-xl border border-[hsl(var(--destructive)/0.45)] bg-[hsl(var(--destructive)/0.12)] p-3.5 text-xs text-[hsl(var(--destructive))]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+            <div className="space-y-2">
+              <div>
+                <strong className="block font-bold">Seller warning: no published COA</strong>
+                {missingCoas.length} allocated research item{missingCoas.length === 1 ? " has" : "s have"} no published Certificate of Analysis. This warning is recorded in the fulfillment audit and printed on the packing slip.
+              </div>
+              <label className="flex items-start gap-2 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={acknowledgeMissingCoa}
+                  onChange={(event) => setAcknowledgeMissingCoa(event.target.checked)}
+                  className="mt-0.5"
+                />
+                I acknowledge the missing COA and authorize fulfillment with the warning disclosed.
+              </label>
+            </div>
           </div>
         </div>
       )}
@@ -552,29 +582,16 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
               value={selectedPreset}
               onChange={(e) => {
                 setSelectedPreset(e.target.value);
-                if (e.target.value.includes("Cold-Chain")) setPackageWeightOz("14");
-                else if (e.target.value.includes("Padded Cryo")) setPackageWeightOz("3");
-                else if (e.target.value.includes("Multi-Vial Box")) setPackageWeightOz("6");
-                else if (e.target.value.includes("Bulk")) setPackageWeightOz("12");
-                else if (e.target.value.includes("Glassware")) setPackageWeightOz("20");
+                const preset = getShippingPackagePreset(e.target.value);
+                if (preset) setPackageWeightOz(String(Math.round(preset.weightLb * 16 * 10) / 10));
               }}
               className="w-full h-8 px-2.5 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
             >
-              <option value="Insulated Cold-Chain Shipper (Foam + Gel Pack)">
-                ❄️ Insulated Cold-Chain Shipper (Foam + Gel Pack) — 14 oz, 8x6x6 in
-              </option>
-              <option value="Padded Cryo/Vial Bubble Mailer (1-4 Vials)">
-                🧪 Padded Cryo/Vial Bubble Mailer (1-4 Vials) — 3 oz, 7x9x1.5 in
-              </option>
-              <option value="Rigid Multi-Vial Laboratory Box (5-10 Vials)">
-                📦 Rigid Multi-Vial Laboratory Box (5-10 Vials) — 6 oz, 7x5x3 in
-              </option>
-              <option value="Bulk Laboratory Carton (10-30 Vials)">
-                📦 Bulk Laboratory Carton (10-30 Vials) — 12 oz, 10x8x5 in
-              </option>
-              <option value="Ambient Glassware / Reagent Shipper">
-                🧪 Ambient Glassware / Reagent Shipper — 20 oz, 12x10x8 in
-              </option>
+              {SHIPPING_PACKAGE_PRESETS.map((preset) => (
+                <option key={preset.name} value={preset.name}>
+                  {preset.name} — {Math.round(preset.weightLb * 16)} oz, {preset.lengthIn}x{preset.widthIn}x{preset.heightIn} in
+                </option>
+              ))}
               <option value="Custom Dimensions">Custom Dimensions</option>
             </select>
           </div>
@@ -597,6 +614,21 @@ export function ResearchFulfillmentPanel({ order, onLabelPurchased, onFulfillSuc
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400">
           {errorMessage}
         </div>
+      )}
+
+      {!hasTracking && (
+        <label className="flex items-start gap-2 rounded-xl border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] p-3 text-xs text-[hsl(var(--destructive))]">
+          <input
+            type="checkbox"
+            checked={confirmedPostagePurchase}
+            onChange={(event) => setConfirmedPostagePurchase(event.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            <strong className="block">Confirm paid postage purchase</strong>
+            This action uses the same funded carrier integration as Shop and may charge the carrier account immediately.
+          </span>
+        </label>
       )}
 
       {/* Action Footer Bar */}

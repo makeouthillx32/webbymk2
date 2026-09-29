@@ -2468,7 +2468,7 @@ export function TankExperience({
                   type="button"
                   onClick={() => {
                     setMobileProfileMenuOpen(false);
-                    alert("Advertise: team@unenter.live");
+                    alert("Advertise: marketing@unenter.live");
                   }}
                   className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-xs font-black text-white hover:bg-white/10"
                 >
@@ -2478,7 +2478,7 @@ export function TankExperience({
                   type="button"
                   onClick={() => {
                     setMobileProfileMenuOpen(false);
-                    alert("Help: discord.gg/unenter");
+                    alert("Help: discord.gg/b9bddXeD3M");
                   }}
                   className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-xs font-black text-white hover:bg-white/10"
                 >
@@ -2605,11 +2605,11 @@ export function TankExperience({
               onOpenNotifications={() => setNotificationsOpen(true)}
               onOpenBilling={() => setOverlayView("season")}
               onOpenAdvertise={() =>
-                alert("Advertise: Contact team@unenter.live")
+                alert("Advertise: Contact marketing@unenter.live")
               }
               onOpenHelp={() =>
                 alert(
-                  "Help: Visit discord.gg/unenter or chat with moderators in Global",
+                  "Help: Visit discord.gg/b9bddXeD3M or chat with moderators in Global",
                 )
               }
               onOpenAppeals={() => setAppealsModalOpen(true)}

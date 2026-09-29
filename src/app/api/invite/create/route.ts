@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { requireAdmin } from "@/lib/require-admin";
+import { VALID_ROLES } from "@/actions/auth/types";
 
 export async function POST(req: Request) {
   const guard = await requireAdmin();
@@ -17,6 +18,15 @@ export async function POST(req: Request) {
 
   if (!role || typeof role !== "string") {
     return NextResponse.json({ error: "role is required" }, { status: 400 });
+  }
+
+  // Minting an invite for a role that no redemption path will actually
+  // grant (e.g. "affiliate"/"moderator" — valid in the roles table and the
+  // profiles CHECK constraint, but deliberately not signup/apply-grantable,
+  // see actions/auth/actions.ts) used to succeed here and hand out a dead
+  // link. Gate creation on the same list both redemption paths enforce.
+  if (!(VALID_ROLES as readonly string[]).includes(role)) {
+    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
   }
 
   // 1. Look up role ID

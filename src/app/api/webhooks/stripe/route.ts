@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { constructCommerceWebhookEvent } from "@/lib/stripe/commerce";
 import { sendNotification } from "@/lib/notifications";
 import { sendOrderConfirmationEmail } from "@/lib/mail/sendOrderConfirmation";
+import { closeResearchCart } from "@/lib/research/closeResearchCart";
 import { beginPaymentAudit, finishPaymentAudit } from "@/lib/stripe/paymentAudit";
 import {
   recordChargeFinancials,
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     let stripe: Stripe;
     let mode: "test" | "live";
     try {
-      const verified = constructCommerceWebhookEvent(body, signature);
+      const verified = await constructCommerceWebhookEvent(body, signature);
       event = verified.event;
       stripe = verified.stripe;
       mode = verified.mode;
@@ -228,7 +229,7 @@ async function handlePaymentSucceeded(
     })
     .eq('id', orderId)
     .eq('payment_status', 'pending')
-    .select('order_number, total_cents, discount_cents, email, customer_first_name, customer_last_name, promo_code, order_source, discount_reservation_id')
+    .select('order_number, total_cents, discount_cents, email, customer_first_name, customer_last_name, promo_code, order_source, discount_reservation_id, research_cart_id, auth_user_id')
     .maybeSingle();
 
   if (error) {
@@ -242,6 +243,20 @@ async function handlePaymentSucceeded(
   }
 
   console.log(`Order ${orderId} marked as paid + ${newStatus}${isPOS ? ' (POS — auto-fulfilled)' : ''}`);
+
+  // ── Labs: a paid research order consumes its cart ────────────────────
+  // The cart used to stay 'active' with its items intact after payment, so
+  // it could be checked out again (found in the 2026-09-24 Labs E2E test).
+  // Only reached on the first delivery — duplicates return above.
+  if (order.order_source === 'research' && order.research_cart_id) {
+    try {
+      await closeResearchCart(supabase, order.research_cart_id, order.auth_user_id);
+      console.log(`[Research] ✅ Closed cart ${order.research_cart_id} for order ${order.order_number}`);
+    } catch (cartErr) {
+      // Non-fatal — order is paid, don't throw
+      console.error('[Research] ⚠️ Failed to close research cart:', cartErr);
+    }
+  }
 
   // ── Confirm promo code usage (web orders only — POS has no promos) ─────
   // discount_reservation_id is set when the code had a max_uses cap —

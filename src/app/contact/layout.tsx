@@ -2,8 +2,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Contact Support | Unenter Labs",
-  description: "Customer care and laboratory research inquiries.",
+  title: "Contact Support",
+  description: "Get in touch with the Unenter team.",
 };
 
 export default function ContactLayout({ children }: { children: React.ReactNode }) {

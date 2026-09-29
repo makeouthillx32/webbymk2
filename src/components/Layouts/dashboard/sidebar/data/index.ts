@@ -176,6 +176,13 @@ export const NAV_DATA = [
             icon: Icons.FourCircle,
           },
           {
+            // Research orders only — the Shop "Orders" page still lists every
+            // order; this is the same manager scoped to the Labs storefront.
+            title: "Orders",
+            url: "/settings/labs-orders",
+            icon: Icons.User,
+          },
+          {
             // Labs keeps its own taxonomy: research_categories, its own nav
             // tree and its own cover bucket, scoped apart from the shop.
             title: "Taxonomy",
@@ -265,6 +272,12 @@ export const NAV_DATA = [
             title: "Mail",
             url: "/settings/mail",
             icon: Icons.MessageIcon,
+            roles: ["admin", "marketing"],
+          },
+          {
+            title: "Ad Campaigns",
+            url: "/settings/marketing/campaigns",
+            icon: Icons.Calendar,
             roles: ["admin", "marketing"],
           },
         ],

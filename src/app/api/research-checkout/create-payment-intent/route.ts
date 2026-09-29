@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createCommerceStripe } from "@/lib/stripe/commerce";
 import { verifyShippingRateQuote } from "@/lib/shippingQuote";
+import { buildCheckoutBreakdown, calcPackageProtectionCents } from "@/lib/research/checkoutTotals";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +37,11 @@ export async function POST(request: NextRequest) {
       shipping_rate_data,
       promo_code,
       marketing_opt_in, // checkout consent checkbox — feeds profiles.marketing_opt_in
+      package_protection,
     } = body;
 
     const marketingOptIn = marketing_opt_in === true;
+    const hasProtection = package_protection === true;
 
     if (!cart_id || !shipping_address || !shipping_rate_id) {
       return NextResponse.json(
@@ -199,7 +202,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const total_cents = subtotal_cents + shipping_cents + tax_cents - discount_cents;
+    // Was missing here entirely — the page added protection to the total it
+    // displayed, but this route never read the toggle, so Stripe charged a
+    // different amount than the button showed. Same formula the offline
+    // route uses, now shared (lib/research/checkoutTotals.ts).
+    const package_protection_cents = calcPackageProtectionCents(subtotal_cents, discount_cents, hasProtection);
+    const breakdown = buildCheckoutBreakdown({
+      subtotal_cents,
+      shipping_cents,
+      tax_cents,
+      discount_cents,
+      package_protection_cents,
+    });
+    const total_cents = breakdown.total_cents;
+    const protectionNote = hasProtection
+      ? `Package Protection: $${(package_protection_cents / 100).toFixed(2)} included`
+      : null;
 
     // ── Order number ──────────────────────────────────────────────
     const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -296,6 +314,7 @@ export async function POST(request: NextRequest) {
           order_number: existing.order_number,
           auth_user_id: authUserId,
           order_source: "research",
+          package_protection_cents: String(package_protection_cents),
         },
         shipping: shippingForStripe,
       });
@@ -310,6 +329,7 @@ export async function POST(request: NextRequest) {
           promo_code: resolved_promo_code,
           discount_reservation_id,
           total_cents,
+          customer_notes: protectionNote,
           shipping_address,
           billing_address: billing_address ?? shipping_address,
           phone: phone ?? shipping_address.phone ?? null,
@@ -327,6 +347,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         order: { id: existing.id, order_number: existing.order_number, total_cents },
+        breakdown,
         payment_intent: {
           id: updatedPI.id,
           client_secret: updatedPI.client_secret,
@@ -339,7 +360,7 @@ export async function POST(request: NextRequest) {
     const { data: existingPending } = await supabase
       .from("orders")
       .select("id, order_number, stripe_payment_intent_id, total_cents, discount_reservation_id")
-      .eq("cart_id", cart_id)
+      .eq("research_cart_id", cart_id)
       .eq("order_source", "research")
       .eq("payment_status", "pending")
       .maybeSingle();
@@ -354,7 +375,7 @@ export async function POST(request: NextRequest) {
       .from("orders")
       .insert({
         order_number,
-        cart_id,
+        research_cart_id: cart_id,
         profile_id: authUserId,
         auth_user_id: authUserId,
         email: resolvedEmail,
@@ -368,6 +389,7 @@ export async function POST(request: NextRequest) {
         promo_code: resolved_promo_code,
         discount_reservation_id,
         total_cents,
+        customer_notes: protectionNote,
         shipping_address,
         billing_address: billing_address ?? shipping_address,
         phone: phone ?? shipping_address.phone ?? null,
@@ -386,7 +408,7 @@ export async function POST(request: NextRequest) {
         const { data: winner } = await supabase
           .from("orders")
           .select("id, order_number, stripe_payment_intent_id, total_cents, discount_reservation_id")
-          .eq("cart_id", cart_id)
+          .eq("research_cart_id", cart_id)
           .eq("order_source", "research")
           .eq("payment_status", "pending")
           .maybeSingle();
@@ -431,6 +453,7 @@ export async function POST(request: NextRequest) {
           order_number: order.order_number,
           auth_user_id: authUserId,
           order_source: "research",
+          package_protection_cents: String(package_protection_cents),
         },
         description: `Order ${order.order_number}`,
         shipping: shippingForStripe,
@@ -450,6 +473,7 @@ export async function POST(request: NextRequest) {
         order_number: order.order_number,
         total_cents: order.total_cents,
       },
+      breakdown,
       payment_intent: {
         id: paymentIntent.id,
         client_secret: paymentIntent.client_secret,

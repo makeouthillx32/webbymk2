@@ -15,7 +15,7 @@ import { getCookie, setCookie } from "@/lib/cookieUtils";
 
 const CONSENT_COOKIE_NAME = "labs_research_disclaimer_accepted_v1";
 const CONSENT_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
-const EXIT_URL = "https://unenter.live";
+const EXIT_URL = "https://www.unenter.live";
 
 const DISCLAIMER_POINTS: string[] = [
   "The products listed on the Website are intended for laboratory research purposes only, and are not for human or animal consumption.",
