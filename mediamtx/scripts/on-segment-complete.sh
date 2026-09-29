@@ -97,6 +97,35 @@ ARCHIVE_ROOT="${TANK_ARCHIVE_LOCAL_ROOT:-/archive}"
 DEST_DIR="${ARCHIVE_ROOT}/segments/${CAMERA_ID}/${DATE_DIR}"
 DEST="${DEST_DIR}/${BASENAME}"
 
+# Guardrail: If the archive volume is not mounted or not accessible, discard the
+# spool segment rather than letting the local spool overflow and crash the stack.
+if [ ! -d "$ARCHIVE_ROOT" ]; then
+  log "ARCHIVE UNAVAILABLE: ${ARCHIVE_ROOT} is not accessible. Discarding spool segment to protect host."
+  rm -f "$SEGMENT"
+  exit 0
+fi
+
+# Rolling FIFO Retention: Clean up camera folders older than configured days
+RETENTION_DAYS="${TANK_ARCHIVE_RETENTION_DAYS:-7}"
+NOW_SEC=$(date +%s 2>/dev/null || echo 0)
+if [ "$NOW_SEC" -gt 0 ]; then
+  RETENTION_SECS=$(( RETENTION_DAYS * 86400 ))
+  CUTOFF_SEC=$(( NOW_SEC - RETENTION_SECS ))
+  CUTOFF_DATE=$(date -u -d "@$CUTOFF_SEC" +%Y-%m-%d 2>/dev/null || echo "")
+  if [ -n "$CUTOFF_DATE" ] && [ -d "${ARCHIVE_ROOT}/segments/${CAMERA_ID}" ]; then
+    for old_dir in "${ARCHIVE_ROOT}/segments/${CAMERA_ID}"/*; do
+      if [ -d "$old_dir" ]; then
+        dir_name=$(basename "$old_dir")
+        # YYYY-MM-DD lexicographical comparison
+        if [ "$dir_name" \< "$CUTOFF_DATE" ]; then
+          log "retention pruning old date ${dir_name} for ${CAMERA_ID}"
+          rm -rf "$old_dir" 2>/dev/null || true
+        fi
+      fi
+    done
+  fi
+fi
+
 STORED=0
 if mkdir -p "$DEST_DIR" 2>/dev/null && mv "$SEGMENT" "$DEST" 2>/dev/null; then
   # Confirm the bytes actually landed before anything is indexed. A segment
@@ -110,7 +139,8 @@ if mkdir -p "$DEST_DIR" 2>/dev/null && mv "$SEGMENT" "$DEST" 2>/dev/null; then
     log "SIZE MISMATCH after move (${MOVED_BYTES:-0} != ${SIZE_BYTES}) for ${BASENAME}"
   fi
 else
-  log "ARCHIVE MOVE FAILED for ${BASENAME} — segment stays in the spool"
+  log "ARCHIVE MOVE FAILED for ${BASENAME} — discarding from spool to protect disk"
+  rm -f "$SEGMENT"
 fi
 
 # ── 2. Refresh the preroll loop ─────────────────────────────────────────────

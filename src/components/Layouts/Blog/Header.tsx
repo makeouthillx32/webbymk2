@@ -47,7 +47,7 @@ export default function BlogHeader() {
         <div className="flex items-center justify-between py-5">
           {/* Wordmark */}
           <div className="flex min-w-0 items-center gap-3">
-            <a href="https://unenter.live" className="shrink-0" aria-label="Unenter home">
+            <a href="https://www.unenter.live" className="shrink-0" aria-label="Unenter home">
               <Image
                 src={theme === "dark" ? "/logodk.svg" : "/logo.svg"}
                 alt="Unenter"

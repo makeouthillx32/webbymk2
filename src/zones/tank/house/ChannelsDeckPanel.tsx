@@ -5,6 +5,7 @@ import { Radio, Users, Video, Globe, Eye, Sparkles } from "lucide-react";
 import { ACTIVE_THEME } from "../theme";
 import { ChromePanel } from "../public/components/ChromePanel";
 import { channels } from "../fixtures";
+import { HouseExternalChatPanel } from "./HouseExternalChatPanel";
 
 export function ChannelsDeckPanel() {
   return (
@@ -80,6 +81,9 @@ export function ChannelsDeckPanel() {
           ))}
         </div>
       </ChromePanel>
+
+      {/* External Streaming Chat Integrations (Twitch, Kick, YouTube, Trovo) */}
+      <HouseExternalChatPanel />
     </div>
   );
 }

@@ -38,6 +38,9 @@ type HeroSlide = {
   // Visual styling
   text_alignment: 'left' | 'center' | 'right';
   text_color: 'dark' | 'light';
+  show_overlay?: boolean | null;
+  cta_alignment?: 'inherit' | 'left' | 'center' | 'right' | null;
+  cta_underline?: boolean | null;
 
   // Ordering & visibility
   position: number;

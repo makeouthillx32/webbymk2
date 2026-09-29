@@ -28,6 +28,7 @@ import socket
 import json
 import time
 from dataclasses import dataclass, field
+import codecs
 from typing import Optional
 
 # Open LAN IPC — no auth, no pairing keys.
@@ -91,21 +92,25 @@ def ipc(argv: list, timeout: int = 25, conn: Optional[dict] = None) -> IpcResult
         s.sendall((json.dumps({"argv": argv}) + "\n").encode())
         s.settimeout(timeout)
 
+        raw_bytes = bytearray()
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         raw_lines = []
         while True:
             try:
                 chunk = s.recv(4096)
                 if not chunk:
                     break
-                raw_lines.append(chunk.decode())
+                decoded = decoder.decode(chunk)
+                raw_lines.append(decoded)
                 # Break as soon as we see the sentinel — TUI keeps connection open
-                if "__UNAXIS_EXIT__" in raw_lines[-1]:
+                if "__UNAXIS_EXIT__" in decoded:
                     break
             except socket.timeout:
                 # Timed out before sentinel arrived
                 text = "".join(raw_lines).rstrip()
                 return IpcResult(argv, text, 5, "unknown", timed_out=True)
 
+        raw_lines.append(decoder.decode(b"", final=True))
         full = "".join(raw_lines)
     finally:
         s.close()

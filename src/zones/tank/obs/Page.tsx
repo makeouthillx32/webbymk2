@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DirectorObsScene } from "./DirectorObsScene";
+import { getTankBuildId } from "../server/obsRuntimeHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function ObsDirectorPage() {
-  return <DirectorObsScene />;
+  return <DirectorObsScene documentBuildId={getTankBuildId()} />;
 }

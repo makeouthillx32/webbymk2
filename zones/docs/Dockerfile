@@ -105,17 +105,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_ZONE=docs
 ENV HOME=/tmp
 
-RUN addgroup --system --gid 1001 nodejs &&     adduser  --system --uid 1001 nextjs
-
-COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
+# oven/bun:*-slim no longer guarantees Debian's adduser/addgroup helpers —
+# same fix as the root Dockerfile: use the `bun` user/group already baked
+# into the base image instead of creating a custom nextjs:nodejs one.
+COPY --from=builder --chown=bun:bun /app/public           ./public
+COPY --from=builder --chown=bun:bun /app/.next/standalone ./
+COPY --from=builder --chown=bun:bun /app/.next/static     ./.next/static
 
 # Markdown docs content — read via fs at request time (layout uses cookies(),
 # so pages render dynamically and standalone tracing won't include these).
-COPY --from=builder --chown=nextjs:nodejs /app/src/zones/docs/content ./src/zones/docs/content
+COPY --from=builder --chown=bun:bun /app/src/zones/docs/content ./src/zones/docs/content
 
-USER nextjs
+USER bun
 
 EXPOSE 3000
 ENV PORT=3000

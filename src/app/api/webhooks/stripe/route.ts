@@ -2,14 +2,28 @@
 import { createAdminClient } from "@/utils/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { constructCommerceWebhookEvent } from "@/lib/stripe/commerce";
 import { sendNotification } from "@/lib/notifications";
 import { sendOrderConfirmationEmail } from "@/lib/mail/sendOrderConfirmation";
+import { closeResearchCart } from "@/lib/research/closeResearchCart";
+import { beginPaymentAudit, finishPaymentAudit } from "@/lib/stripe/paymentAudit";
+import {
+  recordChargeFinancials,
+  recordPaymentIntentFinancials,
+  recordRefundFinancials,
+} from "@/lib/stripe/financialLedger";
+import type { SeasonPassTier } from "@/zones/tank/seasonPass";
+import { TANK_PRODUCTS, type TankProductKey } from "@/zones/tank/tankProducts";
+import {
+  isEntitledSubscriptionStatus,
+  isTerminalSubscriptionStatus,
+  latestSubscriptionPeriodEnd,
+  resolveTankSubscriptionProduct,
+} from "@/zones/tank/server/tankSubscriptionPolicy";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
   try {
     const body = await request.text();
     const signature = request.headers.get('stripe-signature');
@@ -23,8 +37,13 @@ export async function POST(request: NextRequest) {
 
     // Verify webhook signature
     let event: Stripe.Event;
+    let stripe: Stripe;
+    let mode: "test" | "live";
     try {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+      const verified = await constructCommerceWebhookEvent(body, signature);
+      event = verified.event;
+      stripe = verified.stripe;
+      mode = verified.mode;
     } catch (err: any) {
       console.error('Webhook signature verification failed:', err.message);
       return NextResponse.json(
@@ -35,12 +54,15 @@ export async function POST(request: NextRequest) {
 
     // Create Supabase client (service role for webhook operations)
     const supabase = createAdminClient();
+    const audit = await beginPaymentAudit(supabase, event, mode);
 
-    // Handle different event types
-    switch (event.type) {
+    try {
+      // Handle different event types
+      switch (event.type) {
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        await handlePaymentSucceeded(supabase, stripe, paymentIntent);
+        await handlePaymentSucceeded(supabase, stripe, paymentIntent, mode);
+        await recordPaymentIntentFinancials(supabase, stripe, paymentIntent, mode);
         break;
       }
 
@@ -59,17 +81,68 @@ export async function POST(request: NextRequest) {
       case 'charge.succeeded': {
         const charge = event.data.object as Stripe.Charge;
         await handleChargeSucceeded(supabase, charge);
+        await recordChargeFinancials(supabase, stripe, charge.id, mode);
         break;
       }
 
       case 'charge.refunded': {
         const charge = event.data.object as Stripe.Charge;
         await handleChargeRefunded(supabase, charge);
+        await recordRefundFinancials(supabase, stripe, charge, mode);
         break;
       }
 
-      default:
-        console.log(`Unhandled event type: ${event.type}`);
+      case 'checkout.session.completed': {
+        await handleTankCheckoutCompleted(
+          supabase,
+          event.data.object as Stripe.Checkout.Session,
+        );
+        break;
+      }
+
+      case 'checkout.session.expired': {
+        await handleTankCheckoutExpired(
+          supabase,
+          event.data.object as Stripe.Checkout.Session,
+        );
+        break;
+      }
+
+      case 'invoice.paid': {
+        await handleTankInvoicePaid(
+          supabase,
+          stripe,
+          event.data.object as Stripe.Invoice,
+        );
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        await handleTankInvoicePaymentFailed(
+          supabase,
+          stripe,
+          event.data.object as Stripe.Invoice,
+        );
+        break;
+      }
+
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        await syncTankSubscriptionLifecycle(
+          supabase,
+          event.data.object as Stripe.Subscription,
+        );
+        break;
+      }
+
+        default:
+          console.log(`Unhandled event type: ${event.type}`);
+      }
+      await finishPaymentAudit(supabase, audit);
+    } catch (handlerError) {
+      await finishPaymentAudit(supabase, audit, handlerError);
+      throw handlerError;
     }
 
     return NextResponse.json({ received: true });
@@ -86,7 +159,8 @@ export async function POST(request: NextRequest) {
 async function handlePaymentSucceeded(
   supabase: any,
   stripe: Stripe,
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  mode: "test" | "live",
 ) {
   // Tank store purchases (season pass / token packs / room-upgrade bones)
   // carry tank_purchase_id instead of order_id — a season pass isn't a
@@ -149,12 +223,13 @@ async function handlePaymentSucceeded(
       status: newStatus,
       payment_succeeded_at: new Date().toISOString(),
       checkout_step: 'complete',
+      stripe_mode: mode,
       ...paymentMethodDetails,
       updated_at: new Date().toISOString(),
     })
     .eq('id', orderId)
     .eq('payment_status', 'pending')
-    .select('order_number, total_cents, discount_cents, email, customer_first_name, customer_last_name, promo_code, order_source, discount_reservation_id')
+    .select('order_number, total_cents, discount_cents, email, customer_first_name, customer_last_name, promo_code, order_source, discount_reservation_id, research_cart_id, auth_user_id')
     .maybeSingle();
 
   if (error) {
@@ -168,6 +243,20 @@ async function handlePaymentSucceeded(
   }
 
   console.log(`Order ${orderId} marked as paid + ${newStatus}${isPOS ? ' (POS — auto-fulfilled)' : ''}`);
+
+  // ── Labs: a paid research order consumes its cart ────────────────────
+  // The cart used to stay 'active' with its items intact after payment, so
+  // it could be checked out again (found in the 2026-09-24 Labs E2E test).
+  // Only reached on the first delivery — duplicates return above.
+  if (order.order_source === 'research' && order.research_cart_id) {
+    try {
+      await closeResearchCart(supabase, order.research_cart_id, order.auth_user_id);
+      console.log(`[Research] ✅ Closed cart ${order.research_cart_id} for order ${order.order_number}`);
+    } catch (cartErr) {
+      // Non-fatal — order is paid, don't throw
+      console.error('[Research] ⚠️ Failed to close research cart:', cartErr);
+    }
+  }
 
   // ── Confirm promo code usage (web orders only — POS has no promos) ─────
   // discount_reservation_id is set when the code had a max_uses cap —
@@ -254,12 +343,14 @@ async function handlePaymentSucceeded(
   }
 }
 
-// Tank store fulfillment — token packs increment tank_profiles.tokens
-// directly; season pass flips season_pass_active; room_vip is deliberately
-// a placeholder (no real room-tier gating exists yet) that still proves the
-// purchase -> fulfillment path end to end. Same duplicate-delivery guard as
-// the shop path: only transitions FROM 'pending', so a Stripe retry that
-// redelivers this event matches zero rows the second time and no-ops.
+// Tank store fulfillment — token packs credit the ledger (a trigger moves
+// tank_profiles.tokens), season pass flips season_pass_active, and room_vip
+// is deliberately a placeholder (no real room-tier gating exists yet) that
+// still proves the purchase -> fulfillment path end to end.
+//
+// Fulfillment happens BEFORE the row is marked paid, and errors are rethrown
+// so Stripe retries. See the note inside for why the reverse order is unsafe
+// once real money is involved.
 async function handleTankPurchaseSucceeded(supabase: any, paymentIntent: Stripe.PaymentIntent) {
   const purchaseId = paymentIntent.metadata.tank_purchase_id;
   const productKey = paymentIntent.metadata.product_key;
@@ -272,60 +363,281 @@ async function handleTankPurchaseSucceeded(supabase: any, paymentIntent: Stripe.
 
   const { data: purchase, error } = await supabase
     .from('tank_purchases')
-    .update({ status: 'paid', fulfilled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .select('id, status')
     .eq('id', purchaseId)
-    .eq('status', 'pending')
-    .select('id, product_key')
     .maybeSingle();
 
   if (error) {
-    console.error('[Tank Store] Failed to mark purchase paid:', error);
-    return;
+    console.error('[Tank Store] Failed to load purchase:', error);
+    throw error;
   }
   if (!purchase) {
-    console.log(`[Tank Store] Purchase ${purchaseId} already processed — skipping fulfillment`);
+    console.error(`[Tank Store] Purchase ${purchaseId} not found`);
+    return;
+  }
+  if (purchase.status === 'paid') {
+    console.log(`[Tank Store] Purchase ${purchaseId} already fulfilled — skipping`);
     return;
   }
 
-  try {
-    if (productKey.startsWith('tokens_')) {
-      const TOKEN_AMOUNTS: Record<string, number> = {
-        tokens_500: 500,
-        tokens_1500: 1500,
-        tokens_5000: 5000,
-      };
-      const grant = TOKEN_AMOUNTS[productKey] ?? 0;
-      if (grant > 0) {
-        const { data: profile } = await supabase
-          .from('tank_profiles')
-          .select('tokens')
-          .eq('user_id', userId)
-          .maybeSingle();
-        await supabase
-          .from('tank_profiles')
-          .upsert(
-            { user_id: userId, tokens: (profile?.tokens ?? 0) + grant, updated_at: new Date().toISOString() },
-            { onConflict: 'user_id' },
-          );
-        console.log(`[Tank Store] Granted ${grant} tokens to ${userId} (purchase ${purchaseId})`);
-      }
-    } else if (productKey === 'season_pass') {
-      await supabase
-        .from('tank_profiles')
-        .upsert(
-          { user_id: userId, season_pass_active: true, season_pass_purchased_at: new Date().toISOString() },
-          { onConflict: 'user_id' },
-        );
-      console.log(`[Tank Store] Activated season pass for ${userId} (purchase ${purchaseId})`);
-    } else if (productKey === 'room_vip') {
-      // Bones only — no room-tier gating exists yet to actually grant.
-      console.log(`[Tank Store] room_vip purchase ${purchaseId} paid — no gating wired yet, purchase recorded only`);
+  // FULFIL FIRST, MARK PAID SECOND.
+  //
+  // The previous order marked the row paid up front and swallowed any
+  // fulfillment error as "non-fatal". That is survivable with test money and
+  // not with real money: a single failed grant left the customer charged, the
+  // purchase marked paid, and no way back -- we return 200, so Stripe never
+  // retries, and the status guard means a manual replay matches zero rows.
+  // That is exactly how the partial-index bug silently ate a token grant.
+  //
+  // Both writes below are idempotent (unique purchase_id / user_id), so a
+  // Stripe retry re-runs them harmlessly. Throwing therefore costs nothing and
+  // buys us Stripe's retry schedule as a safety net.
+  if (productKey.startsWith('tokens_')) {
+    const product = TANK_PRODUCTS[productKey as TankProductKey];
+    const grant = product?.tokens ?? 0;
+    if (grant <= 0) {
+      // Refuse rather than silently grant nothing on an unknown pack.
+      throw new Error(`Unknown token product ${productKey} on purchase ${purchaseId}`);
     }
-  } catch (fulfillErr) {
-    // Non-fatal — the purchase is marked paid regardless; a stuck
-    // fulfillment can be replayed manually from tank_purchases.
-    console.error('[Tank Store] Fulfillment error:', fulfillErr);
+    const { error: tokenError } = await supabase
+      .from('tank_token_transactions')
+      .upsert({
+        user_id: userId,
+        amount: grant,
+        reason: `stripe_purchase:${productKey}`,
+        purchase_id: purchaseId,
+      }, { onConflict: 'purchase_id', ignoreDuplicates: true });
+    if (tokenError) throw tokenError;
+    console.log(`[Tank Store] Granted ${grant} tokens to ${userId} (purchase ${purchaseId})`);
+  } else if (productKey === 'season_pass') {
+    const { error: passError } = await supabase
+      .from('tank_profiles')
+      .upsert(
+        { user_id: userId, season_pass_active: true, season_pass_purchased_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      );
+    if (passError) throw passError;
+    console.log(`[Tank Store] Activated season pass for ${userId} (purchase ${purchaseId})`);
+  } else if (TANK_PRODUCTS[productKey as TankProductKey]?.irlFulfilment) {
+    // A real-world booking. Nothing here can deliver a week in the house, so
+    // the money is recorded and fulfilled_at is deliberately left null until a
+    // human has actually arranged it. Marking it delivered on payment would
+    // hide an unhonoured $2,500 booking behind a green row.
+    console.log(
+      `[Tank Store] IRL booking ${productKey} paid (purchase ${purchaseId}) — AWAITING STAFF, not fulfilled`,
+    );
+  } else if (productKey === 'room_vip') {
+    // Bones only — no room-tier gating exists yet to actually grant.
+    console.log(`[Tank Store] room_vip purchase ${purchaseId} paid — no gating wired yet, purchase recorded only`);
   }
+
+  const { error: paidError } = await supabase
+    .from('tank_purchases')
+    .update({
+      status: 'paid',
+      // Only things the system actually delivered get a fulfilment time.
+      ...(TANK_PRODUCTS[productKey as TankProductKey]?.irlFulfilment
+        ? {}
+        : { fulfilled_at: new Date().toISOString() }),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', purchaseId)
+    .eq('status', 'pending');
+  if (paidError) {
+    console.error('[Tank Store] Fulfilled but failed to mark paid:', paidError);
+    throw paidError;
+  }
+}
+
+type TankSubscriptionIdentity = {
+  userId: string;
+  purchaseId: string;
+  productKey: "season_pass" | "season_pass_xl";
+  tier: SeasonPassTier;
+};
+
+function tankSubscriptionIdentity(
+  metadata: Stripe.Metadata | null | undefined,
+): TankSubscriptionIdentity | null {
+  if (metadata?.payment_lane !== "tank") return null;
+  const productKey = metadata.product_key;
+  const userId = metadata.user_id;
+  const purchaseId = metadata.tank_purchase_id;
+  const product = resolveTankSubscriptionProduct(productKey);
+  if (!product || !userId || !purchaseId) {
+    return null;
+  }
+  return {
+    userId,
+    purchaseId,
+    productKey: product.productKey,
+    tier: product.tier,
+  };
+}
+
+function stripeId(value: string | { id: string } | null): string | null {
+  return typeof value === "string" ? value : value?.id ?? null;
+}
+
+function subscriptionFromInvoice(invoice: Stripe.Invoice): string | null {
+  const legacyInvoice = invoice as Stripe.Invoice & {
+    subscription?: string | Stripe.Subscription | null;
+  };
+  return stripeId(
+    invoice.parent?.subscription_details?.subscription ??
+      legacyInvoice.subscription ??
+      null,
+  );
+}
+
+function subscriptionPeriodEnd(subscription: Stripe.Subscription): string | null {
+  return latestSubscriptionPeriodEnd(
+    subscription.items.data.map((item) => item.current_period_end),
+  );
+}
+
+async function handleTankCheckoutCompleted(
+  supabase: any,
+  session: Stripe.Checkout.Session,
+) {
+  const identity = tankSubscriptionIdentity(session.metadata);
+  if (!identity || session.mode !== "subscription") return;
+
+  const subscriptionId = stripeId(session.subscription);
+  const customerId = stripeId(session.customer);
+  await supabase
+    .from("tank_purchases")
+    .update({
+      stripe_checkout_session_id: session.id,
+      stripe_subscription_id: subscriptionId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", identity.purchaseId)
+    .eq("user_id", identity.userId);
+
+  await supabase
+    .from("tank_profiles")
+    .upsert(
+      {
+        user_id: identity.userId,
+        ...(customerId ? { stripe_customer_id: customerId } : {}),
+        ...(customerId ? { stripe_customer_mode: session.livemode ? "live" : "test" } : {}),
+        ...(subscriptionId ? { stripe_subscription_id: subscriptionId } : {}),
+        season_pass_tier: identity.tier,
+      },
+      { onConflict: "user_id" },
+    );
+}
+
+async function handleTankCheckoutExpired(
+  supabase: any,
+  session: Stripe.Checkout.Session,
+) {
+  const identity = tankSubscriptionIdentity(session.metadata);
+  if (!identity || session.mode !== "subscription") return;
+  await supabase
+    .from("tank_purchases")
+    .update({ status: "canceled", updated_at: new Date().toISOString() })
+    .eq("id", identity.purchaseId)
+    .eq("status", "pending");
+}
+
+async function syncTankSubscription(
+  supabase: any,
+  subscription: Stripe.Subscription,
+  activateFromPaidInvoice: boolean,
+) {
+  const identity = tankSubscriptionIdentity(subscription.metadata);
+  if (!identity) return null;
+
+  const active = isEntitledSubscriptionStatus(subscription.status);
+  const profile: Record<string, unknown> = {
+    user_id: identity.userId,
+    stripe_customer_id: stripeId(subscription.customer),
+    // Record which mode this cus_ belongs to. Without it, checkout cannot
+    // tell a test customer from a live one and hands the wrong id to Stripe.
+    stripe_customer_mode: subscription.livemode ? "live" : "test",
+    stripe_subscription_id: subscription.id,
+    season_pass_tier: identity.tier,
+    season_pass_status: subscription.status,
+    season_pass_expires_at: subscriptionPeriodEnd(subscription),
+  };
+  if (activateFromPaidInvoice) {
+    profile.season_pass_active = active;
+    profile.season_pass_purchased_at = new Date().toISOString();
+  } else if (!active || isTerminalSubscriptionStatus(subscription.status)) {
+    // Do not leave access active through past_due, incomplete, paused, or a
+    // terminal state. A later invoice.paid event is the only reactivation edge.
+    profile.season_pass_active = false;
+  }
+
+  await supabase.from("tank_profiles").upsert(profile, { onConflict: "user_id" });
+  await supabase
+    .from("tank_purchases")
+    .update({
+      stripe_subscription_id: subscription.id,
+      ...(activateFromPaidInvoice && active
+        ? { status: "paid", fulfilled_at: new Date().toISOString() }
+        : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", identity.purchaseId)
+    .eq("user_id", identity.userId);
+
+  return identity;
+}
+
+async function handleTankInvoicePaid(
+  supabase: any,
+  stripe: Stripe,
+  invoice: Stripe.Invoice,
+) {
+  const subscriptionId = subscriptionFromInvoice(invoice);
+  if (!subscriptionId) return;
+
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const identity = await syncTankSubscription(supabase, subscription, true);
+  if (!identity) return;
+
+  const product = resolveTankSubscriptionProduct(identity.productKey);
+  if (!product) return;
+  const grant = product.monthlyTokens;
+  const { error } = await supabase
+    .from("tank_token_transactions")
+    .upsert(
+      {
+        user_id: identity.userId,
+        amount: grant,
+        reason: `stripe_subscription:${identity.productKey}`,
+        stripe_invoice_id: invoice.id,
+      },
+      { onConflict: "stripe_invoice_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+
+  await supabase
+    .from("tank_profiles")
+    .update({ season_pass_tokens_granted_at: new Date().toISOString() })
+    .eq("user_id", identity.userId)
+    .eq("stripe_subscription_id", subscription.id);
+}
+
+async function handleTankInvoicePaymentFailed(
+  supabase: any,
+  stripe: Stripe,
+  invoice: Stripe.Invoice,
+) {
+  const subscriptionId = subscriptionFromInvoice(invoice);
+  if (!subscriptionId) return;
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  await syncTankSubscription(supabase, subscription, false);
+}
+
+async function syncTankSubscriptionLifecycle(
+  supabase: any,
+  subscription: Stripe.Subscription,
+) {
+  await syncTankSubscription(supabase, subscription, false);
 }
 
 // Handle failed payment
@@ -333,6 +645,16 @@ async function handlePaymentFailed(
   supabase: any,
   paymentIntent: Stripe.PaymentIntent
 ) {
+  if (paymentIntent.metadata.tank_purchase_id) {
+    const { error } = await supabase
+      .from('tank_purchases')
+      .update({ status: 'failed', updated_at: new Date().toISOString() })
+      .eq('id', paymentIntent.metadata.tank_purchase_id)
+      .eq('status', 'pending');
+    if (error) console.error('[Tank Store] Failed to mark purchase failed:', error);
+    return;
+  }
+
   const orderId = paymentIntent.metadata.order_id;
 
   if (!orderId) {

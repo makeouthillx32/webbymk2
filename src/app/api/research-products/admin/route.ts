@@ -49,6 +49,8 @@ export async function GET(req: NextRequest) {
       is_featured,
       status,
       created_at,
+      compound,
+      form,
 
       research_product_images (
         id,
@@ -67,6 +69,18 @@ export async function GET(req: NextRequest) {
           name,
           slug
         )
+      ),
+      research_lab_reports (
+        id,
+        lab_name,
+        coa_number,
+        lot_number,
+        purity_pct,
+        pdf_url,
+        paper_image_url,
+        verified,
+        pending,
+        created_at
       )
     `
     )
@@ -101,7 +115,13 @@ export async function GET(req: NextRequest) {
       .map((pc: any) => pc.research_categories)
       .filter(Boolean);
 
-    return { ...p, product_images: imgs, categories };
+    const reports = (p.research_lab_reports ?? []).slice().sort((a: any, b: any) => {
+      const ca = a.created_at ? Date.parse(a.created_at) : 0;
+      const cb = b.created_at ? Date.parse(b.created_at) : 0;
+      return cb - ca;
+    });
+
+    return { ...p, product_images: imgs, categories, lab_reports: reports };
   });
 
   // ✅ Debug guard: if THIS triggers, your UI will definitely get "Missing product id"

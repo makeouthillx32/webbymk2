@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getPublicActivePoll } from "@/zones/tank/server/pollSystem";
 
 // Plain API route, not a Server Action called from the client. Both
@@ -12,9 +12,15 @@ import { getPublicActivePoll } from "@/zones/tank/server/pollSystem";
 // running for the first time (PollOverlay.tsx had a pre-existing syntax
 // error blocking the build until moments before this was found). Same fix
 // pattern as recordStreamTelemetryAction -> /api/tank/stream-telemetry.
-export async function GET(request: NextRequest) {
-  const poll = await getPublicActivePoll(
-    request.headers.get("x-tank-voter-id") ?? undefined,
+//
+// no-store: a poll that just opened must reach viewers on their next tick,
+// not after a cached empty answer expires.
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  const poll = await getPublicActivePoll();
+  return NextResponse.json(
+    { poll },
+    { headers: { "Cache-Control": "private, no-store, max-age=0" } },
   );
-  return NextResponse.json({ poll });
 }

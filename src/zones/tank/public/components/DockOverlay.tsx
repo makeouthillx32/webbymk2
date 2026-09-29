@@ -5,13 +5,11 @@ import {
   X,
   Lock,
   Ticket,
-  Dices,
   CheckSquare2,
   Square,
   Sparkles,
 } from "lucide-react";
 import { ChromePanel } from "./ChromePanel";
-import { ConsoleButton } from "./ConsoleButton";
 import { ACTIVE_THEME } from "../../theme";
 import type { TankMission } from "../../server/gamification";
 
@@ -22,7 +20,6 @@ export type DockOverlayProps = {
   onOpenPrizeMachine?: () => void;
   onOpenSecretCode?: () => void;
   onGiftSeasonPass?: () => void;
-  onCompleteMission?: (missionId: string) => void;
 };
 
 export function DockOverlay({
@@ -32,7 +29,6 @@ export function DockOverlay({
   onOpenPrizeMachine,
   onOpenSecretCode,
   onGiftSeasonPass,
-  onCompleteMission,
 }: DockOverlayProps) {
   const [timeLeft, setTimeLeft] = useState("21:37:42");
 
@@ -200,15 +196,6 @@ export function DockOverlay({
                   </span>
                 </div>
 
-                {/* Reroll Dice Button */}
-                <ConsoleButton
-                  variant="gray"
-                  onClick={() => alert("Missions rerolled!")}
-                  className="!px-2 !py-1 !text-xs"
-                  ariaLabel="Reroll Missions"
-                >
-                  <Dices className="h-3.5 w-3.5" />
-                </ConsoleButton>
               </div>
             </div>
 
@@ -217,8 +204,7 @@ export function DockOverlay({
               {defaultMissions.map((mission) => (
                 <div
                   key={mission.id}
-                  onClick={() => onCompleteMission?.(mission.id)}
-                  className={`group relative flex items-center justify-between rounded border p-3 shadow-md transition cursor-pointer ${
+                  className={`group relative flex items-center justify-between rounded border p-3 shadow-md transition ${
                     mission.completed
                       ? "border-white/5 bg-black/40 opacity-70"
                       : "border-black/70 bg-[#1c1d1f] hover:border-yellow-400 hover:bg-[#25272a]"

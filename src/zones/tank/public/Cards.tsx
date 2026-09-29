@@ -13,7 +13,7 @@ export function RoomCard({
   const camera = cameraById(room.featuredCameraId);
   return (
     <Link
-      href={`/rooms/${room.slug}`}
+      href="/"
       className={`hover:border-primary/40 group overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${featured ? "md:col-span-2" : ""}`}
     >
       <div

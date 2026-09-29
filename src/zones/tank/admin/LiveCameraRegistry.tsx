@@ -315,7 +315,7 @@ export default function LiveCameraRegistry() {
                       </span>
                     )}
 
-                    {(camera.protocol === "rtsp" || camera.id.startsWith("cam-178")) && (
+                    {(camera.protocol === "ip-camera" || camera.id.startsWith("cam-178")) && (
                       <a
                         href={`http://${camera.id === "cam-1786768240090" ? "192.168.50.65" : camera.id === "cam-1786768240091" ? "192.168.50.66" : camera.id === "cam-1786768240092" ? "192.168.50.67" : "192.168.50.65"}`}
                         target="_blank"

@@ -1,29 +1,29 @@
-import { notFound } from "next/navigation";
 import AdminConsole from "@/zones/tank/admin/AdminConsole";
 import { requireTankAdmin } from "@/zones/tank/admin/requireTankAdmin";
-import type { AdminSection } from "@/zones/tank/contracts";
+import { getServerDirectorState } from "@/zones/tank/server/serverDirectorEngine";
+import { loadPersistedOperatorModeFromDb } from "@/zones/tank/server/directorTelemetryStore";
+import { loadRotationRosterFromDb } from "@/zones/tank/server/directorRotationStore";
 
-const sections: AdminSection[] = [
-  "director",
-  "sources",
-  "channels",
-  "chat",
-  "webhooks",
-  "users",
-  "system",
-];
-export default async function AdminSectionPage({
-  params,
-}: {
-  params: Promise<{ section: string }>;
-}) {
-  const { section } = await params;
-  if (!sections.includes(section as AdminSection)) notFound();
-  const { profile, user } = await requireTankAdmin();
+type AdminSectionPageProps = {
+  params?: Promise<{ section: string }>;
+};
+
+export default async function AdminSectionPage({ params }: AdminSectionPageProps = {}) {
+  await requireTankAdmin();
+  if (params) {
+    await params;
+  }
+  const [initialServerDirector, initialMode, initialRoster] = await Promise.all([
+    getServerDirectorState().catch(() => null),
+    loadPersistedOperatorModeFromDb().catch(() => null),
+    loadRotationRosterFromDb().catch(() => null),
+  ]);
+
   return (
     <AdminConsole
-      section={section as AdminSection}
-      operatorName={profile.display_name || user.email || "Admin"}
+      initialServerDirector={initialServerDirector}
+      initialMode={initialMode}
+      initialRoster={initialRoster}
     />
   );
 }

@@ -260,65 +260,73 @@ export function ShopLayout({
 }: ShopLayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  const innerContent = (
+    <>
+      <RegionBootstrap />
+      <div data-layout={useAppHeader ? "app" : "shop"}>
+        {useAppHeader ? (
+          <AppHeader />
+        ) : (
+          showNav &&
+          (IS_LABS_ZONE ? (
+            <LabsHeader onMenuClick={() => setMobileMenuOpen(true)} />
+          ) : (
+            <ShopHeader onMenuClick={() => setMobileMenuOpen(true)} />
+          ))
+        )}
+
+        {mobileMenuOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 lg:hidden"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-hidden="true"
+            />
+            <div
+              className="fixed bottom-0 left-0 top-0 z-50 w-[min(86vw,360px)] overflow-y-auto border-r border-[var(--lt-border)] bg-[var(--lt-bg)] shadow-[var(--lt-shadow)] lg:hidden"
+              data-layout="shop"
+            >
+              <MobileDrawer
+                key={sessionUserId || "guest"}
+                onClose={() => setMobileMenuOpen(false)}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
+        <main
+          className={
+            IS_LABS_ZONE
+              ? "min-h-screen min-h-[100dvh] pt-4 sm:pt-5"
+              : "min-h-screen min-h-[100dvh]"
+          }
+          style={{ backgroundColor: "hsl(var(--background))" }}
+        >
+          {children}
+        </main>
+
+        {showFooter && (
+          <Suspense fallback={<div className="h-96" />}>
+            {IS_LABS_ZONE ? <LabsFooter /> : <ShopFooter />}
+          </Suspense>
+        )}
+      </div>
+
+      <AppAccessibility />
+      <AppCookieConsent screenSize={screenSize} />
+      <ConditionalOverlays />
+      <AppToaster />
+    </>
+  );
+
   return (
     <CartProvider>
-      <ResearchCartProvider>
-        <RegionBootstrap />
-        <div data-layout={useAppHeader ? "app" : "shop"}>
-          {useAppHeader ? (
-            <AppHeader />
-          ) : (
-            showNav &&
-            (IS_LABS_ZONE ? (
-              <LabsHeader onMenuClick={() => setMobileMenuOpen(true)} />
-            ) : (
-              <ShopHeader onMenuClick={() => setMobileMenuOpen(true)} />
-            ))
-          )}
-
-          {mobileMenuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 lg:hidden"
-                onClick={() => setMobileMenuOpen(false)}
-                aria-hidden="true"
-              />
-              <div
-                className="fixed bottom-0 left-0 top-0 z-50 w-[min(86vw,360px)] overflow-y-auto border-r border-[var(--lt-border)] bg-[var(--lt-bg)] shadow-[var(--lt-shadow)] lg:hidden"
-                data-layout="shop"
-              >
-                <MobileDrawer
-                  key={sessionUserId || "guest"}
-                  onClose={() => setMobileMenuOpen(false)}
-                />
-              </div>
-            </>
-          )}
-
-          {/* Explicit --background override so body's var(--gp-bg) doesn't bleed into page content */}
-          <main
-            className={
-              IS_LABS_ZONE
-                ? "min-h-screen min-h-[100dvh] pt-4 sm:pt-5"
-                : "min-h-screen min-h-[100dvh]"
-            }
-            style={{ backgroundColor: "hsl(var(--background))" }}
-          >
-            {children}
-          </main>
-
-          {showFooter && (
-            <Suspense fallback={<div className="h-96" />}>
-              {IS_LABS_ZONE ? <LabsFooter /> : <ShopFooter />}
-            </Suspense>
-          )}
-        </div>
-
-        <AppAccessibility />
-        <AppCookieConsent screenSize={screenSize} />
-        <ConditionalOverlays />
-        <AppToaster />
-      </ResearchCartProvider>
+      {IS_LABS_ZONE ? (
+        <ResearchCartProvider>{innerContent}</ResearchCartProvider>
+      ) : (
+        innerContent
+      )}
     </CartProvider>
   );
 }

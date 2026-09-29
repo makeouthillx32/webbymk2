@@ -1,8 +1,17 @@
 import { createClient } from '@/utils/supabase/server';
+import { financialGrowthRate, getFinancialSummary } from '@/lib/finance/dashboard';
 
 export async function getOverviewData() {
   try {
-    const usersData = await getUsersData();
+    const now = new Date();
+    const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const [usersData, allTimeLive, thisMonthLive, lastMonthLive] = await Promise.all([
+      getUsersData(),
+      getFinancialSummary('live'),
+      getFinancialSummary('live', thisMonth, now),
+      getFinancialSummary('live', lastMonth, thisMonth),
+    ]);
     
     return {
       views: {
@@ -10,8 +19,8 @@ export async function getOverviewData() {
         growthRate: 0,
       },
       profit: {
-        value: 0,
-        growthRate: 0,
+        value: allTimeLive.netCents / 100,
+        growthRate: financialGrowthRate(thisMonthLive.netCents, lastMonthLive.netCents),
       },
       products: {
         value: 0,

@@ -1,6 +1,6 @@
 // app/api/analytics/dashboard/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
+import { requireAdmin } from '@/lib/require-admin';
 
 interface DeviceAnalytics {
   name: string;
@@ -45,7 +45,10 @@ interface DashboardResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    // Admin-only: this returns site-wide analytics across all visitors.
+    const gate = await requireAdmin();
+    if (gate.error) return gate.error;
+    const supabase = gate.admin;
     const { searchParams } = new URL(request.url);
     
     // Default to last 30 days

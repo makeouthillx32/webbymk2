@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ProductGroup, InventoryRow } from "../page";
+import { fulfillmentProviderLabel } from "@/lib/fulfillment/provider-metadata";
 
 interface Props {
   groups: ProductGroup[];
@@ -67,6 +68,7 @@ function ProductGroupRow({
     (v) => v.track_inventory && (v.quantity ?? 0) === 0
   );
   const allUntracked = group.variants.every((v) => !v.track_inventory);
+  const supplierProviders = [...new Set(group.variants.map((v) => v.fulfillment_provider).filter(Boolean))];
 
   return (
     <div className="border rounded-lg overflow-hidden mb-2">
@@ -102,7 +104,9 @@ function ProductGroupRow({
             </Badge>
           )}
           {allUntracked && (
-            <span className="text-xs text-muted-foreground">Untracked</span>
+            <span className="text-xs text-muted-foreground">
+              {supplierProviders.length ? "Supplier managed" : "Untracked"}
+            </span>
           )}
           {!allUntracked && !hasOut && !hasLow && (
             <span className="text-xs text-muted-foreground">
@@ -151,6 +155,11 @@ function VariantRow({
         {row.sku && (
           <span className="ml-2 text-xs text-muted-foreground font-mono">{row.sku}</span>
         )}
+        {row.fulfillment_provider && (
+          <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0">
+            {fulfillmentProviderLabel(row.fulfillment_provider)} · supplier managed
+          </Badge>
+        )}
       </div>
 
       {/* Stock status badge */}
@@ -160,7 +169,9 @@ function VariantRow({
 
       {/* Quantity */}
       <div className="w-20 text-center tabular-nums">
-        {row.track_inventory ? (
+        {row.supplier_managed ? (
+          <span className="text-muted-foreground text-xs">Supplier</span>
+        ) : row.track_inventory ? (
           <span
             className={
               qty === 0
@@ -197,7 +208,7 @@ function VariantRow({
 
       {/* Edit */}
       <div className="w-10 flex justify-end">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(row)}>
+        <Button variant="ghost" size="icon" className="h-7 w-7" disabled={row.supplier_managed} title={row.supplier_managed ? "Stock is managed by the fulfillment supplier" : "Edit inventory"} onClick={() => onEdit(row)}>
           <Pencil className="h-3.5 w-3.5" />
         </Button>
       </div>

@@ -65,6 +65,7 @@ export async function GET(
       order_number: order.order_number,
       status: order.status,
       payment_status: order.payment_status,
+      payment_method: order.payment_method || order.payment_method_brand,
       
       // Amounts
       subtotal_cents: order.subtotal_cents,

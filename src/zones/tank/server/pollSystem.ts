@@ -4,25 +4,12 @@ import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import {
   projectPollForViewer,
-  sanitizeAnonymousPollClientId,
   type ActivePoll,
   type PollView,
 } from "./pollContract";
+import { resolveTankParticipantIdentity } from "./participantIdentity";
 
 const ACTIVE_POLL_SETTING_KEY = "tank_active_poll_v1";
-
-async function resolveVoterKey(anonymousClientId?: string): Promise<string | null> {
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user?.id) return user.id;
-  } catch {}
-
-  const clientId = sanitizeAnonymousPollClientId(anonymousClientId);
-  return clientId ? `anon_${clientId}` : null;
-}
 
 async function persistHouseLine(body: string, messageType: "announcement" | "house_event" = "announcement") {
   const admin = createAdminClient();
@@ -99,12 +86,11 @@ export async function getActivePoll(): Promise<ActivePoll | null> {
 }
 
 /** Public projection: totals plus only this viewer's selection. */
-export async function getPublicActivePoll(
-  anonymousClientId?: string,
-): Promise<PollView | null> {
+export async function getPublicActivePoll(): Promise<PollView | null> {
   const poll = await getActivePoll();
   if (!poll) return null;
-  return projectPollForViewer(poll, await resolveVoterKey(anonymousClientId));
+  const identity = await resolveTankParticipantIdentity();
+  return projectPollForViewer(poll, identity?.voterKey ?? null);
 }
 
 /**
@@ -114,6 +100,7 @@ export async function createPollAction(params: {
   question: string;
   options: string[];
   durationMinutes?: number | "indefinite";
+  voterEligibility?: "everyone" | "members";
 }): Promise<{ success: boolean; poll?: ActivePoll; error?: string }> {
   const staff = await getPollStaff();
   if (!staff) return { success: false, error: "Staff only." };
@@ -129,6 +116,8 @@ export async function createPollAction(params: {
   }
 
   const durationMinutes = params.durationMinutes ?? 5;
+  const voterEligibility =
+    params.voterEligibility === "members" ? "members" : "everyone";
   const now = Date.now();
   const expiresAt = durationMinutes === "indefinite" ? null : now + durationMinutes * 60 * 1000;
   const createdBy =
@@ -146,6 +135,7 @@ export async function createPollAction(params: {
     durationMinutes,
     createdBy,
     active: true,
+    voterEligibility,
   };
 
   const adminSupabase = createAdminClient();
@@ -162,13 +152,21 @@ export async function createPollAction(params: {
 
     // Broadcast poll to all connected chat clients in real-time
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("new_poll", newPoll);
+    await channel.send({
+      type: "broadcast",
+      event: "new_poll",
+      payload: newPoll,
+    });
 
     // Also send an official CONSOLE announcement in chat stream
     const announcement = await persistHouseLine(
       `📊 LIVE POLL STARTED: "${question}" — Open House Poll from the action menu to vote. (⏱️ ${durationMinutes === "indefinite" ? "Open" : `${durationMinutes}m`})`,
     );
-    if (announcement) await channel.httpSend("new_message", announcement);
+    if (announcement) await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: announcement,
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true, poll: newPoll };
@@ -183,15 +181,15 @@ export async function createPollAction(params: {
 export async function votePollAction(params: {
   pollId: string;
   optionIndex: number;
-  anonymousClientId?: string;
 }): Promise<{ success: boolean; poll?: PollView; error?: string }> {
-  const voterKey = await resolveVoterKey(params.anonymousClientId);
-  if (!voterKey) {
+  const identity = await resolveTankParticipantIdentity();
+  if (!identity) {
     return {
       success: false,
-      error: "This browser could not establish a stable poll identity. Refresh and try again.",
+      error: "Tank could not establish a secure participant identity. Refresh and try again.",
     };
   }
+  const voterKey = identity.voterKey;
 
   const adminSupabase = createAdminClient();
 
@@ -204,9 +202,21 @@ export async function votePollAction(params: {
     if (error || !data) return { success: false, error: error?.message || "Vote failed." };
     const poll = data as ActivePoll;
 
+    if (identity.kind === "member") {
+      await adminSupabase.rpc("tank_record_mission_progress", {
+        p_user_id: identity.voterKey,
+        p_mission_key: "vote_house_poll",
+        p_increment: 1,
+      });
+    }
+
     // Broadcast updated vote counts
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("poll_updated", projectPollForViewer(poll, null));
+    await channel.send({
+      type: "broadcast",
+      event: "poll_updated",
+      payload: projectPollForViewer(poll, null),
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true, poll: projectPollForViewer(poll, voterKey) };
@@ -254,12 +264,20 @@ export async function endPollAction(pollId: string): Promise<{ success: boolean;
     }
 
     const channel = adminSupabase.channel("room:director:chat");
-    await channel.httpSend("poll_ended", { pollId, winner: winningOption, totalVotes: poll.totalVotes });
+    await channel.send({
+      type: "broadcast",
+      event: "poll_ended",
+      payload: { pollId, winner: winningOption, totalVotes: poll.totalVotes },
+    });
 
     const announcement = await persistHouseLine(
       `🏆 POLL CONCLUDED: "${poll.question}" ➔ WINNER: "${winningOption.text}" with ${winningOption.votes}/${poll.totalVotes} votes!`,
     );
-    if (announcement) await channel.httpSend("new_message", announcement);
+    if (announcement) await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: announcement,
+    });
     await adminSupabase.removeChannel(channel);
 
     return { success: true };

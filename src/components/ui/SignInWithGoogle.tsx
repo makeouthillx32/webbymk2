@@ -4,6 +4,10 @@ import { createBrowserClient } from "@/utils/supabase/client";
 import type { Provider } from "@supabase/supabase-js";
 import { buildOAuthCallbackUrl, safePostAuthRedirect } from "@/lib/authRedirect";
 import { CORE_DOMAIN } from "@/lib/multiZone";
+import {
+  clearAuthNavigationIntent,
+  markAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 type OAuthButton = {
   provider: Provider; // "google" | "apple" | "facebook" etc.
@@ -29,6 +33,7 @@ function buildRedirectTo() {
 
 export default function SignInWithProviders() {
   const signIn = async (provider: Provider) => {
+    markAuthNavigationIntent();
     const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -41,6 +46,7 @@ export default function SignInWithProviders() {
     });
 
     if (error) {
+      clearAuthNavigationIntent();
       console.error(`${provider} sign-in error:`, error.message);
       alert(`${provider} sign-in failed – see console for details.`);
     }

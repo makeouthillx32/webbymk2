@@ -1,283 +1,154 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "../runtimeInk.js";
 import { Divider } from "./Divider.jsx";
 import { Spinner } from "./Spinner.jsx";
+import { TextInput } from "./TextInput.tsx";
+import { inferDomainProvider, isValidDomainName, normalizeDomainName } from "../domain-providers.ts";
+import type { DomainProvider, DomainRole } from "../control-db.ts";
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-
-const TEARDROP     = "✻";
-const TITLE        = "UNAXIS CONTROL PLANE";
-const SETTLED_GREY = "#999999";
-
-interface Presets {
-  domain: string;
-  slug: string;
-  path: string;
-}
-
-const DOMAIN_PRESETS: Presets[] = [
-  { domain: "unenter.live", slug: "unenter.live", path: "Z:\\WEBSITES\\webbymk2" },
-  { domain: "makeouthill.xyz", slug: "makeouthill", path: "Z:\\WEBSITES\\makeouthill" },
-  { domain: "unaxis.network", slug: "unaxis", path: "Z:\\WEBSITES\\unaxis" },
-];
-
-// ── Props ──────────────────────────────────────────────────────────────────────
+const TEARDROP = "✻";
+const TITLE = "UNAXIS CONTROL PLANE";
+const PROVIDERS: DomainProvider[] = ["dns", "unstoppable", "ens", "web3"];
+type Step = "intro" | "domain" | "workspace" | "review" | "saving" | "success";
 
 interface Props {
   onCancel: () => void;
-  onDone:   (result: { slug: string; path: string; domain: string }) => void;
+  onDone: (result: { slug: string; path: string; domain: string }) => void;
 }
 
-// ── Component ──────────────────────────────────────────────────────────────────
+function slugifyDomain(domain: string): string {
+  return domain.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "domain";
+}
+
+function defaultRole(provider: DomainProvider): DomainRole {
+  return provider === "dns" ? "primary" : provider === "unstoppable" ? "identity" : "decentralized-site";
+}
 
 export function NewProjectWizard({ onCancel, onDone }: Props) {
-  const [step, setStep] = useState<"intro" | "domain" | "dns" | "layout" | "success">("intro");
-  const [presetIdx, setPresetIdx] = useState(0);
-  const [dnsStatus, setDnsStatus] = useState<"idle" | "checking" | "verified">("idle");
-  const [selectedModules, setSelectedModules] = useState({
-    db: true,
-    proxy: true,
-    zones: true,
-  });
-  const [cursor, setCursor] = useState(0); // For module selection
+  const [step, setStep] = useState<Step>("intro");
+  const [domain, setDomain] = useState("");
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [provider, setProvider] = useState<DomainProvider>("dns");
+  const [error, setError] = useState<string | null>(null);
+  const [savedStatus, setSavedStatus] = useState("");
+  const slug = useMemo(() => slugifyDomain(domain), [domain]);
+  const role = defaultRole(provider);
+  const isTyping = step === "domain" || step === "workspace";
 
-  const current = DOMAIN_PRESETS[presetIdx] || DOMAIN_PRESETS[0];
+  const save = async () => {
+    setStep("saving");
+    setError(null);
+    try {
+      const cdb = await import("../control-db.ts");
+      const { checkManagedDomain } = await import("../domain-providers.ts");
+      const project = cdb.dbGetProjects()[0];
+      const id = cdb.dbUpsertManagedDomain({
+        projectId: project?.id ?? "", name: domain, provider, role,
+        config: { workspacePath },
+        chain: provider === "unstoppable" ? "MATIC" : "",
+      });
+      const controller = cdb.dbGetManagedDomain(id);
+      if (!controller) throw new Error("controller was saved but could not be read back");
+      const health = await checkManagedDomain(controller);
+      cdb.dbSetManagedDomainHealth(id, health.status, health.detail);
+      setSavedStatus(`${health.status} — ${health.detail}`);
+      setStep("success");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setStep("review");
+    }
+  };
 
-  // ── Keyboard Navigation ────────────────────────────────────────────────────
   useInput((input, key) => {
-    if (input === "q" || key.escape) {
-      onCancel();
-      return;
-    }
-
-    if (key.return) {
-      if (step === "intro") {
-        setStep("domain");
-      } else if (step === "domain") {
-        setStep("dns");
-        setDnsStatus("idle");
-      } else if (step === "dns") {
-        if (dnsStatus === "idle") {
-          setDnsStatus("checking");
-          setTimeout(() => setDnsStatus("verified"), 1500);
-        } else if (dnsStatus === "verified") {
-          setStep("layout");
-          setCursor(0);
-        }
-      } else if (step === "layout") {
-        setStep("success");
-      } else if (step === "success") {
-        onDone({ slug: current.slug, path: current.path, domain: current.domain });
+    if (isTyping || step === "saving") return;
+    if (input === "q" || key.escape) { onCancel(); return; }
+    if (step === "intro" && key.return) { setStep("domain"); return; }
+    if (step === "review") {
+      if (key.leftArrow || key.rightArrow || input === "p") {
+        const index = PROVIDERS.indexOf(provider);
+        const delta = key.leftArrow ? -1 : 1;
+        setProvider(PROVIDERS[(index + delta + PROVIDERS.length) % PROVIDERS.length]);
+        return;
       }
+      if (key.return) { void save(); return; }
     }
-
-    if (step === "domain") {
-      if (key.leftArrow) {
-        setPresetIdx((idx) => (idx > 0 ? idx - 1 : DOMAIN_PRESETS.length - 1));
-      }
-      if (key.rightArrow) {
-        setPresetIdx((idx) => (idx < DOMAIN_PRESETS.length - 1 ? idx + 1 : 0));
-      }
-    }
-
-    if (step === "layout") {
-      if (key.upArrow) setCursor((c) => (c > 0 ? c - 1 : 2));
-      if (key.downArrow) setCursor((c) => (c < 2 ? c + 1 : 0));
-      if (input === " ") {
-        setSelectedModules((prev) => {
-          const next = { ...prev };
-          if (cursor === 0) next.db = !next.db;
-          if (cursor === 1) next.proxy = !next.proxy;
-          if (cursor === 2) next.zones = !next.zones;
-          return next;
-        });
-      }
-    }
+    if (step === "success" && key.return) onDone({ slug, path: workspacePath, domain });
   });
 
   return (
-    <Box flexDirection="column" paddingX={3} paddingY={1} width={80}>
-      
-      {/* ── Wordmark Header ── */}
+    <Box flexDirection="column" paddingX={3} paddingY={1} width={86}>
       <Box justifyContent="space-between" marginBottom={1}>
-        <Box gap={1}>
-          <Text color="cyan">{TEARDROP}</Text>
-          <Text bold color="white">{TITLE}</Text>
-        </Box>
-        <Text dimColor>project onboarding</Text>
+        <Box gap={1}><Text color="cyan">{TEARDROP}</Text><Text bold color="white">{TITLE}</Text></Box>
+        <Text dimColor>domain controller onboarding</Text>
       </Box>
       <Divider />
 
-      {/* ── Step: Introduction ── */}
       {step === "intro" && (
         <Box flexDirection="column" gap={1} marginY={1}>
-          <Text color="yellow" bold>⊕ DOMAIN-CENTRIC DOMAIN CONTROLLER WIZARD</Text>
-          <Box flexDirection="column" gap={0} paddingLeft={2} borderStyle="round" borderColor="gray">
-            <Text dimColor>In UNAXIS, a "Project" acts as a dedicated **Domain Controller**.</Text>
-            <Text dimColor>Setting up a new project partitions your services, settings, and databases</Text>
-            <Text dimColor>around a dedicated primary domain (e.g. unenter.live) and its wildcards.</Text>
-          </Box>
-          <Box flexDirection="column" gap={0} marginTop={1}>
-            <Text color="white">This wizard guides you through:</Text>
-            <Text dimColor>  1. Defining the core domain & automatic workspace mapping</Text>
-            <Text dimColor>  2. Configuring wildcards (*.domain) for Next.js multi-zones</Text>
-            <Text dimColor>  3. Generating decoupled Option A app-data directories</Text>
-          </Box>
-          <Box marginTop={1} gap={2}>
-            <Text color="cyan" bold>[↵] Start Setup Process</Text>
-            <Text dimColor>[q/esc] Cancel</Text>
-          </Box>
+          <Text color="yellow" bold>⊕ ADD A PROVIDER-AWARE DOMAIN CONTROLLER</Text>
+          <Text dimColor>Each domain is managed independently and can later bind to one or more zones.</Text>
+          <Text dimColor>Supported controllers: conventional DNS · Unstoppable/Polygon · ENS · generic Web3.</Text>
+          <Text dimColor>This does not change DNS, proxy hosts, IPFS records, or blockchain state.</Text>
+          <Box marginTop={1} gap={2}><Text color="cyan" bold>[↵] Add Domain</Text><Text dimColor>[q/esc] Cancel</Text></Box>
         </Box>
       )}
 
-      {/* ── Step: Domain Selection ── */}
       {step === "domain" && (
         <Box flexDirection="column" gap={1} marginY={1}>
-          <Text color="yellow" bold>STEP 1: DEFINE DOMAIN CONTROLLER BOUNDARY</Text>
-          <Text dimColor>Cycle through target domain presets to see project slug mapping:</Text>
-
-          <Box flexDirection="column" gap={0} paddingX={2} marginY={1}>
-            <Box gap={2} alignItems="center">
-              <Text bold color="cyan">◀</Text>
-              <Box borderStyle="single" borderColor="cyan" paddingX={4}>
-                <Text bold color="yellow">{current.domain}</Text>
-              </Box>
-              <Text bold color="cyan">▶</Text>
-            </Box>
-            <Text dimColor textAlign="center" marginTop={0}>[Left/Right Arrow] to cycle presets</Text>
-          </Box>
-
-          <Box flexDirection="column" gap={1} paddingLeft={2} borderStyle="round" borderColor="gray">
-            <Box gap={1}>
-              <Text color="white" bold>Project Name (Slug):</Text>
-              <Text color="cyan">{current.slug}</Text>
-            </Box>
-            <Box gap={1}>
-              <Text color="white" bold>Target Project Path:</Text>
-              <Text color="yellow">{current.path}</Text>
-            </Box>
-            <Box gap={1}>
-              <Text color="white" bold>Decoupled AppData:</Text>
-              <Text color="magenta">%APPDATA%\unaxis\{current.slug}\</Text>
-            </Box>
-          </Box>
-
-          <Box marginTop={1} gap={2}>
-            <Text color="cyan" bold>[↵] Save Domain & Configure DNS</Text>
-            <Text dimColor>[q/esc] Cancel</Text>
-          </Box>
+          <Text color="yellow" bold>STEP 1: DOMAIN NAME</Text>
+          <Text dimColor>Enter a DNS or Web3 domain. The provider is inferred from its suffix.</Text>
+          <TextInput active width={58} placeholder="example.com or identity.brave" onCancel={onCancel}
+            onSubmit={(value) => {
+              const normalized = normalizeDomainName(value);
+              if (!isValidDomainName(normalized)) { setError("Enter a valid domain name."); return; }
+              setDomain(normalized); setProvider(inferDomainProvider(normalized)); setError(null); setStep("workspace");
+            }} />
+          {error && <Text color="red">✗ {error}</Text>}
+          <Text dimColor>[esc] Cancel</Text>
         </Box>
       )}
 
-      {/* ── Step: DNS Validation ── */}
-      {step === "dns" && (
+      {step === "workspace" && (
         <Box flexDirection="column" gap={1} marginY={1}>
-          <Text color="yellow" bold>STEP 2: WILDCARD DNS & NETWORK CONTROLS</Text>
-          <Text dimColor>Next.js multi-zones route automatically by hostname. Verify DNS wildcards:</Text>
-
-          <Box flexDirection="column" gap={0} marginY={1} borderStyle="single" borderColor="gray" paddingX={1}>
-            <Box justifyContent="space-between">
-              <Text color="white" bold>Record Target</Text>
-              <Text color="white" bold>Type</Text>
-              <Text color="white" bold>Expected Value</Text>
-              <Text color="white" bold>Status</Text>
-            </Box>
-            <Divider />
-            <Box justifyContent="space-between">
-              <Text dimColor>{current.domain}</Text>
-              <Text dimColor>A</Text>
-              <Text dimColor>127.0.0.1</Text>
-              {dnsStatus === "idle" && <Text color="yellow">Pending</Text>}
-              {dnsStatus === "checking" && <Spinner />}
-              {dnsStatus === "verified" && <Text color="green" bold>✓ OK</Text>}
-            </Box>
-            <Box justifyContent="space-between">
-              <Text dimColor>*.{current.domain}</Text>
-              <Text dimColor>A</Text>
-              <Text dimColor>127.0.0.1</Text>
-              {dnsStatus === "idle" && <Text color="yellow">Pending</Text>}
-              {dnsStatus === "checking" && <Spinner />}
-              {dnsStatus === "verified" && <Text color="green" bold>✓ OK</Text>}
-            </Box>
-            <Box justifyContent="space-between">
-              <Text dimColor>db.{current.domain}</Text>
-              <Text dimColor>CNAME</Text>
-              <Text dimColor>{current.domain}</Text>
-              {dnsStatus === "idle" && <Text color="yellow">Pending</Text>}
-              {dnsStatus === "checking" && <Spinner />}
-              {dnsStatus === "verified" && <Text color="green" bold>✓ OK</Text>}
-            </Box>
-          </Box>
-
-          {dnsStatus === "idle" && (
-            <Text color="yellow">Press [↵] to run a mock DNS validation query</Text>
-          )}
-          {dnsStatus === "checking" && (
-            <Text color="yellow">Pinging DNS resolvers for records...</Text>
-          )}
-          {dnsStatus === "verified" && (
-            <Text color="green" bold>✓ DNS Wildcards matched. Router is ready to accept zones.</Text>
-          )}
-
-          <Box marginTop={1} gap={2}>
-            {dnsStatus === "verified" ? (
-              <Text color="cyan" bold>[↵] Proceed to Scaffolding</Text>
-            ) : (
-              <Text color="gray">[↵] Run Validation Check</Text>
-            )}
-            <Text dimColor>[q/esc] Cancel</Text>
-          </Box>
+          <Text color="yellow" bold>STEP 2: CONTROLLER WORKSPACE</Text>
+          <Text dimColor>Enter any absolute path, including a different Windows drive.</Text>
+          <TextInput active width={70} placeholder={`F:\\WEBSITES\\${slug}`} onCancel={() => setStep("domain")}
+            onSubmit={(value) => {
+              if (!value || !/^(?:[a-zA-Z]:\\|\/)/.test(value)) {
+                setError("Enter an absolute workspace path, such as F:\\WEBSITES\\example."); return;
+              }
+              setWorkspacePath(value); setError(null); setStep("review");
+            }} />
+          {error && <Text color="red">✗ {error}</Text>}
+          <Text dimColor>[esc] Back</Text>
         </Box>
       )}
 
-      {/* ── Step: Layout/Modules ── */}
-      {step === "layout" && (
+      {(step === "review" || step === "saving") && (
         <Box flexDirection="column" gap={1} marginY={1}>
-          <Text color="yellow" bold>STEP 3: ENFORCE CORE topOLOGY CONTRACT</Text>
-          <Text dimColor>Select modular services to inherit inside {current.slug}'s domain space:</Text>
-
-          <Box flexDirection="column" gap={0} marginY={1}>
-            <Box gap={2}>
-              <Text color={cursor === 0 ? "cyan" : "white"}>{cursor === 0 ? "▶" : " "} [ {selectedModules.db ? "X" : " " } ] Supabase Core DB Stack</Text>
-              <Text dimColor>(Postgres 15, Auth, Realtime, REST)</Text>
-            </Box>
-            <Box gap={2}>
-              <Text color={cursor === 1 ? "cyan" : "white"}>{cursor === 1 ? "▶" : " "} [ {selectedModules.proxy ? "X" : " " } ] Nginx Proxy Manager Gateway</Text>
-              <Text dimColor>(SSL wildcard certs, proxy routes)</Text>
-            </Box>
-            <Box gap={2}>
-              <Text color={cursor === 2 ? "cyan" : "white"}>{cursor === 2 ? "▶" : " "} [ {selectedModules.zones ? "X" : " " } ] Next.js Multi-Zone Runtime</Text>
-              <Text dimColor>(Blog, Shop, Admin, Main App)</Text>
-            </Box>
+          <Text color="yellow" bold>STEP 3: REVIEW CONTROLLER</Text>
+          <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={2}>
+            <Text>Domain:    <Text color="cyan">{domain}</Text></Text>
+            <Text>Provider:  <Text color="yellow">{provider}</Text></Text>
+            <Text>Role:      <Text color="magenta">{role}</Text></Text>
+            <Text>Workspace: <Text color="white">{workspacePath}</Text></Text>
           </Box>
-
-          <Text dimColor>[↑/↓] Navigate   ·   [Space] Toggle selection</Text>
-
-          <Box marginTop={1} gap={2}>
-            <Text color="cyan" bold>[↵] Scaffold Workspace Configuration</Text>
-            <Text dimColor>[q/esc] Cancel</Text>
-          </Box>
+          {step === "saving" ? <Box gap={1}><Spinner /><Text color="yellow">Saving controller and checking provider…</Text></Box> :
+            <Box flexDirection="column"><Text dimColor>[←/→ or p] Change provider</Text><Text color="cyan" bold>[↵] Save Controller</Text></Box>}
+          {error && <Text color="red">✗ {error}</Text>}
         </Box>
       )}
 
-      {/* ── Step: Success Summary ── */}
       {step === "success" && (
         <Box flexDirection="column" gap={1} marginY={1}>
-          <Text color="green" bold>✓ PROJECT SCATTER CONTRACT DECLARED!</Text>
-          <Text dimColor>A new domain controller has been scaffolded under the Option A namespace.</Text>
-
-          <Box flexDirection="column" gap={0} paddingLeft={2} borderStyle="double" borderColor="green" marginY={1}>
-            <Text dimColor>Slug:      <Text color="white">{current.slug}</Text></Text>
-            <Text dimColor>Domain:    <Text color="white">{current.domain}</Text></Text>
-            <Text dimColor>Root:      <Text color="white">{current.path}</Text></Text>
-            <Text dimColor>Registry:  <Text color="cyan">%APPDATA%\unaxis\{current.slug}\config.json</Text></Text>
-          </Box>
-
-          <Text color="yellow">Press [↵] to return and activate the new domain controller</Text>
+          <Text color="green" bold>✓ DOMAIN CONTROLLER REGISTERED</Text>
+          <Text>{domain} · {provider} · {role}</Text>
+          <Text dimColor>{workspacePath}</Text>
+          <Text color={savedStatus.startsWith("healthy") ? "green" : "yellow"}>{savedStatus}</Text>
+          <Text dimColor>Use domain bind to attach this controller to a zone.</Text>
+          <Text color="cyan" bold>[↵] Return to UNAXIS</Text>
         </Box>
       )}
-
     </Box>
   );
 }
-

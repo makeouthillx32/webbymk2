@@ -36,6 +36,68 @@ async function logMailFailure(input: {
   }
 }
 
+// Records a successful transactional send into the same mail_threads/
+// mail_messages tables the dashboard's unified inbox reads — without this,
+// every Tank verify/welcome email, order confirmation, admin alert, etc. went
+// out via Brevo successfully but never showed up in the dashboard at all
+// (confirmed 2026-09-22: months of real sends, zero rows). Best-effort, same
+// as logMailFailure — a DB hiccup here must never fail the send itself.
+async function logMailSent(input: {
+  to: string;
+  from: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo?: string;
+}) {
+  try {
+    const admin = createAdminClient();
+    // replyTo is always identity.mailbox (e.g. "tank@unenter.live") — the
+    // real receiving mailbox this send belongs to. Falls back to the From
+    // address if a caller ever omits replyTo.
+    const mailbox = input.replyTo || input.from.match(/<(.+)>/)?.[1] || input.from;
+    const fromNameMatch = input.from.match(/^(.*?)\s*<.+>$/);
+    const fromName = fromNameMatch ? fromNameMatch[1] : input.from;
+    const fromEmail = input.from.match(/<(.+)>/)?.[1] || input.from;
+
+    const { data: thread, error: threadErr } = await admin
+      .from("mail_threads")
+      .insert({
+        mailbox,
+        subject: input.subject,
+        snippet: input.text.slice(0, 120),
+        folder: "sent",
+        is_read: true,
+        labels: ["work"],
+        participant_names: [input.to],
+        participant_emails: [input.to],
+        last_message_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (threadErr || !thread) {
+      console.error("[mail] logMailSent thread insert failed:", threadErr);
+      return;
+    }
+
+    await admin.from("mail_messages").insert({
+      thread_id: thread.id,
+      from_name: fromName,
+      from_email: fromEmail,
+      to_emails: [input.to],
+      reply_to: input.replyTo,
+      subject: input.subject,
+      body_text: input.text,
+      body_html: input.html,
+      is_outgoing: true,
+      read: true,
+    });
+  } catch (logErr) {
+    console.error("[mail] Failed to record sent mail:", logErr);
+  }
+}
+
 const transportCache = new Map<string, Transporter>();
 
 function getTransport(creds?: SmtpCredentials): Transporter | null {
@@ -80,6 +142,15 @@ export type SendMailInput = {
   replyTo?: string;
   /** Authenticate as this mailbox instead of the default SMTP_USER/PASS. */
   credentials?: SmtpCredentials;
+  /**
+   * Set false only by callers that already do their own mail_threads/
+   * mail_messages bookkeeping with proper thread reuse — today just
+   * api/mail/send/route.ts, which appends replies to an existing thread
+   * instead of always starting a new one. Every other caller (Tank verify/
+   * welcome, order confirmations, admin alerts, ...) has no logging of its
+   * own, so this defaults to true.
+   */
+  logToInbox?: boolean;
   /** Optional — lets a failure be traced back to the order that triggered it. */
   order_id?: string;
 };
@@ -109,6 +180,7 @@ export async function sendMail(input: SendMailInput): Promise<{ sent: boolean; r
       text: input.text,
       replyTo: input.replyTo,
     });
+    if (input.logToInbox !== false) await logMailSent(input);
     return { sent: true };
   } catch (err: any) {
     const reason = err?.message ?? "Unknown send error";

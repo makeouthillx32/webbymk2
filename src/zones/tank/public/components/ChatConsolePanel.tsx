@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   MessageSquare,
   Smile,
@@ -33,6 +34,8 @@ import {
   Users,
   Image as ImageIcon,
   Loader2,
+  MessageCircle,
+  Search,
 } from "lucide-react";
 import { ChromePanel } from "./ChromePanel";
 import { ConsoleButton } from "./ConsoleButton";
@@ -49,8 +52,15 @@ import {
   type GiphyMediaItem,
 } from "../../server/chatGifs";
 import { GiphyPickerPopover } from "./GiphyPickerPopover";
+import { SuperChatModal } from "./SuperChatModal";
+import { TavernPanel } from "../../tavern/TavernPanel";
 import { ACTIVE_THEME } from "../../theme";
-import type { ChatMessage } from "../../contracts";
+import type { ChatMessage, ChatSearchResult } from "../../contracts";
+import {
+  findActiveMention,
+  getMentionSuggestions,
+  insertMention,
+} from "../chatDiscovery";
 import { type TankSettings } from "./SettingsOverlay";
 import {
   getActivePinnedMessage,
@@ -59,8 +69,10 @@ import {
   type PinnedChatMessage,
   type PinDurationHours,
 } from "../../server/chatPins";
+import { isSystemPillMessage } from "../chatMessagePresentation";
 
 export type MobileChatSize = "hidden" | "half" | "full";
+export type DesktopChatSize = "hidden" | "full";
 
 /**
  * Normalizes chat message timestamp to the client's local browser timezone.
@@ -128,10 +140,15 @@ export type ChatConsolePanelProps = {
   activeChatRoomKey?: string;
   mobileSize?: MobileChatSize;
   onMobileSizeChange?: (size: MobileChatSize) => void;
+  desktopSize?: DesktopChatSize;
+  onDesktopSizeChange?: (size: DesktopChatSize) => void;
   className?: string;
   currentUserRole?: "viewer" | "member" | "moderator" | "admin";
   currentUserId?: string;
   currentUserName?: string;
+  currentUserTokens?: number;
+  onOpenMessenger?: () => void;
+  onOpenSignIn?: () => void;
 };
 
 const USER_COLORS = [
@@ -182,11 +199,20 @@ export function ChatConsolePanel({
   activeChatRoomKey,
   mobileSize = "half",
   onMobileSizeChange,
+  desktopSize = "full",
+  onDesktopSizeChange,
   className = "",
   currentUserRole = "member",
   currentUserId,
   currentUserName,
+  currentUserTokens = 0,
+  onOpenMessenger,
+  onOpenSignIn,
 }: ChatConsolePanelProps) {
+  const [superChatOpen, setSuperChatOpen] = useState(false);
+  const [tavernOverlayOpen, setTavernOverlayOpen] = useState(false);
+  const [liveUserTokens, setLiveUserTokens] = useState(currentUserTokens);
+  useEffect(() => setLiveUserTokens(currentUserTokens), [currentUserTokens]);
   const [roomDropdownOpen, setRoomDropdownOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [rngMenuOpen, setRngMenuOpen] = useState(false);
@@ -202,7 +228,15 @@ export function ChatConsolePanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const feedContainerRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const emojiCatalog = useTankEmojiCatalog();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<ChatSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
 
   // ═══════════ ATTACHMENT & GIF STATE ═══════════
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -273,6 +307,132 @@ export function ChatConsolePanel({
 
   const activeRoomKey =
     activeChatRoomKey || (chatScope === "global" ? "global" : "director");
+
+  const mentionCandidates = useMemo(
+    () =>
+      messages
+        .filter(
+          (message) =>
+            message.userId &&
+            !["SYSTEM", "CONSOLE", "HOUSE EVENT"].includes(
+              message.user.toUpperCase(),
+            ),
+        )
+        .map((message) => ({ userId: message.userId, name: message.user })),
+    [messages],
+  );
+  const activeMention = findActiveMention(
+    chatInput,
+    chatInputRef.current?.selectionStart ?? chatInput.length,
+  );
+  const mentionSuggestions =
+    activeMention && !mentionDismissed
+      ? getMentionSuggestions(
+          mentionCandidates,
+          activeMention.query,
+          currentUserId,
+        )
+      : [];
+
+  useEffect(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+  }, [activeRoomKey]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearchLoading(true);
+      setSearchError(null);
+      try {
+        const params = new URLSearchParams({
+          roomId: activeRoomKey,
+          search: query,
+        });
+        const response = await fetch(`/api/tank/chat/messages?${params}`, {
+          signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error || "Chat search failed.");
+        }
+        setSearchResults(payload.results ?? []);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSearchResults([]);
+          setSearchError(
+            error instanceof Error ? error.message : "Chat search failed.",
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeRoomKey, searchOpen, searchQuery]);
+
+  const toggleSearch = () => {
+    setSearchOpen((open) => {
+      const next = !open;
+      if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return next;
+    });
+  };
+
+  const handleChatInputChangeWithMentions = (value: string) => {
+    setMentionDismissed(false);
+    setMentionIndex(0);
+    onChatInputChange(value);
+  };
+
+  const chooseMention = (index: number) => {
+    const candidate = mentionSuggestions[index];
+    if (!candidate || !activeMention) return;
+    const inserted = insertMention(chatInput, activeMention, candidate.name);
+    onChatInputChange(inserted.value);
+    setMentionDismissed(true);
+    window.setTimeout(() => {
+      chatInputRef.current?.focus();
+      chatInputRef.current?.setSelectionRange(
+        inserted.caretPosition,
+        inserted.caretPosition,
+      );
+    }, 0);
+  };
+
+  const handleMentionKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
+    if (mentionSuggestions.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setMentionIndex((current) => {
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        return (current + delta + mentionSuggestions.length) %
+          mentionSuggestions.length;
+      });
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      chooseMention(Math.min(mentionIndex, mentionSuggestions.length - 1));
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setMentionDismissed(true);
+    }
+  };
 
   const loadPinnedMessage = async () => {
     try {
@@ -445,6 +605,11 @@ export function ChatConsolePanel({
     else if (mobileSize === "half") onMobileSizeChange("hidden");
   };
 
+  const handleDesktopMinusClick = () => {
+    if (!onDesktopSizeChange) return;
+    onDesktopSizeChange("hidden");
+  };
+
   // Moderator actions
   const handleDeleteMessage = async (messageId: string) => {
     if (!isStaff || modBusyId) return;
@@ -511,7 +676,7 @@ export function ChatConsolePanel({
     <>
       {/* Sleek Mini Opener Pill when Chat is Hidden */}
       {mobileSize === "hidden" && (
-        <div className="fixed inset-x-2 bottom-[3.8rem] z-30 flex duration-200 animate-in slide-in-from-bottom-2 md:hidden">
+        <div className="fixed inset-x-2 bottom-[3.8rem] z-30 flex duration-200 animate-in slide-in-from-bottom-2 lg:hidden">
           <button
             type="button"
             onClick={() => onMobileSizeChange?.("half")}
@@ -538,7 +703,7 @@ export function ChatConsolePanel({
             : mobileSize === "half"
               ? "fixed inset-x-0 bottom-[3.5rem] z-30 h-[48dvh] max-h-[48vh] translate-y-0 px-2 pb-1 opacity-100 lg:static lg:h-full lg:max-h-none lg:min-h-full lg:p-0 landscape:bottom-0 landscape:h-[35dvh] landscape:max-h-[35vh]"
               : "pointer-events-none fixed inset-x-0 bottom-[3.5rem] z-10 h-0 translate-y-full px-2 opacity-0 lg:pointer-events-auto lg:static lg:flex lg:h-full lg:max-h-none lg:min-h-full lg:translate-y-0 lg:p-0 lg:opacity-100 landscape:bottom-0"
-        }`}
+        } ${desktopSize === "hidden" ? "lg:hidden" : ""} ${className}`}
       >
         <ChromePanel
           withScrews
@@ -570,7 +735,13 @@ export function ChatConsolePanel({
                   onClick={() => setRoomDropdownOpen((prev) => !prev)}
                   className="flex items-center gap-1 rounded bg-[#1f2021] px-2 py-0.5 text-[10px] font-bold text-white shadow transition hover:bg-black active:scale-95"
                 >
-                  <Globe2 className="h-3 w-3 text-orange-400" />
+                  {chatScope === "click" ? (
+                    <Users className="h-3 w-3 text-orange-400" />
+                  ) : chatScope === "room" ? (
+                    <MessageSquare className="h-3 w-3 text-orange-400" />
+                  ) : (
+                    <Globe2 className="h-3 w-3 text-orange-400" />
+                  )}
                   <span className="max-w-[90px] truncate sm:max-w-[120px]">
                     {chatScope === "global" ? "GLOBAL" : roomTitle}
                   </span>
@@ -579,7 +750,7 @@ export function ChatConsolePanel({
 
                 {/* Dropdown Menu */}
                 {roomDropdownOpen && (
-                  <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-md border border-black/60 bg-[#17191e] p-1 shadow-2xl backdrop-blur-md">
+                  <div className="absolute left-0 top-full z-50 mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-black/60 bg-[#17191e] p-1 shadow-2xl backdrop-blur-md">
                     <button
                       type="button"
                       onClick={() => {
@@ -653,34 +824,100 @@ export function ChatConsolePanel({
 
             {/* Right: Online Indicator + Mobile Expand / Collapse Buttons */}
             <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={toggleSearch}
+                className={`grid h-6 w-6 place-items-center rounded border shadow active:scale-95 md:h-7 md:w-7 ${
+                  searchOpen
+                    ? "border-cyan-300 bg-cyan-500 text-black"
+                    : "border-black/50 bg-[#1f2021] text-cyan-300"
+                }`}
+                title="Search this chat room"
+                aria-label="Search this chat room"
+                aria-pressed={searchOpen}
+              >
+                {searchLoading ? (
+                  <Loader2 className="h-3 w-3 animate-spin md:h-3.5 md:w-3.5" />
+                ) : (
+                  <Search className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                )}
+              </button>
+
               {/* Online count badge */}
               <div className="flex items-center gap-1 font-mono text-[10px] font-black uppercase text-[#241f14]">
                 <span className="h-1.5 w-1.5 animate-ping rounded-full bg-emerald-500" />
                 <span>{onlineCount}</span>
               </div>
 
-              {/* Mobile Size Buttons (+ / -) */}
-              <div className="flex items-center gap-1 md:hidden">
+              {/* Tank Messenger */}
+              {onOpenMessenger && (
                 <button
                   type="button"
-                  onClick={handlePlusClick}
-                  disabled={mobileSize === "full"}
-                  className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95 disabled:opacity-30"
-                  title="Expand Chat"
+                  onClick={onOpenMessenger}
+                  className="grid h-6 w-6 place-items-center rounded bg-emerald-600 text-white shadow active:scale-95 md:h-7 md:w-7"
+                  title="Tank Messenger"
                 >
-                  <Plus className="h-3 w-3" />
+                  <MessageCircle className="h-3 w-3 md:h-3.5 md:w-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={handleMinusClick}
-                  className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95"
-                  title="Collapse Chat"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
+              )}
+
+              {/* Mobile: full = minus, half = plus + minus. Hidden uses the
+                  restore pill above, which contains only plus. */}
+              <div className="flex items-center gap-1 lg:hidden">
+                {mobileSize !== "full" && (
+                  <button type="button" onClick={handlePlusClick} className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95" title="Expand Chat" aria-label="Expand chat">
+                    <Plus className="h-3 w-3" />
+                  </button>
+                )}
+                {mobileSize !== "hidden" && (
+                  <button type="button" onClick={handleMinusClick} className="grid h-6 w-6 place-items-center rounded bg-[#1f2021] text-xs font-black text-white shadow active:scale-95" title="Collapse Chat" aria-label="Collapse chat">
+                    <Minus className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Desktop has two states: open shows minus; closed is restored
+                  by the reserved plus control outside this panel. */}
+              <div className="hidden items-center gap-1 lg:flex">
+                {desktopSize !== "hidden" && (
+                  <button type="button" onClick={handleDesktopMinusClick} className="grid h-7 w-7 place-items-center rounded border border-red-950/70 bg-[#d94339] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.3)] transition hover:bg-[#ef5146] active:translate-y-px" title="Collapse Chat" aria-label="Collapse desktop chat">
+                    <Minus className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
+
+          {searchOpen && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-cyan-500/30 bg-[#111820] px-2.5 py-2">
+              <Search className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") toggleSearch();
+                }}
+                placeholder={`Search ${chatScope === "global" ? "global chat" : roomTitle}...`}
+                className="h-7 min-w-0 flex-1 rounded border border-cyan-500/30 bg-black/70 px-2 text-xs text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+                aria-label="Chat search query"
+              />
+              <span className="shrink-0 font-mono text-[9px] uppercase text-cyan-300/70">
+                {searchQuery.trim().length < 2
+                  ? "2+ chars"
+                  : `${searchResults.length} found`}
+              </span>
+              <button
+                type="button"
+                onClick={toggleSearch}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded text-slate-400 hover:bg-white/10 hover:text-white"
+                aria-label="Close chat search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* ═══════════ CHAT MESSAGE FEED ═══════════ */}
           <div
@@ -691,6 +928,50 @@ export function ChatConsolePanel({
               boxShadow: "inset 0 4px 12px rgba(0,0,0,0.8)",
             }}
           >
+            {searchOpen && (
+              <div className="absolute inset-0 z-30 overflow-y-auto bg-[#0b0d10]/[0.98] p-2.5 backdrop-blur-sm">
+                {searchQuery.trim().length < 2 ? (
+                  <div className="grid h-full place-items-center text-center text-xs font-bold text-slate-500">
+                    Type at least 2 characters to search this room's saved chat.
+                  </div>
+                ) : searchError ? (
+                  <div className="grid h-full place-items-center px-5 text-center text-xs font-bold text-red-400">
+                    {searchError}
+                  </div>
+                ) : searchLoading && searchResults.length === 0 ? (
+                  <div className="grid h-full place-items-center text-cyan-300">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="grid h-full place-items-center text-center text-xs font-bold text-slate-500">
+                    No matching messages in this room.
+                  </div>
+                ) : (
+                  <div className="space-y-2" role="list" aria-label="Chat search results">
+                    {searchResults.map((result) => (
+                      <article
+                        key={result.id}
+                        role="listitem"
+                        className="rounded-lg border border-white/10 bg-white/[0.04] p-2.5 shadow hover:border-cyan-500/30"
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span className="truncate font-black text-cyan-300">
+                            {result.user}
+                          </span>
+                          <time className="shrink-0 font-mono text-[9px] text-slate-500">
+                            {formatLocalChatTime(undefined, result.createdAt)}
+                          </time>
+                        </div>
+                        <p className="break-words text-xs leading-relaxed text-slate-100">
+                          <TankChatBody text={result.body} />
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 📌 Pinned System Announcement Card Banner */}
             {pinnedMessage && (
               <div className="sticky top-0 z-20 mx-0.5 mb-2 overflow-hidden rounded-xl border border-cyan-500/50 bg-gradient-to-r from-cyan-950/90 via-black/95 to-cyan-950/90 p-3 shadow-2xl backdrop-blur-md duration-150 animate-in slide-in-from-top-2">
@@ -770,17 +1051,49 @@ export function ChatConsolePanel({
                 const isMsgAdmin = message.role === "admin";
                 const isMsgMod = message.role === "moderator";
 
-                // 0. Seamless In-Line System / Event / Console Message (Centered pill in the middle of feed)
+                // 0a. Every in-game flavor/console message (Fishtank-style:
+                // plain centered italic text, no pill, no border, no
+                // background, no icon/badge cards — just floating text on
+                // the feed). This used to be split across seven separate
+                // "console card" blocks (rng_drop/item_use/item_flex/
+                // dice_roll/coinflip/slots/roulette/crate_unbox), each with
+                // its own bordered box, icon, and color treatment — visually
+                // loud in a way fishtank's chat never is. All of their body
+                // text is already a complete, self-describing sentence
+                // ("admin rolls a 100-sided dice. It lands: 66", "🎰 admin
+                // spun ... — No match.", etc. — see chatRngEvents.ts's
+                // saveAndBroadcast callers), so no information is lost by
+                // rendering them exactly like /me action text. Was
+                // previously caught by the system/announcement pill below
+                // (0b) before ever reaching its own styling, making it
+                // permanently unreachable dead code — confirmed live
+                // 2026-09-03 comparing against fishtank.live's own /me
+                // rendering, which is exactly this: no box at all.
                 if (
-                  message.messageType === "system" ||
-                  message.messageType === "announcement" ||
                   message.messageType === "action" ||
                   message.messageType === "rng_drop" ||
-                  !message.userId ||
-                  message.user === "CONSOLE" ||
-                  message.user === "SYSTEM" ||
-                  message.role === "system"
+                  message.messageType === "item_use" ||
+                  message.messageType === "item_flex" ||
+                  message.messageType === "dice_roll" ||
+                  message.messageType === "coinflip" ||
+                  message.messageType === "slots" ||
+                  message.messageType === "roulette" ||
+                  message.messageType === "crate_unbox"
                 ) {
+                  return (
+                    <div
+                      key={message.id}
+                      className="my-1.5 flex w-full select-text justify-center px-4 text-center duration-150 animate-in fade-in"
+                    >
+                      <p className="text-xs italic leading-relaxed text-slate-400/90">
+                        <TankChatBody text={message.body} />
+                      </p>
+                    </div>
+                  );
+                }
+
+                // 0b. Seamless In-Line System / Event / Console Message (Centered pill in the middle of feed)
+                if (isSystemPillMessage(message)) {
                   return (
                     <div
                       key={message.id}
@@ -790,266 +1103,6 @@ export function ChatConsolePanel({
                         <p className="text-[11px] font-semibold leading-relaxed tracking-wide text-slate-300">
                           <TankChatBody text={message.body} />
                         </p>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 1. In-Game Action / Flavor RNG Drop Pill & Dice Rolls (Centered banner)
-                if (
-                  message.messageType === "action" ||
-                  message.messageType === "rng_drop"
-                ) {
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 w-full max-w-[92%] rounded-xl border border-white/10 bg-black/60 px-4 py-2 text-center shadow-lg"
-                    >
-                      <p className="text-xs font-bold italic tracking-wide text-slate-200">
-                        <TankChatBody text={message.body} />
-                      </p>
-                    </div>
-                  );
-                }
-
-                // 2. In-Game Item Usage Card (Centered console card)
-                if (message.messageType === "item_use") {
-                  const isPumpkin =
-                    message.itemSlug === "pumpkin" ||
-                    message.body.toLowerCase().includes("pumpkin");
-                  const itemEmoji = isPumpkin ? "🎃" : "🧰";
-                  const actionText =
-                    message.eventDescription ||
-                    message.body.replace(message.user, "").trim();
-
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 flex w-full max-w-[92%] items-center justify-center gap-3 rounded-xl border border-white/10 bg-[#161a23]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-black/60">
-                        {message.itemIconUrl ? (
-                          <img
-                            src={message.itemIconUrl}
-                            alt={message.itemName ?? "Item"}
-                            className="h-7 w-7 object-contain"
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                              const fallback = e.currentTarget
-                                .nextElementSibling as HTMLElement | null;
-                              if (fallback) fallback.style.display = "block";
-                            }}
-                          />
-                        ) : null}
-                        <span
-                          className={`text-xl ${
-                            message.itemIconUrl ? "hidden" : "block"
-                          }`}
-                        >
-                          {itemEmoji}
-                        </span>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-xs font-medium text-slate-200">
-                          <strong className="font-bold uppercase tracking-wide text-white">
-                            {message.user}
-                          </strong>{" "}
-                          <span>{actionText}</span>
-                        </p>
-                        {message.itemName && (
-                          <p className="text-[10px] font-bold text-amber-300/80">
-                            {message.itemName}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 3. Dice Roll Card (Centered console card without garish rarity outline)
-                if (message.messageType === "dice_roll") {
-                  const roll = message.diceRoll;
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 flex w-full max-w-[92%] items-center justify-center rounded-xl border border-white/10 bg-[#16181d]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div className="grid h-8 w-8 place-items-center rounded border border-white/15 bg-black/80 text-lg shadow">
-                          🎲
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs font-black text-white">
-                            <span style={{ color: userColor }}>
-                              {message.user}
-                            </span>{" "}
-                            rolled{" "}
-                            <span className="font-extrabold text-slate-200">
-                              {roll
-                                ? `${roll.result}/${roll.sides}`
-                                : message.body}
-                            </span>
-                            {roll?.crit && (
-                              <span className="py-0.2 ml-1.5 rounded border border-amber-400/40 bg-white/10 px-1 text-[8px] font-black text-amber-300">
-                                NAT CRIT!
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-[10px] font-semibold text-slate-400">
-                            +{roll?.bonusXp ?? 50} XP{" "}
-                            {roll?.bonusTokens
-                              ? `· +${roll.bonusTokens} Tokens`
-                              : ""}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 4. Coinflip Card (Centered console card, subtle border gradient)
-                if (message.messageType === "coinflip") {
-                  const flip = message.coinflip;
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 flex w-full max-w-[92%] items-center justify-center rounded-xl border border-white/10 bg-[#16181d]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div className="grid h-8 w-8 place-items-center rounded-full border border-white/15 bg-black/80 text-lg shadow">
-                          🪙
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs font-black text-white">
-                            <span style={{ color: userColor }}>
-                              {message.user}
-                            </span>{" "}
-                            called {flip?.choice.toUpperCase()} · Landed on{" "}
-                            <span className="font-extrabold text-amber-300">
-                              {flip?.outcome.toUpperCase()}
-                            </span>
-                          </p>
-                          <p className="text-[10px] font-bold text-slate-300">
-                            {flip?.won
-                              ? `WON +${flip.payout} Tokens!`
-                              : `LOST -${flip?.wager} Tokens`}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 5. Slot Machine Card (Centered console card)
-                if (message.messageType === "slots") {
-                  const slots = message.slotsResult;
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 w-full max-w-[92%] rounded-xl border border-white/10 bg-[#16181d]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex items-center justify-center gap-3">
-                        <span className="text-lg">🎰</span>
-                        <span
-                          className="text-xs font-black text-white"
-                          style={{ color: userColor }}
-                        >
-                          {message.user}
-                        </span>
-                        {/* 3 Large Glowing Reels */}
-                        <div className="flex items-center gap-1.5 rounded border border-white/20 bg-black px-2.5 py-1 font-mono text-sm tracking-widest shadow-inner">
-                          <span>{slots?.reels[0] ?? "🍒"}</span>
-                          <span>|</span>
-                          <span>{slots?.reels[1] ?? "7️⃣"}</span>
-                          <span>|</span>
-                          <span>{slots?.reels[2] ?? "💎"}</span>
-                        </div>
-                        <span
-                          className={`text-xs font-black ${slots?.won ? "text-amber-300" : "text-slate-500"}`}
-                        >
-                          {slots?.won
-                            ? `${slots.multiplier}X WIN (+${slots.tokenPayout}T)`
-                            : "NO MATCH"}
-                        </span>
-                      </div>
-                      {slots?.droppedItemName && (
-                        <div className="mt-1.5 flex items-center justify-center gap-2 rounded border border-white/15 bg-white/5 px-2 py-1 text-[10px] font-bold text-amber-200">
-                          <span>🎁 JACKPOT BONUS DROP:</span>
-                          <span className="font-extrabold text-white">
-                            {slots.droppedItemName}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-
-                // 6. Russian Roulette Card (Centered console card)
-                if (message.messageType === "roulette") {
-                  const r = message.rouletteResult;
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 flex w-full max-w-[92%] items-center justify-center rounded-xl border border-white/10 bg-[#16181d]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-lg">
-                          {r?.survived ? "🔫" : "💥"}
-                        </span>
-                        <div className="text-center">
-                          <p className="text-xs font-black text-white">
-                            <span style={{ color: userColor }}>
-                              {message.user}
-                            </span>{" "}
-                            {r?.survived
-                              ? "survived Tank Roulette!"
-                              : "got knocked out of the Tank!"}
-                          </p>
-                          <p className="text-[10px] font-semibold text-slate-300">
-                            {r?.survived
-                              ? `Chamber ${r.chamber}/6 was empty (+150 XP, +15 Tokens)`
-                              : "💥 2-Minute Chat Timeout"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 7. Mystery Crate Unbox Card (Centered console card)
-                if (message.messageType === "crate_unbox") {
-                  const crate = message.crateResult;
-                  return (
-                    <div
-                      key={message.id}
-                      className="mx-auto my-1.5 flex w-full max-w-[92%] items-center justify-center rounded-xl border border-white/10 bg-[#16181d]/90 p-2.5 text-center shadow-md transition-all hover:border-white/20"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded border border-white/20 bg-black shadow">
-                          {crate?.itemIcon ? (
-                            <img
-                              src={crate.itemIcon}
-                              alt=""
-                              className="h-7 w-7 object-contain"
-                            />
-                          ) : (
-                            <span className="text-base">📦</span>
-                          )}
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs font-black text-white">
-                            <span style={{ color: userColor }}>
-                              {message.user}
-                            </span>{" "}
-                            unboxed{" "}
-                            <span className="font-extrabold text-white">
-                              [{crate?.rarity?.toUpperCase()}] {crate?.itemName}
-                            </span>
-                          </p>
-                          <p className="text-[10px] font-bold text-amber-300">
-                            +{crate?.xpAwarded ?? 100} XP · Added to Inventory!
-                          </p>
-                        </div>
                       </div>
                     </div>
                   );
@@ -1116,9 +1169,18 @@ export function ChatConsolePanel({
                     <div className="min-w-0 flex-1">
                       {/* Name + Badges + Level */}
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {/* Clan badge (Red pill like JDRA in screenshot) */}
+                        {/* Clan badge — colored by the Click's own banner
+                            color when the sender has one, falling back to
+                            the original red pill for Clicks created before
+                            banner_color was wired through to chat. */}
                         {message.clanTag && (
-                          <span className="py-0.2 rounded border border-red-400/40 bg-[#ff0033] px-1.5 text-[9px] font-black uppercase text-white shadow-sm">
+                          <span
+                            className="py-0.2 rounded border border-white/20 px-1.5 text-[9px] font-black uppercase text-white shadow-sm"
+                            style={{
+                              backgroundColor: message.clanColor || "#ff0033",
+                              borderColor: message.clanColor ? `${message.clanColor}66` : undefined,
+                            }}
+                          >
                             {message.clanTag}
                           </span>
                         )}
@@ -1539,6 +1601,25 @@ export function ChatConsolePanel({
                     </div>
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRngMenuOpen(false);
+                      setTavernOverlayOpen(true);
+                    }}
+                    className="flex items-center gap-2 rounded border border-amber-600/30 bg-amber-950/40 p-2 text-left transition hover:bg-amber-900/60 active:scale-95"
+                  >
+                    <span className="text-lg">🍺</span>
+                    <div>
+                      <p className="text-xs font-black text-white">
+                        Tavern
+                      </p>
+                      <p className="text-[9px] text-amber-400">
+                        Bartender minigame
+                      </p>
+                    </div>
+                  </button>
+
                 </div>
               </div>
             )}
@@ -1734,7 +1815,23 @@ export function ChatConsolePanel({
                   <Dices className="h-3.5 w-3.5" />
                 </ConsoleButton>
 
-                {/* 5. Staff Pin (staff only) */}
+                {/* 5. Super Chat — paid self-service pin, everyone */}
+                <ConsoleButton
+                  variant="gray"
+                  onClick={() => {
+                    setSuperChatOpen(true);
+                    setEmojiPickerOpen(false);
+                    setRngMenuOpen(false);
+                  }}
+                  disabled={!signedIn}
+                  ariaLabel="Super Chat"
+                  className="!h-8 !px-2.5 text-amber-400"
+                  title="Super Chat — pay tokens to pin your message"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                </ConsoleButton>
+
+                {/* 6. Staff Pin (staff only) */}
                 {isStaff && (
                   <ConsoleButton
                     variant="gray"
@@ -1753,12 +1850,43 @@ export function ChatConsolePanel({
                 )}
               </div>
 
+              {mentionSuggestions.length > 0 && (
+                <div
+                  role="listbox"
+                  aria-label="Mention suggestions"
+                  className="overflow-hidden rounded border border-cyan-500/40 bg-[#111820] shadow-xl"
+                >
+                  <div className="border-b border-white/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-cyan-400/70">
+                    Mention a room participant
+                  </div>
+                  {mentionSuggestions.map((candidate, index) => (
+                    <button
+                      key={candidate.userId || candidate.name}
+                      type="button"
+                      role="option"
+                      aria-selected={index === mentionIndex}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => chooseMention(index)}
+                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs font-bold text-white ${
+                        index === mentionIndex
+                          ? "bg-cyan-500/25 text-cyan-200"
+                          : "hover:bg-white/10"
+                      }`}
+                    >
+                      <span className="text-cyan-400">@</span>
+                      <span className="truncate">{candidate.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Input row — full width so long messages are readable */}
               <div className="flex items-center gap-1.5">
                 <TankChatInputField
                   inputRef={chatInputRef}
                   value={chatInput}
-                  onChange={onChatInputChange}
+                  onChange={handleChatInputChangeWithMentions}
+                  onKeyDown={handleMentionKeyDown}
                   onPasteImage={handleImageFile}
                   placeholder={
                     signedIn
@@ -1780,7 +1908,44 @@ export function ChatConsolePanel({
               </div>
             </form>
           </div>
+
+          {/* Tavern — a full takeover of the chat panel's own bounds only,
+              never the camera feeds or rest of the page (ChromePanel's root
+              is already `relative`, this is `absolute inset-0` within it).
+              Opened from the RNG mini-games/dice menu, closed like any
+              other in-chat overlay. */}
+          {tavernOverlayOpen && (
+            <TavernPanel
+              signedIn={signedIn}
+              currentUserId={currentUserId}
+              onClose={() => setTavernOverlayOpen(false)}
+              onOpenSignIn={() => onOpenSignIn?.()}
+            />
+          )}
         </ChromePanel>
+
+        {/* Super Chat — paid self-service pin. Portaled to <body>: rendered
+            in place, `fixed inset-0` would be contained by whatever
+            transformed ancestor wraps the chat widget (Next.js's animation
+            wrappers among them) instead of the real viewport, squashing the
+            modal into the chat panel's own box instead of centering on
+            screen. PrizeMachineModal/TankMessengerOverlay don't need this —
+            they're already rendered at TankExperience's top level. */}
+        {superChatOpen &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <SuperChatModal
+              isOpen={superChatOpen}
+              onClose={() => setSuperChatOpen(false)}
+              roomId={activeRoomKey}
+              userTokens={liveUserTokens}
+              onSent={(newBalance) => {
+                setLiveUserTokens(newBalance);
+                void loadPinnedMessage();
+              }}
+            />,
+            document.body,
+          )}
 
         {/* GIPHY GIF Picker Modal */}
         <GiphyPickerPopover

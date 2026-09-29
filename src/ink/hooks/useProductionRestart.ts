@@ -38,7 +38,7 @@ export const RESTART_SIGNAL_PATH = join(
 // Dev mode:        process.execPath → bun.exe  (bun --watch runs the source)
 // Production mode: process.execPath → node.exe (node dist/cli.js)
 
-const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+const isProductionMode = process.env.UNAXIS_DEV !== "true" && !process.execPath.toLowerCase().includes("bun");
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 

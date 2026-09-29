@@ -2,38 +2,170 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { safeStorage } from "@/lib/safeStorage";
 import type { ChatMessage } from "../contracts";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const MAX_CHAT_DOM_MESSAGES = 150; // Performance cap to maintain high framerates
 
-function getStorageKey(roomId: string) {
-  return `tank_chat_storage_${roomId}`;
+// Root cause of the "iOS Safari / Brave stuck loading forever until you
+// clear site data" incident (vault/Core/tank-ios-safari-persisted-site-data-
+// forever-load.md): this cache used to write one full raw localStorage entry
+// PER ROOM EVER VISITED, with no cap on the number of rooms and no routing
+// through safeStorage's quota-exceeded handling. A visitor who'd clicked
+// through Director + every room over a session accumulated that many
+// uncapped ~150-message JSON blobs. Safari's per-origin localStorage quota is
+// tight and shared across the whole origin — once full, writes made by code
+// that ISN'T defensively wrapped (Supabase's own auth SDK session persistence
+// among them) start throwing, and that's what actually bricked the app. Every
+// deploy forces a hard reload for everyone at once (new JS hash = no cached
+// bundle to fall back to), which is why this reliably showed up right after
+// pushing a build instead of trickling in randomly.
+//
+// Fixed two ways: (1) route through safeStorage so a quota failure here is
+// the same handled/evicting path as everywhere else instead of a bespoke
+// silent catch, and (2) cap how many rooms' worth of history are kept at
+// all — LRU-evict the oldest room's cache once the count exceeds the cap,
+// so total footprint no longer grows with "how many rooms has this browser
+// ever opened."
+const MAX_CACHED_ROOMS = 6;
+const ROOM_CACHE_INDEX_KEY = "tank_chat_storage_index";
+
+function getStorageKey(roomId: string, userId?: string | null) {
+  if (userId) {
+    return `tank_chat_storage_user_${userId}_${roomId}`;
+  }
+  return `tank_chat_storage_guest_${roomId}`;
 }
 
-export function drainClientChatStorage() {
+/**
+ * Where a guest's messages accumulate before they sign in.
+ *
+ * sessionStorage, not localStorage: it must survive the full page load of the
+ * sign-in round trip (auth.unenter.live and back) so a guest who signs in keeps
+ * what they said beforehand, but must not outlive the tab.
+ *
+ * The subtlety that makes the lifecycle work: this buffer is WRITTEN on every
+ * guest message and READ only at the moment of sign-in. A guest who merely
+ * refreshes never reads it, so their chat clears exactly as intended — while
+ * the same messages are still there to be reclaimed if they log in instead.
+ */
+function guestBufferKey(roomId: string) {
+  return `tank_chat_guest_buffer_${roomId}`;
+}
+
+function saveGuestBuffer(roomId: string, messages: ChatMessage[]) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      guestBufferKey(roomId),
+      JSON.stringify(messages.slice(-MAX_CHAT_DOM_MESSAGES)),
+    );
+  } catch {}
+}
+
+/** Read and immediately consume the guest buffer — claimed once, at sign-in. */
+function takeGuestBuffer(roomId: string): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(guestBufferKey(roomId));
+    sessionStorage.removeItem(guestBufferKey(roomId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readRoomCacheIndex(): string[] {
+  try {
+    const raw = safeStorage.getItem(ROOM_CACHE_INDEX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// Moves storageKey to the front of the index, evicting oldest room caches if over limit
+function touchRoomCacheIndex(storageKey: string) {
+  try {
+    const index = readRoomCacheIndex().filter((id) => id !== storageKey);
+    index.unshift(storageKey);
+    const evicted = index.splice(MAX_CACHED_ROOMS);
+    for (const staleKey of evicted) {
+      safeStorage.removeItem(staleKey);
+    }
+    safeStorage.setItem(ROOM_CACHE_INDEX_KEY, JSON.stringify(index));
+  } catch {}
+}
+
+export function clearTankSessionCookies() {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  const cookiesToClear = [
+    "tank_participant_v1",
+    "tank_voter_client_id",
+    "userRole",
+    "userRoleUserId",
+    "userDisplayName",
+    "userPermissions",
+    "rememberMe",
+    "lastPage",
+  ];
+  const host = window.location.hostname;
+  const domains = [undefined, host, `.${host}`, ".unenter.live", "unenter.live"];
+  const paths = ["/", "/rooms", ""];
+
+  for (const name of cookiesToClear) {
+    for (const domain of domains) {
+      for (const path of paths) {
+        const domainPart = domain ? `; domain=${domain}` : "";
+        const pathPart = path ? `; path=${path}` : "; path=/";
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT${pathPart}${domainPart}; SameSite=Lax`;
+      }
+    }
+  }
+}
+
+export function drainClientChatStorage(userId?: string | null) {
   if (typeof window === "undefined") return;
   try {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (
-        k &&
-        (k.startsWith("tank_chat_storage_") ||
-          k.startsWith("tank_session_chat_"))
-      ) {
-        keysToRemove.push(k);
+      if (!k) continue;
+      if (userId) {
+        if (
+          k.startsWith(`tank_chat_storage_user_${userId}_`) ||
+          k.startsWith(`tank_session_chat_${userId}_`)
+        ) {
+          keysToRemove.push(k);
+        }
+      } else {
+        if (
+          k.startsWith("tank_chat_storage_user_") ||
+          k.startsWith("tank_session_chat_") ||
+          k.startsWith("tank_chat_storage_")
+        ) {
+          keysToRemove.push(k);
+        }
       }
     }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    keysToRemove.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    });
     sessionStorage.clear();
+    clearTankSessionCookies();
   } catch {}
 }
 
-function loadClientStorageMessages(roomId: string): ChatMessage[] | null {
+function loadClientStorageMessages(roomId: string, userId?: string | null): ChatMessage[] | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(getStorageKey(roomId));
+    const key = getStorageKey(roomId, userId);
+    const raw = safeStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : null;
@@ -42,15 +174,28 @@ function loadClientStorageMessages(roomId: string): ChatMessage[] | null {
   }
 }
 
-function saveClientStorageMessages(roomId: string, messages: ChatMessage[]) {
+function saveClientStorageMessages(roomId: string, messages: ChatMessage[], userId?: string | null) {
   if (typeof window === "undefined") return;
   try {
     const slice = messages.slice(-MAX_CHAT_DOM_MESSAGES);
-    localStorage.setItem(getStorageKey(roomId), JSON.stringify(slice));
+    const key = getStorageKey(roomId, userId);
+    safeStorage.setItem(key, JSON.stringify(slice));
+    touchRoomCacheIndex(key);
   } catch {}
 }
 
-async function fetchChatHistory(roomId: string): Promise<ChatMessage[]> {
+type FetchedHistory = { messages: ChatMessage[]; withheld: boolean };
+
+/**
+ * Server-stored history. Only used to REFRESH what is already on screen and to
+ * deliver scoped rooms — never to populate a room on load. See the load effect.
+ *
+ * `withheld` is the server saying "you are not signed in, so you get nothing"
+ * rather than "this room is empty". Callers must tell those apart: merging an
+ * empty result would erase a guest's live session, because mergeHistory
+ * REPLACES the visible set rather than adding to it.
+ */
+async function fetchChatHistory(roomId: string): Promise<FetchedHistory> {
   const response = await fetch(
     `/api/tank/chat/messages?roomId=${encodeURIComponent(roomId)}`,
     {
@@ -60,10 +205,31 @@ async function fetchChatHistory(roomId: string): Promise<ChatMessage[]> {
   const json = await response.json();
   if (!response.ok || !json.success)
     throw new Error(json.error || "Failed to load chat.");
-  return Array.isArray(json.messages) ? json.messages : [];
+  return {
+    messages: Array.isArray(json.messages) ? json.messages : [],
+    withheld: json.historyWithheld === true,
+  };
 }
 
-function mergeHistory(current: ChatMessage[], history: ChatMessage[]) {
+/**
+ * Copy reaction state onto messages already on screen, introducing nothing.
+ *
+ * A reaction event must not be an excuse to re-populate the room. mergeHistory
+ * would swap the whole visible set for the server's copy, which would drag back
+ * every message the viewer was never present for — the exact behaviour the
+ * lifecycle exists to prevent.
+ */
+export function syncReactions(current: ChatMessage[], history: ChatMessage[]): ChatMessage[] {
+  if (history.length === 0) return current;
+  const byId = new Map(history.map((m) => [m.id, m]));
+  return current.map((message) => {
+    const fresh = byId.get(message.id);
+    if (!fresh) return message;
+    return { ...message, reactions: fresh.reactions };
+  });
+}
+
+export function mergeHistory(current: ChatMessage[], history: ChatMessage[]) {
   const pending = current.filter(
     (message) => message.pending || message.failed,
   );
@@ -107,6 +273,7 @@ export function useTankRealtimeChat(
   // this initializer made Safari render cached chat while the server rendered
   // the empty state, causing React to discard and rebuild the whole Tank tree
   // during refresh.
+  const currentUserId = identity?.userId ?? null;
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,27 +281,51 @@ export function useTankRealtimeChat(
 
   // Sync messages to local client storage as new messages stream in
   useEffect(() => {
-    if (messages.length > 0 && roomId) {
-      saveClientStorageMessages(roomId, messages);
+    if (messages.length === 0 || !roomId) return;
+    if (currentUserId) {
+      saveClientStorageMessages(roomId, messages, currentUserId);
+    } else {
+      // Guests do not get a durable cache — only the per-tab buffer that a
+      // later sign-in can claim.
+      saveGuestBuffer(roomId, messages);
     }
-  }, [messages, roomId]);
+  }, [messages, roomId, currentUserId]);
 
-  // When room changes or on reload: load cached client messages and fetch recent history
+  // When room changes or user identity changes or on reload: load cached messages and fetch recent history
   useEffect(() => {
     if (!roomId) return;
-    const cached = loadClientStorageMessages(roomId);
-    if (cached && cached.length > 0) {
-      setMessages(cached);
-    }
 
     let active = true;
+
+    // A guest starts with what was buffered in this tab; a member restores cached messages
+    if (!currentUserId) {
+      const carried = takeGuestBuffer(roomId);
+      setMessages(carried.length > 0 ? carried : EMPTY_MESSAGES);
+      setLoadingHistory(false);
+    } else {
+      const cached = loadClientStorageMessages(roomId, currentUserId) ?? [];
+      const carried = takeGuestBuffer(roomId);
+      const restored = carried.length > 0 ? mergeHistory(cached, carried) : cached;
+      setMessages(restored.length > 0 ? restored : EMPTY_MESSAGES);
+      if (restored.length > 0) {
+        saveClientStorageMessages(roomId, restored, currentUserId);
+      }
+    }
+
     setLoadingHistory(true);
-    fetchChatHistory(roomId)
-      .then((history) => {
-        if (active) {
+    void fetchChatHistory(roomId)
+      .then(({ messages: history, withheld }) => {
+        if (!active) return;
+        if (withheld) {
+          setLoadingHistory(false);
+          return;
+        }
+        if (history.length > 0) {
           setMessages((current) => {
             const next = mergeHistory(current, history);
-            saveClientStorageMessages(roomId, next);
+            if (currentUserId) {
+              saveClientStorageMessages(roomId, next, currentUserId);
+            }
             return next;
           });
         }
@@ -147,33 +338,61 @@ export function useTankRealtimeChat(
     return () => {
       active = false;
     };
-  }, [roomId]);
+  }, [roomId, currentUserId]);
 
-  // Drain client storage if auth state changes to SIGNED_OUT
+  // Drain client storage if auth state changes to SIGNED_OUT, and sync logout across tabs
   useEffect(() => {
+    const handleLogout = (targetUserId?: string | null) => {
+      drainClientChatStorage(targetUserId || currentUserId);
+      setMessages(EMPTY_MESSAGES);
+      // Deliberately NOT re-fetching. This used to immediately pull the room's
+      // whole history straight back in ("fresh public room history for guest"),
+      // so signing out cleared the chat and then instantly undid it — the chat
+      // an admin had just signed away from was on screen again a moment later.
+      // Signing out starts an empty room that accumulates live from here.
+    };
+
     const supabase = createClient();
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
-        drainClientChatStorage();
-        setMessages(EMPTY_MESSAGES);
+        handleLogout();
       }
     });
 
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel("tank_session_channel");
+      bc.onmessage = (event) => {
+        if (event.data?.type === "LOGOUT") {
+          handleLogout(event.data.userId);
+        }
+      };
+    }
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "tank_logout_sync") {
+        handleLogout();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
     return () => {
       subscription.unsubscribe();
+      if (bc) bc.close();
+      window.removeEventListener("storage", onStorage);
     };
-  }, []);
+  }, [roomId, currentUserId]);
 
   // Realtime Supabase broadcast listener with live message dispatching
   useEffect(() => {
     if (!roomId) return;
     const supabase = createClient();
 
-    if (roomId.startsWith("click:")) {
+    if (roomId.startsWith("click:") || roomId.startsWith("dm:")) {
       const channel = supabase
-        .channel(`tank-click-chat-${roomId.slice(6)}`)
+        .channel(`tank-scoped-chat-${roomId}`)
         .on(
           "postgres_changes",
           {
@@ -184,7 +403,11 @@ export function useTankRealtimeChat(
           },
           () => {
             void fetchChatHistory(roomId)
-              .then((history) => {
+              .then(({ messages: history, withheld }) => {
+                // Scoped rooms deliver via refetch, so a full merge is correct
+                // here — but never against a withheld (signed-out) response,
+                // which would blank the room.
+                if (withheld) return;
                 setMessages((current) => mergeHistory(current, history));
               })
               .catch(() => {});
@@ -235,8 +458,9 @@ export function useTankRealtimeChat(
       .on("broadcast", { event: "reaction_changed" }, ({ payload }) => {
         if (!payload?.messageId) return;
         void fetchChatHistory(roomId)
-          .then((history) => {
-            setMessages((current) => mergeHistory(current, history));
+          .then(({ messages: history, withheld }) => {
+            if (withheld) return;
+            setMessages((current) => syncReactions(current, history));
           })
           .catch(() => {});
       })
@@ -264,15 +488,16 @@ export function useTankRealtimeChat(
   }, []);
 
   const postMessage = useCallback(
-    async (body: string, replyTo?: ChatMessage) => {
+    async (
+      body: string,
+      replyTo?: ChatMessage,
+      onFailure?: (failedText: string, errorMsg: string) => void,
+    ): Promise<boolean> => {
       const trimmed = body.trim();
       if (!trimmed) return false;
 
-      // Optimistic send. The old flow awaited seven server round trips — auth,
-      // ban check, automod config, XP read+write, insert, broadcast — before
-      // the message appeared and before the input was even cleared, so typing
-      // felt like it stalled on every line. The row now renders instantly and
-      // the server reconciles it under clientNonce.
+      // Optimistic send. The row renders immediately so chat feels responsive,
+      // and reconciles when the server answers under clientNonce.
       const nonce =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
@@ -311,74 +536,66 @@ export function useTankRealtimeChat(
           : next;
       });
 
-      // Deliberately NOT awaited by the caller's UI path: the input clears on
-      // the synchronous return above. `sending` is still exposed for anyone who
-      // wants a subtle in-flight hint, but it no longer gates typing.
       setSending(true);
-      void fetch("/api/tank/chat/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          roomId,
-          body: trimmed,
-          clientNonce: nonce,
-          replyToMessageId: replyTo?.id,
-        }),
-      })
-        .then(async (response) => {
-          let result: { success?: boolean; error?: string; message?: ChatMessage } = {};
-          try {
-            result = await response.json();
-          } catch {
-            result = {
-              success: false,
-              error:
-                response.status >= 500
-                  ? "Server temporarily unavailable. Tap to retry."
-                  : "Failed to send message.",
-            };
-          }
-          if (!response.ok && !result.error) {
-            result.error = "Failed to send message.";
-          }
-          return result;
-        })
-        .then((result) => {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.clientNonce === nonce);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            if (result.success && result.message) {
-              // Broadcast may have already reconciled this row; replacing an
-              // identical message is harmless and keeps the two paths simple.
-              next[idx] = result.message;
-            } else {
-              // Keep the row and mark it failed rather than deleting it — the
-              // user's text is the one thing they cannot get back.
-              next[idx] = { ...next[idx], pending: false, failed: true };
-            }
-            return next;
-          });
-          if (!result.success)
-            setError(result.error ?? "Failed to send message.");
-        })
-        .catch((err) => {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.clientNonce === nonce);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            next[idx] = { ...next[idx], pending: false, failed: true };
-            return next;
-          });
-          setError(
-            err instanceof Error && err.name === "AbortError"
-              ? "Request timed out."
-              : "Connection issue. Failed to send message."
-          );
-        })
-        .finally(() => setSending(false));
+      try {
+        const response = await fetch("/api/tank/chat/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            roomId,
+            body: trimmed,
+            clientNonce: nonce,
+            replyToMessageId: replyTo?.id,
+          }),
+        });
 
-      return true;
+        let result: { success?: boolean; error?: string; message?: ChatMessage } = {};
+        try {
+          result = await response.json();
+        } catch {
+          result = {
+            success: false,
+            error:
+              response.status >= 500
+                ? "Server temporarily unavailable. Tap to retry."
+                : "Failed to send message.",
+          };
+        }
+        if (!response.ok && !result.error) {
+          result.error = "Failed to send message.";
+        }
+
+        if (result.success && result.message) {
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.clientNonce === nonce);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = result.message!;
+            return next;
+          });
+          return true;
+        } else {
+          // If message send failed (slow mode, permission, word filter, rate limit):
+          // Don't release optimistic message into feed — roll it back.
+          setMessages((prev) => prev.filter((m) => m.clientNonce !== nonce));
+          const errorMsg = result.error ?? "Failed to send message.";
+          setError(errorMsg);
+          onFailure?.(trimmed, errorMsg);
+          return false;
+        }
+      } catch (err) {
+        // Network / timeout error: roll back optimistic message and notify
+        setMessages((prev) => prev.filter((m) => m.clientNonce !== nonce));
+        const errorMsg =
+          err instanceof Error && err.name === "AbortError"
+            ? "Request timed out."
+            : "Connection issue. Failed to send message.";
+        setError(errorMsg);
+        onFailure?.(trimmed, errorMsg);
+        return false;
+      } finally {
+        setSending(false);
+      }
     },
     [roomId, identity],
   );
@@ -395,8 +612,8 @@ export function useTankRealtimeChat(
         setError(json.error || "Failed to react.");
         return false;
       }
-      const history = await fetchChatHistory(roomId);
-      setMessages((current) => mergeHistory(current, history));
+      const { messages: history, withheld } = await fetchChatHistory(roomId);
+      if (!withheld) setMessages((current) => syncReactions(current, history));
       return true;
     },
     [roomId],

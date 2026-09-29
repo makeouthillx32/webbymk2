@@ -1,0 +1,276 @@
+﻿<section class="un-tank-callout" aria-labelledby="un-tank-callout-title">
+  <style>
+    .un-tank-callout {
+      --un-tank-bg: hsl(var(--card));
+      --un-tank-fg: hsl(var(--card-foreground));
+      --un-tank-canvas: hsl(var(--background));
+      --un-tank-muted: hsl(var(--muted-foreground));
+      --un-tank-border: hsl(var(--border));
+      --un-tank-primary: hsl(var(--primary));
+      --un-tank-primary-fg: hsl(var(--primary-foreground));
+      width: 100%;
+      color: var(--un-tank-fg);
+      background: var(--un-tank-bg);
+      border-block: 1px solid var(--un-tank-border);
+      transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease;
+    }
+
+    .un-tank-callout,
+    .un-tank-callout * {
+      box-sizing: border-box;
+    }
+
+    .un-tank-callout__inner {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: clamp(56px, 8vw, 104px) 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+      align-items: center;
+      gap: clamp(36px, 7vw, 88px);
+    }
+
+    .un-tank-callout__media {
+      position: relative;
+      min-width: 0;
+      aspect-ratio: 1200 / 630;
+      margin: 0;
+      overflow: hidden;
+      border: 1px solid var(--un-tank-border);
+      border-radius: min(var(--radius, 8px), 8px);
+      background: var(--un-tank-canvas);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .un-tank-callout__media img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      transition: transform 420ms ease;
+    }
+
+    .un-tank-callout__media:hover img {
+      transform: scale(1.025);
+    }
+
+    .un-tank-callout__caption {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      margin: 0;
+      padding: 8px 14px;
+      border: 1px solid var(--un-tank-border);
+      border-radius: min(var(--radius, 8px), 8px);
+      color: var(--un-tank-fg);
+      background: hsl(var(--card) / 0.92);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .un-tank-callout__live-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background-color: #ef4444;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #ef4444;
+      animation: un-tank-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes un-tank-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .un-tank-callout__copy {
+      min-width: 0;
+    }
+
+    .un-tank-callout__eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 18px;
+      color: var(--un-tank-muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .un-tank-callout__eyebrow::before {
+      content: "";
+      width: 32px;
+      height: 2px;
+      flex: 0 0 auto;
+      background: var(--un-tank-primary);
+    }
+
+    .un-tank-callout h2 {
+      max-width: 14ch;
+      margin: 0;
+      color: var(--un-tank-fg);
+      font-size: clamp(2rem, 4.1vw, 3.65rem);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      text-wrap: balance;
+    }
+
+    .un-tank-callout__body {
+      max-width: 56ch;
+      margin: 24px 0 0;
+      color: var(--un-tank-muted);
+      font-size: clamp(1rem, 1.45vw, 1.125rem);
+      line-height: 1.7;
+    }
+
+    .un-tank-callout__topics {
+      margin: 26px 0 0;
+      padding: 0;
+      border-top: 1px solid var(--un-tank-border);
+      list-style: none;
+    }
+
+    .un-tank-callout__topics li {
+      min-height: 44px;
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      align-items: center;
+      border-bottom: 1px solid var(--un-tank-border);
+      color: var(--un-tank-fg);
+      font-size: 0.875rem;
+      font-weight: 650;
+    }
+
+    .un-tank-callout__topics span {
+      color: var(--un-tank-muted);
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .un-tank-callout__link {
+      width: fit-content;
+      min-height: 44px;
+      margin-top: 30px;
+      padding: 0 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 1px solid var(--un-tank-primary);
+      border-radius: min(var(--radius, 8px), 8px);
+      color: var(--un-tank-primary-fg);
+      background: var(--un-tank-primary);
+      font-size: 0.9375rem;
+      font-weight: 700;
+      line-height: 1;
+      text-decoration: none;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+
+    .un-tank-callout__link:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .un-tank-callout__link:focus-visible {
+      outline: 3px solid var(--un-tank-primary);
+      outline-offset: 4px;
+    }
+
+    .un-tank-callout__link span {
+      font-size: 1.15em;
+      transition: transform 160ms ease;
+    }
+
+    .un-tank-callout__link:hover span {
+      transform: translateX(3px);
+    }
+
+    @media (max-width: 800px) {
+      .un-tank-callout__inner {
+        width: min(100% - 32px, 640px);
+        grid-template-columns: 1fr;
+        gap: 38px;
+      }
+
+      .un-tank-callout__copy {
+        order: -1;
+      }
+
+      .un-tank-callout h2 {
+        max-width: 16ch;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .un-tank-callout__inner {
+        width: min(100% - 24px, 640px);
+        padding: 48px 0;
+      }
+
+      .un-tank-callout__link {
+        width: 100%;
+      }
+
+      .un-tank-callout__caption {
+        left: 8px;
+        bottom: 8px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .un-tank-callout__link,
+      .un-tank-callout__link span,
+      .un-tank-callout__media img,
+      .un-tank-callout__live-indicator {
+        transition: none;
+        animation: none;
+      }
+
+      .un-tank-callout__link:hover,
+      .un-tank-callout__link:hover span,
+      .un-tank-callout__media:hover img {
+        transform: none;
+      }
+    }
+  </style>
+
+  <div class="un-tank-callout__inner">
+    <figure class="un-tank-callout__media">
+      <img
+        src="https://db.unenter.live/storage/v1/object/public/site-assets/zones/tank/open-graph/1787724040474-f09c43da.jpg"
+        alt="The Tank interactive 24/7 livestream studio preview"
+        loading="lazy"
+        decoding="async"
+      />
+      <figcaption class="un-tank-callout__caption">
+        <span class="un-tank-callout__live-indicator" aria-hidden="true"></span>
+        <span>tank.unenter.live &bull; LIVE 24/7</span>
+      </figcaption>
+    </figure>
+
+    <div class="un-tank-callout__copy">
+      <p class="un-tank-callout__eyebrow">Unenter Tank Zone</p>
+      <h2 id="un-tank-callout-title">The living studio, live 24/7.</h2>
+      <p class="un-tank-callout__body">
+        Step inside the interactive multi-cam house. Chat in real-time, trigger physical and digital events with Tavern coins, switch views across the grid, and watch autonomous AI director feeds orchestrate the room.
+      </p>
+      <ol class="un-tank-callout__topics" aria-label="Tank zone features">
+        <li><span>01</span>Multi-Angle Camera Grid &amp; Low-Latency HLS</li>
+        <li><span>02</span>Interactive Chat, Tip Jar &amp; Tavern Economy</li>
+        <li><span>03</span>Autonomous AI Director &amp; Room Automation</li>
+      </ol>
+      <a class="un-tank-callout__link" href="https://tank.unenter.live/">
+        Enter the Tank <span aria-hidden="true">&rarr;</span>
+      </a>
+    </div>
+  </div>
+</section>

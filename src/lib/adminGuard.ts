@@ -8,9 +8,10 @@ import { createClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import { authLogger } from "./authLogger";
 
-export async function requireAdmin() {
+export async function requireAdmin(options?: { allowedRoles?: string[] }) {
+  const allowedRoles = options?.allowedRoles ?? ['admin'];
   const supabase = await createClient();
-  
+
   // Use getUser() — Supabase recommends this over getSession() in server
   // components because it re-validates the JWT against the auth server instead
   // of just reading the (potentially stale) cookie value.
@@ -36,8 +37,10 @@ export async function requireAdmin() {
     redirect('/sign-in?next=/dashboard/me&error=profile_error&message=Could not verify permissions');
   }
 
-  // Check if user is admin
-  if (profile.role !== 'admin') {
+  // Check if user's role is one of the allowed roles (admin-only by default —
+  // pass allowedRoles to widen this for a specific gate, e.g. the dashboard
+  // root layout admitting 'marketing' alongside 'admin').
+  if (!allowedRoles.includes(profile.role)) {
     authLogger.adminAccessDenied(
       user.id,
       user.email || '',

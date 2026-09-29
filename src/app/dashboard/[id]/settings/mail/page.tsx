@@ -6,9 +6,10 @@ import { FilterTabs } from "@/components/dashboard/FilterTabs";
 import { DomainsPanel } from "./_components/DomainsPanel";
 import { BoxesPanel } from "./_components/BoxesPanel";
 import { FailuresPanel } from "./_components/FailuresPanel";
+import { MainMailPanel } from "./_components/index";
 
 export default function MailPage() {
-  const [tab, setTab] = useState<"boxes" | "domains" | "failures">("boxes");
+  const [tab, setTab] = useState<"main" | "boxes" | "domains" | "failures">("main");
 
   return (
     <div className="flex flex-col gap-4">
@@ -26,13 +27,16 @@ export default function MailPage() {
         value={tab}
         onChange={(value) => setTab(value as typeof tab)}
         options={[
+          { value: "main", label: "Main" },
           { value: "boxes", label: "Mailboxes" },
           { value: "domains", label: "Domains & DKIM" },
           { value: "failures", label: "Delivery Failures" },
         ]}
       />
 
-      {tab === "boxes" ? (
+      {tab === "main" ? (
+        <MainMailPanel />
+      ) : tab === "boxes" ? (
         <BoxesPanel />
       ) : tab === "domains" ? (
         <DomainsPanel />

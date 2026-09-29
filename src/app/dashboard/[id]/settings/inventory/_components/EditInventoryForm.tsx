@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { InventoryModal } from "./InventoryModal";
-import type { InventoryRow } from "./InventoryTable";
+import type { InventoryRow } from "../page";
 
 type Props = {
   open: boolean;

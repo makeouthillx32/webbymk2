@@ -108,7 +108,7 @@ export function CategoryModal({
       />
 
       {/* panel */}
-      <div className="absolute left-1/2 top-1/2 w-[calc(100%-24px)] max-w-xl -translate-x-1/2 -translate-y-1/2">
+      <div className="absolute left-1/2 top-1/2 w-[calc(100%-24px)] max-w-xl -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div
           ref={panelRef}
           tabIndex={-1}

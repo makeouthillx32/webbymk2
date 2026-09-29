@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect } from "react";
 import "./landing.scss";
+import { CardOverlayEditor, type PreviewCategory } from "./CardOverlayEditor";
 
 interface SectionConfigFormProps {
   type: string;
@@ -22,6 +23,14 @@ interface CategoryOption {
   name: string;
   slug: string;
   product_count?: number;
+  // Carried through for the card-overlay preview so it renders over the real
+  // cover with the real words instead of a stand-in.
+  coverImageUrl?: string | null;
+  eyebrow?: string | null;
+  tagline?: string | null;
+  subtitle?: string | null;
+  cta_label?: string | null;
+  text_color_token?: string | null;
 }
 
 interface StaticPageOption {
@@ -86,21 +95,24 @@ export function SectionConfigForm({ type, config, onChange }: SectionConfigFormP
     }
   };
 
-  // Special handler for categories_grid that auto-updates columns
+  // Selection handler for categories_grid.
+  //
+  // Writes `itemIds` — the source-agnostic key — and clears the legacy
+  // `categoryIds` so a section can't end up carrying both and disagreeing with
+  // itself. The renderer still reads `categoryIds` as a fallback for sections
+  // last saved before the source switch existed.
   const updateCategoryIds = (selectedIds: string[]) => {
     const newConfig = { ...config };
-    
+    delete newConfig.categoryIds;
+
     if (selectedIds.length === 0) {
-      // No categories selected - remove both fields
-      delete newConfig.categoryIds;
+      delete newConfig.itemIds;
       delete newConfig.columns;
     } else {
-      // Set the selected categories
-      newConfig.categoryIds = selectedIds;
-      // Auto-calculate columns based on number of selected categories
+      newConfig.itemIds = selectedIds;
       newConfig.columns = selectedIds.length;
     }
-    
+
     onChange(newConfig);
   };
 
@@ -131,7 +143,145 @@ export function SectionConfigForm({ type, config, onChange }: SectionConfigFormP
     );
   }
 
-  // HERO CAROUSEL FORM
+  // INTERACTIVE 3D BANNER FORM
+  if (type === 'hero_3d') {
+    return (
+      <>
+        <div className="custom-component-notice" style={{ marginBottom: 16 }}>
+          <div className="notice-icon">ℹ️</div>
+          <div className="notice-content">
+            <h4>Custom Component by unenter</h4>
+            <p>
+              Full hero block — the 4K video backdrop, the starry loop and the three.js
+              logo scene. Placing this replaces the built-in home hero entirely.
+            </p>
+            <p className="notice-hint">
+              The video, backdrop and 3D model are all swappable from the site asset
+              registry with no rebuild. The options below are styling only.
+            </p>
+          </div>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">
+            <input
+              type="checkbox"
+              checked={config.showVideo !== false}
+              onChange={(e) => updateField('showVideo', e.target.checked)}
+            />{' '}
+            Show 4K video backdrop
+          </label>
+          <p className="form-hint">Layers the hero video behind the 3D scene (default on)</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Video opacity</label>
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={config.videoOpacity ?? 0.3}
+            onChange={(e) => updateField('videoOpacity', parseFloat(e.target.value))}
+            className="form-input"
+          />
+          <p className="form-hint">0 = hidden, 1 = full strength (default 0.3)</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Minimum height (optional)</label>
+          <input
+            type="text"
+            value={config.minHeight || ''}
+            onChange={(e) => updateField('minHeight', e.target.value)}
+            className="form-input"
+            placeholder="e.g. 100vh — leave empty to size to content"
+          />
+          <p className="form-hint">Any CSS length. Empty = the scene sizes itself.</p>
+        </div>
+      </>
+    );
+  }
+
+  // FOOTER CHROME / DECORATION FORM
+  if (type === 'footer_chrome') {
+    return (
+      <>
+        <div className="form-field">
+          <label className="form-label">Shapes</label>
+          <select
+            value={config.shapes || 'both'}
+            onChange={(e) => updateField('shapes', e.target.value)}
+            className="form-input"
+          >
+            <option value="both">Both (polygon + orb)</option>
+            <option value="polygon">Polygon only (bottom-left)</option>
+            <option value="orb">Orb only (top-right)</option>
+          </select>
+          <p className="form-hint">Which decorative shapes to draw in the band</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Tint</label>
+          <select
+            value={config.tint || 'primary'}
+            onChange={(e) => updateField('tint', e.target.value)}
+            className="form-input"
+          >
+            <option value="primary">Primary (theme)</option>
+            <option value="accent">Accent (theme)</option>
+            <option value="muted">Muted (theme)</option>
+            <option value="foreground">Foreground (theme)</option>
+          </select>
+          <p className="form-hint">
+            Always a theme token — the decoration follows the active theme per zone.
+            No fixed colours, so it can never drift out of palette again.
+          </p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Opacity</label>
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={config.opacity ?? 0.5}
+            onChange={(e) => updateField('opacity', parseFloat(e.target.value))}
+            className="form-input"
+          />
+          <p className="form-hint">0 = invisible, 1 = full strength (default 0.5)</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">Band height (px)</label>
+          <input
+            type="number"
+            min="40"
+            max="600"
+            step="10"
+            value={config.height ?? 180}
+            onChange={(e) => updateField('height', parseInt(e.target.value) || 180)}
+            className="form-input"
+          />
+          <p className="form-hint">Vertical space the decoration occupies</p>
+        </div>
+
+        <div className="form-field">
+          <label className="form-label">
+            <input
+              type="checkbox"
+              checked={config.flip === true}
+              onChange={(e) => updateField('flip', e.target.checked)}
+            />{' '}
+            Mirror horizontally
+          </label>
+          <p className="form-hint">Swaps which side each shape sits on</p>
+        </div>
+      </>
+    );
+  }
+
   if (type === 'hero_carousel') {
     return (
       <div className="custom-component-notice">
@@ -153,16 +303,33 @@ export function SectionConfigForm({ type, config, onChange }: SectionConfigFormP
 
   // CATEGORIES GRID FORM - MOBILE-FRIENDLY CHECKBOX VERSION
   if (type === 'categories_grid') {
-    const selectedCategoryIds = config.categoryIds || [];
+    // Which taxonomy this grid draws cards from. Tags are deliberately absent:
+    // a tag is a filter attached to a product, never a card with its own art.
+    const source: 'categories' | 'collections' =
+      config.source === 'collections' ? 'collections' : 'categories';
+    const sourceItems: any[] = source === 'collections' ? collections : categories;
+    const selectedCategoryIds = config.itemIds || config.categoryIds || [];
     const selectedCategories = selectedCategoryIds
-      .map((id: string) => categories.find(c => c.id === id))
+      .map((id: string) => sourceItems.find((c: any) => c.id === id))
       .filter(Boolean);
 
-    const allSelected = categories.length > 0 && selectedCategoryIds.length === categories.length;
+    const previewSource = selectedCategories.length > 0 ? selectedCategories : sourceItems;
+    const previewCategories: PreviewCategory[] = previewSource.map((c: CategoryOption) => ({
+      id: c.id,
+      name: c.name,
+      coverImageUrl: c.coverImageUrl,
+      eyebrow: c.eyebrow,
+      tagline: c.tagline,
+      subtitle: c.subtitle,
+      cta_label: c.cta_label,
+      text_color_token: c.text_color_token,
+    }));
+
+    const allSelected = sourceItems.length > 0 && selectedCategoryIds.length === sourceItems.length;
     const noneSelected = selectedCategoryIds.length === 0;
 
     const handleSelectAll = () => {
-      const allCategoryIds = categories.map(c => c.id);
+      const allCategoryIds = sourceItems.map((c: any) => c.id);
       updateCategoryIds(allCategoryIds);
     };
 
@@ -281,6 +448,34 @@ export function SectionConfigForm({ type, config, onChange }: SectionConfigFormP
             </p>
           )}
         </div>
+
+        <div className="form-field">
+          <label className="form-label">Card source</label>
+          <select
+            className="form-input"
+            value={source}
+            onChange={(e) => {
+              // Ids live in different tables, so a stale selection would silently
+              // match nothing. Clear it with the switch.
+              const next: Record<string, any> = { ...config, source: e.target.value };
+              delete next.itemIds;
+              delete next.categoryIds;
+              onChange(next);
+            }}
+          >
+            <option value="categories">Categories — what a product IS (browse structure)</option>
+            <option value="collections">Collections — what you are PUSHING (merchandising)</option>
+          </select>
+          <p className="form-hint">
+            Tags aren't offered: a tag is a filter attached to a product, not a card with its own artwork.
+          </p>
+        </div>
+
+        <CardOverlayEditor
+          config={config}
+          updateField={updateField}
+          categories={previewCategories}
+        />
       </>
     );
   }

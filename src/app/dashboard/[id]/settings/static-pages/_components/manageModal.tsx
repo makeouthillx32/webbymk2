@@ -66,7 +66,7 @@ export function CreatePageModal({
       onClick={onCancel}
     >
       <div
-        className="relative w-full max-w-2xl rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] shadow-lg"
+        className="relative w-full max-w-2xl rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] shadow-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[hsl(var(--border))] p-6">

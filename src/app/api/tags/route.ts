@@ -9,7 +9,7 @@ function jsonError(status: number, code: string, message: string, details?: any)
 }
 
 // TODO: Replace with your real role gating (admin/catalog manager)
-async function requireAdmin(supabase: ReturnType<typeof createServerClient>) {
+async function requireAdmin(supabase: Awaited<ReturnType<typeof createServerClient>>) {
   const { data } = await supabase.auth.getUser();
   if (!data.user) return { ok: false };
   return { ok: true };
@@ -23,7 +23,7 @@ async function requireAdmin(supabase: ReturnType<typeof createServerClient>) {
  *  - q=search
  */
 export async function GET(req: NextRequest) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
 
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q");
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
  * { "name": "Sale", "slug": "sale" }
  */
 export async function POST(req: NextRequest) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
 
   const gate = await requireAdmin(supabase);
   if (!gate.ok) return jsonError(401, "UNAUTHORIZED", "Authentication required");
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
  * { "id": "uuid", "name"?: "...", "slug"?: "..." }
  */
 export async function PATCH(req: NextRequest) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
 
   const gate = await requireAdmin(supabase);
   if (!gate.ok) return jsonError(401, "UNAUTHORIZED", "Authentication required");

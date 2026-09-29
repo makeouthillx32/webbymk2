@@ -19,7 +19,7 @@ declare const UNAXIS_VERSION: string | undefined;
 const VERSION = typeof UNAXIS_VERSION === "string" ? UNAXIS_VERSION : "0.0.5";
 
 const FULL_NAME = "Unified Next App eXecution & Infrastructure System";
-const isDev     = process.env.NODE_ENV !== "production";
+const isDev     = process.env.UNAXIS_DEV === "true" || (typeof UNAXIS_VERSION === "undefined" && process.env.NODE_ENV !== "production");
 
 // ── useClock ──────────────────────────────────────────────────────────────────
 

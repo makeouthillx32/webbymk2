@@ -8,6 +8,7 @@ const APP_AUTH_COOKIE_NAMES = [
   "userDisplayName",
   "userPermissions",
   "rememberMe",
+  "authAt",
   "lastPage",
 ];
 

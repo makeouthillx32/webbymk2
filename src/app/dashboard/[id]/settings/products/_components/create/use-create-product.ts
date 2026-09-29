@@ -51,6 +51,11 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [availableCollections, setAvailableCollections] = useState<CollectionRow[]>([]);
   const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
+  // Tags are held as {slug,name} rather than ids because the join endpoint
+  // upserts by slug. That lets a brand-new tag be coined right here at upload
+  // time instead of forcing a detour to the taxonomy manager first.
+  const [availableTags, setAvailableTags] = useState<{ id?: string; slug: string; name: string }[]>([]);
+  const [selectedTags, setSelectedTags] = useState<{ slug: string; name: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [customGroups, setCustomGroups] = useState<OptionGroup[]>([]); // ✅ Add custom groups state
 
@@ -97,6 +102,7 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
     setVariants([]);
     setSelectedCategoryIds([]);
     setSelectedCollectionIds([]);
+    setSelectedTags([]);
     setCustomGroups([]); // ✅ Reset custom groups
   };
 
@@ -444,14 +450,47 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
         throw new Error(`Product creation rolled back - ${variantError.message}`);
       }
 
-      await Promise.all([
-        ...selectedCategoryIds.map(id => fetch(`/api/products/admin/${productId}/categories`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category_id: id })
-        })),
-        ...selectedCollectionIds.map(id => fetch(`/api/products/admin/${productId}/collections`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collection_id: id })
-        }))
+      // Shelve the product: attach every taxonomy chosen on the way in.
+      //
+      // fetch() resolves for 4xx and 5xx — it only REJECTS on a network
+      // failure. These calls previously went out unchecked, so a product could
+      // be created with none of its categories, collections or tags attached
+      // while the modal still reported success. That silence is exactly how
+      // /api/tags sat returning 500 without anyone noticing.
+      const link = (kind: string, url: string, body: unknown) =>
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }).then(
+          (res) => ({ kind, ok: res.ok }),
+          () => ({ kind, ok: false }),
+        );
+
+      const linkResults = await Promise.all([
+        ...selectedCategoryIds.map((id) =>
+          link("category", `/api/products/admin/${productId}/categories`, { category_id: id })),
+        ...selectedCollectionIds.map((id) =>
+          link("collection", `/api/products/admin/${productId}/collections`, { collection_id: id })),
+        ...selectedTags.map((t) =>
+          link("tag", `/api/products/admin/${productId}/tags`, { slug: t.slug, name: t.name })),
       ]);
+
+      const failedLinks = linkResults.filter((r) => !r.ok);
+      if (failedLinks.length) {
+        const counts = failedLinks.reduce<Record<string, number>>((acc, r) => {
+          acc[r.kind] = (acc[r.kind] ?? 0) + 1;
+          return acc;
+        }, {});
+        const summary = Object.entries(counts)
+          .map(([kind, n]) => `${n} ${kind}${n > 1 ? "s" : ""}`)
+          .join(", ");
+        // The product and its variants are valid and saved, so this warns
+        // rather than rolls back — but it must not pass silently.
+        toast.error(
+          `Product saved, but ${summary} could not be attached. Add them from the product's taxonomy tabs.`,
+        );
+      }
 
       if (images.length) {
         const supabase = createBrowserClient();
@@ -466,7 +505,7 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
           });
           if (error) throw error;
 
-          await fetch(`/api/products/admin/${productId}/images`, {
+          const metaRes = await fetch(`/api/products/admin/${productId}/images`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -477,6 +516,11 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
               is_primary: img.isPrimary,
             }),
           });
+          // The upload above throws on failure, but this row is what makes the
+          // file visible on the product — unchecked, it would orphan the image.
+          if (!metaRes.ok) {
+            throw new Error(`Image ${i + 1} uploaded but could not be attached to the product.`);
+          }
         }
       }
 
@@ -495,7 +539,8 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
     state: {
       title, slug, baseSku, price, description, material, madeIn, images, availableSizes, availableColors,
       availableMaterials, availableMadeIn, variants, availableCategories,
-      selectedCategoryIds, availableCollections, selectedCollectionIds, creating, customGroups
+      selectedCategoryIds, availableCollections, selectedCollectionIds, availableTags, selectedTags,
+      creating, customGroups
     },
     actions: {
       setTitle, setSlug, setBaseSku, setPrice, setDescription, setMaterial, setMadeIn, autoSlug, autoBaseSku,
@@ -508,6 +553,7 @@ export function useCreateProduct(onOpenChange: (v: boolean) => void, onCreated: 
       setVariants,
       setSelectedCategoryIds, setSelectedCollectionIds,
       setAvailableCategories, setAvailableCollections,
+      setAvailableTags, setSelectedTags,
       setCustomGroups, // ✅ Export setCustomGroups
       create, reset
     }

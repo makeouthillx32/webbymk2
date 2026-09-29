@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, ChevronDown, Pencil, Trash2, ImageIcon } from "lucide-react";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+import { publicStorageUrl } from "@/lib/storageUrl";
 
 export type CategoryRow = {
   id: string;
@@ -25,6 +25,20 @@ interface CategoriesTableProps {
   categories: Category[];
   onEdit: (category: Category) => void;
   onDelete: (category: Category) => void;
+  /** Featured Rows shows the artwork; Browse Structure shows the tree. */
+  showCover?: boolean;
+  /**
+   * How the list reads.
+   *
+   *   "tree"  — indentation, Root/Sub level, expand toggles. Browse Structure.
+   *   "cards" — a flat row per category with its cover. Featured Rows.
+   *
+   * The hierarchy is deliberately absent from "cards": Browse Structure already
+   * shows it, and repeating it here framed an artwork screen as a nav screen —
+   * the LEVEL column and the indent are answering a question this view is not
+   * asking. Matches the Collections list so the two groups read alike.
+   */
+  variant?: "tree" | "cards";
 }
 
 function buildTree(flat: Category[]): Category[] {
@@ -48,10 +62,8 @@ function buildTree(flat: Category[]): Category[] {
   return roots;
 }
 
-function getCoverUrl(bucket: string | null | undefined, path: string | null | undefined): string | null {
-  if (!bucket || !path) return null;
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
-}
+/** Browser-safe public URL — see lib/storageUrl for why this isn't inlined. */
+const getCoverUrl = publicStorageUrl;
 
 function CategoryRowItem({
   category,
@@ -60,6 +72,7 @@ function CategoryRowItem({
   onDelete,
   expanded,
   onToggle,
+  showCover,
 }: {
   category: Category;
   depth: number;
@@ -67,10 +80,13 @@ function CategoryRowItem({
   onDelete: (c: Category) => void;
   expanded: Set<string>;
   onToggle: (id: string) => void;
+  showCover: boolean;
 }) {
   const hasChildren = (category.children?.length ?? 0) > 0;
   const isExpanded = expanded.has(category.id);
-  const coverUrl = getCoverUrl(category.cover_image_bucket, category.cover_image_path);
+  // In the nav view the thumbnail is noise — Browse Structure is about
+  // hierarchy, not artwork. Featured Rows is where the picture matters.
+  const coverUrl = showCover ? getCoverUrl(category.cover_image_bucket, category.cover_image_path) : null;
 
   return (
     <>
@@ -161,6 +177,7 @@ function CategoryRowItem({
       {hasChildren && isExpanded &&
         category.children!.map((child) => (
           <CategoryRowItem
+              showCover={showCover}
             key={child.id}
             category={child}
             depth={depth + 1}
@@ -174,7 +191,17 @@ function CategoryRowItem({
   );
 }
 
-export function CategoriesTable({ categories, onEdit, onDelete }: CategoriesTableProps) {
+export function CategoriesTable({
+  categories,
+  onEdit,
+  onDelete,
+  showCover = true,
+  variant = "tree",
+}: CategoriesTableProps) {
+  if (variant === "cards") {
+    return <CategoryCardsList categories={categories} onEdit={onEdit} onDelete={onDelete} />;
+  }
+
   const tree = buildTree(categories);
   const [expanded, setExpanded] = React.useState<Set<string>>(() => {
     const s = new Set<string>();
@@ -222,6 +249,7 @@ export function CategoriesTable({ categories, onEdit, onDelete }: CategoriesTabl
         <tbody>
           {tree.map((root) => (
             <CategoryRowItem
+              showCover={showCover}
               key={root.id}
               category={root}
               depth={0}
@@ -234,6 +262,102 @@ export function CategoriesTable({ categories, onEdit, onDelete }: CategoriesTabl
         </tbody>
       </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Flat, artwork-first list — the same shape the Collections list uses, so
+ * Featured Rows reads as one screen regardless of which group you are in.
+ * Sub-categories appear as ordinary rows; their parent is shown as context
+ * rather than as structure, because nothing here edits structure.
+ */
+function CategoryCardsList({
+  categories,
+  onEdit,
+  onDelete,
+}: {
+  categories: Category[];
+  onEdit: (c: Category) => void;
+  onDelete: (c: Category) => void;
+}) {
+  const nameById = new Map(categories.map((c) => [c.id, c.name]));
+  const ordered = [...categories].sort((a, b) =>
+    (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name),
+  );
+
+  if (ordered.length === 0) {
+    return (
+      <div className="text-center py-16 text-[hsl(var(--muted-foreground))] text-sm">
+        No categories yet. Create your first one above.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {ordered.map((cat) => {
+        const coverUrl = getCoverUrl(cat.cover_image_bucket, cat.cover_image_path);
+        const parentName = cat.parent_id ? nameById.get(cat.parent_id) : null;
+
+        return (
+          <div
+            key={cat.id}
+            className="flex items-center gap-3 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3"
+          >
+            <div className="flex-shrink-0">
+              {coverUrl ? (
+                <div className="relative h-20 w-16 overflow-hidden rounded-md border border-[hsl(var(--border))]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={coverUrl}
+                    alt={cat.cover_image_alt || cat.name}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="flex h-20 w-16 items-center justify-center rounded-md border-2 border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  <ImageIcon className="h-6 w-6 text-[hsl(var(--muted-foreground))]" />
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-[hsl(var(--foreground))]">
+                {cat.name}
+              </p>
+              <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">/{cat.slug}</p>
+              {parentName && (
+                <p className="mt-1 truncate text-xs text-[hsl(var(--muted-foreground))]">
+                  in {parentName}
+                </p>
+              )}
+              {!coverUrl && (
+                <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+                  No cover — renders as a flat card
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onEdit(cat)}
+                className="rounded-[var(--radius)] p-1.5 transition-colors hover:bg-[hsl(var(--muted))]"
+                aria-label={`Edit ${cat.name}`}
+              >
+                <Pencil className="h-4 w-4 text-[hsl(var(--foreground))]" />
+              </button>
+              <button
+                onClick={() => onDelete(cat)}
+                className="rounded-[var(--radius)] p-1.5 transition-colors hover:bg-[hsl(var(--muted))]"
+                aria-label={`Delete ${cat.name}`}
+              >
+                <Trash2 className="h-4 w-4 text-[hsl(var(--destructive))]" />
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -37,14 +37,14 @@ export async function PaymentsOverview({
           <dt className="text-xl font-bold text-[hsl(var(--foreground))] dark:text-[hsl(var(--card-foreground))]">
             ${standardFormat(data.received.reduce((acc, { y }) => acc + y, 0))}
           </dt>
-          <dd className="font-medium text-[hsl(var(--muted-foreground))] dark:text-[hsl(var(--muted-foreground))]">Received Amount</dd>
+          <dd className="font-medium text-[hsl(var(--muted-foreground))] dark:text-[hsl(var(--muted-foreground))]">Live Gross Volume</dd>
         </div>
 
         <div>
           <dt className="text-xl font-bold text-[hsl(var(--foreground))] dark:text-[hsl(var(--card-foreground))]">
             ${standardFormat(data.due.reduce((acc, { y }) => acc + y, 0))}
           </dt>
-          <dd className="font-medium text-[hsl(var(--muted-foreground))] dark:text-[hsl(var(--muted-foreground))]">Due Amount</dd>
+          <dd className="font-medium text-[hsl(var(--muted-foreground))] dark:text-[hsl(var(--muted-foreground))]">Fees + Refunds</dd>
         </div>
       </dl>
     </div>

@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
-import { requireStaff } from "@/zones/tank/server/staffAuth";
+import { checkStaff, staffDenialResponse } from "@/zones/tank/server/staffAuth";
+import { FOLLOWABLE_MEMBERS, followableWithGuests, isFollowableSlug } from "@/zones/tank/server/followMember";
+import { finishEnrollment, listKnownGuests, loadEnrollment, startEnrollment } from "@/zones/tank/server/enrollmentStore";
 import {
   getEffectiveMode,
+  getFollowMember,
   getOperatorMode,
-  setOperatorMode,
+  loadPersistedOperatorModeFromDb,
+  persistOperatorModeToDb,
+  SUBJECT_MODES,
 } from "@/zones/tank/server/directorTelemetryStore";
-import type { SubjectMode } from "@/zones/tank/server/directorVirtualAtlas";
 
 // Lets an operator choose what the director is looking for.
 //
@@ -19,24 +23,39 @@ import type { SubjectMode } from "@/zones/tank/server/directorVirtualAtlas";
 
 export const dynamic = "force-dynamic";
 
-const SUBJECT_MODES: SubjectMode[] = [
-  "auto", "person", "speaker", "feet", "face", "motion", "crowd", "chaos", "manual",
-];
-
-
 export async function GET() {
-  return NextResponse.json({
-    success: true,
-    operatorMode: getOperatorMode(),
-    effectiveMode: getEffectiveMode(),
-    available: SUBJECT_MODES,
-  });
+  try {
+    await loadPersistedOperatorModeFromDb(true);
+    const [guests, enrollment, access] = await Promise.all([
+      listKnownGuests().catch(() => [] as string[]),
+      loadEnrollment(true).catch(() => null),
+      checkStaff().catch(() => ({ staff: null, denial: "unavailable" as const })),
+    ]);
+    return NextResponse.json({
+      success: true,
+      operatorMode: getOperatorMode(),
+      effectiveMode: getEffectiveMode(),
+      followMember: getFollowMember(),
+      followable: followableWithGuests(guests),
+      enrollment,
+      available: SUBJECT_MODES,
+      authority: "server-database",
+      // Whether THIS browser may change the director, and if not why -- so the
+      // console can lock its controls up front instead of failing on click.
+      canControl: Boolean(access.staff),
+      denial: access.denial,
+    });
+  } catch (error) {
+    console.error("[DirectorMode] Failed to attach to durable mode:", error);
+    return NextResponse.json({ error: "Director mode unavailable" }, { status: 503 });
+  }
 }
 
 export async function POST(request: Request) {
-  const staff = await requireStaff();
+  const { staff, denial } = await checkStaff();
   if (!staff) {
-    return NextResponse.json({ error: "Staff only" }, { status: 403 });
+    const { status, body } = staffDenialResponse(denial ?? "unavailable");
+    return NextResponse.json(body, { status });
   }
 
   let body: any;
@@ -44,6 +63,45 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Finishing an enrollment ends the session, asks the learner to rebuild the
+  // gallery, and switches to following the new guest so the operator can see
+  // straight away whether the house now knows them.
+  if (body?.finishEnrollment === true) {
+    try {
+      const finished = await finishEnrollment(`${staff.role}:${staff.id}`);
+      if (finished) await persistOperatorModeToDb("member", `${staff.role}:${staff.id}`, finished.slug);
+      return NextResponse.json({
+        success: true,
+        enrollment: null,
+        finished,
+        operatorMode: getOperatorMode(),
+        effectiveMode: getEffectiveMode(),
+        followMember: getFollowMember(),
+        authority: "server-database",
+      });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Could not finish enrollment" }, { status: 503 });
+    }
+  }
+
+  // Starting one needs the guest's name; switching back to Enroll while a
+  // session is open just resumes it.
+  if (body?.mode === "enroll") {
+    try {
+      const open = await loadEnrollment(true);
+      if (!open) {
+        const name = typeof body?.enrollName === "string" ? body.enrollName : "";
+        const member = typeof body?.enrollMember === "string" ? body.enrollMember : null;
+        if (!member && !name.trim()) {
+          return NextResponse.json({ error: "Pick a housemate or name the guest you are enrolling." }, { status: 400 });
+        }
+        await startEnrollment(name, `${staff.role}:${staff.id}`, member);
+      }
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Could not start enrollment" }, { status: 400 });
+    }
   }
 
   // null is a real choice: it hands control back to the detector's suggestion.
@@ -55,10 +113,27 @@ export async function POST(request: Request) {
     );
   }
 
-  setOperatorMode(mode);
-  return NextResponse.json({
-    success: true,
-    operatorMode: getOperatorMode(),
-    effectiveMode: getEffectiveMode(),
-  });
+  // Optional: omitted keeps the current member, null clears it.
+  const followMember = body?.followMember;
+  if (followMember !== undefined && followMember !== null && !isFollowableSlug(followMember)) {
+    return NextResponse.json(
+      { error: `followMember must be null, a guest-* slug, or one of: ${FOLLOWABLE_MEMBERS.map((m) => m.slug).join(", ")}` },
+      { status: 400 },
+    );
+  }
+
+  try {
+    await persistOperatorModeToDb(mode, `${staff.role}:${staff.id}`, followMember);
+    return NextResponse.json({
+      success: true,
+      operatorMode: getOperatorMode(),
+      effectiveMode: getEffectiveMode(),
+      followMember: getFollowMember(),
+      enrollment: await loadEnrollment().catch(() => null),
+      authority: "server-database",
+    });
+  } catch (error) {
+    console.error("[DirectorMode] Failed to persist mode:", error);
+    return NextResponse.json({ error: "Director mode was not saved" }, { status: 503 });
+  }
 }

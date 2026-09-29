@@ -75,6 +75,11 @@ type FormState = {
   signed_date: string;
   produced_date: string;
   pdf_url: string;
+  paper_image_url: string;
+  purity_pct: string;
+  verification_url: string;
+  sha256_checksum: string;
+  raw_telemetry: any;
   notes: string;
   methodology: string;
   chromatogram_sample_ref: string;
@@ -102,6 +107,11 @@ const emptyForm = (): FormState => ({
   signed_date: "",
   produced_date: "",
   pdf_url: "",
+  paper_image_url: "",
+  purity_pct: "",
+  verification_url: "",
+  sha256_checksum: "",
+  raw_telemetry: null,
   notes: "",
   methodology: "",
   chromatogram_sample_ref: "",
@@ -184,6 +194,11 @@ export function LabDataTab({ detail }: LabDataTabProps) {
       signed_date: r.signed_date ?? "",
       produced_date: r.produced_date ?? "",
       pdf_url: r.pdf_url ?? "",
+      paper_image_url: r.paper_image_url ?? "",
+      purity_pct: r.purity_pct != null ? String(r.purity_pct) : "",
+      verification_url: r.verification_url ?? "",
+      sha256_checksum: r.sha256_checksum ?? "",
+      raw_telemetry: r.raw_telemetry ?? null,
       notes: r.notes ?? "",
       methodology: r.methodology ?? "",
       chromatogram_sample_ref: r.chromatogram_sample_ref ?? "",
@@ -236,9 +251,14 @@ export function LabDataTab({ detail }: LabDataTabProps) {
       const json = await safeReadJson(res);
       if (!res.ok || !json?.ok) throw new Error(json?.error?.message ?? "Upload failed");
 
-      setForm((f) => ({ ...f, pdf_url: json.data.url }));
+      const isPdf = file.type === "application/pdf";
+      setForm((f) => ({
+        ...f,
+        pdf_url: isPdf ? json.data.url : f.pdf_url,
+        paper_image_url: !isPdf ? json.data.url : f.paper_image_url,
+      }));
       setUploadedFile({ path: json.data.path, contentType: json.data.contentType, name: file.name });
-      toast.success("File uploaded");
+      toast.success("File uploaded — click 'Parse with AI' to extract specs");
     } catch (err: any) {
       console.error(err);
       toast.error(err?.message ?? "Upload failed");
@@ -273,6 +293,12 @@ export function LabDataTab({ detail }: LabDataTabProps) {
         date_confirmed: d.date_confirmed ?? f.date_confirmed,
         signed_date: d.signed_date ?? f.signed_date,
         produced_date: d.produced_date ?? f.produced_date,
+        purity_pct: d.purity_pct != null ? String(d.purity_pct) : f.purity_pct,
+        verification_url: d.verification_url ?? f.verification_url,
+        sha256_checksum: d.sha256_checksum ?? f.sha256_checksum,
+        paper_image_url: d.paper_image_url ?? f.paper_image_url,
+        pdf_url: d.pdf_url ?? f.pdf_url,
+        raw_telemetry: d.raw_telemetry ?? f.raw_telemetry,
         fentanyl_free: typeof d.fentanyl_free === "boolean" ? d.fentanyl_free : f.fentanyl_free,
         fentanyl_test_method: d.fentanyl_test_method ?? f.fentanyl_test_method,
         lab_director_name: d.lab_director_name ?? f.lab_director_name,
@@ -342,6 +368,11 @@ export function LabDataTab({ detail }: LabDataTabProps) {
         signed_date: form.signed_date || null,
         produced_date: form.produced_date || null,
         pdf_url: form.pdf_url.trim() || null,
+        paper_image_url: form.paper_image_url.trim() || null,
+        purity_pct: form.purity_pct.trim() ? Number(form.purity_pct) : null,
+        verification_url: form.verification_url.trim() || null,
+        sha256_checksum: form.sha256_checksum.trim() || null,
+        raw_telemetry: form.raw_telemetry || {},
         notes: form.notes.trim() || null,
         methodology: form.methodology.trim() || null,
         chromatogram_sample_ref: form.chromatogram_sample_ref.trim() || null,
@@ -716,6 +747,39 @@ export function LabDataTab({ detail }: LabDataTabProps) {
                 placeholder="e.g. Conformity V1"
               />
             </div>
+
+            <div className="space-y-1">
+              {fieldLabel("Headline Purity % (HPLC)")}
+              <Input
+                value={form.purity_pct}
+                onChange={(e) => setForm((f) => ({ ...f, purity_pct: e.target.value }))}
+                placeholder="e.g. 99.42"
+              />
+            </div>
+            <div className="space-y-1">
+              {fieldLabel("Lab Verification Portal Link")}
+              <Input
+                value={form.verification_url}
+                onChange={(e) => setForm((f) => ({ ...f, verification_url: e.target.value }))}
+                placeholder="https://janoshik.com/verify/..."
+              />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              {fieldLabel("Scanned Lab Paper Image URL (PNG / WEBP facsimile)")}
+              <Input
+                value={form.paper_image_url}
+                onChange={(e) => setForm((f) => ({ ...f, paper_image_url: e.target.value }))}
+                placeholder="https://.../research-lab-reports/.../scan.png"
+              />
+            </div>
+            <div className="space-y-1">
+              {fieldLabel("SHA256 Checksum")}
+              <Input
+                value={form.sha256_checksum}
+                onChange={(e) => setForm((f) => ({ ...f, sha256_checksum: e.target.value }))}
+                placeholder="e.g. 4a2b9f..."
+              />
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-6 pt-2 border-t border-[hsl(var(--border))]">
@@ -976,89 +1040,149 @@ export function LabDataTab({ detail }: LabDataTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold flex items-center gap-2">
-          <FlaskConical size={16} />
-          Certificates of Analysis ({reports.length})
-        </h3>
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <FlaskConical size={16} />
+            Batches & Certificates of Analysis ({reports.length})
+          </h3>
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">
+            Multi-batch quality release tracking. Each batch holds its own lab test results, original PDF, and scanned paper facsimile.
+          </p>
+        </div>
         <Button size="sm" onClick={startCreate}>
-          <Plus size={14} className="mr-1" /> Add COA
+          <Plus size={14} className="mr-1" /> Add New Batch COA
         </Button>
       </div>
 
       {loading ? (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading batches…</p>
       ) : reports.length === 0 ? (
         <div className="text-center py-8 border border-dashed border-[hsl(var(--border))] rounded-lg">
           <FlaskConical size={32} className="mx-auto mb-2 text-[hsl(var(--muted-foreground))]" />
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            No COAs yet. Add one to start building the lab-data library for this product.
+            No batch COAs uploaded yet. Click &quot;Add New Batch COA&quot; to upload a lab PDF or scanned image.
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {reports.map((r) => {
             const variant = variants.find((v: any) => v.id === r.variant_id);
+            const purity = r.purity_pct ?? r.conformity_samples?.[0]?.purity_pct ?? null;
+
             return (
-              <div key={r.id} className="rounded-lg border border-[hsl(var(--border))]">
-                <div className="flex items-center gap-3 p-3">
+              <div key={r.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm transition hover:border-[hsl(var(--primary)/0.5)]">
+                <div className="flex items-start justify-between gap-3 p-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold truncate">{r.lab_name}</span>
+                      <span className="font-mono text-sm font-bold text-[hsl(var(--card-foreground))]">
+                        {r.lot_number ? `Lot #${r.lot_number}` : r.coa_number ? `COA #${r.coa_number}` : "Batch"}
+                      </span>
+
+                      {purity && (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.3)] text-[hsl(var(--primary))]">
+                          {purity}% HPLC
+                        </span>
+                      )}
+
+                      <span className="text-xs px-2 py-0.5 rounded-md font-medium bg-[hsl(var(--muted))] text-[hsl(var(--card-foreground))]">
+                        {r.lab_name}
+                      </span>
+
                       {variant && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]">
                           {variant.title}
                         </span>
                       )}
+
                       {r.verified && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                          <ShieldCheck size={11} /> Verified
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] flex items-center gap-1 font-semibold">
+                          <ShieldCheck size={12} /> Verified
                         </span>
                       )}
                       {r.pending && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                          Pending
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--muted)/0.4)] text-[hsl(var(--muted-foreground))]">
+                          Pending Release
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">
-                      {[r.coa_number, r.lot_number && `Lot ${r.lot_number}`, r.date_confirmed]
-                        .filter(Boolean)
-                        .join(" · ") || "No details yet"}
-                    </p>
-                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                      {(r.results?.length ?? 0)} results · {(r.conformity_samples?.length ?? 0)} samples ·{" "}
-                      {(r.stats?.length ?? 0)} stats
-                    </p>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[hsl(var(--muted-foreground))]">
+                      <span>Tested: <strong className="text-[hsl(var(--card-foreground))]">{r.date_confirmed || "Recent"}</strong></span>
+                      {r.coa_number && <span>COA Ref: <strong className="font-mono text-[hsl(var(--card-foreground))]">{r.coa_number}</strong></span>}
+                      {r.access_code && <span>Access Code: <strong className="font-mono text-[hsl(var(--card-foreground))]">{r.access_code}</strong></span>}
+                    </div>
+
+                    {/* Document Status Badges */}
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+                      {r.pdf_url && (
+                        <a
+                          href={r.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-0.5 font-medium text-[hsl(var(--card-foreground))] hover:text-[hsl(var(--primary))] hover:border-[hsl(var(--primary))]"
+                        >
+                          <Download size={11} /> Lab PDF
+                        </a>
+                      )}
+                      {r.paper_image_url && (
+                        <a
+                          href={r.paper_image_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-0.5 font-medium text-[hsl(var(--card-foreground))] hover:text-[hsl(var(--primary))] hover:border-[hsl(var(--primary))]"
+                        >
+                          Scanned Paper PNG
+                        </a>
+                      )}
+                      {r.verification_url && (
+                        <a
+                          href={r.verification_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.08)] px-2 py-0.5 font-medium text-[hsl(var(--primary))] hover:underline"
+                        >
+                          Verify with Lab &rarr;
+                        </a>
+                      )}
+                      <span className="text-[hsl(var(--muted-foreground))]">
+                        {(r.results?.length ?? 0)} analytes · {(r.conformity_samples?.length ?? 0)} samples
+                      </span>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => openQr(r)}
-                    className={`shrink-0 ${
-                      qrOpenId === r.id
-                        ? "text-[hsl(var(--sidebar-primary))]"
-                        : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                    }`}
-                    aria-label="Generate QR code"
-                    title="Generate verification QR code"
-                  >
-                    <QrCode size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => startEdit(r)}
-                    className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] shrink-0"
-                    aria-label="Edit COA"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => remove(r.id)}
-                    className="text-[hsl(var(--muted-foreground))] hover:text-red-500 shrink-0"
-                    aria-label="Delete COA"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openQr(r)}
+                      className={`p-1.5 rounded-md hover:bg-[hsl(var(--muted))] ${
+                        qrOpenId === r.id
+                          ? "text-[hsl(var(--primary))]"
+                          : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                      }`}
+                      aria-label="Generate QR code"
+                      title="Generate verification QR code for vial label"
+                    >
+                      <QrCode size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(r)}
+                      className="p-1.5 rounded-md text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
+                      aria-label="Edit COA"
+                      title="Edit batch release data"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(r.id)}
+                      className="p-1.5 rounded-md text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--muted))]"
+                      aria-label="Delete COA"
+                      title="Delete this batch record"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
 
                 {qrOpenId === r.id && (

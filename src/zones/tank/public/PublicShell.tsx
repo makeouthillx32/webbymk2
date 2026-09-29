@@ -38,7 +38,7 @@ export function PublicShell({ children }: { children: ReactNode }) {
               Cameras
             </Link>
             <Link
-              href="/rooms/director"
+              href="/"
               className="rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
             >
               Director

@@ -13,6 +13,7 @@ import {
   Sparkles,
   ChevronDown,
   Lock,
+  UserPlus,
 } from "lucide-react";
 import { ACTIVE_THEME } from "../theme";
 import { ChromePanel } from "../public/components/ChromePanel";
@@ -23,6 +24,12 @@ import {
   type PlatformUserSummary,
   type PromotableRole,
 } from "../server/userRoles";
+import {
+  createTankUser,
+  resendVerificationEmail,
+  sendPasswordResetEmail,
+  setUserEmailVerified,
+} from "../server/userAccountAdmin";
 
 export function UserDirectoryPanel({
   operatorRole = "admin",
@@ -41,6 +48,9 @@ export function UserDirectoryPanel({
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [draft, setDraft] = useState({ email: "", password: "", displayName: "", invite: true });
 
   const loadUsers = async () => {
     setLoading(true);
@@ -52,6 +62,51 @@ export function UserDirectoryPanel({
   useEffect(() => {
     void loadUsers();
   }, []);
+
+  /**
+   * Run one account action against one user.
+   *
+   * Everything here either sends mail or changes what an account can do, so it
+   * is one user at a time with the outcome stated plainly — never a silent
+   * success, which on these actions is indistinguishable from a no-op.
+   */
+  const runAction = async (
+    userId: string | null,
+    label: string,
+    action: () => Promise<{ success: boolean; error?: string }>,
+  ) => {
+    if (busyUserId) return;
+    setBusyUserId(userId ?? "global");
+    setNotice(null);
+    try {
+      const res = await action();
+      setNotice(
+        res.success
+          ? { tone: "ok", text: `${label} — done.` }
+          : { tone: "bad", text: `${label} failed: ${res.error ?? "unknown error"}` },
+      );
+      if (res.success) await loadUsers();
+    } catch {
+      setNotice({ tone: "bad", text: `${label} failed.` });
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const toggleVerified = (user: PlatformUserSummary) => {
+    // OAuth accounts are verified BY the provider. Flipping the flag here would
+    // claim something Tank does not control and the provider would reassert.
+    if (user.authProvider !== "email") {
+      setNotice({
+        tone: "bad",
+        text: `${user.displayName} signed in with ${user.authProvider} — that provider owns the verification.`,
+      });
+      return;
+    }
+    void runAction(user.id, user.emailVerified ? "Un-verify" : "Verify", () =>
+      setUserEmailVerified(user.id, !user.emailVerified),
+    );
+  };
 
   const handleRoleChange = async (userId: string, newRole: PromotableRole) => {
     if (operatorRole !== "admin" || busyUserId) return;
@@ -94,6 +149,16 @@ export function UserDirectoryPanel({
           </div>
 
           <div className="flex items-center gap-2">
+            {operatorRole === "admin" ? (
+              <ConsoleButton
+                variant={showCreate ? "orange" : "gray"}
+                onClick={() => setShowCreate((open) => !open)}
+                className="!py-1 text-xs"
+              >
+                <UserPlus className="h-3 w-3" />
+                New account
+              </ConsoleButton>
+            ) : null}
             <ConsoleButton
               variant="gray"
               onClick={loadUsers}
@@ -105,6 +170,84 @@ export function UserDirectoryPanel({
             </ConsoleButton>
           </div>
         </div>
+
+        {notice ? (
+          <p
+            className={`rounded border px-3 py-2 text-[11px] font-bold ${
+              notice.tone === "ok"
+                ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                : "border-red-400 bg-red-50 text-red-900"
+            }`}
+          >
+            {notice.text}
+          </p>
+        ) : null}
+
+        {showCreate && operatorRole === "admin" ? (
+          <div className="rounded border border-black/20 bg-black/5 p-3 space-y-2.5">
+            <p className="text-[10px] font-black uppercase tracking-wider text-[#241f14]">
+              Create a Tank account
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <input
+                value={draft.email}
+                onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+                placeholder="email@example.com"
+                className="rounded border border-black/25 bg-white px-2 py-1.5 text-[11px]"
+              />
+              <input
+                value={draft.displayName}
+                onChange={(e) => setDraft({ ...draft, displayName: e.target.value })}
+                placeholder="Display name (optional)"
+                className="rounded border border-black/25 bg-white px-2 py-1.5 text-[11px]"
+              />
+              <input
+                type="password"
+                value={draft.password}
+                onChange={(e) => setDraft({ ...draft, password: e.target.value })}
+                disabled={draft.invite}
+                placeholder={draft.invite ? "They choose their own" : "Password (min 8)"}
+                className="rounded border border-black/25 bg-white px-2 py-1.5 text-[11px] disabled:opacity-50"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-[10px] font-bold text-[#4c4630]">
+              <input
+                type="checkbox"
+                checked={draft.invite}
+                onChange={(e) => setDraft({ ...draft, invite: e.target.checked })}
+              />
+              {/* Invite is the default because it is the only path where the
+                  person proves they own the inbox and staff never handle their
+                  password. */}
+              <span>
+                Email an invite and let them set their own password (recommended). Untick to
+                create it pre-verified with a password you set.
+              </span>
+            </label>
+            <ConsoleButton
+              variant="orange"
+              disabled={busyUserId !== null || !draft.email.trim()}
+              onClick={() =>
+                void runAction(null, draft.invite ? "Invite" : "Create account", async () => {
+                  const res = await createTankUser({
+                    email: draft.email,
+                    password: draft.invite ? undefined : draft.password,
+                    displayName: draft.displayName,
+                    sendInvite: draft.invite,
+                  });
+                  if (res.success) {
+                    setDraft({ email: "", password: "", displayName: "", invite: true });
+                    setShowCreate(false);
+                  }
+                  return res;
+                })
+              }
+              className="!py-1 text-xs"
+            >
+              {draft.invite ? "Send invite" : "Create account"}
+            </ConsoleButton>
+          </div>
+        ) : null}
 
         {/* Presence Summary Strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -127,6 +270,16 @@ export function UserDirectoryPanel({
               {users.filter((u) => u.level >= 5).length}
             </p>
             <p className="text-[9px] font-black uppercase text-slate-500">VIP / Veteran</p>
+          </div>
+          <div className="rounded border border-black/20 bg-black/5 p-2 text-center">
+            <p className="text-lg font-black text-emerald-600">
+              {users.filter((u) => u.seasonPassTier).length}
+              <span className="text-[10px] text-blue-600">
+                {" "}
+                ({users.filter((u) => u.seasonPassTier === "xl").length} XL)
+              </span>
+            </p>
+            <p className="text-[9px] font-black uppercase text-slate-500">Paying Members</p>
           </div>
         </div>
 
@@ -245,6 +398,20 @@ export function UserDirectoryPanel({
                       >
                         {user.role}
                       </span>
+                      {user.seasonPassTier && (
+                        <span
+                          className={`ml-1 rounded px-1.5 py-0.5 text-[9px] font-black uppercase text-white ${
+                            user.seasonPassTier === "xl" ? "bg-blue-600" : "bg-emerald-600"
+                          }`}
+                          title={
+                            user.seasonPassExpiresAt
+                              ? `Renews ${new Date(user.seasonPassExpiresAt).toLocaleDateString()}`
+                              : "No expiry recorded"
+                          }
+                        >
+                          {user.seasonPassTier === "xl" ? "PASS XL" : "PASS"}
+                        </span>
+                      )}
                     </td>
                     <td className="p-2.5">
                       <span className="font-bold text-[#241f14]">Lv. {user.level}</span>{" "}
@@ -255,18 +422,81 @@ export function UserDirectoryPanel({
                     </td>
                     {operatorRole === "admin" && (
                       <td className="p-2.5 text-right">
-                        <select
-                          disabled={busyUserId === user.id}
-                          value={user.role}
-                          onChange={(e) =>
-                            handleRoleChange(user.id, e.target.value as PromotableRole)
-                          }
-                          className="rounded border border-black/30 bg-white px-2 py-1 text-[10px] font-black uppercase text-[#241f14] focus:outline-none"
-                        >
-                          <option value="member">Member</option>
-                          <option value="moderator">Moderator</option>
-                          <option value="admin">Admin</option>
-                        </select>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            disabled={busyUserId === user.id}
+                            onClick={() => toggleVerified(user)}
+                            title={
+                              user.emailVerified
+                                ? "Mark this address unverified"
+                                : "Mark this address verified without an email round-trip"
+                            }
+                            className={`rounded border px-2 py-1 text-[9px] font-black uppercase disabled:opacity-40 ${
+                              user.emailVerified
+                                ? "border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                                : "border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                            }`}
+                          >
+                            {user.emailVerified ? "Unverify" : "Verify"}
+                          </button>
+
+                          {/* Only for accounts stuck unverified — the case this
+                              exists for is a viewer whose link never worked. */}
+                          {!user.emailVerified && user.email ? (
+                            <button
+                              type="button"
+                              disabled={busyUserId === user.id}
+                              onClick={() =>
+                                void runAction(user.id, "Resend verification", () =>
+                                  resendVerificationEmail(user.email as string),
+                                )
+                              }
+                              title="Send the confirmation email again"
+                              className="rounded border border-black/30 bg-white px-2 py-1 text-[9px] font-black uppercase text-[#241f14] hover:bg-black/5 disabled:opacity-40"
+                            >
+                              Resend
+                            </button>
+                          ) : null}
+
+                          {user.email ? (
+                            <button
+                              type="button"
+                              disabled={busyUserId === user.id}
+                              onClick={() => {
+                                // Confirmed because it puts real mail in a real
+                                // person's inbox, which is not undoable.
+                                if (
+                                  !window.confirm(
+                                    `Send a password reset email to ${user.email}?`,
+                                  )
+                                ) {
+                                  return;
+                                }
+                                void runAction(user.id, "Password reset", () =>
+                                  sendPasswordResetEmail(user.email as string),
+                                );
+                              }}
+                              title="Email this person a password reset link"
+                              className="rounded border border-black/30 bg-white px-2 py-1 text-[9px] font-black uppercase text-[#241f14] hover:bg-black/5 disabled:opacity-40"
+                            >
+                              Reset PW
+                            </button>
+                          ) : null}
+
+                          <select
+                            disabled={busyUserId === user.id}
+                            value={user.role}
+                            onChange={(e) =>
+                              handleRoleChange(user.id, e.target.value as PromotableRole)
+                            }
+                            className="rounded border border-black/30 bg-white px-2 py-1 text-[10px] font-black uppercase text-[#241f14] focus:outline-none"
+                          >
+                            <option value="member">Member</option>
+                            <option value="moderator">Moderator</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </div>
                       </td>
                     )}
                   </tr>

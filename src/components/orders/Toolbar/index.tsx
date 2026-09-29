@@ -13,6 +13,7 @@ interface OrderToolbarProps {
   fulfillmentFilter: FulfillmentStatus | 'all';
   paymentFilter: PaymentStatus | 'all';
   customerTypeFilter: CustomerTypeFilter;
+  hideCustomerType?: boolean;
   searchQuery: string;
   onFulfillmentFilter: (v: FulfillmentStatus | 'all') => void;
   onPaymentFilter: (v: PaymentStatus | 'all') => void;
@@ -26,6 +27,7 @@ export function OrderToolbar({
   fulfillmentFilter,
   paymentFilter,
   customerTypeFilter,
+  hideCustomerType = false,
   searchQuery,
   onFulfillmentFilter,
   onPaymentFilter,
@@ -76,18 +78,21 @@ export function OrderToolbar({
           <option value="refunded">Refunded</option>
         </select>
 
-        {/* Customer type filter — now includes POS */}
-        <select
-          value={customerTypeFilter}
-          onChange={(e) => onCustomerTypeFilter(e.target.value as CustomerTypeFilter)}
-          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-black/10"
-        >
-          <option value="all">All Orders</option>
-          <option value="member">Members ★</option>
-          <option value="guest">Guests</option>
-          <option value="pos">In-Person (POS) 🛍</option>
-          <option value="research">Research 🧪</option>
-        </select>
+        {/* Customer type filter — now includes POS. Hidden on the Labs tab,
+            where every row is already a research order. */}
+        {!hideCustomerType && (
+          <select
+            value={customerTypeFilter}
+            onChange={(e) => onCustomerTypeFilter(e.target.value as CustomerTypeFilter)}
+            className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-black/10"
+          >
+            <option value="all">All Orders</option>
+            <option value="member">Members ★</option>
+            <option value="guest">Guests</option>
+            <option value="pos">In-Person (POS) 🛍</option>
+            <option value="research">Research 🧪</option>
+          </select>
+        )}
 
         {/* Batch actions */}
         {selectedCount > 0 && (

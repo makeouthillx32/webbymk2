@@ -159,8 +159,7 @@ export async function getChatAttachmentStatus(imageId: string | number): Promise
       .from("tank_chat_attachments")
       .select("id, file_path, status, expires_at")
       .eq("id", cleanId)
-      .maybeSingle()
-      .abortSignal(AbortSignal.timeout(500));
+      .maybeSingle();
 
     if (!data) {
       // Fallback url check

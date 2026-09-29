@@ -24,13 +24,10 @@ export type ZoneLayoutConfig = {
 export const ZONE_LAYOUTS: Record<string, ZoneLayoutConfig> = {
   blog:     { layoutType: "landing", appFooter: "none" },
   shop:     { layoutType: "shop",    appFooter: "none" },
-  running:  { layoutType: "minimal", appFooter: "none" },
-  rappers:  { layoutType: "minimal", appFooter: "none" },
-  onemore:  { layoutType: "app", appFooter: "none" },
   logs:     { layoutType: "minimal", appFooter: "none" },
-  logz:     { layoutType: "minimal", appFooter: "none" },
   docs:     { layoutType: "app", appFooter: "none" },
   labs:     { layoutType: "shop", appFooter: "none" },
   tank:     { layoutType: "minimal", appFooter: "none" },
   status:   { layoutType: "minimal", appFooter: "none" },
+  "unenter-pw": { layoutType: "app", appFooter: "none" },
 };

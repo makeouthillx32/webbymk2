@@ -89,19 +89,20 @@ export function LandingSkeleton() {
 function SquareCardSkeleton() {
   return (
     <div className="flex-shrink-0 w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]">
-      <div className="aspect-square bg-[var(--muted)] animate-pulse rounded-lg" />
+      <div className="aspect-square bg-muted/40 animate-pulse rounded-xl" />
     </div>
   );
 }
 
 function PromoCardSkeleton() {
   return (
-    <div className="aspect-[4/3] bg-[var(--muted)] animate-pulse rounded-lg p-8">
+    <div className="aspect-[4/3] bg-muted/30 border border-border/40 animate-pulse rounded-2xl p-8 flex flex-col justify-between">
       <div className="space-y-4">
-        <div className="h-8 w-48 bg-background/30 rounded" />
-        <div className="h-6 w-64 bg-background/30 rounded" />
-        <div className="h-6 w-40 bg-background/30 rounded" />
+        <div className="h-6 w-28 bg-muted/60 rounded-full" />
+        <div className="h-8 w-48 bg-muted/60 rounded-lg" />
+        <div className="h-5 w-64 bg-muted/50 rounded" />
       </div>
+      <div className="h-5 w-32 bg-muted/50 rounded-lg" />
     </div>
   );
 }
@@ -109,15 +110,15 @@ function PromoCardSkeleton() {
 function ProductCardSkeleton() {
   return (
     <div className="space-y-3">
-      {/* Image */}
-      <div className="aspect-[3/4] bg-[var(--muted)] animate-pulse rounded-lg" />
+      {/* Square Image matching SmartProductImage */}
+      <div className="aspect-square bg-muted/30 border border-border/40 animate-pulse rounded-xl" />
       
       {/* Title */}
-      <div className="h-4 w-full bg-[var(--muted)] animate-pulse rounded" />
-      <div className="h-4 w-3/4 bg-[var(--muted)] animate-pulse rounded" />
+      <div className="h-4 w-full bg-muted/40 animate-pulse rounded" />
+      <div className="h-3 w-1/2 bg-muted/30 animate-pulse rounded" />
       
       {/* Price */}
-      <div className="h-5 w-20 bg-[var(--muted)] animate-pulse rounded" />
+      <div className="h-4 w-16 bg-muted/40 animate-pulse rounded" />
     </div>
   );
 }

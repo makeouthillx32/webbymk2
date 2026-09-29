@@ -13,6 +13,8 @@ export type ConsoleButtonProps = {
   type?: "button" | "submit";
   disabled?: boolean;
   ariaLabel?: string;
+  /** Native tooltip. Distinct from ariaLabel: this one is visible on hover. */
+  title?: string;
   href?: string;
 };
 
@@ -29,6 +31,7 @@ export function ConsoleButton({
   type = "button",
   disabled = false,
   ariaLabel,
+  title,
   href,
 }: ConsoleButtonProps) {
   const bgImage =
@@ -48,9 +51,12 @@ export function ConsoleButton({
     backgroundImage: `url(${bgImage})`,
     backgroundSize: "100% 100%",
     backgroundRepeat: "no-repeat",
-    color: active || variant !== "gray" ? "#241f14" : "#2e2b26",
-    fontFamily: ACTIVE_THEME.fonts.label,
+    color: active || variant !== "gray" ? "var(--tank-color-text-dark, #241f14)" : "#2e2b26",
+    fontFamily: `var(--tank-font-primary, ${ACTIVE_THEME.fonts.label})`,
     textShadow: "0 1px 0 rgba(255,255,255,.4)",
+    borderRadius: "var(--tank-border-radius, 9999px)",
+    transitionDuration: "var(--tank-anim-duration, 150ms)",
+    boxShadow: active ? "var(--tank-anim-glow, none)" : undefined,
   };
 
   const sharedClasses = `relative inline-flex items-center justify-center px-3 py-1.5 text-xs font-black uppercase tracking-wider transition-all select-none focus:outline-none ${
@@ -61,7 +67,14 @@ export function ConsoleButton({
 
   if (href) {
     return (
-      <Link href={href} aria-label={ariaLabel} className={sharedClasses} style={sharedStyle}>
+      <Link
+        href={href}
+        onClick={onClick}
+        aria-label={ariaLabel}
+        title={title}
+        className={sharedClasses}
+        style={sharedStyle}
+      >
         {content}
       </Link>
     );
@@ -73,6 +86,7 @@ export function ConsoleButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
+      title={title}
       className={sharedClasses}
       style={sharedStyle}
     >

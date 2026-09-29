@@ -1,0 +1,13 @@
+{
+  "name": "tank-program-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Renders the Tank Director programme browser source in a virtual display + sound card and publishes it as one continuous RTMP feed into Tank's own obs/director ingest, so consumers that only accept a played-back URL (not a browser source) have one. See docs/tank-director-program-output.md.",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

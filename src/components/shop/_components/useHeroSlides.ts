@@ -23,6 +23,19 @@ export interface HeroSlide {
   mobile_alt_text: string | null;
   text_alignment: "left" | "center" | "right";
   text_color: "dark" | "light";
+  /** Theme token for the overlay text. null = black/white from text_color. */
+  text_color_token: string | null;
+  // Overlay controls (2026-09-05). show_overlay defaults false in the DB, so a
+  // slide stays image-only until an editor opts it in.
+  show_overlay: boolean | null;
+  cta_alignment: "inherit" | "left" | "center" | "right" | null;
+  cta_underline: boolean | null;
+  cta_style: "button" | "text" | null;
+  overlay_position: "top" | "center" | "bottom" | null;
+  overlay_pad_x: number | null;
+  overlay_pad_y: number | null;
+  overlay_opacity: number | null;
+  target_device?: "all" | "desktop" | "mobile" | null;
   // Metadata
   blurhash: string | null;
   width: number | null;
@@ -88,6 +101,23 @@ export function useHeroSlides(page: string = "shop") {
             mobile_alt_text: slide.mobile_alt_text ?? slide.alt_text ?? null,
             text_alignment: slide.text_alignment,
             text_color: slide.text_color,
+            // Dropped here until 2026-09-07: the column loaded from the DB
+            // and was thrown away, so the colour picker was a no-op live.
+            text_color_token: slide.text_color_token ?? null,
+            // Without these three the overlay could never render — the columns
+            // would load from the DB and be dropped on the floor right here.
+            show_overlay: slide.show_overlay ?? false,
+            cta_alignment: slide.cta_alignment ?? "inherit",
+            cta_underline: slide.cta_underline ?? false,
+            // Without these the storefront would silently ignore the position
+            // and style you set in the editor — the columns would load and be
+            // dropped right here, exactly like show_overlay nearly was.
+            cta_style: slide.cta_style ?? "button",
+            overlay_position: slide.overlay_position ?? "center",
+            overlay_pad_x: slide.overlay_pad_x ?? 24,
+            overlay_pad_y: slide.overlay_pad_y ?? 24,
+            overlay_opacity: slide.overlay_opacity ?? null,
+            target_device: slide.target_device ?? "all",
             blurhash: slide.blurhash,
             width: slide.width,
             height: slide.height,

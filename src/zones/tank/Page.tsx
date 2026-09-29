@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
 import {
   TankExperience,
-  type TankInitialLocation,
 } from "./public/TankExperience";
+import {
+  DEFAULT_TANK_METADATA,
+  type TankInitialLocation,
+} from "./tankLocation";
 import {
   getActiveMissions,
   getActiveSeason,
+  getHouseDayStartedAt,
   getArchives,
   getClans,
   getCurrentTankProfile,
@@ -17,12 +21,9 @@ import {
 import { getCameraDirectorySnapshot } from "./server/receiverManager";
 import { toPublicCameraDirectory } from "./server/publicCameraProjection";
 import { getServerDirectorState } from "./server/serverDirectorEngine";
+import { getAllRoomPortals } from "./server/roomPortalsCatalog";
 
-export const metadata: Metadata = {
-  title: "Tank | Live rooms, cameras, and community",
-  description:
-    "Watch the director feed, move between public cameras, and join live rooms on Tank.",
-};
+export const metadata: Metadata = DEFAULT_TANK_METADATA;
 
 // Nothing this page reads forces Next.js's automatic dynamic-rendering
 // detection on its own (no cookies()/headers() call sits directly in this
@@ -62,13 +63,19 @@ function withDeadline<T>(promise: Promise<T>, fallback: NoInfer<T>, ms = 2500): 
 // and gamification state server-side so video players mount and start buffering
 // instantly on the very first HTML render without waiting for client fetches.
 export default async function TankPage({
-  initialLocation,
+  // All Rooms, not Director. This is the server-rendered default for anyone
+  // with no saved view — a new visitor, a new tab, a cleared browser. Landing
+  // in a single directed feed hides the other six rooms behind a click, and
+  // it was also overriding the restored view on the client.
+  initialLocation = { mode: "grid" },
 }: {
   initialLocation?: TankInitialLocation;
 } = {}) {
+  const resolvedLocation = initialLocation;
   const [
     profile,
     season,
+    houseDayStartedAt,
     missions,
     leaderboard,
     clans,
@@ -78,9 +85,11 @@ export default async function TankPage({
     tokenTransactions,
     cameraSnapshotRaw,
     directorState,
+    roomPortals,
   ] = await Promise.all([
     withDeadline(getCurrentTankProfile().catch(() => null), null),
     withDeadline(getActiveSeason().catch(() => null), null),
+    withDeadline(getHouseDayStartedAt().catch(() => null), null),
     withDeadline(getActiveMissions().catch(() => []), []),
     withDeadline(getLeaderboard(10).catch(() => []), []),
     withDeadline(getClans().catch(() => []), []),
@@ -93,6 +102,7 @@ export default async function TankPage({
     // client refreshes it moments later anyway.
     withDeadline(getCameraDirectorySnapshot().catch(() => null), null, 2000),
     withDeadline(getServerDirectorState().catch(() => null), null, 2000),
+    withDeadline(getAllRoomPortals().catch(() => []), [], 2000),
   ]);
 
   const initialCameraSnapshot = cameraSnapshotRaw
@@ -108,11 +118,13 @@ export default async function TankPage({
         }}
       />
       <TankExperience
-        initialLocation={initialLocation}
+        initialLocation={resolvedLocation}
         initialCameraSnapshot={initialCameraSnapshot}
         initialProfile={profile}
         initialDirectorState={directorState}
+        initialRoomPortals={roomPortals}
         season={season}
+        houseDayStartedAt={houseDayStartedAt}
         missions={missions}
         leaderboard={leaderboard}
         clans={clans}

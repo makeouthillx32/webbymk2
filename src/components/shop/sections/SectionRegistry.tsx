@@ -9,6 +9,8 @@ import ResearchProductsGridSection from "./ResearchProductsGridSection";
 import FeaturedResearchCarouselSection from "./FeaturedResearchCarouselSection";
 import FamilyHighlightSection from "./FamilyHighlightSection";
 import StaticHtmlSection from "./StaticHtmlSection";
+import Hero3DSection from "./Hero3DSection";
+import FooterChromeSection from "./FooterChromeSection";
 
 export type SectionType =
   | "top_banner"
@@ -18,6 +20,8 @@ export type SectionType =
   | "research_products_grid"
   | "featured_research_carousel"
   | "family_highlight"
+  | "hero_3d"
+  | "footer_chrome"
   | "static_html"
   | "testimonials"
   | "instagram_feed";
@@ -46,4 +50,6 @@ export const SectionComponents: Record<string, SectionComponent> = {
   featured_research_carousel: FeaturedResearchCarouselSection,
   family_highlight: FamilyHighlightSection,
   static_html: StaticHtmlSection,
+  hero_3d: Hero3DSection,
+  footer_chrome: FooterChromeSection,
 };

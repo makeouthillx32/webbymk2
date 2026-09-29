@@ -25,17 +25,20 @@ export async function sendTankWelcomeEmail(userId: string): Promise<{ sent: bool
   const identity = getMailIdentity("tank");
   const subject = "Thanks for watching Tank";
 
-  // Same warm amber-on-cream palette as the platform's default theme
-  // (src/lib/mail/theme.ts's FALLBACK_PALETTE) — Tank doesn't have its own
-  // stored theme_id to resolve, so this is hand-matched to it rather than
-  // resolved dynamically, for the same look every recipient gets.
+  // TANK'S palette, not the platform's.
+  //
+  // This used to borrow the shop's warm amber-on-cream default, so a new viewer
+  // got two emails seconds apart in two unrelated visual identities — a dark
+  // orange-on-black confirmation and a cream shop receipt — and reasonably
+  // concluded something was broken. Tank is black and #ff4d00 everywhere else
+  // it appears; the email is now the same brand as the site it links to.
   const palette = {
-    primary: "#b5561f",
-    background: "#fbf8f4",
-    card: "#f7f1e9",
-    border: "#d4c4b0",
-    foreground: "#2b2624",
-    mutedForeground: "#666057",
+    primary: "#ff4d00",
+    background: "#0a0a0b",
+    card: "#141416",
+    border: "#2a2a2e",
+    foreground: "#f4f4f5",
+    mutedForeground: "#8b8b93",
   };
 
   const text = `Hey ${name},
@@ -53,8 +56,8 @@ https://tank.unenter.live
       <table role="presentation" width="100%" style="max-width: 480px; margin: 0 auto; border-collapse: collapse;">
         <tr>
           <td style="background: ${palette.primary}; border-radius: 12px 12px 0 0; padding: 20px 28px;">
-            <span style="color: ${palette.background}; font-size: 13px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;">
-              Tank
+            <span style="color: #ffffff; font-size: 13px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;">
+              Tank Live
             </span>
           </td>
         </tr>
@@ -68,9 +71,9 @@ https://tank.unenter.live
               there's a lot more coming.
             </p>
             <a href="https://tank.unenter.live"
-               style="display: inline-block; background: ${palette.primary}; color: ${palette.background};
+               style="display: inline-block; background: ${palette.primary}; color: #ffffff;
                       padding: 11px 22px; border-radius: 8px; text-decoration: none;
-                      font-weight: 600; font-size: 14px; margin-top: 4px;">
+                      font-weight: 700; font-size: 14px; margin-top: 4px;">
               Open Tank
             </a>
             <p style="margin: 24px 0 0; font-size: 12px; line-height: 1.5; color: ${palette.mutedForeground};">

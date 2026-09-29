@@ -32,33 +32,95 @@ import type { BillingCycle, SeasonPassOverlayProps, SeasonPassTier } from "./typ
 import { ChromePanel } from "../ChromePanel";
 import { ConsoleButton } from "../ConsoleButton";
 import { ACTIVE_THEME } from "../../../theme";
+import { TANK_PRODUCTS } from "../../../tankProducts";
+import { createTankSubscriptionCheckout } from "../../../server/tankStore";
+import { TankEmbeddedCheckout } from "../TankEmbeddedCheckout";
 
 export function SeasonPassOverlay({
   isOpen,
   onClose,
   variant = "get",
   onSelectTier,
+  currentTier = null,
   onOpenProducerLounge,
 }: SeasonPassOverlayProps) {
   const [billing, setBilling] = useState<BillingCycle>("monthly");
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [checkout, setCheckout] = useState<{ clientSecret: string; title: string } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSelect = (tier: SeasonPassTier) => {
-    if (onSelectTier) {
-      onSelectTier(tier, billing);
-    } else {
-      console.log(`[SeasonPass] Selected ${tier} (${billing})`);
+  const handleSelect = async (tier: SeasonPassTier) => {
+    if (checkoutBusy) return;
+    // Buying a tier you already hold opens a SECOND Stripe subscription and
+    // bills it alongside the first. The UI below relabels these buttons, but
+    // the guard lives here too: a stale render must not be able to charge.
+    if (currentTier === tier) return;
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    try {
+      if (onSelectTier) {
+        await onSelectTier(tier, billing);
+        return;
+      }
+      const result = await createTankSubscriptionCheckout(
+        tier === "xl" ? "season_pass_xl" : "season_pass",
+      );
+      if (!result.success) {
+        setCheckoutError("error" in result ? result.error : "Could not open checkout.");
+        return;
+      }
+      // Mounted in place instead of window.location.assign(): the viewer stays
+      // in Tank, the stream keeps playing behind the overlay, and there is no
+      // trip out to a Stripe-hosted page and back on a query string.
+      setCheckout({
+        clientSecret: result.clientSecret,
+        title: tier === "xl" ? "Season Pass XL" : "Season Pass",
+      });
+    } catch {
+      setCheckoutError("Could not connect to checkout. Please try again.");
+    } finally {
+      setCheckoutBusy(false);
     }
   };
 
   const isRequired = variant === "required";
+  const ownsStandard = currentTier === "standard";
+  const ownsXl = currentTier === "xl";
+  const ownsAny = ownsStandard || ownsXl;
+  // Not just the tier they own: createTankSubscriptionCheckout refuses ANY
+  // second subscription while one is active, so offering the other tier just
+  // dead-ends in a red error. Upgrade/downgrade needs real subscription
+  // management before these come back to life.
   const isSixMonths = billing === "six_months";
 
-  const standardPrice = isSixMonths ? "$50.00" : "$10.00";
+  const standardPrice = `$${(TANK_PRODUCTS.season_pass.amountCents / 100).toFixed(2)}`;
   const standardSubtext = isSixMonths ? "per 6 months (Save 17%)" : "per month";
-  const xlPrice = isSixMonths ? "$175.00" : "$35.00";
+  const xlPrice = `$${(TANK_PRODUCTS.season_pass_xl.amountCents / 100).toFixed(2)}`;
   const xlSubtext = isSixMonths ? "per 6 months (Save 17%)" : "per month";
+
+  // Checkout REPLACES the tier picker rather than stacking under it. Leaving
+  // the buy buttons live behind an open payment form invites a second session
+  // for a different tier while the first is still collecting a card.
+  if (checkout) {
+    return (
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Season Pass checkout"
+      >
+        <div className="w-full max-w-[540px] my-auto" onClick={(e) => e.stopPropagation()}>
+          <TankEmbeddedCheckout
+            clientSecret={checkout.clientSecret}
+            title={checkout.title}
+            onClose={() => setCheckout(null)}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -113,7 +175,11 @@ export function SeasonPassOverlay({
                 className="relative z-10 text-2xl sm:text-3xl font-black uppercase text-[#241f14] leading-tight tracking-tight drop-shadow"
                 style={{ fontFamily: ACTIVE_THEME.fonts.labelWide || ACTIVE_THEME.fonts.label }}
               >
-                {isRequired ? "Season Pass Required!" : "Get a Season Pass!"}
+                {isRequired
+                  ? "Season Pass Required!"
+                  : ownsAny
+                    ? "Your Season Pass"
+                    : "Get a Season Pass!"}
               </h1>
               <p className="relative z-10 text-xs font-bold text-[#5a5442] mt-0.5">
                 Unlock 24/7 interactive controls, monthly rewards, and live house perks. Inventory stays open to every account.
@@ -136,6 +202,8 @@ export function SeasonPassOverlay({
                 </button>
                 <button
                   type="button"
+                  disabled
+                  title="Six-month billing is not available yet"
                   onClick={() => setBilling("six_months")}
                   className={`rounded-lg px-4 py-1.5 text-xs font-black uppercase transition-all flex items-center gap-1.5 ${
                     billing === "six_months"
@@ -145,24 +213,27 @@ export function SeasonPassOverlay({
                 >
                   <span>6 Months</span>
                   <span className="rounded bg-orange-500 px-1 py-0.2 text-[8px] font-black text-black">
-                    SAVE 17%
+                    COMING SOON
                   </span>
                 </button>
               </div>
             </div>
 
+            {checkoutError && <p role="alert" className="text-sm font-bold text-red-700">{checkoutError}</p>}
+            {checkoutBusy && <p role="status" className="text-sm font-bold text-[#241f14]">Opening secure checkout…</p>}
             {/* ═══════════ TWO COMPARISON TIER CARDS ═══════════ */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 items-stretch">
+            <fieldset disabled={checkoutBusy} className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 items-stretch">
               {/* ── TIER 1: STANDARD PASS ── */}
               <div className="flex flex-col rounded-xl bg-white/75 border-2 border-black/20 p-3.5 shadow-md hover:border-orange-500/60 hover:shadow-xl transition-all duration-200 group">
                 {/* Header Action Button */}
                 <button
                   type="button"
                   onClick={() => handleSelect("standard")}
+                  disabled={ownsAny}
                   className="w-full rounded-lg bg-gradient-to-b from-[#f26d4b] to-[#d64b27] hover:from-[#f57a5b] hover:to-[#e05430] py-2 text-center text-xs font-black uppercase tracking-wider text-white shadow-md border-t border-white/40 active:translate-y-0.5 transition"
                   style={{ fontFamily: ACTIVE_THEME.fonts.label }}
                 >
-                  Season Pass
+                  {ownsStandard ? "Your Plan" : "Season Pass"}
                 </button>
 
                 {/* Price Display */}
@@ -191,7 +262,7 @@ export function SeasonPassOverlay({
                   </li>
                   <li className="flex items-center gap-1.5">
                     <Coins className="h-3.5 w-3.5 shrink-0 text-orange-600" />
-                    <span>100 Tokens / Month</span>
+                    <span>{TANK_PRODUCTS.season_pass.monthlyTokens} Tokens / Month</span>
                   </li>
                   <li className="flex items-center gap-1.5">
                     <Trophy className="h-3.5 w-3.5 shrink-0 text-orange-600" />
@@ -206,9 +277,10 @@ export function SeasonPassOverlay({
                 <button
                   type="button"
                   onClick={() => handleSelect("standard")}
+                  disabled={ownsAny}
                   className="mt-3 w-full rounded bg-black/10 hover:bg-black/20 py-1.5 text-center text-xs font-bold text-[#241f14] transition"
                 >
-                  Select Standard
+                  {ownsStandard ? "Current Plan" : ownsAny ? "Manage Coming Soon" : "Select Standard"}
                 </button>
               </div>
 
@@ -223,6 +295,7 @@ export function SeasonPassOverlay({
                 <button
                   type="button"
                   onClick={() => handleSelect("xl")}
+                  disabled={ownsAny}
                   className="w-full rounded-lg bg-gradient-to-b from-[#5594d4] to-[#2563eb] hover:from-[#65a1de] hover:to-[#3b82f6] py-2 text-center text-xs font-black uppercase tracking-wider text-white shadow-md border-t border-white/40 active:translate-y-0.5 transition flex items-center justify-center gap-1"
                   style={{ fontFamily: ACTIVE_THEME.fonts.label }}
                 >
@@ -256,7 +329,7 @@ export function SeasonPassOverlay({
                   </li>
                   <li className="flex items-center gap-1.5">
                     <Coins className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-                    <span>350 Tokens / Month</span>
+                    <span>{TANK_PRODUCTS.season_pass_xl.monthlyTokens} Tokens / Month</span>
                   </li>
                   <li className="flex items-center gap-1.5">
                     <Trophy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
@@ -275,12 +348,13 @@ export function SeasonPassOverlay({
                 <button
                   type="button"
                   onClick={() => handleSelect("xl")}
+                  disabled={ownsAny}
                   className="mt-3 w-full rounded bg-blue-600 hover:bg-blue-700 py-1.5 text-center text-xs font-black text-white shadow transition"
                 >
-                  Select VIP XL
+                  {ownsXl ? "Current Plan" : ownsAny ? "Upgrade Coming Soon" : "Select VIP XL"}
                 </button>
               </div>
-            </div>
+            </fieldset>
 
             {/* Bottom Producer Lounge / VIP Info */}
             <div className="pt-2 border-t border-black/10 text-center">

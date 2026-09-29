@@ -1,6 +1,7 @@
 // app/api/landing/hero-slides/route.ts
 import { NextResponse } from "next/server";
 import { createServerClient } from "@/utils/supabase/server";
+import { requireRoleClient } from "@/lib/require-admin";
 
 function jsonError(status: number, code: string, message: string, details?: any) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
@@ -14,11 +15,8 @@ function publicUrl(supabase: any, bucket: string, path?: string | null) {
 
 async function requireAdmin() {
   const supabase = await createServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return { ok: false as const, status: 401 as const, message: error.message };
-  if (!data.user) return { ok: false as const, status: 401 as const, message: "Not signed in" };
-
-  // TODO: replace with your real role gating (admin/catalog manager)
+  const gate = await requireRoleClient(supabase, ["admin", "marketing"]);
+  if (!gate.ok) return { ok: false as const, status: gate.status, message: gate.message };
   return { ok: true as const, supabase };
 }
 
@@ -48,6 +46,7 @@ export async function GET() {
         "mobile_alt_text",
         "mobile_width",
         "mobile_height",
+        "target_device",
 
         // CTA / overlay fields you already store
         "pill_text",
@@ -61,6 +60,17 @@ export async function GET() {
         "text_alignment",
         "text_color",
         "overlay_opacity",
+        // Overlay controls (2026-09-05). Omitting these from the SELECT would
+        // let saves succeed but reopening a slide would show the defaults —
+        // the editor would silently "lose" every setting on reload.
+        "show_overlay",
+        "cta_alignment",
+        "cta_underline",
+        "cta_style",
+        "overlay_position",
+        "overlay_pad_x",
+        "overlay_pad_y",
+        "text_color_token",
 
         // tech
         "width",

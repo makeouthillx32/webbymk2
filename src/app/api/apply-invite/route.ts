@@ -18,6 +18,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { VALID_ROLES } from "@/actions/auth/types";
 
 export async function POST(req: Request) {
   const { invite } = await req.json();
@@ -61,6 +62,21 @@ export async function POST(req: Request) {
 
   if (!roleData) {
     return NextResponse.json({ error: "Role not found" }, { status: 400 });
+  }
+
+  // This route used to grant whatever role the invite's row pointed at,
+  // with no check against VALID_ROLES — a completely separate rule from
+  // signUpAction's "not a signup-grantable tier" gate for the exact same
+  // invite table. Since this route has no UI caller at all (redemption only
+  // ever happens through the sign-up form), that gap meant a raw POST here
+  // with a real invite code could hand an existing account a role (e.g.
+  // "affiliate") that new-signup redemption of the identical code silently
+  // refuses to grant. Both paths must agree on what an invite can grant.
+  if (!(VALID_ROLES as readonly string[]).includes(roleData.role)) {
+    return NextResponse.json(
+      { error: "This invite's role can't be self-applied. Ask an admin." },
+      { status: 400 }
+    );
   }
 
   // 3. Update user profile with role

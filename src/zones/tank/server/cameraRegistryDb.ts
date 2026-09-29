@@ -116,6 +116,8 @@ export async function loadCameraLifecycleMemory(
   }
 }
 
+let lastDbSyncWarningAt = 0;
+
 export async function saveCameraLifecycleState(
   state: PersistedCameraState,
 ): Promise<void> {
@@ -159,8 +161,12 @@ export async function saveCameraLifecycleState(
         { onConflict: "camera_id" },
       ),
     );
-  } catch (err) {
-    console.warn("[cameraRegistryDb] Database sync warning:", err);
+  } catch (err: any) {
+    const now = Date.now();
+    if (now - lastDbSyncWarningAt > 30000) {
+      console.warn("[cameraRegistryDb] Database sync warning (using in-memory fallback):", err?.message || err);
+      lastDbSyncWarningAt = now;
+    }
   }
 }
 
@@ -448,6 +454,15 @@ export type RoomPresentationRow = {
   audioOutputKind: RoomAudioOutputKind;
   audioOutputConfig: Record<string, unknown>;
   audioInputSourceId: string | null;
+  /**
+   * Admin kill-switch (migration adding tank_rooms.is_offline). When true,
+   * roomProjection.ts's deriveRooms() omits the room from its output
+   * entirely — not flagged-but-hidden, actually absent from every response
+   * that flows from it (/api/tank/cameras, CameraPlayer, room grids). That's
+   * the actual safety property: nothing about an offline room, including
+   * its camera URLs, ever leaves the server.
+   */
+  isOffline: boolean;
 };
 
 const roomPresentationFallback = new Map<string, RoomPresentationRow>();
@@ -462,7 +477,7 @@ export async function loadRoomPresentation(): Promise<RoomPresentationRow[]> {
       supabase
         .from("tank_rooms")
         .select(
-          "room_key, title, eyebrow, description, tags, visibility_policy, audio_output_kind, audio_output_config, audio_input_source_id",
+          "room_key, title, eyebrow, description, tags, visibility_policy, audio_output_kind, audio_output_config, audio_input_source_id, is_offline",
         ),
     );
     if (error || !data) return Array.from(roomPresentationFallback.values());
@@ -477,6 +492,7 @@ export async function loadRoomPresentation(): Promise<RoomPresentationRow[]> {
       audioOutputKind: (row.audio_output_kind as RoomAudioOutputKind | null) ?? "embedded",
       audioOutputConfig: (row.audio_output_config as Record<string, unknown> | null) ?? {},
       audioInputSourceId: row.audio_input_source_id ?? null,
+      isOffline: row.is_offline === true,
     }));
     roomPresentationFallback.clear();
     for (const row of rows) roomPresentationFallback.set(row.roomKey, row);
@@ -496,6 +512,7 @@ export async function saveRoomPresentation(input: {
   audioOutputKind?: RoomAudioOutputKind;
   audioOutputConfig?: Record<string, unknown>;
   audioInputSourceId?: string | null;
+  isOffline?: boolean;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase = createAdminClient();
@@ -517,6 +534,7 @@ export async function saveRoomPresentation(input: {
           ...(input.audioOutputKind ? { audio_output_kind: input.audioOutputKind } : {}),
           ...(input.audioOutputConfig ? { audio_output_config: input.audioOutputConfig } : {}),
           ...(input.audioInputSourceId !== undefined ? { audio_input_source_id: input.audioInputSourceId } : {}),
+          ...(input.isOffline !== undefined ? { is_offline: input.isOffline } : {}),
         },
         { onConflict: "room_key" },
       ),

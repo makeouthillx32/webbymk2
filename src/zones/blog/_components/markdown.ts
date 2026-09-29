@@ -5,6 +5,7 @@
 import { Marked } from "marked";
 import hljs from "highlight.js";
 import markedKatex from "marked-katex-extension";
+import { blogBlockExtensions, renderDataBlock } from "./blocks";
 
 export interface TocEntry {
   id:    string;
@@ -75,6 +76,14 @@ export function renderMarkdown(src: string): { html: string; toc: TocEntry[] } {
           }
         }
 
+        // Other data blocks (mermaid / video / audio / pdf / file / stats /
+        // embed / excalidraw) follow the same contract as ```chart``` above:
+        // recognised language → placeholder or real element; unrecognised or
+        // malformed JSON → null, and we fall through to highlighted code so a
+        // typo degrades to a readable block instead of blanking the post.
+        const dataBlock = renderDataBlock(language, text);
+        if (dataBlock !== null) return dataBlock;
+
         let body: string;
         try {
           body = language && hljs.getLanguage(language)
@@ -98,6 +107,13 @@ export function renderMarkdown(src: string): { html: string; toc: TocEntry[] } {
     output: "htmlAndMathml",
     throwOnError: false,
   }));
+
+  // Blog block system: container directives (callout/accordion/toggle/tabs/
+  // align), footnotes, emoji shortcodes and #tags. Registered AFTER katex so
+  // the inline math tokenizer still wins on `$…$` — the emoji tokenizer is
+  // colon-anchored and the tag tokenizer requires a leading letter, so neither
+  // competes with math, but order keeps that guarantee explicit.
+  for (const ext of blogBlockExtensions()) marked.use(ext);
 
   const html = marked.parse(src, { async: false }) as string;
   return { html, toc };

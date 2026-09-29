@@ -1,56 +1,44 @@
+import { getFinancialDaily } from "@/lib/finance/dashboard";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 export async function getPaymentsOverviewData(
   timeFrame?: "monthly" | "yearly" | (string & {}),
 ) {
-  // Fake delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const now = new Date();
+  const yearly = timeFrame === "yearly";
+  const start = yearly
+    ? new Date(Date.UTC(now.getUTCFullYear() - 4, 0, 1))
+    : new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
 
-  if (timeFrame === "yearly") {
+  try {
+    const daily = await getFinancialDaily("live", start, end);
+    const buckets = new Map<string, { gross: number; deductions: number }>();
+    for (const row of daily) {
+      const date = new Date(`${row.day}T00:00:00Z`);
+      const key = yearly ? String(date.getUTCFullYear()) : String(date.getUTCMonth());
+      const bucket = buckets.get(key) ?? { gross: 0, deductions: 0 };
+      bucket.gross += row.grossCents;
+      bucket.deductions += row.feeCents + row.refundCents;
+      buckets.set(key, bucket);
+    }
+
+    const labels = yearly
+      ? Array.from({ length: 5 }, (_, index) => now.getUTCFullYear() - 4 + index)
+      : MONTHS.map((_, index) => index);
     return {
-      received: [
-        { x: 2020, y: 450 },
-        { x: 2021, y: 620 },
-        { x: 2022, y: 780 },
-        { x: 2023, y: 920 },
-        { x: 2024, y: 1080 },
-      ],
-      due: [
-        { x: 2020, y: 1480 },
-        { x: 2021, y: 1720 },
-        { x: 2022, y: 1950 },
-        { x: 2023, y: 2300 },
-        { x: 2024, y: 1200 },
-      ],
+      received: labels.map((value) => ({
+        x: yearly ? value : MONTHS[value],
+        y: (buckets.get(String(value))?.gross ?? 0) / 100,
+      })),
+      due: labels.map((value) => ({
+        x: yearly ? value : MONTHS[value],
+        y: (buckets.get(String(value))?.deductions ?? 0) / 100,
+      })),
     };
+  } catch (error) {
+    console.error("Payments overview unavailable:", error);
+    return { received: [], due: [] };
   }
-
-  return {
-    received: [
-      { x: "Jan", y: 0 },
-      { x: "Feb", y: 20 },
-      { x: "Mar", y: 35 },
-      { x: "Apr", y: 45 },
-      { x: "May", y: 35 },
-      { x: "Jun", y: 55 },
-      { x: "Jul", y: 65 },
-      { x: "Aug", y: 50 },
-      { x: "Sep", y: 65 },
-      { x: "Oct", y: 75 },
-      { x: "Nov", y: 60 },
-      { x: "Dec", y: 75 },
-    ],
-    due: [
-      { x: "Jan", y: 15 },
-      { x: "Feb", y: 9 },
-      { x: "Mar", y: 17 },
-      { x: "Apr", y: 32 },
-      { x: "May", y: 25 },
-      { x: "Jun", y: 68 },
-      { x: "Jul", y: 80 },
-      { x: "Aug", y: 68 },
-      { x: "Sep", y: 84 },
-      { x: "Oct", y: 94 },
-      { x: "Nov", y: 74 },
-      { x: "Dec", y: 62 },
-    ],
-  };
 }

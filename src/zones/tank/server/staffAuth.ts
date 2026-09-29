@@ -1,24 +1,53 @@
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 // Whether the current request is from staff, and nothing more.
 //
-// Role lives in the Supabase auth user's app_metadata — set via the admin API
-// in userRoles.ts — never in a database table. Three routes built this session
-// (mode, telemetry/simulate, telemetry/live) each queried tank_profiles for a
-// `role` column that has never existed on that table, so requireStaff() failed
-// closed for every request, including real admins, with a 403 that gave no
-// hint why. That is what made the detection simulator look like it did
-// nothing: it was being rejected before it ever reached the telemetry store.
+// Identity is verified against Supabase Auth, then authorization is read from
+// the canonical core `profiles.role` record through the server-only admin
+// client. This deliberately matches the Tank admin page guard. Relying only on
+// JWT app_metadata made staff access drift until a token refresh, while using
+// user_metadata would be unsafe because users can edit it themselves.
 
 export type StaffUser = { id: string; role: "admin" | "moderator" };
 
-export async function requireStaff(): Promise<StaffUser | null> {
+/**
+ * Why a request may not control the house. "signed-out" and "not-staff" need
+ * different fixes from the operator (sign in again vs. use a staff account), so
+ * the director console shows them differently instead of silently snapping back
+ * to the server's mode (the "it keeps going back to Dog" bug, 2026-09-19).
+ */
+export type StaffDenial = "signed-out" | "not-staff" | "unavailable";
+
+export type StaffCheck = { staff: StaffUser; denial: null } | { staff: null; denial: StaffDenial };
+
+export async function checkStaff(): Promise<StaffCheck> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return { staff: null, denial: "signed-out" };
 
-  const role = (user.app_metadata?.role as string) || (user.user_metadata?.role as string) || "";
-  if (role !== "admin" && role !== "moderator") return null;
+  const admin = createAdminClient();
+  const { data: profile, error } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
 
-  return { id: user.id, role };
+  // A failed lookup is not proof the user is not staff; say so honestly.
+  if (error) return { staff: null, denial: "unavailable" };
+  const role = String(profile?.role ?? "");
+  if (role !== "admin" && role !== "moderator") return { staff: null, denial: "not-staff" };
+
+  return { staff: { id: user.id, role }, denial: null };
+}
+
+export async function requireStaff(): Promise<StaffUser | null> {
+  return (await checkStaff()).staff;
+}
+
+/** HTTP status + body for a denial: 401 signed out, 403 not staff, 503 lookup failed. */
+export function staffDenialResponse(denial: StaffDenial): { status: number; body: { error: string; denial: StaffDenial } } {
+  if (denial === "signed-out") return { status: 401, body: { error: "Sign in to control the director", denial } };
+  if (denial === "not-staff") return { status: 403, body: { error: "This account is not Tank staff", denial } };
+  return { status: 503, body: { error: "Could not check your staff access; try again", denial } };
 }

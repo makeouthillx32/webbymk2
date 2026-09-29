@@ -15,7 +15,19 @@ interface CreateCategoryModalProps {
   categories: Category[];
   activeSection: string;
   onClose: () => void;
-  onCreate: (data: { name: string; slug: string; parent_id: string | null }) => Promise<void>;
+  /**
+   * Which concern is creating. Nav assigns a parent; Featured Rows uploads the
+   * artwork instead — the two screens create the same row from opposite ends,
+   * and offering both fields in both places is what made this confusing.
+   */
+  mode?: "structure" | "display";
+  onCreate: (data: {
+    name: string;
+    slug: string;
+    parent_id: string | null;
+    /** Only ever set from Featured Rows; uploaded after the row exists. */
+    coverFile?: File | null;
+  }) => Promise<void>;
 }
 
 function slugify(str: string) {
@@ -32,12 +44,16 @@ export function CreateCategoryModal({
   categories,
   activeSection,
   onClose,
+  mode = "structure",
   onCreate,
 }: CreateCategoryModalProps) {
+  const isDisplay = mode === "display";
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugManual, setSlugManual] = useState(false);
   const [parentId, setParentId] = useState<string>("");
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,6 +67,8 @@ export function CreateCategoryModal({
       setSlug("");
       setSlugManual(false);
       setParentId("");
+      setCoverFile(null);
+      setCoverPreview(null);
       setError(null);
     }
   }, [open]);
@@ -66,7 +84,14 @@ export function CreateCategoryModal({
     setSaving(true);
     setError(null);
     try {
-      await onCreate({ name: name.trim(), slug: slug.trim(), parent_id: parentId || null });
+      await onCreate({
+        name: name.trim(),
+        slug: slug.trim(),
+        // A category created from Featured Rows is top-level; nesting is a nav
+        // decision and belongs to Browse Structure.
+        parent_id: isDisplay ? null : parentId || null,
+        coverFile: isDisplay ? coverFile : null,
+      });
     } catch (e: any) {
       setError(e?.message ?? "Unexpected error.");
     } finally {
@@ -88,7 +113,7 @@ export function CreateCategoryModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-md bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl">
+      <div className="relative z-10 w-full max-w-md bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[hsl(var(--border))]">
           <h2 className="text-base font-semibold text-[hsl(var(--foreground))]">
             New Category
@@ -139,6 +164,49 @@ export function CreateCategoryModal({
             <p className="text-xs text-[hsl(var(--muted-foreground))]">/{activeSection}/{slug || "…"}</p>
           </div>
 
+          {isDisplay ? (
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+                Cover Image
+              </label>
+              <div className="flex items-start gap-3">
+                <div className="flex h-20 w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-md border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  {coverPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={coverPreview} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-[10px] text-[hsl(var(--muted-foreground))]">None</span>
+                  )}
+                </div>
+                <div className="flex-1 space-y-1.5">
+                  <input
+                    id="new-category-cover"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      setCoverFile(f);
+                      // Revoke on replace so repeated picks don't leak blobs.
+                      setCoverPreview((prev) => {
+                        if (prev) URL.revokeObjectURL(prev);
+                        return f ? URL.createObjectURL(f) : null;
+                      });
+                    }}
+                  />
+                  <label
+                    htmlFor="new-category-cover"
+                    className="inline-flex cursor-pointer items-center rounded-md border border-[hsl(var(--border))] px-3 py-2 text-sm"
+                  >
+                    {coverFile ? "Change image" : "Upload image"}
+                  </label>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    Optional — uploaded once the category is created. Card copy is added by editing it.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
               Parent Category
@@ -161,6 +229,7 @@ export function CreateCategoryModal({
                 : "Top-level — appears directly in the navigation bar."}
             </p>
           </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-[hsl(var(--border))]">

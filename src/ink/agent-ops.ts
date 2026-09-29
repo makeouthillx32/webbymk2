@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawn }        from "child_process";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join }         from "path";
 import { PROJECT_DIR, GHCR_USER } from "../config/zones.ts";
 import { getCredential }          from "../utils/secureStorage/index.js";
@@ -59,7 +59,7 @@ function readAgentVersion(): string {
 
 function makeLocalDockerEnv(): Record<string, string> {
   const localSocket =
-    process.platform !== "win32"
+    process.platform !== "win32" && existsSync("/var/run/docker.sock")
       ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
       : {};
   return {

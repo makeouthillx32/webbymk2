@@ -19,6 +19,7 @@ import {
   Users,
   CheckCircle,
   HelpCircle,
+  Gift,
 } from "lucide-react";
 
 type PageId =
@@ -31,7 +32,31 @@ type PageId =
   | "xp"
   | "items"
   | "missions"
+  | "drops"
   | "clicks";
+
+/**
+ * Live today, or planned?
+ *
+ * The whole page carries one "v2.0 Roadmap" badge up in the header, which
+ * means a reader cannot tell a feature they can use right now from one that
+ * does not exist yet — every paragraph reads as a promise. Tagging each
+ * feature is the difference between a roadmap and a manual.
+ */
+function Status({ state }: { state: "live" | "soon" }) {
+  const live = state === "live";
+  return (
+    <span
+      className={`ml-2 align-middle rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+        live
+          ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+          : "bg-amber-500/10 text-amber-400/90 border border-amber-500/25"
+      }`}
+    >
+      {live ? "Live" : "Planned"}
+    </span>
+  );
+}
 
 const PAGES: { id: PageId; label: string; group: string; icon?: string }[] = [
   { id: "about", label: "About", group: "Tank LIVE" },
@@ -43,6 +68,7 @@ const PAGES: { id: PageId; label: string; group: string; icon?: string }[] = [
   { id: "xp", label: "XP & Streaks", group: "Features" },
   { id: "items", label: "Tankems & Crafting", group: "Features" },
   { id: "missions", label: "Chores & Quests", group: "Features" },
+  { id: "drops", label: "Drops", group: "Features" },
   { id: "clicks", label: "Clicks & Alliances", group: "Features" },
 ];
 
@@ -60,6 +86,7 @@ export function DocsPage() {
       const found = PAGES.find((p) => p.id === hash);
       if (found) setActiveTab(found.id);
       else if (hash === "chores" || hash === "directives") setActiveTab("missions");
+      else if (hash === "drop" || hash === "watch-and-earn" || hash === "watch2earn") setActiveTab("drops");
       else if (hash === "clicks" || hash === "cliques") setActiveTab("clicks");
       else if (hash === "trinkets" || hash === "tanktoys") setActiveTab("tanktoys");
       else if (hash === "tankems" || hash === "tankitems") setActiveTab("items");
@@ -277,6 +304,48 @@ export function DocsPage() {
                     />
                   </div>
 
+                  <h3 className="text-xl font-bold text-white pt-4">Also running today</h3>
+                  <p className="text-sm text-slate-400">
+                    Built and in use, and not written up anywhere else on this site.
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 not-prose my-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white">
+                        The Tavern
+                        <Status state="live" />
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">A bartender shift you can actually work — pour drinks against a queue, earn chits, and get voted out in a mutiny if the house turns on you.</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white">
+                        Director Programme
+                        <Status state="live" />
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">One continuously directed feed that cuts between every live camera on its own, so there is always something to watch without picking a room.</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white">
+                        Archives
+                        <Status state="live" />
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Browse back through recorded footage by season, room and date. Roughly 200 segments are recorded every hour.</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white">
+                        Player Market
+                        <Status state="live" />
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">List items you own and trade them with other members.</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white">
+                        Stream Overlays
+                        <Status state="live" />
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">The goal bars, timecode and REC badges on the broadcast are live pages, so they update the moment something changes.</p>
+                    </div>
+                  </div>
+
                   <h3 className="text-xl font-bold text-white pt-4">Interactive Stream Features</h3>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 not-prose my-4">
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -436,7 +505,14 @@ export function DocsPage() {
 
                 <div className="prose prose-invert max-w-none text-slate-300 space-y-6">
                   <div>
-                    <h2 className="text-2xl font-bold text-white">Text-To-Speech (TTS)</h2>
+                    <h2 className="text-2xl font-bold text-white">
+                      Text-To-Speech (TTS)
+                      <Status state="live" />
+                    </h2>
+                    <p className="leading-relaxed">
+                      <strong className="text-white">75 ₮</strong> per message, spoken aloud in the room you
+                      pick.
+                    </p>
                     <p className="leading-relaxed">
                       Viewers can select specific rooms and voices (e.g. Brainrot, Badass Hero, Gnome, Grandpa,
                       Oldhead, Sexy Temptress, Alex B, Shouting Indian Woman, Rough Rider) to blast messages
@@ -445,11 +521,34 @@ export function DocsPage() {
                   </div>
 
                   <div>
-                    <h2 className="text-2xl font-bold text-white">AI Sound Effects (SFX)</h2>
+                    <h2 className="text-2xl font-bold text-white">
+                      The Soundboard
+                      <Status state="live" />
+                    </h2>
                     <p className="leading-relaxed">
-                      Type any prompt describing a sound effect (e.g. <em>"creaking haunted door"</em> or{" "}
-                      <em>"loud alarm siren"</em>) and the system generates and streams the audio buffer directly
-                      into the chosen room within seconds.
+                      199 clips, played into the room for real. What a sound costs depends on how much
+                      it disrupts the house — a quiet cue is cheap, an airhorn is not.
+                    </p>
+                    <ul className="mt-3 space-y-1.5 text-slate-300">
+                      <li>
+                        <strong className="text-white">Cue · 20 ₮</strong> — beeps, chirps, crickets,
+                        doorbells. Punctuation.
+                      </li>
+                      <li>
+                        <strong className="text-white">Voice · 35 ₮</strong> — the meme clips. The bulk of
+                        the board.
+                      </li>
+                      <li>
+                        <strong className="text-white">Sting · 40 ₮</strong> — rimshots, cymbals, applause.
+                      </li>
+                      <li>
+                        <strong className="text-white">Blast · 100 ₮</strong> — airhorns, sirens, chainsaws.
+                        Loud enough to move people in the room.
+                      </li>
+                    </ul>
+                    <p className="mt-3 leading-relaxed text-slate-400">
+                      A Season Pass grants 100 ₮ a month, XL grants 350. Token packs start at $4.99 for 500 ₮.
+                      Some clips are unlocked by owning an item instead, and cost nothing to play.
                     </p>
                   </div>
                 </div>
@@ -473,26 +572,41 @@ export function DocsPage() {
 
                 <div className="prose prose-invert max-w-none text-slate-300 space-y-6">
                   <div>
-                    <h2 className="text-2xl font-bold text-white">Tanktoys</h2>
+                    <h2 className="text-2xl font-bold text-white">
+                      Tanktoys
+                      <Status state="soon" />
+                    </h2>
                     <p className="leading-relaxed">
-                      Spend tokens to physically affect conditions in the house: trigger strobe lights, activate
-                      airhorns, drop care packages, or adjust room climates in real-time.
+                      Spending tokens to physically affect the house — strobes, airhorns, care
+                      packages, room climate. Not built yet. What works today is the soundboard
+                      below: real audio, played into the real room, paid for in tokens.
                     </p>
                   </div>
 
                   <div>
-                    <h2 className="text-2xl font-bold text-white">Trinkets (Chat Warfare)</h2>
+                    <h2 className="text-2xl font-bold text-white">
+                      Trinkets (Chat Warfare)
+                      <Status state="soon" />
+                    </h2>
                     <p className="leading-relaxed">
-                      Deploy combat items in chat against rival cliques: cast Text Shrink Rays, mute opposing
-                      spokespersons, or drop Slime Bombs to temporarily slow enemy cooldowns.
+                      Combat items aimed at rival Clicks — Text Shrink Rays, muting a
+                      spokesperson, Slime Bombs on enemy cooldowns. Designed, not yet built.
+                      Clicks themselves are live, so the factions these are aimed at already exist.
                     </p>
                   </div>
 
                   <div>
                     <h2 className="text-2xl font-bold text-white">Big Tanktoys (IRL Experiences)</h2>
                     <p className="leading-relaxed">
-                      High-tier real-world access packages: Book Tank B&B to crash at the house for a day, or Wine
-                      and Dine a House Member of your choice.
+                      <strong className="text-white">Tank B&amp;B</strong>
+                      <Status state="live" /> — $2,500 for a week in the house. Bought with money,
+                      never tokens. Payment reserves your stay and staff arrange the dates with you
+                      directly; nothing is automated, and nothing is marked delivered until you have
+                      actually been.
+                    </p>
+                    <p className="leading-relaxed">
+                      <strong className="text-white">Wine &amp; Dine a House Member</strong>
+                      <Status state="soon" /> — not yet available to buy.
                     </p>
                   </div>
                 </div>
@@ -624,6 +738,76 @@ export function DocsPage() {
                     <em>"Watch 30 minutes of Director Mode"</em>, <em>"Cheer for your Click"</em>). Fulfilling them
                     rewards your account with instant token payouts and progression XP.
                   </p>
+                </div>
+              </article>
+            )}
+
+            {/* ═══════════ SECTION: DROPS ═══════════ */}
+            {activeTab === "drops" && (
+              <article className="space-y-8 animate-fadeIn">
+                <header className="border-b border-white/10 pb-6">
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#f30e00]">
+                    Watch & Earn
+                  </span>
+                  <h1 className="mt-1 text-3xl font-black tracking-tight text-white sm:text-4xl">
+                    Drops
+                    <Status state="soon" />
+                  </h1>
+                  <p className="mt-3 text-base text-slate-400 leading-relaxed">
+                    Just have Tank open? That's worth something. Watch a camera long enough during a live Drops
+                    campaign and claim tokens, XP, or rare items — no purchase required. No campaign is
+                    running yet, so there is nothing to claim today.
+                  </p>
+                </header>
+
+                <div className="prose prose-invert max-w-none text-slate-300 space-y-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">How it works</h2>
+                    <p className="leading-relaxed">
+                      When a Drops campaign is live, a purple banner shows up above the player with a progress bar
+                      and a target time. Keep watching — the tab has to stay in focus — and the bar fills on its own.
+                      Hit the target and a <strong>Claim Drop</strong> button lights up. Nothing is granted
+                      automatically: you press claim, and the reward lands straight in your account.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 not-prose my-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white flex items-center gap-2">
+                        <Gift className="h-4 w-4 text-purple-400" /> Tiered Rewards
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        A campaign can have several tiers — a quick 15-minute payout, then bigger rewards the longer
+                        you stay. Each tier claims independently once you've watched long enough.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="font-bold text-white flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-yellow-400" /> Flash Drops
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Sometimes a producer fires off a short, high-value drop the moment something wild happens on
+                        camera — first come, first watched.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Room-targeted campaigns</h2>
+                    <p className="leading-relaxed">
+                      Some Drops apply everywhere; others only count toward one specific camera — a nudge to check
+                      out a room that isn't getting attention. The banner tells you which camera counts if a
+                      campaign is room-specific.
+                    </p>
+                  </div>
+
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Sign-in required</h2>
+                    <p className="leading-relaxed">
+                      Progress is tied to your account, not your browser tab, so it survives reloads and device
+                      switches — but you do need to be signed in for it to count at all.
+                    </p>
+                  </div>
                 </div>
               </article>
             )}

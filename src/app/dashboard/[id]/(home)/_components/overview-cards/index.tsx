@@ -18,7 +18,7 @@ export async function OverviewCardsGroup() {
       />
 
       <OverviewCard
-        label="Total Profit"
+        label="Live Net Proceeds"
         data={{
           ...profit,
           value: "$" + compactFormat(profit.value),

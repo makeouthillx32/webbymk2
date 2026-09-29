@@ -12,9 +12,11 @@ import { AdminOrder, FulfillmentStatus, PaymentStatus } from '@/lib/orders/types
 
 interface OrdersManagerProps {
   initialOrders: AdminOrder[];
+  /** 'labs' = a research-only list (Labs Orders tab): the customer-type filter has nothing left to split. */
+  scope?: 'all' | 'labs';
 }
 
-export function OrdersManager({ initialOrders }: OrdersManagerProps) {
+export function OrdersManager({ initialOrders, scope = 'all' }: OrdersManagerProps) {
   const [orders, setOrders]             = useState<AdminOrder[]>(initialOrders);
   const [selectedIds, setSelectedIds]   = useState<string[]>([]);
   const [editingOrder, setEditingOrder] = useState<AdminOrder | null>(null);
@@ -59,6 +61,9 @@ export function OrdersManager({ initialOrders }: OrdersManagerProps) {
       setEditingOrder(order);
     } else if (order.label_pdf_path) {
       // Label already paid for — open detail dialog to reprint
+      setEditingOrder(order);
+    } else if (order.is_research || order.items?.some((i) => !!i.research_product_id)) {
+      // Research order — must satisfy research preflight & batch allocation in dialog
       setEditingOrder(order);
     } else {
       // No label yet — open PackagePicker to generate
@@ -145,6 +150,7 @@ export function OrdersManager({ initialOrders }: OrdersManagerProps) {
           fulfillmentFilter={fulfillmentFilter}
           paymentFilter={paymentFilter}
           customerTypeFilter={customerTypeFilter}
+          hideCustomerType={scope === 'labs'}
           searchQuery={searchQuery}
           onFulfillmentFilter={setFulfillmentFilter}
           onPaymentFilter={setPaymentFilter}

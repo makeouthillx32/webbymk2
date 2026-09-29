@@ -34,12 +34,13 @@ import { spawn }                from "child_process";
 import { gracefulShutdownSync } from "../../utils/gracefulShutdown.js";
 
 // Dev mode = bun --watch; Production = node running dist/cli.js
-const isProductionMode = !process.execPath.toLowerCase().includes("bun");
+const isProductionMode = process.env.UNAXIS_DEV !== "true" && !process.execPath.toLowerCase().includes("bun");
 const SETTLE_MS = 180;
 
 // Version injected at build time via bun define; falls back to "dev" in watch mode
 declare const UNAXIS_VERSION: string;
 const VERSION = ((): string => {
+  if (process.env.UNAXIS_DEV === "true") return "dev";
   try { return UNAXIS_VERSION; } catch { return "dev"; }
 })();
 
@@ -158,9 +159,22 @@ export function StartupScreen({ onDone, onQuit, instant = false, bgOps }: Props)
 
   // ── Keyboard handling (when no overlay is active) ──────────────────────────
   useInput((input, key) => {
-    if (phase !== "picking" || pickerLoading || overlay !== "none") return;
+    if (overlay !== "none") return;
 
-    const maxIdx = items.length - 1;
+    // Fast-path: Enter, Space, or hotkeys 1-8 at ANY phase immediately advance into the project
+    if (key.return || input === " " || /^[1-8]$/.test(input || "")) {
+      const item = items[selected] ?? items[0];
+      if (item && item.slug === CREATE_NEW_SLUG) {
+        setOverlay("wizard");
+        return;
+      }
+      onDone();
+      return;
+    }
+
+    if (phase !== "picking" || pickerLoading) return;
+
+    const maxIdx = Math.max(0, items.length - 1);
 
     if (key.upArrow || input === "k") {
       setSelected((s) => Math.max(0, s - 1));
@@ -171,7 +185,7 @@ export function StartupScreen({ onDone, onQuit, instant = false, bgOps }: Props)
       return;
     }
 
-    if (key.return || key.rightArrow) {
+    if (key.rightArrow) {
       const item = items[selected];
       if (!item) return;
       if (item.slug === CREATE_NEW_SLUG) {

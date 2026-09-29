@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Trash2, Loader2, Settings2, Image as ImageIcon, Tag as TagIcon, Star, CheckCircle2, Archive, FileEdit, Plus } from "lucide-react";
+import { Trash2, Loader2, Settings2, Image as ImageIcon, Tag as TagIcon, Star, CheckCircle2, Archive, FileEdit, Plus, FlaskConical, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getPrimaryImageUrl } from "@/lib/images";
@@ -25,6 +25,19 @@ export type ProductCategory = {
   slug: string;
 };
 
+export type LabReportSummary = {
+  id: string;
+  lab_name?: string | null;
+  coa_number?: string | null;
+  lot_number?: string | null;
+  purity_pct?: number | null;
+  pdf_url?: string | null;
+  paper_image_url?: string | null;
+  verified?: boolean | null;
+  pending?: boolean | null;
+  created_at?: string;
+};
+
 export type ProductRow = {
   id: string;
   slug: string;
@@ -38,8 +51,12 @@ export type ProductRow = {
   is_featured: boolean;
   status?: string;
   created_at: string;
+  /** Grouping axes — see research_products.compound / .form. */
+  compound?: string | null;
+  form?: string | null;
   product_images?: ProductImageRow[];
   categories?: ProductCategory[];
+  lab_reports?: LabReportSummary[];
 };
 
 interface ProductsTableProps {
@@ -47,6 +64,7 @@ interface ProductsTableProps {
   allProductsCount?: number;
   isRefreshing?: boolean;
   onManage: (product: ProductRow) => void;
+  onManageCOA?: (product: ProductRow) => void;
   onArchive: (product: ProductRow) => void;
   onStatusChange?: (product: ProductRow, newStatus: string) => Promise<void>;
   onToggleFeatured?: (product: ProductRow, newFeatured: boolean) => Promise<void>;
@@ -66,6 +84,10 @@ export default function ProductsTable({
   allProductsCount,
   isRefreshing = false,
   onManage,
+  // Declared in ProductsTableProps but never destructured: every reference to
+  // it below was an undefined identifier, which throws at render rather than
+  // degrading to the onManage fallback the call sites clearly intended.
+  onManageCOA,
   onArchive,
   onStatusChange,
   onToggleFeatured,
@@ -115,6 +137,9 @@ export default function ProductsTable({
         {products.map((p) => {
           const imgCount = p.product_images?.length ?? 0;
           const categories = p.categories ?? [];
+          const reports = p.lab_reports ?? [];
+          const primaryReport = reports[0];
+          const hasCoa = reports.length > 0;
           const isBusy = updatingId === p.id;
 
           const thumbUrl = getPrimaryImageUrl(p.product_images ?? []) ?? null;
@@ -145,13 +170,44 @@ export default function ProductsTable({
                       </span>
                     </div>
 
-                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate flex items-center gap-1.5">
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate flex items-center gap-1.5 flex-wrap mt-0.5">
                       <span className="truncate">{p.slug}</span>
                       {p.dosage_label ? (
                         <span className="shrink-0 inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-[hsl(var(--foreground))]">
                           {p.dosage_label}
                         </span>
                       ) : null}
+
+                      {/* COA / Lab Report Pill */}
+                      {hasCoa ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onManageCOA ? onManageCOA(p) : onManage(p);
+                          }}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+                          title={`${reports.length} COA report${reports.length > 1 ? "s" : ""} attached. Click to open Batches & COAs.`}
+                        >
+                          <FlaskConical size={10} />
+                          {primaryReport.purity_pct ? `${primaryReport.purity_pct}% HPLC` : "COA Attached"}
+                          {primaryReport.lab_name ? ` • ${primaryReport.lab_name}` : ""}
+                          {primaryReport.pdf_url ? " • PDF" : ""}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onManageCOA ? onManageCOA(p) : onManage(p);
+                          }}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 transition-colors"
+                          title="No COA report uploaded yet. Click to upload paper/PDF."
+                        >
+                          <FlaskConical size={10} />
+                          No COA
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -224,14 +280,29 @@ export default function ProductsTable({
 
               {/* Actions Column */}
               <div className="col-span-6 md:col-span-2 flex items-center justify-end">
-                <div className="flex flex-col sm:flex-row gap-2 items-end sm:items-center">
+                <div className="flex flex-col sm:flex-row gap-1.5 items-end sm:items-center">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onManageCOA ? onManageCOA(p) : onManage(p)}
+                    className={`h-8 px-2.5 text-xs font-semibold border transition-all ${
+                      hasCoa
+                        ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/60"
+                        : "border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/60"
+                    }`}
+                    title="Upload & Manage Certificates of Analysis, Batches, and Lab Reports"
+                  >
+                    <FlaskConical size={13} className="mr-1" />
+                    {hasCoa ? `COA (${reports.length})` : "+ COA"}
+                  </Button>
+
                   <Button
                     size="sm"
                     variant="secondary"
                     onClick={() => onManage(p)}
-                    className="w-[100px] sm:w-auto"
+                    className="h-8 px-2.5 text-xs"
                   >
-                    <Settings2 size={15} className="mr-1.5" />
+                    <Settings2 size={14} className="mr-1" />
                     Manage
                   </Button>
 
@@ -239,10 +310,9 @@ export default function ProductsTable({
                     size="sm"
                     variant="destructive"
                     onClick={() => onArchive(p)}
-                    className="w-[100px] sm:w-auto"
+                    className="h-8 px-2 text-xs"
                   >
-                    <Trash2 size={15} className="mr-1.5" />
-                    Archive
+                    <Trash2 size={14} />
                   </Button>
                 </div>
               </div>
@@ -250,10 +320,25 @@ export default function ProductsTable({
               {/* Extra Details Sub-Bar */}
               <div className="hidden md:flex md:col-span-12 items-center justify-between pt-2 text-xs text-[hsl(var(--muted-foreground))] border-t border-[hsl(var(--border))/0.4]">
                 <span>Created: {new Date(p.created_at).toLocaleString()}</span>
-                <span className="inline-flex items-center gap-1">
-                  <ImageIcon size={13} /> {imgCount} image{imgCount === 1 ? "" : "s"}
-                  <span className="mx-2">•</span>
-                  <TagIcon size={13} /> Manage categories & lab reports via Manage
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1">
+                    <ImageIcon size={13} /> {imgCount} image{imgCount === 1 ? "" : "s"}
+                  </span>
+                  <span className="text-[hsl(var(--border))]">•</span>
+                  <button
+                    type="button"
+                    onClick={() => onManageCOA ? onManageCOA(p) : onManage(p)}
+                    className="inline-flex items-center gap-1 hover:text-[hsl(var(--foreground))] transition-colors cursor-pointer"
+                  >
+                    <FlaskConical size={13} className={hasCoa ? "text-emerald-500" : "text-amber-500"} />
+                    {hasCoa
+                      ? `${reports.length} COA report${reports.length === 1 ? "" : "s"} attached`
+                      : "No COA attached (click to upload)"}
+                  </button>
+                  <span className="text-[hsl(var(--border))]">•</span>
+                  <span className="inline-flex items-center gap-1">
+                    <TagIcon size={13} /> Manage details via Manage
+                  </span>
                 </span>
               </div>
             </div>

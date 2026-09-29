@@ -2,22 +2,36 @@ import type { Config } from "tailwindcss";
 import defaultTheme from "tailwindcss/defaultTheme";
 
 const config: Config = {
-  content: [
-    "./src/style/**/*.css",
-    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/zones/**/*.{js,ts,jsx,tsx,mdx}",
-    // Standalone zones (e.g. src/zones/status) can carry their own
-    // node_modules for local dev/build. Tailwind's ** happily recurses into
-    // it, silently multiplying the scan by tens of thousands of files -
-    // confirmed live 2026-08-22/23 as the actual cause of every zone's
-    // Docker build hanging indefinitely, deterministically, right after
-    // Tailwind's own "accidentally matching all of node_modules" warning.
-    // .dockerignore excludes node_modules from the build context, but this
-    // is real defense-in-depth for local (non-Docker) builds too.
-    "!./src/zones/**/node_modules/**",
-  ],
+  content: {
+    // relative:true resolves every string below against THIS config file's
+    // own directory, not process.cwd(). Without it (the v3 default),
+    // Tailwind resolves relative content globs against cwd - which happens
+    // to equal this directory for every Docker build and the root `next
+    // dev`, but NOT for zones/tank's bare-metal dev-bare.ps1, which runs
+    // `next dev` with cwd = zones/tank/. There, "./src/app/**" silently
+    // resolved to the near-empty zones/tank/src/app/ stub instead of the
+    // real src/app/ tree, so the JIT scanner found almost nothing and
+    // shipped a ~418-rule stylesheet - confirmed live 2026-08-30 as a
+    // fully unstyled bare-metal dev server with no console error at all
+    // (a missing utility class isn't a JS error, so it's silent).
+    relative: true,
+    files: [
+      "./src/style/**/*.css",
+      "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+      "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+      "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+      "./src/zones/**/*.{js,ts,jsx,tsx,mdx}",
+      // Standalone zones (e.g. src/zones/status) can carry their own
+      // node_modules for local dev/build. Tailwind's ** happily recurses into
+      // it, silently multiplying the scan by tens of thousands of files -
+      // confirmed live 2026-08-22/23 as the actual cause of every zone's
+      // Docker build hanging indefinitely, deterministically, right after
+      // Tailwind's own "accidentally matching all of node_modules" warning.
+      // .dockerignore excludes node_modules from the build context, but this
+      // is real defense-in-depth for local (non-Docker) builds too.
+      "!./src/zones/**/node_modules/**",
+    ],
+  },
 
   darkMode: "class",
   prefix: "",

@@ -26,6 +26,8 @@ export function useManageProduct(
   const [formBrand, setFormBrand] = useState("");
   const [formCasNumber, setFormCasNumber] = useState("");
   const [formPurity, setFormPurity] = useState("");
+  const [formCompound, setFormCompound] = useState("");
+  const [formPresentation, setFormPresentation] = useState("");
   const [formResearchUseOnly, setFormResearchUseOnly] = useState(true);
   const [formFeatured, setFormFeatured] = useState(false);
 
@@ -56,6 +58,8 @@ export function useManageProduct(
       setFormDesc(data.description ?? "");
       setFormBadge(data.badge ?? "");
       setFormBrand(data.brand ?? "");
+      setFormCompound((data as any).compound ?? "");
+      setFormPresentation((data as any).form ?? "");
       setFormCasNumber(data.cas_number ?? "");
       setFormPurity(data.purity_percent != null ? String(data.purity_percent) : "");
       setFormResearchUseOnly(data.research_use_only ?? true);
@@ -107,6 +111,11 @@ export function useManageProduct(
           cas_number: formCasNumber.trim() || null,
           purity_percent: formPurity.trim() ? Number(formPurity) : null,
           research_use_only: formResearchUseOnly,
+          // Empty is sent as null on purpose: the DB trigger re-derives from the
+          // title when either is blank, so clearing a field means "guess again"
+          // rather than "leave it empty".
+          compound: formCompound.trim() || null,
+          form: formPresentation.trim() || null,
           is_featured: formFeatured,
           // status intentionally omitted — managed inline on the catalog
           // table row now, not from within this modal.
@@ -391,6 +400,8 @@ export function useManageProduct(
       formDesc,
       formBadge,
       formBrand,
+      formCompound,
+      formPresentation,
       formCasNumber,
       formPurity,
       formResearchUseOnly,
@@ -408,6 +419,8 @@ export function useManageProduct(
       setFormDesc,
       setFormBadge,
       setFormBrand,
+      setFormCompound,
+      setFormPresentation,
       setFormCasNumber,
       setFormPurity,
       setFormResearchUseOnly,

@@ -91,11 +91,11 @@ export function PaymentsOverviewChart({ data }: PropsType) {
         options={options}
         series={[
           {
-            name: "Received",
+            name: "Gross volume",
             data: data.received,
           },
           {
-            name: "Due",
+            name: "Fees + refunds",
             data: data.due,
           },
         ]}

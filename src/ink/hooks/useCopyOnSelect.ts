@@ -24,7 +24,9 @@
 
 import { useState, useCallback, useContext } from "react";
 import { spawn }                 from "child_process";
+import { existsSync }            from "fs";
 import { TerminalWriteContext }  from "../useTerminalNotification.js";
+
 
 // ── Unicode → ASCII sanitization ──────────────────────────────────────────────
 // Replaces common Unicode symbols used in the TUI with plain-ASCII equivalents
@@ -112,6 +114,18 @@ function sanitizeForClipboard(text: string): string {
 
 // ── Platform clipboard write ──────────────────────────────────────────────────
 
+function getClipExePath(): string | null {
+  if (process.platform === "win32") return "clip.exe";
+  const candidates = [
+    "/mnt/c/windows/system32/clip.exe",
+    "/mnt/c/Windows/System32/clip.exe",
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
 function writeClipboard(text: string, writeRaw?: (data: string) => void): void {
   const clean = text.trim();
   if (!clean) return;
@@ -119,24 +133,35 @@ function writeClipboard(text: string, writeRaw?: (data: string) => void): void {
   const safe = sanitizeForClipboard(clean);
 
   try {
-    if (process.platform === "win32") {
-      // clip.exe on Windows — sanitized text to avoid Unicode mangling.
-      const proc = spawn("clip.exe", [], {
+    const clipExe = getClipExePath();
+    if (clipExe) {
+      // Windows native or WSL — pipe to clip.exe
+      const proc = spawn(clipExe, [], {
         stdio: ["pipe", "ignore", "ignore"],
         windowsHide: true,
       });
-      proc.stdin!.write(safe, "utf8");
-      proc.stdin!.end();
-
-    } else if (process.platform === "darwin") {
-      const proc = spawn("pbcopy", [], { stdio: ["pipe", "ignore", "ignore"] });
-      proc.stdin!.write(clean, "utf8");
-      proc.stdin!.end();
-
-    } else {
-      // Linux or WSL — try xclip, then xsel, then fall back to OSC 52.
-      spawnClipboard(clean, writeRaw);
+      proc.on("error", () => {});
+      proc.stdin?.on("error", () => {});
+      try {
+        proc.stdin?.write(safe, "utf8");
+        proc.stdin?.end();
+      } catch {}
+      return;
     }
+
+    if (process.platform === "darwin") {
+      const proc = spawn("pbcopy", [], { stdio: ["pipe", "ignore", "ignore"] });
+      proc.on("error", () => {});
+      proc.stdin?.on("error", () => {});
+      try {
+        proc.stdin?.write(clean, "utf8");
+        proc.stdin?.end();
+      } catch {}
+      return;
+    }
+
+    // Generic Linux without WSL clip.exe
+    spawnClipboard(clean, writeRaw);
   } catch {
     // Best-effort — silently ignore clipboard errors so the TUI keeps running.
   }
@@ -147,8 +172,10 @@ function spawnClipboard(text: string, writeRaw?: (data: string) => void): void {
     const proc = spawn("xclip", ["-selection", "clipboard"], {
       stdio: ["pipe", "ignore", "ignore"],
     });
-    proc.stdin!.write(text, "utf8");
-    proc.stdin!.end();
+    proc.on("error", () => {});
+    proc.stdin?.on("error", () => {});
+    proc.stdin?.write(text, "utf8");
+    proc.stdin?.end();
     return;
   } catch {}
 
@@ -156,15 +183,20 @@ function spawnClipboard(text: string, writeRaw?: (data: string) => void): void {
     const proc = spawn("xsel", ["--clipboard", "--input"], {
       stdio: ["pipe", "ignore", "ignore"],
     });
-    proc.stdin!.write(text, "utf8");
-    proc.stdin!.end();
+    proc.on("error", () => {});
+    proc.stdin?.on("error", () => {});
+    proc.stdin?.write(text, "utf8");
+    proc.stdin?.end();
     return;
   } catch {}
 
   // OSC 52 — supported by most modern terminals (kitty, WezTerm, iTerm2, etc.)
-  const b64 = Buffer.from(text, "utf8").toString("base64");
-  writeRaw?.(`\x1b]52;c;${b64}\x07`);
+  try {
+    const b64 = Buffer.from(text, "utf8").toString("base64");
+    writeRaw?.(`\x1b]52;c;${b64}\x07`);
+  } catch {}
 }
+
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 

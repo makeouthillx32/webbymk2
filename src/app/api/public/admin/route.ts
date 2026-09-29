@@ -14,7 +14,7 @@ function jsonError(status: number, code: string, message: string, details?: any)
  *  - limit, offset
  */
 export async function GET(req: NextRequest) {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
 
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return jsonError(401, "UNAUTHORIZED", "Authentication required");

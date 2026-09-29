@@ -17,7 +17,23 @@ import { ensureRuntimeEnv } from './utils/runtimeEnv.js'
 // 1. Snapshot original cwd
 const originalCwd = process.cwd()
 
+// Emergency cleanup: ensure terminal escape sequences (mouse tracking, cursor) are always reset
+function resetTerminal() {
+  if (process.stdout.isTTY) {
+    try {
+      process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h')
+    } catch {}
+  }
+}
+process.on('exit', resetTerminal)
+process.on('uncaughtException', (err) => {
+  resetTerminal()
+  console.error('\nUNAXIS crashed with uncaught exception:', err)
+  process.exit(1)
+})
+
 profileCheckpoint('main-start')
+
 
 // 2. Resolve project root
 const rootState = detectProjectRoot()

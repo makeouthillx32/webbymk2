@@ -17,6 +17,12 @@ import { DeleteConfirmModal } from "./_components/DeleteConfirmModal";
 type DbCategory = CategoryRow & {
   position?: number;
   section?: string;
+  // Optional editorial copy (2026-09-05) — rendered over the cover image on the
+  // shop front end. Null on every existing row, so cards look unchanged.
+  eyebrow?: string | null;
+  tagline?: string | null;
+  subtitle?: string | null;
+  cta_label?: string | null;
 };
 
 function normalizeSlug(input: string) {
@@ -33,7 +39,41 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export default function CategoriesPage() {
+/**
+ * One category list, two concerns.
+ *
+ *   structure — the nav tree: name, slug, nesting. Browse Structure.
+ *   display   — the card artwork and the copy over it. Featured Rows.
+ *
+ * Both read and write the same rows; only the editor's fields differ, so a
+ * category never has to exist twice to be both a nav link and a picture.
+ */
+export default function CategoriesPage({
+  embedded = false,
+  mode = "structure",
+  table = "categories",
+  bucket = "category-covers",
+  defaultSection = "shop",
+}: {
+  embedded?: boolean;
+  mode?: "structure" | "display";
+  /**
+   * Which taxonomy table this manages. Labs points at research_categories,
+   * which carries the identical shape — nesting, section, cover and card copy
+   * — so the whole manager is reused rather than forked.
+   */
+  table?: "categories" | "research_categories";
+  bucket?: string;
+  /**
+   * Section this manager opens on and creates into.
+   *
+   * `section` partitions a taxonomy table into independent trees. It was
+   * hardcoded to "shop", which is invisible until a second catalog arrives:
+   * every research_categories row has section NULL, so a Labs manager pinned
+   * to "shop" would have listed nothing at all and looked simply broken.
+   */
+  defaultSection?: string;
+} = {}) {
   const supabase = useMemo(() => {
     return createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,8 +82,8 @@ export default function CategoriesPage() {
   }, []);
 
   // ── Section state ──────────────────────────────────────────────────────────
-  const [sections, setSections] = useState<string[]>(["shop"]);
-  const [activeSection, setActiveSection] = useState<string>("shop");
+  const [sections, setSections] = useState<string[]>([defaultSection]);
+  const [activeSection, setActiveSection] = useState<string>(defaultSection);
 
   // ── Category state ─────────────────────────────────────────────────────────
   const [rows, setRows] = useState<DbCategory[]>([]);
@@ -61,17 +101,17 @@ export default function CategoriesPage() {
   // ── Load distinct sections ─────────────────────────────────────────────────
   const loadSections = useCallback(async () => {
     const { data } = await supabase
-      .from("categories")
+      .from(table)
       .select("section")
       .order("section", { ascending: true });
 
     if (data) {
       const unique = Array.from(new Set(data.map((r: any) => r.section as string).filter(Boolean)));
-      // Always ensure 'shop' is first
-      const ordered = ["shop", ...unique.filter((s) => s !== "shop")];
+      // This catalog's own section leads; the rest follow.
+      const ordered = [defaultSection, ...unique.filter((s) => s !== defaultSection)];
       setSections(ordered);
     }
-  }, [supabase]);
+  }, [supabase, table, defaultSection]);
 
   // ── Load categories for active section ────────────────────────────────────
   const load = useCallback(async () => {
@@ -79,8 +119,8 @@ export default function CategoriesPage() {
     setLoading(true);
 
     const { data, error } = await supabase
-      .from("categories")
-      .select("id,name,slug,parent_id,position,cover_image_bucket,cover_image_path,cover_image_alt,section")
+      .from(table)
+      .select("id,name,slug,parent_id,position,cover_image_bucket,cover_image_path,cover_image_alt,section,eyebrow,tagline,subtitle,cta_label")
       .eq("section", activeSection)
       .order("position", { ascending: true })
       .order("name", { ascending: true });
@@ -131,7 +171,12 @@ export default function CategoriesPage() {
   const safeCloseDelete = () => { if (!busy) setDeleteOpen(false); };
 
   // ── Create ─────────────────────────────────────────────────────────────────
-  const handleCreate = async (data: { name: string; slug: string; parent_id: string | null }) => {
+  const handleCreate = async (data: {
+    name: string;
+    slug: string;
+    parent_id: string | null;
+    coverFile?: File | null;
+  }) => {
     setErr(null);
     setBusy(true);
 
@@ -145,15 +190,46 @@ export default function CategoriesPage() {
 
       const position = nextPositionForParent(data.parent_id);
 
-      const { error } = await supabase.from("categories").insert({
+      // Need the new id back: the cover path is keyed by it, so the row has to
+      // exist before the file can be uploaded.
+      const { data: created, error } = await supabase.from(table).insert({
         name: data.name.trim(),
         slug,
         parent_id: data.parent_id,
         position,
         section: activeSection,
-      });
+      }).select("id").single();
 
       if (error) { setErr(error.message); return; }
+
+      // Cover is optional and arrives only from Featured Rows. A failure here
+      // must not read as "create failed" — the category exists and is usable;
+      // only its artwork is missing, and that is fixable by editing it.
+      if (data.coverFile && created?.id) {
+        const ext = data.coverFile.name.split(".").pop() ?? "jpg";
+        const path = `${created.id}/cover.${ext}`;
+
+        const { error: upErr } = await supabase.storage
+          .from(bucket)
+          .upload(path, data.coverFile, { upsert: true });
+
+        if (upErr) {
+          setErr(`Category created, but the cover upload failed: ${upErr.message}`);
+        } else {
+          const { error: linkErr } = await supabase
+            .from(table)
+            .update({
+              cover_image_bucket: bucket,
+              cover_image_path: path,
+              cover_image_alt: data.name.trim(),
+            })
+            .eq("id", created.id);
+
+          if (linkErr) {
+            setErr(`Category created and image uploaded, but linking it failed: ${linkErr.message}`);
+          }
+        }
+      }
 
       await load();
       await loadSections(); // refresh tabs in case this is a first row in a new section
@@ -170,7 +246,7 @@ export default function CategoriesPage() {
     setEditOpen(true);
   };
 
-  const handleSave = async (data: { id: string; name: string; slug: string; parent_id: string | null }) => {
+  const handleSave = async (data: { id: string; name: string; slug: string; parent_id: string | null; eyebrow?: string | null; tagline?: string | null; subtitle?: string | null; cta_label?: string | null }) => {
     setErr(null);
     setBusy(true);
 
@@ -189,10 +265,14 @@ export default function CategoriesPage() {
         : current?.position;
 
       const { error } = await supabase
-        .from("categories")
+        .from(table)
         .update({
           name: data.name.trim(),
           slug,
+          eyebrow: data.eyebrow ?? null,
+          tagline: data.tagline ?? null,
+          subtitle: data.subtitle ?? null,
+          cta_label: data.cta_label ?? null,
           parent_id: data.parent_id,
           ...(parentChanged ? { position } : {}),
         })
@@ -220,7 +300,7 @@ export default function CategoriesPage() {
     setBusy(true);
 
     try {
-      const { error } = await supabase.from("categories").delete().eq("id", cat.id);
+      const { error } = await supabase.from(table).delete().eq("id", cat.id);
       if (error) { setErr(error.message); return; }
 
       await load();
@@ -243,12 +323,14 @@ export default function CategoriesPage() {
   return (
     <div className="categories-manager">
       <div className="categories-header">
-        <div>
-          <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Category Header</h1>
-          <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Manage category trees across sections. Shop drives storefront nav — zone sections are auto-detected from the TUI.
-          </p>
-        </div>
+        {!embedded && (
+          <div>
+            <h1 className="text-xl font-semibold text-[hsl(var(--foreground))]">Browse Structure (Categories)</h1>
+            <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+              What a product IS — drives storefront nav and browse pages. Hierarchical. For time-based pushes use Featured Rows; for cross-cutting traits use Attributes.
+            </p>
+          </div>
+        )}
 
         <CategoryActionBar
           search={search}
@@ -282,11 +364,12 @@ export default function CategoriesPage() {
         <LoadingState />
       ) : (
         <div className="categories-table">
-          <CategoriesTable categories={filtered} onEdit={handleEdit} onDelete={handleDelete} />
+          <CategoriesTable categories={filtered} onEdit={handleEdit} onDelete={handleDelete} showCover={mode === "display"} variant={mode === "display" ? "cards" : "tree"} />
         </div>
       )}
 
       <CreateCategoryModal
+        mode={mode}
         open={createOpen}
         categories={rows}
         activeSection={activeSection}
@@ -295,6 +378,9 @@ export default function CategoriesPage() {
       />
 
       <EditCategoryForm
+        mode={mode}
+        bucket={bucket}
+        table={table}
         open={editOpen}
         category={selected}
         categories={rows}

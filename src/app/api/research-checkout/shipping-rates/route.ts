@@ -6,6 +6,7 @@
 import { createServerClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getOAuthToken } from "@/lib/usps/tokens";
+import { signShippingRates } from "@/lib/shippingQuote";
 
 const USPS_ENV = process.env.USPS_ENV ?? "mock";
 const USPS_BASE = USPS_ENV === "production"
@@ -86,30 +87,37 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient();
     const body = await request.json();
-    const { subtotal_cents, zip, cart_id } = body;
+    const { zip, cart_id } = body;
 
-    if (!subtotal_cents) {
-      return NextResponse.json({ error: "subtotal_cents is required" }, { status: 400 });
+    if (!cart_id) {
+      return NextResponse.json({ error: "cart_id is required" }, { status: 400 });
     }
 
     // ── Check if all research cart items have weights ─────────────
-    if (cart_id) {
-      const { data: cartItems } = await supabase
-        .from("research_cart_items")
-        .select("quantity, research_product_variants ( weight_grams )")
-        .eq("cart_id", cart_id);
+    const { data: cartItems, error: cartError } = await supabase
+      .from("research_cart_items")
+      .select("quantity, price_cents, research_product_variants ( weight_grams )")
+      .eq("cart_id", cart_id);
 
-      const missingWeight = (cartItems ?? []).some(
-        (item: any) => !item.research_product_variants?.weight_grams
-      );
+    if (cartError || !cartItems?.length) {
+      return NextResponse.json({ error: "Cart not found or empty" }, { status: 400 });
+    }
 
-      if (missingWeight) {
-        return NextResponse.json({
-          shipping_rates: freeStandardRate(),
-          source: "free-fallback",
-          reason: "missing-weight",
-        });
-      }
+    const resolvedSubtotalCents = cartItems.reduce(
+      (sum: number, item: any) => sum + Number(item.price_cents) * Number(item.quantity),
+      0,
+    );
+
+    const missingWeight = cartItems.some(
+      (item: any) => !item.research_product_variants?.weight_grams
+    );
+
+    if (missingWeight) {
+      return NextResponse.json({
+        shipping_rates: signShippingRates("labs", cart_id, resolvedSubtotalCents, freeStandardRate()),
+        source: "free-fallback",
+        reason: "missing-weight",
+      });
     }
 
     if (isLiveMode() && zip) {
@@ -122,7 +130,7 @@ export async function POST(request: NextRequest) {
       const originZip = origin?.postal_code || process.env.USPS_FROM_ZIP || "";
 
       if (!originZip) {
-        return fallbackToDbRates(supabase, subtotal_cents);
+        return fallbackToDbRates(supabase, resolvedSubtotalCents);
       }
 
       const { data: preset } = await supabase
@@ -142,7 +150,7 @@ export async function POST(request: NextRequest) {
       try {
         oauthToken = await getOAuthToken();
       } catch {
-        return fallbackToDbRates(supabase, subtotal_cents);
+        return fallbackToDbRates(supabase, resolvedSubtotalCents);
       }
 
       const results = await Promise.all(
@@ -168,7 +176,7 @@ export async function POST(request: NextRequest) {
           max_delivery_days: r.maxDays,
         }));
 
-      if (subtotal_cents >= FREE_THRESHOLD_CENTS) {
+      if (resolvedSubtotalCents >= FREE_THRESHOLD_CENTS) {
         const ground = rates.find((r) => r.mail_class === "USPS_GROUND_ADVANTAGE");
         if (ground) {
           ground.price_cents = 0;
@@ -177,11 +185,14 @@ export async function POST(request: NextRequest) {
       }
 
       if (rates.length > 0) {
-        return NextResponse.json({ shipping_rates: rates, source: "usps" });
+        return NextResponse.json({
+          shipping_rates: signShippingRates("labs", cart_id, resolvedSubtotalCents, rates),
+          source: "usps",
+        });
       }
     }
 
-    return fallbackToDbRates(supabase, subtotal_cents);
+    return fallbackToDbRates(supabase, resolvedSubtotalCents);
   } catch (error: any) {
     console.error("[Research Shipping Rates] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

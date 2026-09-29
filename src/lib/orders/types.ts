@@ -28,6 +28,10 @@ export interface AdminOrderItem {
   quantity: number;
   price_cents: number;
   weight_grams?: number | null;
+  product_id?: string | null;
+  research_product_id?: string | null;
+  allocated_batch_id?: string | null;
+  allocated_batch_number?: string | null;
 }
 
 export interface AdminOrder {
@@ -52,6 +56,17 @@ export interface AdminOrder {
   tracking_url?: string;
   label_pdf_path?: string;
   label_postage_cents?: number;
+  label_created_at?: string | null;
+  handed_to_carrier_at?: string | null;
+  carrier_accepted_at?: string | null;
+  fulfilled_at?: string | null;
+  picked_by?: string | null;
+  picked_at?: string | null;
+  checked_by?: string | null;
+  checked_at?: string | null;
+  package_preset?: string | null;
+  package_weight_oz?: number | null;
+  fulfillment_audit?: any[] | null;
   internal_notes?: string;
   // Identity — mutually exclusive
   source: OrderSource;    // 'web' | 'pos' | 'research'

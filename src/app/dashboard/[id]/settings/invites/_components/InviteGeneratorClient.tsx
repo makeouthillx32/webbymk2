@@ -1,12 +1,18 @@
-// app/components/invite/InviteGeneratorClient.tsx
+// app/dashboard/[id]/settings/invites/_components/InviteGeneratorClient.tsx
 "use client";
 
 import InviteGenerator from "./InviteGenerator";
 
-export default function InviteGeneratorClient({ defaultRole = "client" }: { defaultRole?: string }) {
+export default function InviteGeneratorClient({
+  defaultRole = "member",
+  onCreated,
+}: {
+  defaultRole?: string;
+  onCreated?: () => void;
+}) {
   return (
     <div className="w-full mt-10">
-      <InviteGenerator defaultRole={defaultRole} />
+      <InviteGenerator defaultRole={defaultRole} onCreated={onCreated} />
     </div>
   );
 }

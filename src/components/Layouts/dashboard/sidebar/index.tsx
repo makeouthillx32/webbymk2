@@ -2,6 +2,7 @@
 
 import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
+import { getCookie } from "@/lib/cookieUtils";
 import Link from "next/link";
 import { usePathname, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -9,6 +10,14 @@ import { NAV_DATA } from "./data";
 import { ArrowLeftIcon, ChevronUp } from "./icons";
 import { MenuItem } from "./menu-item";
 import { useSidebarContext } from "./sidebar-context";
+
+// Restrictive-by-default: matches every item's own default (no `roles` field
+// = admin-only), so a role read that fails/hasn't landed yet under-shows
+// rather than over-shows. Corrected from the real userRole cookie on mount —
+// see the effect below. Do NOT use userRoleCookies.getUserRole() here, it
+// validates against a stale ["admin","member","guest"] list and silently
+// drops "marketing".
+const canSee = (role: string, roles?: string[]) => !roles || roles.includes(role);
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -18,6 +27,11 @@ export function Sidebar() {
   const { setIsOpen, isOpen, isMobile, toggleSidebar } = useSidebarContext();
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [collapsedSections, setCollapsedSections] = useState<string[]>([]);
+  const [role, setRole] = useState("marketing");
+
+  useEffect(() => {
+    setRole(getCookie("userRole") || "marketing");
+  }, []);
 
   const toggleExpanded = (title: string) => {
     setExpandedItems((prev) =>
@@ -94,6 +108,16 @@ export function Sidebar() {
           {/* Navigation Sections */}
           <div className="custom-scrollbar mt-6 flex-1 overflow-y-auto pr-3 min-[850px]:mt-10">
             {NAV_DATA.map((section) => {
+              const visibleItems = section.items
+                .filter((item) => canSee(role, (item as { roles?: string[] }).roles))
+                .map((item) => ({
+                  ...item,
+                  items: item.items.filter((subItem) =>
+                    canSee(role, (subItem as { roles?: string[] }).roles)
+                  ),
+                }));
+              if (visibleItems.length === 0) return null;
+
               const isSectionCollapsed = collapsedSections.includes(section.label);
               return (
               <div key={section.label} className="mb-6">
@@ -121,7 +145,7 @@ export function Sidebar() {
                 {!isSectionCollapsed && (
                 <nav role="navigation" aria-label={section.label}>
                   <ul className="space-y-2">
-                    {section.items.map((item) => {
+                    {visibleItems.map((item) => {
                       const hasChildren = item.items.length > 0;
 
                       if (hasChildren) {

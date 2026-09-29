@@ -148,8 +148,23 @@ export default class App extends PureComponent<Props, State> {
   lastStdinTime = Date.now();
 
   // Determines if TTY is supported on the provided stdin
+  //
+  // this.props.stdin.isTTY is a Node-computed heuristic and can be a false
+  // negative on Windows through certain process-spawn chains — confirmed
+  // 2026-08-30 with a `bun --watch`-respawned child on Windows (the shape
+  // `bun run tui:dev` produces: bun run -> powershell run.ps1 -> bun --watch
+  // supervisor -> bun --watch worker): the worker's stdin genuinely has a
+  // working setRawMode, but .isTTY read false, so componentDidMount below
+  // silently never called handleSetRawMode(true) — no error, no crash, the
+  // 'readable' listener just never got attached and every keystroke vanished
+  // with zero visible symptom. Exact same class of bug already hit and fixed
+  // for stdout in ink.tsx ("Force to true to fix Windows PowerShell false
+  // negatives") — never applied here. Check the actual capability we're
+  // about to use (a real setRawMode function) instead of trusting the
+  // separately-computed, sometimes-wrong isTTY flag.
   isRawModeSupported(): boolean {
-    return this.props.stdin.isTTY;
+    const stdin = this.props.stdin as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
+    return Boolean(stdin.isTTY) || typeof stdin.setRawMode === "function";
   }
   override render() {
     return <TerminalSizeContext.Provider value={{
@@ -216,13 +231,9 @@ export default class App extends PureComponent<Props, State> {
       stdin
     } = this.props;
     if (!this.isRawModeSupported()) {
-      if (stdin === process.stdin) {
-        throw new Error('Raw mode is not supported on the current process.stdin, which Ink uses as input stream by default.\nRead about how to prevent this error on https://github.com/vadimdemedes/ink/#israwmodesupported');
-      } else {
-        throw new Error('Raw mode is not supported on the stdin provided to Ink.\nRead about how to prevent this error on https://github.com/vadimdemedes/ink/#israwmodesupported');
-      }
+      return;
     }
-    stdin.setEncoding('utf8');
+    stdin.setEncoding?.('utf8');
     if (isEnabled) {
       // Ensure raw mode is enabled only once
       if (this.rawModeEnabledCount === 0) {

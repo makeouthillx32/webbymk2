@@ -1,10 +1,13 @@
 import type { DiscoveredCamera, PlaybackProtocol, CameraPlayback } from "../contracts";
+import { mediaMtxConfigEqual } from "./mediaMtxConfigEqual";
 import {
   buildPublicCameraPlayback,
   buildPublicCameraPreview,
+  buildPublicCameraLowPreview,
   cameraMediaPath,
   cameraHlsMediaPath,
   cameraHlsLowMediaPath,
+  cameraSubMediaPath,
   cameraPreviewMediaPath,
   cameraArchiveMediaPath,
   obsRoomMediaPath,
@@ -30,6 +33,29 @@ export function getPublicCameraPreview(cameraId: string, online: boolean) {
   return buildPublicCameraPreview(cameraId, online, {
     whepBaseUrl: process.env.TANK_WHEP_PUBLIC_BASE_URL,
   });
+}
+
+/**
+ * The 720p HLS rung, for thumbnails that must not open a 4K WHEP decoder.
+ *
+ * receiverManager imports this behind TANK_HLS_LOW_RUNG. Without the wrapper
+ * the module graph fails at import time, which takes the whole server director
+ * down rather than just the thumbnails.
+ */
+export function getPublicCameraLowPreview(cameraId: string, online: boolean) {
+  return buildPublicCameraLowPreview(cameraId, online, {
+    hlsBaseUrl: process.env.TANK_HLS_PUBLIC_BASE_URL,
+  });
+}
+
+export function getMediaMtxApiBaseUrl(): string | undefined {
+  const envUrl = process.env.MEDIAMTX_API_URL;
+  if (!envUrl) return undefined;
+  const isBareMetal = process.env.NODE_ENV === "development" && !process.env.DOCKER_CONTAINER;
+  if (isBareMetal && (envUrl.includes("unt_mediamtx") || envUrl.includes("mediamtx:"))) {
+    return "http://127.0.0.1:9997";
+  }
+  return envUrl;
 }
 
 export { buildPublicCameraPlayback, cameraMediaPath, cameraHlsMediaPath } from "../mediaPlayback";
@@ -67,8 +93,15 @@ export function buildManagerSrtSource(input: {
     !input.streamKey
   ) return null;
   const streamId = `play/stream/${input.streamUser}?srtauth=${input.streamKey}`;
-  const latency = input.latencyMs ? `&latency=${input.latencyMs}` : "";
-  return `srt://${input.lanHost}:${input.videoOutPort}?streamid=${streamId}&mode=caller${latency}`;
+  // NOTE: FFmpeg's libsrt parses `latency` and `rcvlatency` in MICROSECONDS.
+  // Passing 1000 meant 1000us = 1ms! That caused SRT's tlpktdrop to drop video
+  // packets on any jitter >400ms (RCV-DROPPED ... packet corrupt, dropping it),
+  // creating torn/missing slices that manifested as vertical scanline smearing.
+  // Convert ms to microseconds (x1000), set 64MB receive buffer (rcvbuf=67108864),
+  // and disable too-late packet drop (tlpktdrop=0) to ensure full GOP delivery.
+  const latencyMs = input.latencyMs && input.latencyMs > 0 ? input.latencyMs : 2000;
+  const latencyUs = latencyMs * 1000;
+  return `srt://${input.lanHost}:${input.videoOutPort}?streamid=${streamId}&mode=caller&latency=${latencyUs}&rcvlatency=${latencyUs}&rcvbuf=67108864&tlpktdrop=0&timeout=5000000`;
 }
 
 export function mediaMtxHeaders() {
@@ -134,7 +167,75 @@ export type MediaMtxProvisionOptions = {
   forceSoftwareDecode?: boolean;
   /** Provision a 360p/12fps video-only roster rung (used for IRL cameras). */
   previewRung?: boolean;
+  /**
+   * The camera's own low-resolution sub-stream (see "Camera sub-streams"
+   * below). When set, the -hls-low rung is COPIED from it instead of being
+   * decoded out of the 4K main stream and re-encoded, and the main ingest
+   * stops decoding altogether.
+   */
+  lowRungSource?: CameraSubstreamSource | null;
 };
+
+// ── Camera sub-streams ──────────────────────────────────────────────────────
+//
+// The -hls-low rung used to be made by decoding every camera's 4K main stream
+// on NVDEC, scaling it to 720p on CUDA and re-encoding it on NVENC, all day,
+// for all six fixed cameras — whether or not anyone was watching. Measured
+// 2026-09-27: that alone held the decoder engine at 40-70%, which is what
+// made the house PC unusable for anything else on the GPU.
+//
+// Every one of those cameras already encodes a small stream of its own (the
+// Dahua "sub stream", `subtype=1`/`2` on the same RTSP path). The SRT Receiver
+// Manager holds the camera password and hands Tank that source over the shared
+// secret (/api/cameras/<id>/rtsp/low-source); MediaMTX pulls it straight from
+// the camera on POWER into cameras/<id>-sub and Tank copies it: no decode, no
+// scale, no encode.
+//
+// Pulled here, NOT bridged by the manager: OPT1 is a 4-core box already
+// saturated by the six main bridges. Having it relay six more feeds (tried
+// 2026-09-27) made its receivers' SRT sends time out and the main feeds drop.
+//
+// Dahua sub-streams squeeze the full 16:9 view into 704x480 with no aspect
+// flag; the manager computes the sample aspect ratio and the -sub stage stamps
+// it into the H.264 headers (still a copy) so every player shows 16:9.
+
+export type CameraSubstreamSource = {
+  /** rtsp://user:pass@camera/…subtype=N — carries the camera password. */
+  url: string;
+  /** e.g. "40/33", or null when the sub-stream already has square pixels. */
+  sar: string | null;
+};
+
+/** Pulls the camera's sub-stream into cameras/<id>-sub. See camera-substream.sh. */
+export function buildSubstreamPullCommand(source: CameraSubstreamSource, subPath: string): string {
+  const sar = source.sar && /^\d+\/\d+$/.test(source.sar) ? source.sar : "none";
+  return `/bin/sh /scripts/camera-substream.sh ${subPath} ${sar} "${source.url}"`;
+}
+
+/**
+ * Copies the camera sub-stream's VIDEO into the low rung and takes the AUDIO
+ * from the camera's main path.
+ *
+ * Dahua sub-streams carry no audio track, but this rung is where the vision
+ * worker measures loudness for the director's audio-peak mode (and where the
+ * card previews get their sound), so the rung must keep the room's audio. The
+ * main path's audio has already been through the stabilisation chain, so it
+ * is only re-encoded to AAC here, not filtered a second time.
+ */
+export function buildSubstreamLowRungCommand(sourceUrl: string, mainPath: string, lowPath: string): string {
+  // An SRT source carries its own timeout in the URL; -rtsp_transport before
+  // -i would be an unknown input option for it and abort ffmpeg outright.
+  const inputOptions = sourceUrl.startsWith("rtsp://") ? " -rtsp_transport tcp -timeout 5000000" : "";
+  // Two live inputs: the default 8-packet queue per input blocks whenever one
+  // bursts while the other is still being read.
+  return `ffmpeg -hide_banner -loglevel warning${inputOptions} -probesize 10M -analyzeduration 2M` +
+    ` -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero` +
+    ` -thread_queue_size 512 -i "${sourceUrl}"` +
+    ` -rtsp_transport tcp -timeout 5000000 -thread_queue_size 512 -i rtsp://127.0.0.1:8554/${mainPath}` +
+    ` -map 0:v:0 -map 1:a:0? -c:v copy -bsf:v dump_extra` +
+    ` -af aresample=async=1000:min_hard_comp=0.100000:first_pts=0 -c:a aac -b:a 96k` +
+    ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${lowPath}`;
+}
 
 // Every browser delivery path Tank uses requires H.264 video.
 //
@@ -278,15 +379,30 @@ export function previewEncoderTuning(): string {
     " -x264-params no-scenecut=1:keyint=24:min-keyint=24";
 }
 
+/**
+ * Gate a dependent stage on its source actually publishing.
+ *
+ * runOnInit fires when a path is CREATED, not when its source is READY, so
+ * every -hls / -hls-low / -archive job used to start against a path that did
+ * not exist yet, take a 404, exit, and be restarted instantly by
+ * runOnInitRestart. That respawn storm is what pinned MediaMTX between 150%
+ * and 865% CPU while cameras flickered 6/6 -> 0/6.
+ *
+ * Waiting is free; racing costs the pipeline.
+ */
+function awaitSource(sourcePath: string, command: string): string {
+  return `/bin/sh /scripts/await-source.sh ${sourcePath} ${command}`;
+}
+
 export function buildPreviewSiblingCommand(sourcePath: string, previewPath: string): string {
   return `ffmpeg -nostdin -hide_banner -loglevel warning${hwDecodeFlags()}` +
-    ` -rtsp_transport tcp -i rtsp://127.0.0.1:8554/${sourcePath}` +
+    ` -rtsp_transport tcp -timeout 5000000 -i rtsp://127.0.0.1:8554/${sourcePath}` +
     ` -map 0:v:0 -an -vf ${scaleFilter(360)} -r 12 ${previewEncoderTuning()}` +
     ` -fps_mode cfr -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${previewPath}`;
 }
 
 export async function teardownCameraPreview(cameraId: string): Promise<void> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return;
   let apiUrl: URL;
   try {
@@ -345,7 +461,7 @@ export async function provisionMediaMtxCamera(
 ): Promise<MediaGatewayProvisionResult> {
   const path = cameraMediaPath(cameraId);
   const playback = getPublicCameraPlayback(cameraId, true);
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
 
   if (!apiBase || !sourceUrl) {
     return {
@@ -369,6 +485,14 @@ export async function provisionMediaMtxCamera(
 
   const hlsPath = cameraHlsMediaPath(cameraId);
   const lowPath = cameraHlsLowMediaPath(cameraId);
+
+  // A camera whose own path is still cooling down from a failed write does
+  // NOTHING this poll — not even the codec probes below. Those are two GETs
+  // per camera per 2.5s aimed at a path already known to be unwritable, which
+  // is the same storm in a quieter register.
+  if (pathInCooldown(path)) {
+    return { ok: false, cameraId, path, playback, error: `path ${path} is in write cooldown` };
+  }
 
   // What the camera is actually publishing right now. Null on first
   // provision (nothing to read yet); the next poll re-evaluates.
@@ -395,10 +519,35 @@ export async function provisionMediaMtxCamera(
     ? `${tuning.live("4000k")} -pix_fmt yuv420p -fps_mode passthrough` +
       ` -metadata:s:v:0 ${VIDEO_NORMALIZE_MARKER}`
     : "-c:v copy";
-  // Single-pass EBU R128 loudness normalization combined with monotonic audio resampling.
-  // aresample=async=1000 ensures audio PTS stays monotonic without backwards-in-time drift
-  // during SRT/RTSP jitter or packet retransmission, preventing HLS audio segment corruption.
-  const audioFilter = "aresample=async=1000:min_hard_comp=0.100000:first_pts=0,loudnorm=I=-16:TP=-1.5:LRA=11";
+  // Full audio stabilization chain for IP camera mics — applied to every camera feed.
+  //
+  // Stage 1 — Input pad: IP camera preamps are hot and clip internally before the
+  //   signal even arrives. -12 dB cuts the baseline to prevent digital clipping at
+  //   capture while leaving headroom for dynamic peaks.
+  //
+  // Stage 2 — High-pass filter (100 Hz, 24 dB/oct): two cascaded 2-pole Butterworth
+  //   stages = 4 poles total. Removes mechanical housing resonance, HVAC hum, and
+  //   low-frequency rumble that IP camera housings pick up from walls/ceilings.
+  //
+  // Stage 3 — Downward compressor (3:1, -24 dBFS threshold): tames the difference
+  //   between someone talking close vs. across the room. 15 ms attack avoids
+  //   breathing on consonants; 250 ms release rides the average rather than reacting
+  //   to individual transients. 6 dB soft knee keeps it transparent.
+  //   threshold=0.063 ≈ -24 dBFS in amplitude (10^(-24/20)).
+  //
+  // Stage 4 — Monotonic resampler: ensures audio PTS stays strictly monotonic
+  //   through SRT/RTSP jitter and packet retransmission, preventing HLS segment
+  //   corruption across the whole downstream chain.
+  //
+  // Stage 5 — EBU R128 loudness normalization: targets -16 LUFS integrated,
+  //   -1.0 dBTP true-peak ceiling (broadcast/streaming standard), LRA ≤ 7 LU
+  //   (tighter than the previous 11 — appropriate for dialogue-heavy room audio).
+  const audioFilter =
+    "volume=-12dB" +
+    ",highpass=f=100:p=2,highpass=f=100:p=2" +
+    ",acompressor=threshold=0.063:ratio=3:attack=15:release=250:knee=6" +
+    ",aresample=async=1000:min_hard_comp=0.100000:first_pts=0" +
+    ",loudnorm=I=-16:TP=-1.0:LRA=7";
 
   // The source process publishes the WHEP path and optional 720p rung. HLS is
   // a lightweight sidecar below: it copies the already-normalized H.264 video
@@ -415,12 +564,19 @@ export async function provisionMediaMtxCamera(
   // ABR low rung — 720p. Requires hardware acceleration or explicit TANK_HLS_LOW_RUNG=1
   // to avoid CPU saturation across multiple 4K raw camera streams.
   const lowRungEnabled = process.env.TANK_HLS_LOW_RUNG === "1";
-  const lowOut = lowRungEnabled
+  // A camera that supplies its own sub-stream gets its low rung copied from
+  // it (see "Camera sub-streams" above), so the main ingest no longer produces one.
+  const lowFromSubstream = lowRungEnabled && Boolean(options?.lowRungSource?.url);
+  const lowOut = lowRungEnabled && !lowFromSubstream
     ? ` -map 0:v:0 -map 0:a:0? -vf ${scaleFilter(720, options?.forceSoftwareDecode)} ${tuning.live("1500k")} -fps_mode passthrough` +
       ` -af ${audioFilter} -c:a aac -b:a 96k ${rtspOut(lowPath)}`
     : "";
 
-  const ffmpegBase = `ffmpeg -hide_banner -loglevel warning${hwDecodeFlags(options?.forceSoftwareDecode)} -probesize 10M -analyzeduration 2M -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero`;
+  // The main ingest only needs a decoder when it makes pixels: a video
+  // normalise, or the in-process low rung. A copy-only ingest skips NVDEC.
+  const needsDecode = transcodeVideo || Boolean(lowOut);
+  const decodeFlags = needsDecode ? hwDecodeFlags(options?.forceSoftwareDecode) : "";
+  const ffmpegBase = `ffmpeg -hide_banner -loglevel warning${decodeFlags} -probesize 10M -analyzeduration 2M -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero`;
 
   let runOnInitCmd = "";
   if (options?.externalAudioUrl) {
@@ -445,11 +601,18 @@ export async function provisionMediaMtxCamera(
   // Reuse the normalized H.264 bitstream. Transcoded main paths carry Opus for
   // WHEP, so only their audio is converted to AAC; direct paths already carry
   // HLS-safe audio and remain a pure remux.
-  const hlsAudioOut = isTranscoding ? "-c:a aac -b:a 128k" : "-c:a copy";
+  // Add aresample to keep AAC audio PTS monotonic with video PTS and prevent
+  // timestamp drift across segment boundaries.
+  const hlsAudioFilter = "aresample=async=1000:min_hard_comp=0.100000:first_pts=0";
+  const hlsAudioOut = isTranscoding ? `-af ${hlsAudioFilter} -c:a aac -b:a 128k` : "-c:a copy";
+  // Add -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero and -bsf:v dump_extra
+  // so H.264 IDR frames always carry SPS/PPS parameter sets, preventing hardware decoder
+  // frame corruption and timestamp discontinuity spam.
   const hlsRunOnInitCmd =
-    `ffmpeg -hide_banner -loglevel warning -rtsp_transport tcp` +
+    `ffmpeg -hide_banner -loglevel warning -rtsp_transport tcp -timeout 5000000` +
+    ` -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero` +
     ` -i rtsp://127.0.0.1:8554/${path}` +
-    ` -map 0:v:0 -map 0:a:0? -c:v copy ${hlsAudioOut} ${rtspOut(hlsPath)}`;
+    ` -map 0:v:0 -map 0:a:0? -c:v copy -bsf:v dump_extra ${hlsAudioOut} ${rtspOut(hlsPath)}`;
 
   // The HLS sibling has to exist BEFORE the main path's ffmpeg starts —
   // that process publishes into it, and MediaMTX refuses a publish to a
@@ -457,33 +620,63 @@ export async function provisionMediaMtxCamera(
   const hlsResult = await upsertMediaMtxPath(apiUrl, hlsPath, {
     source: "publisher",
     sourceOnDemand: false,
-    runOnInit: hlsRunOnInitCmd,
+    runOnInit: awaitSource(path, hlsRunOnInitCmd),
     runOnInitRestart: true,
   });
 
   // Low rung receives from the main path's ffmpeg (same ordering reason as
-  // the AAC sibling), so it only exists while the ladder is enabled.
-  if (lowRungEnabled) {
-    await upsertMediaMtxPath(apiUrl, lowPath, {
+  // the AAC sibling), so it only exists while the ladder is enabled — unless
+  // the camera supplies its own sub-stream, in which case the rung runs its
+  // own copy-only ffmpeg and the main path never publishes into it.
+  const subPath = cameraSubMediaPath(cameraId);
+  if (lowFromSubstream) {
+    // Pulled straight from the camera into its own path first, so a slow
+    // reader downstream is buffered by MediaMTX instead of back-pressuring
+    // the camera's RTSP session.
+    await upsertMediaMtxPath(apiUrl, subPath, {
       source: "publisher",
       sourceOnDemand: false,
-      runOnInit: "",
+      runOnInit: buildSubstreamPullCommand(options!.lowRungSource!, subPath),
+      runOnInitRestart: true,
     });
+  } else {
+    await removeMediaMtxPathIfPresent(apiUrl, subPath);
+  }
+  if (lowRungEnabled) {
+    await upsertMediaMtxPath(apiUrl, lowPath, lowFromSubstream
+      ? {
+          source: "publisher",
+          sourceOnDemand: false,
+          // Waits for both inputs: video from -sub, audio from the main path.
+          runOnInit: awaitSource(subPath, awaitSource(path,
+            buildSubstreamLowRungCommand(`rtsp://127.0.0.1:8554/${subPath}`, path, lowPath))),
+          runOnInitRestart: true,
+        }
+      : {
+          source: "publisher",
+          sourceOnDemand: false,
+          runOnInit: "",
+        });
   }
 
   const targetSource = isTranscoding ? "publisher" : sourceUrl;
-  // Mobile/SRTLA cameras have a dedicated 360p preview sibling. Let that path
-  // own the recent clip so the worker can remux it without another decode or
-  // encode. Fixed cameras do not keep a permanent preview encoder, so their
-  // main path owns the GPU-downscaled clip instead.
-  const readyHook = options?.previewRung
-    ? "TANK_CLIP_ENABLED=0 /bin/sh /scripts/on-preview-ready.sh"
-    : "/bin/sh /scripts/on-preview-ready.sh";
   const bodyObj: Record<string, unknown> = {
     source: targetSource,
     sourceOnDemand: false,
-    runOnReady: readyHook,
-    runOnReadyRestart: true,
+    // NO runOnReady WORKER HERE, DELIBERATELY.
+    //
+    // MediaMTX re-fires runOnReady on every publisher reconnect and does not
+    // stop the previous worker; runOnReadyRestart then restarts it when it
+    // exits. One flapping camera therefore multiplied workers without bound —
+    // 12 expected became 56 — until MediaMTX burned 400-750% CPU. That has
+    // taken the house down five times, and the hook-janitor that hunts and
+    // SIGKILLs duplicates every minute is a broom, not a fix.
+    //
+    // Preview stills and loop clips are now owned by a single supervised
+    // worker (_preview_worker in mediamtx.yml) that iterates every ready path
+    // itself, the same dummy-path pattern as _archive_transcoder. One process,
+    // restarted by MediaMTX if it dies, so accumulation is impossible by
+    // construction rather than policed after the fact.
   };
   if (isTranscoding && runOnInitCmd) {
     bodyObj.runOnInit = runOnInitCmd;
@@ -511,8 +704,8 @@ export async function provisionMediaMtxCamera(
       sourceOnDemand: false,
       runOnInit: buildPreviewSiblingCommand(path, previewPath),
       runOnInitRestart: true,
-      runOnReady: "/bin/sh /scripts/on-preview-ready.sh",
-      runOnReadyRestart: true,
+      // Preview stills are the _preview_worker singleton's job — see the
+      // note on the main camera path for why no worker is spawned here.
     });
     if (!previewResult.ok) {
       console.warn(
@@ -557,7 +750,7 @@ export async function provisionMediaMtxCamera(
  * this ffmpeg needs to have something to pull.
  */
 export async function provisionObsWhepSibling(slug: string): Promise<{ ok: boolean; error?: string }> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return { ok: false, error: "MEDIAMTX_API_URL is not configured." };
   let apiUrl: URL;
   try {
@@ -589,8 +782,8 @@ export async function provisionObsWhepSibling(slug: string): Promise<{ ok: boole
     sourceOnDemand: false,
     runOnInit: buildPreviewSiblingCommand(whepPath, previewPath),
     runOnInitRestart: true,
-    runOnReady: "/bin/sh /scripts/on-preview-ready.sh",
-    runOnReadyRestart: true,
+    // Preview stills are the _preview_worker singleton's job — see the
+    // note on the main camera path for why no worker is spawned here.
   });
   return previewResult.ok
     ? { ok: true }
@@ -615,9 +808,10 @@ export async function provisionObsWhepSibling(slug: string): Promise<{ ok: boole
  * first-frame deadline instead.
  */
 export function buildObsWhepSiblingCommand(rawPath: string, whepPath: string): string {
+  const sanitize = "-probesize 10M -analyzeduration 2M -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero";
   const input = hwEncoderEnabled()
-    ? `${hwDecodeFlags()} -rtsp_transport tcp -i rtsp://127.0.0.1:8554/${rawPath}`
-    : ` -rtsp_transport tcp -i rtsp://127.0.0.1:8554/${rawPath}`;
+    ? `${hwDecodeFlags()} ${sanitize} -rtsp_transport tcp -i rtsp://127.0.0.1:8554/${rawPath}`
+    : ` ${sanitize} -rtsp_transport tcp -i rtsp://127.0.0.1:8554/${rawPath}`;
   const video = hwEncoderEnabled()
     ? `-vf ${scaleFilter(1080)} ${encoderTuning().live("4500k")} -fps_mode passthrough`
     : `-c:v copy`;
@@ -629,7 +823,7 @@ export function buildObsWhepSiblingCommand(rawPath: string, whepPath: string): s
 
 /** Stands the WHEP sibling down when a room goes offline, so its ffmpeg stops error-looping against a dead source instead of being left to retry forever. */
 export async function teardownObsWhepSibling(slug: string): Promise<void> {
-  const apiBase = process.env.MEDIAMTX_API_URL;
+  const apiBase = getMediaMtxApiBaseUrl();
   if (!apiBase) return;
   let apiUrl: URL;
   try {
@@ -668,12 +862,12 @@ export type ArchiveRungConfig = {
 };
 
 export function getArchiveRungConfig(): ArchiveRungConfig {
+  const envEnabled = process.env.TANK_ARCHIVE_ENABLED;
+  const enabled = envEnabled === undefined ? true : envEnabled === "1" || envEnabled === "true";
   return {
-    // Archiving is disabled. Batch 01 (chunked 10m/15m segments) failed the 24-hour continuous archive test.
-    // Chunked segmentation is decommissioned until full 24-hour daily timeline aggregation is built.
-    enabled: false,
-    bitrate: process.env.TANK_ARCHIVE_BITRATE || "3000k",
-    segmentDuration: process.env.TANK_ARCHIVE_SEGMENT_DURATION || "24h",
+    enabled,
+    bitrate: process.env.TANK_ARCHIVE_BITRATE || "1500k",
+    segmentDuration: process.env.TANK_ARCHIVE_SEGMENT_DURATION || "10m",
     spoolRetention: process.env.TANK_ARCHIVE_SPOOL_RETENTION || "2h",
   };
 }
@@ -756,15 +950,19 @@ async function provisionArchiveRung(
   // Copying the existing 720p low rung costs ZERO encoder sessions and almost
   // no CPU, at the price of archiving at 720p rather than 1080p.
   const archiveFromLowRung = process.env.TANK_ARCHIVE_SOURCE !== "transcode";
+  // Whichever stream the encode below reads is the one it must wait for.
+  const archiveSourcePath = archiveFromLowRung
+    ? cameraHlsLowMediaPath(cameraId)
+    : mainPath;
 
   const encode = archiveFromLowRung
     ? // Straight remux of a stream that is already H.264 720p with AAC audio.
       // No decode, no encode, no filter graph — just bytes into a file.
-      `ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp` +
+      `ffmpeg -nostdin -hide_banner -loglevel warning -rtsp_transport tcp -timeout 5000000` +
       ` -i rtsp://127.0.0.1:8554/${cameraHlsLowMediaPath(cameraId)}` +
       ` -map 0:v:0 -map 0:a:0? -c:v copy -c:a copy` +
       ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${archivePath}`
-    : `ffmpeg -nostdin -hide_banner -loglevel warning${hwDecodeFlags()} -rtsp_transport tcp` +
+    : `ffmpeg -nostdin -hide_banner -loglevel warning${hwDecodeFlags()} -rtsp_transport tcp -timeout 5000000` +
       ` -i rtsp://127.0.0.1:8554/${mainPath}` +
       ` -map 0:v:0 -map 0:a:0? -vf ${scaleFilter(1080)}` +
       ` ${encoderTuning().archive(config.bitrate)} -fps_mode passthrough` +
@@ -774,7 +972,7 @@ async function provisionArchiveRung(
   return upsertMediaMtxPath(apiUrl, archivePath, {
     source: "publisher",
     sourceOnDemand: false,
-    runOnInit: encode,
+    runOnInit: awaitSource(archiveSourcePath, encode),
     runOnInitRestart: true,
     record: true,
     recordFormat: "fmp4",
@@ -791,11 +989,65 @@ async function provisionArchiveRung(
 // unchanged path makes MediaMTX reload its configuration and tears down the
 // active SRT pull, producing a visible disconnect/reconnect loop. Read the
 // current path first and mutate only when it is absent or actually changed.
+/**
+ * Paths whose write keeps failing, and when it is worth trying again.
+ *
+ * Regression cover lives in mediaGatewayCooldown.test.ts. The storm this
+ * prevents was measured on POWER 2026-09-10: upsertMediaMtxPath only applies
+ * its "unchanged" guard when the config GET succeeds, so a path that cannot
+ * be created skipped the guard entirely and was rewritten on EVERY receiver
+ * poll (2.5s) forever — about 110 failed control-API calls a minute from the
+ * two SRTLA cameras whose paths 404 while their receivers cycle.
+ *
+ * Keyed by path rather than by camera: one rung of a camera can be
+ * uncreatable while the others are fine, and cooling the whole camera would
+ * stop the healthy rungs from being repaired.
+ */
+const g_pathCooldownUntil = new Map<string, number>();
+const PATH_COOLDOWN_MS = 60_000;
+
+function pathInCooldown(path: string, now = Date.now()): boolean {
+  const until = g_pathCooldownUntil.get(path);
+  if (until === undefined) return false;
+  if (until > now) return true;
+  // Expired: drop it so the map cannot grow without bound across a long run.
+  g_pathCooldownUntil.delete(path);
+  return false;
+}
+// Paths confirmed absent, so an unused -sub path costs no control-API call on
+// every poll. Cleared whenever a path is written.
+const g_pathsKnownAbsent = new Set<string>();
+
+/** Removes a path's config if it exists — e.g. a camera's sub-stream turned off. */
+async function removeMediaMtxPathIfPresent(apiUrl: URL, path: string): Promise<void> {
+  if (g_pathsKnownAbsent.has(path)) return;
+  const encoded = encodeURIComponent(path);
+  try {
+    const current = await fetch(new URL(`/v3/config/paths/get/${encoded}`, apiUrl), {
+      method: "GET", headers: mediaMtxHeaders(), cache: "no-store",
+    });
+    if (current.ok) {
+      await fetch(new URL(`/v3/config/paths/delete/${encoded}`, apiUrl), {
+        method: "DELETE", headers: mediaMtxHeaders(), cache: "no-store",
+      });
+    }
+    g_pathsKnownAbsent.add(path);
+  } catch {
+    // Best effort; the next poll tries again.
+  }
+}
+
 async function upsertMediaMtxPath(
   apiUrl: URL,
   path: string,
   bodyObj: Record<string, unknown>,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
+  g_pathsKnownAbsent.delete(path);
+  // The whole point: a path in cooldown costs ZERO control-API calls.
+  if (pathInCooldown(path)) {
+    return { ok: false, error: `path ${path} is in write cooldown` };
+  }
+
   const encoded = encodeURIComponent(path);
 
   const currentResponse = await fetch(
@@ -808,15 +1060,11 @@ async function upsertMediaMtxPath(
     // carries record settings that can change while the source stays identical
     // (segment duration, retention, toggling recording off) — a two-field
     // comparison would report "unchanged" and silently never apply them.
-    const unchanged = Object.keys(bodyObj).every((key) => {
-      const desired = bodyObj[key];
-      const actual = current[key];
-      if (typeof desired === "string" || typeof actual === "string") {
-        return (actual ?? "") === (desired ?? "");
-      }
-      return actual === desired;
-    });
-    if (unchanged) return { ok: true };
+    const unchanged = mediaMtxConfigEqual(current, bodyObj);
+    if (unchanged) {
+      g_pathCooldownUntil.delete(path);
+      return { ok: true };
+    }
   }
 
   const body = JSON.stringify(bodyObj);
@@ -846,8 +1094,15 @@ async function upsertMediaMtxPath(
     });
   }
 
-  if (response.ok) return { ok: true, status: response.status };
+  if (response.ok) {
+    // Recovered — a path that creates cleanly must never stay cooled down.
+    g_pathCooldownUntil.delete(path);
+    return { ok: true, status: response.status };
+  }
 
+  // Both PATCH and ADD were refused, so this path cannot currently be written.
+  // Back off instead of asking again in 2.5 seconds, forever.
+  g_pathCooldownUntil.set(path, Date.now() + PATH_COOLDOWN_MS);
   const errorText = await response.text().catch(() => "");
   return { ok: false, status: response.status, error: errorText || undefined };
 }

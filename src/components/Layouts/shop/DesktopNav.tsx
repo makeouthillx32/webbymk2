@@ -226,21 +226,18 @@ export default function DesktopNav() {
   if (loading) {
     return (
       <nav className="nav-container" aria-label="Primary">
-        <div className="nav-menu">
-          <div className="text-sm">Loading...</div>
+        <div className="nav-menu flex items-center justify-center gap-6 py-2">
+          <div className="h-3.5 w-14 rounded-full bg-muted/60 animate-pulse" />
+          <div className="h-3.5 w-18 rounded-full bg-muted/60 animate-pulse" />
+          <div className="h-3.5 w-24 rounded-full bg-muted/60 animate-pulse" />
+          <div className="h-3.5 w-16 rounded-full bg-muted/60 animate-pulse" />
         </div>
       </nav>
     );
   }
 
   if (navTree.length === 0) {
-    return (
-      <nav className="nav-container" aria-label="Primary">
-        <div className="nav-menu">
-          <div className="text-sm">No navigation available</div>
-        </div>
-      </nav>
-    );
+    return null;
   }
 
   return (

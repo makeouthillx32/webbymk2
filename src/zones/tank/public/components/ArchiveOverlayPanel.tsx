@@ -1,15 +1,10 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, Lock } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Lock, Clock, Film } from "lucide-react";
 
 // The Archives section inside the live experience.
-//
-// Same data and same endpoint as the full /archives page — this is the compact
-// view for someone who does not want to leave the stream. Where the full page
-// shows every day of the season (so gaps are visible), this shows only days
-// that actually have footage: in a small overlay a row of disabled chips is
-// noise, and the full page is one click away for the whole timeline.
+// Follows Days → Rooms on Day → Footage hierarchy.
 
 type RoomOption = { slug: string; name: string };
 type ArchiveDay = {
@@ -20,6 +15,21 @@ type ArchiveDay = {
   isComplete: boolean;
   isStreamable: boolean;
 };
+
+type DayRoomFootage = {
+  slug: string;
+  name: string;
+  kind: "fixed-247" | "irl" | "user-stream";
+  kindLabel: string;
+  segmentCount: number;
+  totalSeconds: number;
+  formattedDuration: string;
+  activeWindow: string;
+  is24Hour: boolean;
+  hasMasterArchive: boolean;
+  isRecordingLive?: boolean;
+};
+
 type Segment = {
   id: string;
   segmentStart: string;
@@ -35,11 +45,12 @@ type BrowseResponse = {
   seasons: { slug: string; name: string }[];
   rooms: RoomOption[];
   days: ArchiveDay[];
+  selectedDate: string | null;
+  roomsOnDay: DayRoomFootage[];
+  selectedRoom: string | null;
   segments: Segment[];
 };
 
-// Kept in step with TANK_ARCHIVE_BROWSABLE_DAYS. If the window changes, this
-// is the number the notice quotes at viewers.
 const ARCHIVE_PUBLIC_DAYS = 5;
 
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -49,9 +60,8 @@ function chipLabel(iso: string) {
   return { month: MONTHS[Number(m) - 1] ?? "", day: d ?? "" };
 }
 
-
 function formatDuration(totalSeconds: number): string {
-  if (totalSeconds <= 0) return "";
+  if (totalSeconds <= 0) return "0m";
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.round((totalSeconds % 3600) / 60);
   if (h >= 1) return m > 0 ? `${h}h ${m}m` : `${h}h`;
@@ -63,20 +73,9 @@ function clock(iso: string) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-
-/**
- * True when this browser can play AV1.
- *
- * Segments past the public window are AV1, which Safari decodes only on newer
- * hardware (A17 Pro / M3 and later). Without this check those viewers get a
- * black player and no explanation, so the answer drives a plain-language
- * notice rather than a silent failure.
- */
 function canPlayAv1(): boolean {
   if (typeof document === "undefined") return true;
   const v = document.createElement("video");
-  // "probably" and "maybe" both count: browsers are deliberately vague here,
-  // and an empty string is the only clear "no".
   return v.canPlayType('video/mp4; codecs="av01.0.05M.08"') !== "";
 }
 
@@ -104,10 +103,10 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
         if (!active) return;
         setData(json);
         setActiveIndex(0);
-        // Adopt whatever the server resolved so the next request is explicit
-        // rather than relying on the same defaults being picked again.
+
         if (!season && json.seasons?.length) setSeason(json.seasons[json.seasons.length - 1].slug);
-        if (!room && json.rooms?.length) setRoom(json.rooms[0].slug);
+        if (!date && json.selectedDate) setDate(json.selectedDate);
+        if (!room && json.selectedRoom) setRoom(json.selectedRoom);
       })
       .catch(() => active && setData(null))
       .finally(() => active && setLoading(false));
@@ -122,6 +121,9 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
     [data?.days],
   );
 
+  const roomsOnDay = data?.roomsOnDay ?? [];
+  const activeRoom = roomsOnDay.find((r) => r.slug === room) ?? roomsOnDay[0] ?? null;
+
   const playable = useMemo(
     () => (data?.segments ?? []).filter((s) => s.playbackUrl),
     [data?.segments],
@@ -129,21 +131,17 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
 
   const active = playable[activeIndex] ?? null;
 
-  // Older footage is AV1, which needs a recent device. Work out whether this
-  // viewer is affected rather than letting them hit a silent black player.
   const av1Supported = useMemo(() => canPlayAv1(), []);
   const viewingAv1 = (data?.segments ?? []).some((x) => x.codec === "av1");
 
-  // A day is many segments; roll into the next one so it plays as one
-  // continuous recording rather than stopping every ten minutes.
   const onEnded = useCallback(() => {
     setActiveIndex((i) => (i + 1 < playable.length ? i + 1 : i));
   }, [playable.length]);
 
   const fullPageHref = `/archives?${new URLSearchParams({
     ...(season ? { season } : {}),
-    ...(room ? { room } : {}),
     ...(date ? { date } : {}),
+    ...(room ? { room } : {}),
   }).toString()}`;
 
   if (!loading && data && !data.isMember) {
@@ -168,28 +166,7 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
 
   return (
     <div className="space-y-3">
-      {/* Room picker */}
-      <div className="flex flex-wrap gap-1.5">
-        {(data?.rooms ?? []).map((r) => (
-          <button
-            key={r.slug}
-            type="button"
-            onClick={() => {
-              setRoom(r.slug);
-              setDate("");
-            }}
-            className={`rounded border px-2.5 py-1 text-[11px] font-black uppercase tracking-wider transition ${
-              r.slug === room
-                ? "border-black/60 bg-gradient-to-b from-[#ff8a7a] to-[#ff3b2f] text-white shadow"
-                : "border-black/30 bg-black/80 text-yellow-400 hover:bg-black/90"
-            }`}
-          >
-            {r.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Days that actually have footage */}
+      {/* Step 1: Days that have footage */}
       <div className="flex items-center gap-1.5">
         <button
           type="button"
@@ -200,7 +177,10 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           <ChevronLeft className="h-4 w-4" />
         </button>
 
-        <div ref={stripRef} className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-1 scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={stripRef}
+          className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-1 scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {loading && <p className="py-2 text-xs font-mono text-slate-400">Loading telemetry…</p>}
           {!loading && daysWithFootage.length === 0 && (
             <p className="py-2 text-xs font-mono text-slate-400">
@@ -210,12 +190,19 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           {daysWithFootage.map((d) => {
             const { month, day } = chipLabel(d.date);
             const selected = d.date === date;
+            const isToday = d.date === new Date().toISOString().slice(0, 10);
+
             return (
               <button
                 key={d.date}
                 type="button"
-                title={`${formatDuration(d.totalSeconds)} across ${d.segmentCount} recordings${d.isComplete ? "" : " — still recording"}`}
-                onClick={() => setDate(d.date)}
+                title={`${formatDuration(d.totalSeconds)} across ${d.segmentCount} recordings${
+                  d.isComplete ? "" : " — still recording"
+                }`}
+                onClick={() => {
+                  setDate(d.date);
+                  setRoom("");
+                }}
                 className={`flex w-[62px] shrink-0 flex-col items-center rounded border px-1.5 py-1 transition ${
                   selected
                     ? "border-yellow-400 bg-amber-950/80 text-yellow-300 ring-2 ring-yellow-400 shadow-[0_0_8px_rgba(234,179,8,0.5)]"
@@ -225,7 +212,7 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
                 <span className="text-[8px] font-mono font-bold leading-tight uppercase">{month}</span>
                 <span className="text-sm font-mono font-black leading-tight">{day}</span>
                 <span className="text-[7px] font-black leading-tight opacity-75 uppercase">
-                  {d.isComplete ? formatDuration(d.totalSeconds) : "REC"}
+                  {isToday ? "REC" : d.isComplete ? "24H" : formatDuration(d.totalSeconds)}
                 </span>
               </button>
             );
@@ -242,7 +229,56 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
         </button>
       </div>
 
-      {/* Player */}
+      {/* Step 2: Active rooms on this date */}
+      {roomsOnDay.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-bold text-[#4c4630]">
+            <span className="flex items-center gap-1 uppercase tracking-wider">
+              <Film className="h-3 w-3" /> Available Camera Feeds:
+            </span>
+            <span>{roomsOnDay.length} recorded</span>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {roomsOnDay.map((r) => {
+              const isSelected = r.slug === (activeRoom?.slug ?? "");
+              const is24h = r.kind === "fixed-247";
+              const isIrl = r.kind === "irl";
+
+              return (
+                <button
+                  key={r.slug}
+                  type="button"
+                  onClick={() => setRoom(r.slug)}
+                  className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] font-black uppercase tracking-wider transition ${
+                    isSelected
+                      ? "border-black/60 bg-gradient-to-b from-[#ff8a7a] to-[#ff3b2f] text-white shadow"
+                      : "border-black/30 bg-black/80 text-yellow-400 hover:bg-black/90"
+                  }`}
+                >
+                  <span>{r.name}</span>
+                  <span
+                    className={`rounded px-1 py-0.2 text-[8px] font-bold ${
+                      isSelected
+                        ? "bg-black/30 text-white"
+                        : is24h
+                          ? "bg-blue-900/60 text-blue-200"
+                          : isIrl
+                            ? "bg-amber-900/60 text-amber-200"
+                            : "bg-purple-900/60 text-purple-200"
+                    }`}
+                  >
+                    {is24h ? "24H" : isIrl ? "IRL" : "STREAM"}
+                  </span>
+                  <span className="text-[9px] opacity-80 lowercase">({r.formattedDuration})</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Player */}
       <div className="overflow-hidden rounded border border-black/60 bg-black/95 shadow-inner">
         {active?.playbackUrl ? (
           <video
@@ -258,15 +294,15 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
           <div className="grid aspect-video w-full place-items-center px-4 text-center">
             <p className="text-xs font-mono text-slate-400">
               {date && playable.length === 0
-                ? "No streamable footage for this cycle."
-                : "Select a camera room and timestamp to initiate playback."}
+                ? "No streamable footage for this camera sector on this day."
+                : "Select a date and camera feed above to initiate playback."}
             </p>
           </div>
         )}
       </div>
 
       {/* Segment rail */}
-      {playable.length > 0 && (
+      {playable.length > 1 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {playable.map((s, i) => (
             <button
@@ -289,13 +325,6 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
       {viewingAv1 && !av1Supported && (
         <p className="rounded border border-amber-500/40 bg-amber-950/80 p-2 text-[11px] font-mono text-amber-300">
           ⚠️ This footage format requires AV1 codec hardware. Older archives ({ARCHIVE_PUBLIC_DAYS}+ days) are encoded in AV1. Recent footage plays on all devices.
-        </p>
-      )}
-
-      {/* Cold footage notice */}
-      {date && (data?.segments.length ?? 0) > playable.length && (
-        <p className="text-[10px] font-mono text-slate-700">
-          ℹ️ {(data!.segments.length - playable.length)} segment(s) archived in cold vault storage.
         </p>
       )}
 

@@ -1,7 +1,4 @@
-import { NextResponse } from "next/server";
-import { requireStaff } from "@/zones/tank/server/staffAuth";
-import { recordTelemetry } from "@/zones/tank/server/directorTelemetryStore";
-import type { CameraTelemetryInput, SubjectMode } from "@/zones/tank/server/directorVirtualAtlas";
+import { handleDirectorTelemetrySimulatePost } from "@/zones/tank/server/directorTelemetryHttp";
 
 // The director configuration screen's own detection simulator posts here.
 //
@@ -15,23 +12,4 @@ import type { CameraTelemetryInput, SubjectMode } from "@/zones/tank/server/dire
 // for machines.
 
 export const dynamic = "force-dynamic";
-
-
-export async function POST(request: Request) {
-  const staff = await requireStaff();
-  if (!staff) return NextResponse.json({ error: "Staff only" }, { status: 403 });
-
-  let body: any;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const cameras = Array.isArray(body?.cameras) ? (body.cameras as CameraTelemetryInput[]) : null;
-  if (!cameras) return NextResponse.json({ error: "Expected { cameras: [...] }" }, { status: 400 });
-
-  const mode: SubjectMode | undefined = typeof body?.mode === "string" ? body.mode : undefined;
-  const stored = recordTelemetry(cameras, mode);
-  return NextResponse.json({ success: true, stored });
-}
+export const POST = handleDirectorTelemetrySimulatePost;

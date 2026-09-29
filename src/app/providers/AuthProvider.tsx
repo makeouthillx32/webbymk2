@@ -29,6 +29,10 @@ import { authLogger } from "@/lib/authLogger";
 import { RoleProvider } from "@/lib/roleContext";
 import { isLastPageExcluded } from "@/lib/protectedRoutes";
 import { safeStorage } from "@/lib/safeStorage";
+import {
+  clearAuthNavigationIntent,
+  hasFreshAuthNavigationIntent,
+} from "@/lib/authNavigationIntent";
 
 // ── Context type ──────────────────────────────────────────────────────────────
 
@@ -201,6 +205,7 @@ export function AuthProviderWrapper({
     try {
       if (window.sessionStorage.getItem(SYNCED_TOKEN_KEY) === newSession.access_token) {
         console.log("[AuthProvider] ⏭️ Skipping redundant SIGNED_IN sync — this session was already synced to server cookies");
+        clearAuthNavigationIntent();
         return;
       }
     } catch {
@@ -239,13 +244,20 @@ export function AuthProviderWrapper({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         console.error("[AuthProvider] Server session sync failed:", payload);
+        window.sessionStorage.removeItem(SYNCED_TOKEN_KEY);
+        clearAuthNavigationIntent();
         return;
       }
 
       window.sessionStorage.removeItem("postSignInRedirect");
+      clearAuthNavigationIntent();
       window.location.assign(payload.redirectTo || redirectTo);
     } catch (error) {
       console.error("[AuthProvider] Server session sync threw:", error);
+      try {
+        window.sessionStorage.removeItem(SYNCED_TOKEN_KEY);
+      } catch {}
+      clearAuthNavigationIntent();
     } finally {
       syncInFlightRef.current = false;
     }
@@ -355,12 +367,26 @@ export function AuthProviderWrapper({
       }
 
       if (event === "SIGNED_IN" && newSession) {
-        syncBrowserSessionToServer(newSession);
+        const ownsNavigation = hasFreshAuthNavigationIntent();
+
+        if (ownsNavigation) {
+          syncBrowserSessionToServer(newSession);
+        } else {
+          // Supabase broadcasts SIGNED_IN between tabs and browser windows.
+          // Observer clients should adopt the new session in-place, never run
+          // another tab's redirect.
+          // Saving the token also suppresses a replay when this tab is focused.
+          try {
+            window.sessionStorage.setItem(SYNCED_TOKEN_KEY, newSession.access_token);
+          } catch {}
+          console.log("[AuthProvider] Preserving this tab's URL after cross-tab sign-in");
+        }
       }
 
       if (event === "SIGNED_OUT") {
         try {
           window.sessionStorage.removeItem(SYNCED_TOKEN_KEY);
+          clearAuthNavigationIntent();
         } catch {
           /* best-effort */
         }

@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/server";
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const body = await req.json();
     const { 
       documentId, 
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const { searchParams } = new URL(req.url);
     const documentId = searchParams.get("documentId");
 
@@ -234,7 +234,7 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const { searchParams } = new URL(req.url);
     const shareId = searchParams.get("shareId");
 

@@ -8,52 +8,10 @@
 import { useState } from 'react';
 import { Loader2, Package, Printer, AlertCircle } from 'lucide-react';
 import { AdminOrder } from '@/lib/orders/types';
-
-interface PackagePreset {
-  name: string;
-  weightLb: number;
-  lengthIn: number;
-  widthIn: number;
-  heightIn: number;
-  description: string;
-}
-
-// ── Default presets (hardcoded until package_presets table is built) ──
-// These will be replaced by a Supabase fetch in a future task.
-const DEFAULT_PRESETS: PackagePreset[] = [
-  {
-    name: 'Poly Mailer — Small',
-    description: 'T-shirts, cardigans, soft items',
-    weightLb: 0.5,
-    lengthIn: 10,
-    widthIn: 13,
-    heightIn: 1,
-  },
-  {
-    name: 'Poly Mailer — Large',
-    description: 'Bulkier clothing, multiple items',
-    weightLb: 1.0,
-    lengthIn: 14.5,
-    widthIn: 19,
-    heightIn: 1,
-  },
-  {
-    name: 'Small Box',
-    description: 'Accessories, jewelry, small gifts',
-    weightLb: 0.75,
-    lengthIn: 8,
-    widthIn: 6,
-    heightIn: 4,
-  },
-  {
-    name: 'Medium Box',
-    description: 'Boots, shoes',
-    weightLb: 3.0,
-    lengthIn: 14,
-    widthIn: 10,
-    heightIn: 6,
-  },
-];
+import {
+  SHIPPING_PACKAGE_PRESETS,
+  type ShippingPackagePreset,
+} from '@/lib/shipping/packagePresets';
 
 interface PackagePickerProps {
   order: AdminOrder;
@@ -62,7 +20,7 @@ interface PackagePickerProps {
 }
 
 export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps) {
-  const [selected, setSelected] = useState<PackagePreset | null>(null);
+  const [selected, setSelected] = useState<ShippingPackagePreset | null>(null);
   const [custom, setCustom] = useState(false);
   const [customFields, setCustomFields] = useState({
     weightLb: '',
@@ -72,8 +30,9 @@ export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps)
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmedPurchase, setConfirmedPurchase] = useState(false);
 
-  const activePreset: PackagePreset | null = custom
+  const activePreset: ShippingPackagePreset | null = custom
     ? {
         name: 'Custom',
         description: 'Manually entered dimensions',
@@ -86,6 +45,7 @@ export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps)
 
   const canSubmit =
     activePreset &&
+    confirmedPurchase &&
     activePreset.weightLb > 0 &&
     activePreset.lengthIn > 0 &&
     activePreset.widthIn > 0 &&
@@ -106,6 +66,7 @@ export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps)
           widthIn: activePreset.widthIn,
           heightIn: activePreset.heightIn,
           presetName: activePreset.name,
+          confirmPostagePurchase: true,
         }),
       });
 
@@ -191,7 +152,7 @@ export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps)
             Select Package
           </p>
 
-          {DEFAULT_PRESETS.map((preset) => (
+          {SHIPPING_PACKAGE_PRESETS.map((preset) => (
             <button
               key={preset.name}
               onClick={() => { setSelected(preset); setCustom(false); }}
@@ -260,6 +221,19 @@ export function PackagePicker({ order, onSuccess, onClose }: PackagePickerProps)
             <span>{error}</span>
           </div>
         )}
+
+        <label className="mx-6 mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <input
+            type="checkbox"
+            checked={confirmedPurchase}
+            onChange={(event) => setConfirmedPurchase(event.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            <strong className="block">Confirm paid postage purchase</strong>
+            Generating this label uses the funded carrier account and may immediately purchase postage.
+          </span>
+        </label>
 
         {/* Footer */}
         <div className="px-6 py-4 border-t flex gap-3">

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildDirectorProgramPlayback,
   buildPublicCameraPlayback,
   cameraMediaPath,
 } from "../mediaPlayback";
+import { buildManagerSrtSource } from "./mediaGateway";
 
 describe("Tank media gateway public contract", () => {
   test("builds stable WHEP and HLS endpoints for Cam0", () => {
@@ -41,4 +43,61 @@ describe("Tank media gateway public contract", () => {
     expect(serialized).not.toContain("streamkey");
     expect(serialized).not.toContain("srtauth");
   });
+
+  test("builds one stable Director program path independent of camera cuts", () => {
+    const playback = buildDirectorProgramPlayback(true, {
+      whepBaseUrl: "https://media.tank.unenter.live/webrtc",
+      hlsBaseUrl: "https://media.tank.unenter.live/hls",
+    });
+
+    expect(playback.path).toBe("obs/director");
+    expect(playback.whepUrl).toBe(
+      "https://media.tank.unenter.live/webrtc/obs/director-whep/whep",
+    );
+    expect(playback.hlsUrl).toBe(
+      "https://media.tank.unenter.live/hls/obs/director/index.m3u8",
+    );
+  });
+
+  test("buildManagerSrtSource converts ms to microseconds for ffmpeg libsrt and sets packet protection", () => {
+    const wired = buildManagerSrtSource({
+      lanHost: "192.168.50.204",
+      videoOutPort: 4000,
+      streamUser: "cam-1",
+      streamKey: "secret123",
+      latencyMs: 1000,
+    });
+    expect(wired).toContain("latency=1000000");
+    expect(wired).toContain("rcvlatency=1000000");
+    expect(wired).toContain("rcvbuf=67108864");
+    expect(wired).toContain("tlpktdrop=0");
+    expect(wired).toContain("mode=caller");
+
+    const srtla = buildManagerSrtSource({
+      lanHost: "192.168.50.204",
+      videoOutPort: 4001,
+      streamUser: "cam-phone",
+      streamKey: "secret456",
+      latencyMs: 4000,
+    });
+    expect(srtla).toContain("latency=4000000");
+    expect(srtla).toContain("rcvlatency=4000000");
+
+    const defaultLatency = buildManagerSrtSource({
+      lanHost: "192.168.50.204",
+      videoOutPort: 4002,
+      streamUser: "cam-default",
+      streamKey: "secret789",
+    });
+    expect(defaultLatency).toContain("latency=2000000");
+    expect(defaultLatency).toContain("rcvlatency=2000000");
+
+    expect(buildManagerSrtSource({
+      lanHost: "",
+      videoOutPort: 4000,
+      streamUser: "user",
+      streamKey: "key",
+    })).toBeNull();
+  });
 });
+

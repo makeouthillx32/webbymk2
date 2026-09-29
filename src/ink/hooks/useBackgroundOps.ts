@@ -32,6 +32,7 @@ import type { DerivedZone } from "../zone-scaffold.ts";
 import type { StackOp }    from "../components/DetachedStack.tsx";
 
 import { spawnLogTail }          from "../docker.ts";
+import { isBareDevRunning, startBareDev, stopBareDev, streamBareDevLogs } from "../bare-dev.ts";
 import { drainStream }           from "../utils.ts";
 import { loadZones }             from "../zone-store.ts";
 import { log }                   from "../logger.ts";
@@ -161,6 +162,7 @@ export function useBackgroundOps({
   const runOp = useCallback(
     (title: string, op: (onLine: (l: string) => void) => Promise<number>) => {
       const { id, addLine } = _startOp(title, false, true);
+      addLine(`▶ Starting ${title}...`);
       Promise.resolve()
         .then(() => op(addLine))
         .then(
@@ -195,6 +197,7 @@ export function useBackgroundOps({
     (title: string, op: OpFn, sink?: (l: string) => void): Promise<number> => {
       const { id, addLine } = _startOp(title, false, false);
       const tee = (l: string) => { addLine(l); sink?.(l); };
+      tee(`▶ Starting ${title}...`);
       return Promise.resolve()
         .then(() => op(tee))
         .then(
@@ -246,6 +249,7 @@ export function useBackgroundOps({
       const opFn = op.payload as OpFn;
       await new Promise<void>((resolve) => {
         const { id, addLine } = _startOp(op.label, false, true);
+        addLine(`▶ Starting ${op.label}...`);
         Promise.resolve().then(() => opFn(addLine)).then(
           (code) => {
             addLine(code === 0 ? "✓ done" : `✗ exit ${code}`);
@@ -540,6 +544,124 @@ export function useBackgroundOps({
     });
   }, [_startOp, setBgOps]);
 
+  /**
+   * Bare-metal sibling of runDevModeOp — same background-stack UI
+   * (fullscreen/background-to-sidebar/dismiss-to-stop/restart, [x] to end),
+   * for zones that opted into bare-dev.ts's bare-metal dev path instead of a
+   * Docker dev container. Was entirely missing until now: the [v] Dev mode
+   * action for bare-metal zones only ever fired a bare runOp (start once,
+   * flash "done", drop out of the stack) — no way to see it was still alive,
+   * background it, or stop it once out of view. Docker zones already had all
+   * of that via runDevModeOp; this brings bare-metal to parity using the
+   * same op-stack primitives, swapping `docker ps` / `docker logs -f` for
+   * isBareDevRunning / streamBareDevLogs.
+   */
+  const runBareDevModeOp = useCallback((zone: Zone) => {
+    const label = zone.label;
+
+    // Same auto-cleanup as runDevModeOp — don't let finished dev/stop ops
+    // pile up in the stack across repeated start/stop cycles.
+    setBgOps((prev) => {
+      const devTitles = new Set([`Dev  ${label}`, `Stop Dev  ${label}`]);
+      const toRemove  = prev.filter((o) => !o.busy && devTitles.has(o.title));
+      toRemove.forEach((o) => {
+        dismissHooks.current.delete(o.id);
+        restartHooks.current.delete(o.id);
+      });
+      return toRemove.length === 0
+        ? prev
+        : prev.filter((o) => o.busy || !devTitles.has(o.title));
+    });
+
+    const { id, addLine } = _startOp(`Dev  ${label}`, false, true);
+    setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, dismissable: true } : o));
+
+    isBareDevRunning(zone).then((running) => {
+      if (running) {
+        log.info("dev", "bare-metal already running — stopping", { label, key: zone.key });
+        addLine(`Bare-metal dev server for ${label} is running — stopping…`);
+        return stopBareDev(zone, addLine).then((code) => {
+          addLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+          setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+        });
+      }
+
+      log.info("dev", "starting bare-metal", { label, key: zone.key });
+      return startBareDev(zone, addLine).then((code) => {
+        if (code !== 0) {
+          addLine(`✗ start failed (exit ${code})`);
+          setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+          return;
+        }
+
+        // Mutable ref to the active log stream's stop function — shared by
+        // dismiss + restart hooks, same shape as runDevModeOp's currentLogProc.
+        let stopStream: (() => void) | null = null;
+
+        const devAddLine = (l: string) => {
+          addLine(l);
+          if (/Ready in \d/.test(l)) {
+            log.info("dev", "Next.js ready", { label, key: zone.key });
+            setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, devReady: true } : o));
+          }
+        };
+
+        function startStreaming() {
+          setBgOps((prev) => prev.map((o) =>
+            o.id === id ? { ...o, busy: true, isLog: true, dismissable: true, devReady: false } : o
+          ));
+          stopStream = streamBareDevLogs(zone, devAddLine);
+        }
+
+        addLine(`─── streaming dev logs (bare-metal, polling) ───`);
+        startStreaming();
+
+        dismissHooks.current.set(id, () => {
+          stopStream?.();
+          restartHooks.current.delete(id);
+          log.info("dev", "dismissed — stopping bare-metal", { label, key: zone.key });
+          const { id: stopId, addLine: stopLine } = _startOp(`Stop Dev  ${label}`, false, false);
+          stopBareDev(zone, stopLine).then((code) => {
+            stopLine(code === 0 ? "✓ stopped" : `✗ stop exited ${code}`);
+            setBgOps((prev) => prev.map((o) => o.id === stopId ? { ...o, busy: false } : o));
+          }).catch((err) => {
+            stopLine(`✗ stop error: ${String(err)}`);
+            setBgOps((prev) => prev.map((o) => o.id === stopId ? { ...o, busy: false } : o));
+          });
+        });
+
+        restartHooks.current.set(id, () => {
+          stopStream?.();
+          stopStream = null;
+          setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, devReady: false, busy: true, isLog: false } : o));
+          addLine(`─── hard restart — stopping bare-metal server… ───`);
+          stopBareDev(zone, addLine)
+            .then(() => {
+              addLine(`─── starting fresh bare-metal server… ───`);
+              return startBareDev(zone, addLine);
+            })
+            .then((restartCode) => {
+              if (restartCode !== 0) {
+                addLine(`✗ restart failed (exit ${restartCode})`);
+                setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+                return;
+              }
+              setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, lines: [] } : o));
+              addLine(`─── streaming dev logs (bare-metal, polling) ───`);
+              startStreaming();
+            })
+            .catch((err) => {
+              addLine(`✗ restart error: ${String(err)}`);
+              setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+            });
+        });
+      });
+    }).catch((err) => {
+      addLine(`✗ status check error: ${String(err)}`);
+      setBgOps((prev) => prev.map((o) => o.id === id ? { ...o, busy: false } : o));
+    });
+  }, [_startOp, setBgOps]);
+
   // Pop-out terminal management
   const registerPopout = useCallback((opId: number) => {
     popoutOps.current.add(opId);
@@ -561,7 +683,7 @@ export function useBackgroundOps({
     runOp,         runOpQueued,    runOpVisible,
     runCreateZone,
     openLogs,
-    runDevModeOp,
+    runDevModeOp,  runBareDevModeOp,
     triggerDismissHook,
     triggerRestartHook,
     registerPopout, dismissPopout,

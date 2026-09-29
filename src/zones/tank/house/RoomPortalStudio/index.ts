@@ -1,0 +1,1 @@
+export { RoomPortalStudioPanel } from "./RoomPortalStudioPanel";

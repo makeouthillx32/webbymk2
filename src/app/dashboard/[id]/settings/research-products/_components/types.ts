@@ -71,11 +71,23 @@ export type VariantInput = {
   selectedSizes: string[];
   selectedColors: string[];
   selectedMaterials: string[];
-  selectedMadeIn: string[];
   customOptions: Record<string, string | string[]>;
   weight_grams: string;
   price_override: string;
   initial_stock: string;
+};
+
+export type LabReportSummary = {
+  id: string;
+  lab_name?: string | null;
+  coa_number?: string | null;
+  lot_number?: string | null;
+  purity_pct?: number | null;
+  pdf_url?: string | null;
+  paper_image_url?: string | null;
+  verified?: boolean | null;
+  pending?: boolean | null;
+  created_at?: string;
 };
 
 // Product row (for management)
@@ -95,11 +107,15 @@ export type ProductRow = {
   is_featured: boolean;
   status?: string;
   created_at: string;
+  /** Grouping axes — see research_products.compound / .form. */
+  compound?: string | null;
+  form?: string | null;
   product_images?: ProductImageRow[];
   product_variants?: any[];
   categories?: any[];
   collections?: any[];
   tags?: { id: string; slug: string; name: string }[];
+  lab_reports?: LabReportSummary[];
   material?: string | null;
   made_in?: string | null;
 };

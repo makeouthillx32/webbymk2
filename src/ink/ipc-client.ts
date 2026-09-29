@@ -37,6 +37,13 @@ const CONTROL_NODE_IP = STACK_IP_SAFE;
 // Detect if running on the control node itself or from a remote sandbox
 const IS_LOCAL   = (() => {
   if (!CONTROL_NODE_IP) return true;
+  // WSL detection: running in WSL on the host machine is local
+  try {
+    const fs = require("fs") as typeof import("fs");
+    if (fs.existsSync("/proc/version") && fs.readFileSync("/proc/version", "utf8").toLowerCase().includes("microsoft")) {
+      return true;
+    }
+  } catch {}
   try {
     const { networkInterfaces } = require("os") as typeof import("os");
     const ifaces = networkInterfaces();
@@ -117,6 +124,16 @@ export async function sendIpcCommand(
   const connect = (port: number, label: string, silentRefused = false) =>
     new Promise<number>((resolve, reject) => {
       const socket = net.connect(port, CONNECT_HOST);
+      socket.setTimeout(2500);
+      socket.on("timeout", () => {
+        socket.destroy();
+        if (silentRefused) {
+          reject(new Error("Connection timed out"));
+        } else {
+          if (!quiet) process.stderr.write(`✗ ${label} TUI connection timed out (${CONNECT_HOST}:${port})\n`);
+          resolve(1);
+        }
+      });
       socket.on("connect", () => streamCommand(socket, cmd, quiet, resolve));
       socket.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "ECONNREFUSED") {

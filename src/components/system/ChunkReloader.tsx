@@ -31,22 +31,27 @@ const ATTEMPT_WINDOW_MS = 60_000;
 const SUCCESS_RESET_MS = 15_000;
 const MAX_ATTEMPTS = 3;
 
+let g_fallbackLastReload = 0;
+let g_fallbackReloadCount = 0;
+
 function isChunkError(value: unknown): boolean {
   if (!value) return false;
   const s = typeof value === "string" ? value : String((value as any)?.message ?? (value as any)?.name ?? "");
   return (
-    /ChunkLoadError/i.test(s) ||
-    /Loading chunk [^ ]+ failed/i.test(s) ||
-    /Loading CSS chunk/i.test(s) ||
-    /Failed to fetch dynamically imported module/i.test(s)
+    (/ChunkLoadError/i.test(s) ||
+      /Loading chunk [^ ]+ failed/i.test(s) ||
+      /Loading CSS chunk/i.test(s)) &&
+    !/onnxruntime/i.test(s) &&
+    !/yolov8/i.test(s) &&
+    !/models\//i.test(s)
   );
 }
 
 export default function ChunkReloader() {
   useEffect(() => {
     const reloadOnce = () => {
+      const now = Date.now();
       try {
-        const now = Date.now();
         const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
         if (now - last < THROTTLE_MS) return; // already tried recently — avoid loop
 
@@ -64,8 +69,6 @@ export default function ChunkReloader() {
 
         const attempts = previousAttempts + 1;
         if (attempts > MAX_ATTEMPTS) {
-          // Hard stop: a real fix (or manual refresh) is needed at this point.
-          // Reloading kept us here before — see incident note above.
           console.error(
             `[ChunkReloader] Giving up after ${MAX_ATTEMPTS} reload attempts — chunk mismatch persists. Manual refresh required.`
           );
@@ -76,7 +79,16 @@ export default function ChunkReloader() {
         sessionStorage.setItem(RELOAD_KEY, String(now));
         sessionStorage.setItem(COUNT_KEY, String(attempts));
       } catch {
-        /* sessionStorage unavailable — fall through to reload */
+        // In-memory fallback if sessionStorage is blocked/unavailable
+        if (now - g_fallbackLastReload < THROTTLE_MS) return;
+        g_fallbackLastReload = now;
+        g_fallbackReloadCount += 1;
+        if (g_fallbackReloadCount > MAX_ATTEMPTS) {
+          console.error(
+            `[ChunkReloader] Giving up after ${MAX_ATTEMPTS} fallback attempts.`
+          );
+          return;
+        }
       }
       window.location.reload();
     };

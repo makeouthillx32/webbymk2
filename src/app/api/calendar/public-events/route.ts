@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     
     // Get current user (still need auth to prevent abuse, but role doesn't matter)
     const { data: { user }, error: userError } = await supabase.auth.getUser();

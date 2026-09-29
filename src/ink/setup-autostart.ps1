@@ -47,7 +47,9 @@
 #   .\src\ink\setup-autostart.ps1 -Uninstall
 
 param(
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$Windows,
+    [switch]$Prod
 )
 
 $TUI_DIR      = $PSScriptRoot
@@ -93,10 +95,13 @@ if ($powershellCmd) {
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($ShortcutPath)
 $shortcut.TargetPath       = $powershellPath
-$shortcut.Arguments        = '-NoExit -ExecutionPolicy Bypass -File "{0}"' -f $LaunchScript
+$shortcutArgs = '-NoExit -ExecutionPolicy Bypass -File "{0}"' -f $LaunchScript
+if ($Windows) { $shortcutArgs += " -Windows" }
+if ($Prod)    { $shortcutArgs += " -Prod" }
+$shortcut.Arguments        = $shortcutArgs
 $shortcut.WorkingDirectory = $TUI_DIR
 $shortcut.WindowStyle      = 1
-$shortcut.Description      = "Launches the UNAXIS prod TUI at logon. Installed by setup-autostart.ps1."
+$shortcut.Description      = "Launches the UNAXIS TUI at logon (WSL/tmux attach). Installed by setup-autostart.ps1."
 $shortcut.Save()
 
 Write-Host ""

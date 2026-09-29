@@ -32,6 +32,7 @@ import {
   SectionComponents,
   type SectionRow,
 } from "@/components/shop/sections/SectionRegistry";
+import { ShieldEntryGate } from "@/components/shield";
 
 const ZONE_KEY = "labs";
 const ZONE_LABEL = "Unenter Labs";
@@ -63,53 +64,55 @@ export default async function UnenterLabsPage() {
   const sections: SectionRow[] = (sectionsData as SectionRow[] | null) ?? [];
 
   return (
-    <main>
-      {/* ── Dynamic landing_sections (managed from the dashboard) ─────────── */}
-      {sections.length > 0 && (
-        <div className={`dynamic-${ZONE_KEY}-sections flex flex-col w-full`}>
-          {sections.map((section) => {
-            const Component = SectionComponents[section.type];
-            if (!Component) {
-              console.warn(`[${ZONE_KEY}] Unknown section type: ${section.type}`);
-              return null;
-            }
-            return <Component key={section.id} section={section} />;
-          })}
-        </div>
-      )}
+    <ShieldEntryGate zoneTitle={ZONE_LABEL}>
+      <main>
+        {/* ── Dynamic landing_sections (managed from the dashboard) ─────────── */}
+        {sections.length > 0 && (
+          <div className={`dynamic-${ZONE_KEY}-sections flex flex-col w-full`}>
+            {sections.map((section) => {
+              const Component = SectionComponents[section.type];
+              if (!Component) {
+                console.warn(`[${ZONE_KEY}] Unknown section type: ${section.type}`);
+                return null;
+              }
+              return <Component key={section.id} section={section} />;
+            })}
+          </div>
+        )}
 
-      {/* ── Fallback hero (shown only while no sections are configured) ──── */}
-      {sections.length === 0 && (
-        <section className="py-20 md:py-28 lg:py-32">
-          <div className="container">
-            <div className="mx-auto max-w-3xl text-center">
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
-                <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                {ZONE_DOMAIN}
-              </div>
-              <h1 className="mb-6 text-4xl font-bold leading-tight text-black dark:text-white sm:text-5xl">
-                {ZONE_LABEL}
-              </h1>
-              <p className="mb-3 text-lg leading-relaxed text-body-color">
-                Research compounds for laboratory use. This page is live but has
-                no <code>landing_sections</code> rows yet.
-              </p>
-              <p className="text-sm text-body-color/80">
-                Add sections from the dashboard&apos;s <strong>Landing → Labs Landing</strong> tab
-                and they will render here in <em>position</em> order.
-              </p>
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-                <Link
-                  href="/dashboard"
-                  className="rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-white shadow transition hover:bg-primary/90"
-                >
-                  Open dashboard
-                </Link>
+        {/* ── Fallback hero (shown only while no sections are configured) ──── */}
+        {sections.length === 0 && (
+          <section className="py-20 md:py-28 lg:py-32">
+            <div className="container">
+              <div className="mx-auto max-w-3xl text-center">
+                <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
+                  <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                  {ZONE_DOMAIN}
+                </div>
+                <h1 className="mb-6 text-4xl font-bold leading-tight text-black dark:text-white sm:text-5xl">
+                  {ZONE_LABEL}
+                </h1>
+                <p className="mb-3 text-lg leading-relaxed text-body-color">
+                  Research compounds for laboratory use. This page is live but has
+                  no <code>landing_sections</code> rows yet.
+                </p>
+                <p className="text-sm text-body-color/80">
+                  Add sections from the dashboard&apos;s <strong>Landing → Labs Landing</strong> tab
+                  and they will render here in <em>position</em> order.
+                </p>
+                <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                  <Link
+                    href="/dashboard"
+                    className="rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-white shadow transition hover:bg-primary/90"
+                  >
+                    Open dashboard
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
-      )}
-    </main>
+          </section>
+        )}
+      </main>
+    </ShieldEntryGate>
   );
 }

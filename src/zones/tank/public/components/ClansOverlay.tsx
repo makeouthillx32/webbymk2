@@ -480,7 +480,7 @@ export function ClicksOverlay({
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                   Creating a Click opens a members-only realtime chat and your own RPG group identity. Creation requires an active{" "}
                   <strong className="text-amber-300">Season Pass</strong> OR reaching{" "}
-                  <strong className="text-white">Iceberg Level 4+</strong> and 100 Tokens.
+                  <strong className="text-white">Iceberg Level 4+</strong> and 50 Tokens.
                 </p>
                 <div className="mt-2.5 flex items-center gap-3 text-xs font-bold">
                   <span className={userClan?.hasSeasonPass ? "text-emerald-400" : "text-slate-400"}>
@@ -491,8 +491,8 @@ export function ClicksOverlay({
                     Level: {currentUserLevel}/4
                   </span>
                   <span>·</span>
-                  <span className={currentUserTokens >= 100 ? "text-emerald-400" : "text-slate-400"}>
-                    Tokens: {currentUserTokens}/100
+                  <span className={currentUserTokens >= 50 ? "text-emerald-400" : "text-slate-400"}>
+                    Tokens: {currentUserTokens}/50
                   </span>
                 </div>
               </div>
@@ -515,12 +515,12 @@ export function ClicksOverlay({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-black uppercase text-slate-300 mb-1">
-                      Click Tag (2-5 Letters)
+                      Click Tag (2-7 Letters)
                     </label>
                     <input
                       type="text"
                       required
-                      maxLength={5}
+                      maxLength={7}
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value.toUpperCase())}
                       placeholder="e.g. VAMP, KIT, WOLF"

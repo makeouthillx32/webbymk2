@@ -151,6 +151,36 @@ export async function getRoomArchiveDay(
 ): Promise<ArchiveSegment[]> {
   try {
     const supabase = await createClient();
+
+    // 1. Check if a consolidated 24-hour master archive exists for this day
+    const { data: dailyArchive } = await supabase
+      .from("tank_archives")
+      .select("*")
+      .eq("room_slug", roomSlug)
+      .eq("recorded_date", isoDate)
+      .maybeSingle();
+
+    if (dailyArchive?.storage_path) {
+      return [
+        {
+          id: dailyArchive.id,
+          cameraId: roomSlug,
+          roomSlug: dailyArchive.room_slug,
+          seasonSlug: dailyArchive.season_slug || "s01",
+          recordedDate: dailyArchive.recorded_date,
+          segmentStart: `${dailyArchive.recorded_date}T00:00:00.000Z`,
+          segmentEnd: `${dailyArchive.recorded_date}T23:59:59.000Z`,
+          durationSeconds: dailyArchive.duration_seconds || 86400,
+          tier: "hot",
+          storagePath: dailyArchive.storage_path,
+          coldPath: null,
+          fileSizeBytes: Number(dailyArchive.file_size_bytes || 0),
+          codec: "h264",
+        },
+      ];
+    }
+
+    // 2. Otherwise return individual active segments (for today currently recording)
     const { data, error } = await supabase
       .from("tank_archive_segments")
       .select("*")

@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawnSync } from "child_process";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { PROJECT_DIR } from "../../config/stack.ts";
 
@@ -29,20 +29,22 @@ function getUnaxisVersion(): string {
 function getGitSourceRef(): string {
   const run = (args: string[]): string => {
     try {
-      const r = spawnSync("git", args, { cwd: PROJECT_DIR, encoding: "utf-8" });
+      const r = spawnSync("git", args, { cwd: PROJECT_DIR, encoding: "utf-8", timeout: 800 });
       return r.status === 0 ? (r.stdout ?? "").trim() : "";
     } catch { return ""; }
   };
   const fullSha  = run(["rev-parse", "HEAD"]);
   const shortSha = run(["rev-parse", "--short=8", "HEAD"]) || (fullSha ? fullSha.slice(0, 8) : "nogit");
-  const dirty = run(["status", "--porcelain"]).length > 0;
+  const dirty = run(["status", "--porcelain", "-uno"]).length > 0;
   return `g${shortSha}${dirty ? "-dirty" : ""}`;
 }
+
+const hasUnixSocket = process.platform !== "win32" && existsSync("/var/run/docker.sock");
 
 export const DOCKER_ENV: Record<string, string> = {
   ...(process.env as Record<string, string>),
   DOCKER_API_VERSION: process.env.DOCKER_API_VERSION || "1.45",
-  ...(process.platform !== "win32"
+  ...(hasUnixSocket
     ? { DOCKER_HOST: "unix:///var/run/docker.sock" }
     : {}),
   UNAXIS_VERSION: getUnaxisVersion(),

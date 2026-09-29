@@ -68,15 +68,21 @@ export function SubjectTelemetryCard({
           background: DETECTION.panel,
           border: `1px solid ${DETECTION.panelBorder}`,
           borderLeft: `2px solid ${DETECTION.accent}`,
-          padding: "4px 7px",
+          // Was padding 4/7, fontSize 9, minWidth 118 — read as a full-size
+          // HUD panel on a 3x2 grid where each tile is a few hundred px
+          // wide. Same rows, same information, just built for the tile size
+          // this actually renders at instead of a hypothetical full-frame
+          // single-camera view.
+          padding: "2px 5px",
           fontFamily: DETECTION_MONO,
-          fontSize: 9,
-          lineHeight: 1.45,
-          minWidth: 118,
+          fontSize: 7,
+          lineHeight: 1.35,
+          minWidth: 82,
+          gap: 1,
         }}
       >
         {rows.map((row) => (
-          <div key={row.label} className="flex justify-between gap-3 whitespace-nowrap">
+          <div key={row.label} className="flex justify-between gap-2 whitespace-nowrap">
             <span style={{ color: DETECTION.textDim }}>{row.label}:</span>
             <span
               style={{

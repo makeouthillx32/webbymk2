@@ -74,8 +74,12 @@ export function ReprintReceipt({ order }: ReprintReceiptProps) {
         orderNumber:   order.order_number,
         items:         order.items.map((i) => ({
           key:           i.id,
+          product_id:    i.product_id ?? i.id,
+          variant_id:    i.id,
           product_title: i.title,
           variant_title: i.variant_title ?? "",
+          sku:           i.sku ?? null,
+          image_url:     null,
           price_cents:   i.price_cents,
           quantity:      i.quantity,
         })),

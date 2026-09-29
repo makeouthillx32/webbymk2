@@ -30,20 +30,24 @@ interface ActionPanelProps {
   zone:     Zone;
   status:   Status;
   selected: number;
+  envName?: string;
 }
 
 // ── Action builders ───────────────────────────────────────────────────────────
 
 /** Actions available on a regular deployable zone. */
-export function buildActions(zone: Zone): Action[] {
+export function buildActions(zone: Zone, envName?: string): Action[] {
+  const isRemote = Boolean(envName && envName.toUpperCase() !== "POWER" && envName.toUpperCase() !== "LOCAL");
+
   return [
-    { id: "deploy",   label: "Deploy",             desc: "docker compose pull + up",                        key: "d", disabled: false           },
-    { id: "pull",     label: "Pull + up",          desc: "docker compose pull + up (no build)",             key: "p", disabled: false           },
-    { id: "restart",  label: "Restart",            desc: "docker compose restart",                          key: "r", disabled: false           },
-    { id: "build",    label: "Build + deploy",     desc: "build + push + pull + up  (ship)",                    key: "b", disabled: !zone.dockerfile },
-    { id: "rebuild",  label: "Rebuild + deploy",   desc: "no-cache build + push + pull + up  (clean)",         key: "R", disabled: !zone.dockerfile },
-    { id: "logs",     label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
+    { id: "deploy",   label: "Deploy",             desc: isRemote ? `deploy to ${envName} via agent manifest` : "docker compose pull + up", key: "d", disabled: false           },
+    { id: "pull",     label: "Pull + up",          desc: isRemote ? `pull + up on ${envName} via agent` : "docker compose pull + up (no build)", key: "p", disabled: false           },
+    { id: "restart",  label: "Restart",            desc: isRemote ? `restart container on ${envName} via agent` : "docker compose restart", key: "r", disabled: false           },
+    { id: "build",    label: "Build + deploy",     desc: isRemote ? `build (POWER) + deploy (${envName})` : "build + push + pull + up  (ship)", key: "b", disabled: !zone.dockerfile },
+    { id: "rebuild",  label: "Rebuild + deploy",   desc: isRemote ? `rebuild (POWER) + deploy (${envName})` : "no-cache build + push + pull + up  (clean)", key: "R", disabled: !zone.dockerfile },
+    { id: "logs",     label: "Logs",               desc: isRemote ? `tail -f logs from ${envName}` : "tail -f container output", key: "l", disabled: false           },
     { id: "dev",      label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
+    { id: "deployments", label: "Deployments", desc: isRemote ? `deployment history on ${envName}` : "build & deploy timeline, durations, rollback", key: "H", disabled: false },
     { id: "npm",      label: "Register NPM",       desc: "create proxy host + Let's Encrypt cert",         key: "n", disabled: false           },
     { id: "publish",  label: "Public toggle",      desc: "show / hide in the public Sites & Apps catalog",  key: "P", disabled: false           },
     { id: "sections", label: "Manage sections",    desc: "add / remove dynamic route sections",            key: "s", disabled: false           },
@@ -64,6 +68,7 @@ export function buildCoreActions(zone: Zone): Action[] {
     { id: "build",   label: "Build + deploy",     desc: "build + push + pull + up  (ship)",                    key: "b", disabled: !zone.dockerfile },
     { id: "rebuild", label: "Rebuild + deploy",   desc: "no-cache build + push + pull + up  (clean)",         key: "R", disabled: !zone.dockerfile },
     { id: "logs",    label: "Logs",               desc: "tail -f container output",                        key: "l", disabled: false           },
+    { id: "deployments", label: "Deployments",    desc: "build & deploy timeline, durations, rollback",    key: "H", disabled: false           },
     { id: "dev",     label: "Dev mode",           desc: "start dev container  (volume-mount + bun dev)", key: "v", disabled: false           },
   ];
 }
@@ -143,12 +148,16 @@ function ActionPanelRow({ action, focused }: ActionPanelRowProps) {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
+export function ActionPanel({ zone, status, selected, envName }: ActionPanelProps) {
+  const isRemote = Boolean(envName && envName.toUpperCase() !== "POWER" && envName.toUpperCase() !== "LOCAL");
+  const badgeColor = isRemote ? "magenta" : "blue";
+  const badgeText = envName ? `[${envName.toUpperCase()}]` : "[POWER]";
+
   const actions = isCoreZone(zone)
     ? buildCoreActions(zone)
     : isProxyZone(zone)
       ? buildProxyActions()
-      : buildActions(zone);
+      : buildActions(zone, envName);
 
   return (
     <Box flexDirection="column">
@@ -156,6 +165,10 @@ export function ActionPanel({ zone, status, selected }: ActionPanelProps) {
       {/* ── Zone header ─────────────────────────────────────────────────── */}
       <Box paddingX={1} gap={2} marginBottom={1}>
         <Text bold color="cyan">{zone.label}</Text>
+        <Text dimColor>·</Text>
+        <Text color={badgeColor} bold={isRemote}>
+          {badgeText}
+        </Text>
         <Text dimColor>·</Text>
         <Text dimColor>{zone.domain}</Text>
         <Text dimColor>·</Text>

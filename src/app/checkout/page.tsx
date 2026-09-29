@@ -14,7 +14,7 @@ import { safeStorage } from "@/lib/safeStorage";
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, itemCount, subtotal, removeItem, updateQuantity } = useCart();
+  const { items, itemCount, subtotal, removeItem, updateQuantity, isLoading } = useCart();
 
   const [promoCode, setPromoCode] = useState("");
   const [promoApplied, setPromoApplied] = useState<any>(null);
@@ -23,10 +23,10 @@ export default function CheckoutPage() {
   const [discountCents, setDiscountCents] = useState(0);
 
   useEffect(() => {
-    if (itemCount === 0) {
+    if (!isLoading && itemCount === 0) {
       router.push("/shop");
     }
-  }, [itemCount, router]);
+  }, [isLoading, itemCount, router]);
 
   // Restore promo from safeStorage on mount (survives refresh)
   useEffect(() => {
@@ -106,6 +106,27 @@ export default function CheckoutPage() {
     router.push("/checkout/shipping");
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-6 max-w-6xl">
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground mb-8">
+            <div className="h-4 bg-muted animate-pulse rounded w-16" />
+            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+            <div className="h-4 bg-muted animate-pulse rounded w-16" />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-3">
+              <div className="h-28 bg-muted animate-pulse rounded-xl" />
+              <div className="h-28 bg-muted animate-pulse rounded-xl" />
+            </div>
+            <div className="h-72 bg-muted animate-pulse rounded-xl" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (itemCount === 0) return null;
 
   return (
@@ -153,6 +174,7 @@ export default function CheckoutPage() {
                       alt={item.product_title}
                       fill
                       className="object-cover"
+                      unoptimized={Boolean(item.image_url?.toLowerCase().includes(".avif"))}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">

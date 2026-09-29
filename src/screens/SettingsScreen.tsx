@@ -7,6 +7,7 @@
 //   infrastructure — ports, URLs, network config, default project path
 //   identity       — credentials: ghcr_token + npm_token (masked, age-tracked)
 //   zones          — scaffolded zones list
+//   payments       — Stripe lane modes and scoped service apply
 //
 // Credentials are stored in ~/.unaxis/.credentials.json via secureStorage.
 // Settings (non-secret) are in ~/.unaxis/settings.json.
@@ -17,7 +18,7 @@
 //   [p]  edit default project path (infrastructure tab)
 //   [e]  open ~/.unaxis/settings.json in system editor
 //   [c]  open ~/.unaxis/.credentials.json in system editor
-//   [1-3] / Tab — switch tabs
+//   [1-4] / Tab — switch tabs
 //   esc / q — back
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ import { ProgressLine } from "../ink/components/design-system/ProgressLine.jsx";
 import { sparkline } from "../ink/utils/sparkline.js";
 
 import { useNotifications } from "../ink/components/Notifications.jsx";
+import { StripePaymentsSettings } from "../ink/components/StripePaymentsSettings.jsx";
 
 import {
   getCredential, setCredential,
@@ -154,16 +156,17 @@ interface SettingsScreenProps {
   zones: Zone[];
   onTokenEditStart: () => void;
   onTokenEditEnd: () => void;
+  runOp: (title: string, run: (onLine: (line: string) => void) => Promise<number> | number, priority?: any) => void;
 }
 
-export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: SettingsScreenProps) {
+export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd, runOp }: SettingsScreenProps) {
   const { addNotification } = useNotifications();
   const { tw, dw, iw } = useWidths();
   // Input width: fill available inner width, minus label text (~18 chars) and
   // box borders (4 cols). Floor at 20 so it's usable even on very narrow terms.
   const inputW = Math.max(20, iw - 20);
 
-  const [activeTab, setTab] = useState<"infra" | "identity" | "zones">("infra");
+  const [activeTab, setTab] = useState<"infra" | "identity" | "zones" | "payments">("infra");
   const [editField, setEditField] = useState<EditField>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -308,7 +311,8 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (key.tab) {
       setTab((prev) =>
         prev === "infra" ? "identity" :
-          prev === "identity" ? "zones" : "infra"
+          prev === "identity" ? "zones" :
+            prev === "zones" ? "payments" : "infra"
       );
       return;
     }
@@ -316,6 +320,7 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
     if (input === "1") { setTab("infra"); return; }
     if (input === "2") { setTab("identity"); return; }
     if (input === "3") { setTab("zones"); return; }
+    if (input === "4") { setTab("payments"); return; }
 
     if (input === "e") { openConfigInEditor(); return; }
     if (input === "c") { openCredentialsInEditor(); return; }
@@ -379,10 +384,11 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
       </Box>
 
       <Tabs
-        tabs={["infrastructure", "identity", "zones"]}
+        tabs={["infrastructure", "identity", "zones", "payments"]}
         active={
           activeTab === "infra" ? "infrastructure" :
-            activeTab === "identity" ? "identity" : "zones"
+            activeTab === "identity" ? "identity" :
+              activeTab === "zones" ? "zones" : "payments"
         }
         marginBottom={1}
       />
@@ -620,6 +626,10 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
         </Box>
       )}
 
+      {activeTab === "payments" && (
+        <StripePaymentsSettings zones={zones} runOp={runOp} active={!editField && provStep === "idle"} />
+      )}
+
       <Box flexGrow={1} />
       <Divider width={dw} />
 
@@ -637,7 +647,13 @@ export function SettingsScreen({ zones, onTokenEditStart, onTokenEditEnd }: Sett
               ...(activeTab === "infra" ? [
                 { k: "p", label: "set project path" },
               ] : []),
-              { k: "1-3", label: "switch tabs" },
+              ...(activeTab === "payments" ? [
+                { k: "↑/↓", label: "select lane" },
+                { k: "t", label: "test + apply" },
+                { k: "l", label: "live + confirm" },
+                { k: "r", label: "refresh" },
+              ] : []),
+              { k: "1-4", label: "switch tabs" },
               { k: "Tab", label: "cycle tabs" },
               { k: "e", label: "open settings in editor" },
               { k: "c", label: "open credentials in editor" },

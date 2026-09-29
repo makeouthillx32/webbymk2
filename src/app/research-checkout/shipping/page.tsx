@@ -22,6 +22,7 @@ interface ShippingRate {
   price_cents: number;
   min_delivery_days: number;
   max_delivery_days: number;
+  quote_token?: string;
 }
 
 export default function ResearchCheckoutShippingPage() {
@@ -205,6 +206,7 @@ export default function ResearchCheckoutShippingPage() {
         id: rateData.id,
         name: rateData.name,
         price_cents: rateData.price_cents,
+        quote_token: rateData.quote_token,
       }));
     }
 

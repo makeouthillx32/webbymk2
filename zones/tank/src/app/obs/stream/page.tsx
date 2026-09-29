@@ -1,11 +1,7 @@
-import type { Metadata } from "next";
-import { MyStreamPage } from "@/zones/tank/obs/MyStreamPage";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Your Tank Stream | Tank Console",
-  description: "Generate your own OBS/Streamlabs stream key for a personal Tank room.",
-};
-
+// Superseded by /stream's Creator Dashboard (Stream URL & Key tab) —
+// redirect rather than delete so any existing bookmarks/links keep working.
 export default function Page() {
-  return <MyStreamPage />;
+  redirect("/stream");
 }

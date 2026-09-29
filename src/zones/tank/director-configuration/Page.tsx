@@ -8,12 +8,17 @@ export const metadata: Metadata = {
   description: "Dynamic Virtual Canvas Grid & TouchDesigner Kinematics Controller",
 };
 
-export default function DirectorConfigurationPage() {
-  // ACTIVE_THEME carries fonts, fontFaces and images — there is no `colors`
-  // key. This page was the only place in the zone that assumed otherwise, and
-  // reading `.colors.chassis.bg` threw on every render, which is why the
-  // director console 500'd instead of rendering the canvas. The chassis look
-  // comes from the same aluminium texture the rest of the console uses.
+import { getServerDirectorState } from "../server/serverDirectorEngine";
+import { loadPersistedOperatorModeFromDb } from "../server/directorTelemetryStore";
+import { loadRotationRosterFromDb } from "../server/directorRotationStore";
+
+export default async function DirectorConfigurationPage() {
+  const [initialServerDirector, initialMode, initialRoster] = await Promise.all([
+    getServerDirectorState().catch(() => null),
+    loadPersistedOperatorModeFromDb().catch(() => null),
+    loadRotationRosterFromDb().catch(() => null),
+  ]);
+
   return (
     <main
       className="min-h-screen p-4 sm:p-6 lg:p-8"
@@ -24,7 +29,11 @@ export default function DirectorConfigurationPage() {
       }}
     >
       <div className="mx-auto max-w-7xl">
-        <DirectorWorkspace />
+        <DirectorWorkspace
+          initialServerDirector={initialServerDirector}
+          initialMode={initialMode}
+          initialRoster={initialRoster}
+        />
       </div>
     </main>
   );

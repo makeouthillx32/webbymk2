@@ -7,6 +7,7 @@
 import { createServerClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getOAuthToken } from "@/lib/usps/tokens";
+import { signShippingRates } from "@/lib/shippingQuote";
 
 const USPS_ENV = process.env.USPS_ENV ?? 'mock';
 const USPS_BASE = USPS_ENV === 'production'
@@ -116,34 +117,42 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient();
     const body = await request.json();
-    const { subtotal_cents, zip, cart_id } = body;
+    const { zip, cart_id } = body;
 
-    if (!subtotal_cents) {
-      return NextResponse.json({ error: 'subtotal_cents is required' }, { status: 400 });
+    if (!cart_id) {
+      return NextResponse.json({ error: 'cart_id is required' }, { status: 400 });
     }
 
     // ── Check if all cart items have weights ──────────────────────
-    if (cart_id) {
-      const { data: cartItems } = await supabase
-        .from('cart_items')
-        .select(`
-          quantity,
-          product_variants (weight_grams)
-        `)
-        .eq('cart_id', cart_id);
+    const { data: cartItems, error: cartError } = await supabase
+      .from('cart_items')
+      .select(`
+        quantity,
+        price_cents,
+        product_variants (weight_grams)
+      `)
+      .eq('cart_id', cart_id);
 
-      const missingWeight = (cartItems ?? []).some(
-        (item: any) => !item.product_variants?.weight_grams
-      );
+    if (cartError || !cartItems?.length) {
+      return NextResponse.json({ error: 'Cart not found or empty' }, { status: 400 });
+    }
 
-      if (missingWeight) {
-        console.log('[Shipping Rates] One or more items missing weight — using free standard shipping');
-        return NextResponse.json({
-          shipping_rates: freeStandardRate(),
-          source: 'free-fallback',
-          reason: 'missing-weight',
-        });
-      }
+    const resolvedSubtotalCents = cartItems.reduce(
+      (sum: number, item: any) => sum + Number(item.price_cents) * Number(item.quantity),
+      0,
+    );
+
+    const missingWeight = cartItems.some(
+      (item: any) => !item.product_variants?.weight_grams
+    );
+
+    if (missingWeight) {
+      console.log('[Shipping Rates] One or more items missing weight — using free standard shipping');
+      return NextResponse.json({
+        shipping_rates: signShippingRates('shop', cart_id, resolvedSubtotalCents, freeStandardRate()),
+        source: 'free-fallback',
+        reason: 'missing-weight',
+      });
     }
 
     // ── LIVE MODE: query USPS Rates API ──────────────────────────
@@ -161,7 +170,7 @@ export async function POST(request: NextRequest) {
 
       if (!originZip) {
         console.warn('[Shipping Rates] No origin zip — falling back to DB rates');
-        return fallbackToDbRates(supabase, subtotal_cents);
+        return fallbackToDbRates(supabase, resolvedSubtotalCents);
       }
 
       // Get default package preset from Supabase
@@ -186,7 +195,7 @@ export async function POST(request: NextRequest) {
         oauthToken = await getOAuthToken();
       } catch (err: any) {
         console.error('[Shipping Rates] OAuth failed, falling back to DB rates:', err.message);
-        return fallbackToDbRates(supabase, subtotal_cents);
+        return fallbackToDbRates(supabase, resolvedSubtotalCents);
       }
 
       // Query all mail classes in parallel
@@ -214,7 +223,7 @@ export async function POST(request: NextRequest) {
         }));
 
       // Apply free shipping threshold to Ground Advantage
-      if (subtotal_cents >= FREE_THRESHOLD_CENTS) {
+      if (resolvedSubtotalCents >= FREE_THRESHOLD_CENTS) {
         const ground = rates.find(r => r.mail_class === 'USPS_GROUND_ADVANTAGE');
         if (ground) {
           ground.price_cents = 0;
@@ -224,13 +233,16 @@ export async function POST(request: NextRequest) {
 
       if (rates.length > 0) {
         console.log('[Shipping Rates] Live rates:', rates.map(r => `${r.name}: $${(r.price_cents / 100).toFixed(2)}`).join(', '));
-        return NextResponse.json({ shipping_rates: rates, source: 'usps' });
+        return NextResponse.json({
+          shipping_rates: signShippingRates('shop', cart_id, resolvedSubtotalCents, rates),
+          source: 'usps',
+        });
       }
 
       console.warn('[Shipping Rates] All USPS calls failed — falling back to DB rates');
     }
 
-    return fallbackToDbRates(supabase, subtotal_cents);
+    return fallbackToDbRates(supabase, resolvedSubtotalCents);
 
   } catch (error: any) {
     console.error('[Shipping Rates] Unexpected error:', error);

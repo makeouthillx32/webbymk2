@@ -27,6 +27,18 @@ const SHOP_SECTION_TYPES = [
     config: {}
   },
   {
+    value: "hero_3d",
+    label: "Interactive 3D Banner (Custom by unenter)",
+    description: "Full hero — 4K video backdrop + starry loop + three.js logo scene. Replaces the built-in home hero.",
+    config: { showVideo: true, videoOpacity: 0.3, minHeight: "" }
+  },
+  {
+    value: "footer_chrome",
+    label: "Footer Chrome / Decoration",
+    description: "Themed gradient shapes — place above the footer for chrome, or between sections as a divider",
+    config: { shapes: "both", tint: "primary", opacity: 0.5, height: 180, flip: false }
+  },
+  {
     value: "categories_grid",
     label: "Categories Grid",
     description: "Display product categories in a grid layout",
@@ -56,10 +68,20 @@ const SHOP_SECTION_TYPES = [
 // tables — products_grid / categories_grid would silently show Shop inventory
 // on the Labs page (see zones/labs/Page.tsx). research_products_grid is the
 // Labs-safe counterpart.
+// Look up by VALUE, never by index. These used to be SHOP_SECTION_TYPES[0]/[1]/[3],
+// which silently broke the moment a new type was inserted into the middle of that
+// array — [3] stopped being static_html and Labs lost its Static Page Embed option
+// with no error anywhere. Lookup-by-value cannot drift.
+const shopType = (value: string) => {
+  const found = SHOP_SECTION_TYPES.find(t => t.value === value);
+  if (!found) throw new Error(`SHOP_SECTION_TYPES has no entry "${value}"`);
+  return found;
+};
+
 const LABS_SECTION_TYPES = [
-  SHOP_SECTION_TYPES[0], // top_banner
-  SHOP_SECTION_TYPES[1], // hero_carousel
-  SHOP_SECTION_TYPES[3], // static_html
+  shopType("top_banner"),
+  shopType("hero_carousel"),
+  shopType("static_html"),
   {
     value: "research_products_grid",
     label: "Research Chemicals Grid",

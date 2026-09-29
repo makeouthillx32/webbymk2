@@ -1,0 +1,9 @@
+/* zones/tank/src/app/globals.css — bare-metal dev only.
+   layout.tsx imports this via a relative `./globals.css` (Next.js CSS
+   imports don't go through the @/ webpack alias the way JS/TS imports do),
+   so a real file has to exist at this exact path. The Docker build gets
+   there by physically copying core's globals.css in at build time (see
+   ../../../Dockerfile's overlay step); this re-imports the real file
+   through the @/ alias instead, so there's nothing to keep in sync by hand
+   — a change to the real file is live here immediately. */
+@import "@/app/globals.css";

@@ -32,7 +32,53 @@ export type TouchTelemetryOptions = {
   flushIntervalMs?: number; // Batch flushes every 1000ms to conserve socket headroom
   onLocalBatch?: (batch: TouchEventPayload[]) => void;
   onHitSuccess?: (result: TapClaimResult, coords: { nx: number; ny: number }) => void;
+  onTouchTap?: (payload: TouchEventPayload) => void;
 };
+
+export function computeTouchPayload(params: {
+  clientX: number;
+  clientY: number;
+  rect: { left: number; top: number; width: number; height: number };
+  gridCols?: number;
+  heatmapBins?: number;
+  pointerType?: "touch" | "mouse" | "pen";
+  camSlug?: string;
+  timestamp?: number;
+}): TouchEventPayload | null {
+  const {
+    clientX,
+    clientY,
+    rect,
+    gridCols = 3,
+    heatmapBins = 10,
+    pointerType = "touch",
+    camSlug = "director",
+    timestamp = Date.now(),
+  } = params;
+
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  const rawX = (clientX - rect.left) / rect.width;
+  const rawY = (clientY - rect.top) / rect.height;
+
+  const nx = Math.max(0, Math.min(1, parseFloat(rawX.toFixed(4))));
+  const ny = Math.max(0, Math.min(1, parseFloat(rawY.toFixed(4))));
+
+  const zoneIndex = Math.min(gridCols - 1, Math.floor(nx * gridCols));
+  const heatX = Math.min(heatmapBins - 1, Math.floor(nx * heatmapBins));
+  const heatY = Math.min(heatmapBins - 1, Math.floor(ny * heatmapBins));
+  const gridId = `h_${heatX}_${heatY}`;
+
+  return {
+    nx,
+    ny,
+    zoneIndex,
+    gridId,
+    pointerType,
+    timestamp,
+    camSlug,
+  };
+}
 
 export function useInvisibleTouchTelemetry(
   containerRef: React.RefObject<HTMLElement | null>,
@@ -47,6 +93,7 @@ export function useInvisibleTouchTelemetry(
     flushIntervalMs = 1500,
     onLocalBatch,
     onHitSuccess,
+    onTouchTap,
   } = options;
 
   const bufferRef = useRef<TouchEventPayload[]>([]);
@@ -77,6 +124,7 @@ export function useInvisibleTouchTelemetry(
     try {
       if (!channelRef.current) {
         channelRef.current = supabaseRef.current.channel("telemetry:viewport_gestures");
+        channelRef.current.subscribe();
       }
       const channel = channelRef.current;
       void channel.send({
@@ -101,47 +149,41 @@ export function useInvisibleTouchTelemetry(
     const element = containerRef.current;
     if (!element) return;
 
+    if (!channelRef.current) {
+      channelRef.current = supabaseRef.current.channel("telemetry:viewport_gestures");
+      channelRef.current.subscribe();
+    }
+
     const handlePointerDown = async (e: PointerEvent) => {
       // Passive capture: does not call preventDefault or stopPropagation
       const rect = element.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-
-      // 1. Calculate Normalized Coordinates [0.000, 1.000]
-      const rawX = (e.clientX - rect.left) / rect.width;
-      const rawY = (e.clientY - rect.top) / rect.height;
-
-      const nx = Math.max(0, Math.min(1, parseFloat(rawX.toFixed(4))));
-      const ny = Math.max(0, Math.min(1, parseFloat(rawY.toFixed(4))));
-
-      // 2. Calculate Tri-Zone Column (0: Left, 1: Center, 2: Right)
-      const zoneIndex = Math.min(gridCols - 1, Math.floor(nx * gridCols));
-
-      // 3. Calculate Fine Heatmap Bin (e.g. 10x10 grid)
-      const heatX = Math.min(heatmapBins - 1, Math.floor(nx * heatmapBins));
-      const heatY = Math.min(heatmapBins - 1, Math.floor(ny * heatmapBins));
-      const gridId = `h_${heatX}_${heatY}`;
-
-      const pointerType = (e.pointerType || "touch") as "touch" | "mouse" | "pen";
-
-      const payload: TouchEventPayload = {
-        nx,
-        ny,
-        zoneIndex,
-        gridId,
-        pointerType,
-        timestamp: Date.now(),
+      const payload = computeTouchPayload({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        rect,
+        gridCols,
+        heatmapBins,
+        pointerType: (e.pointerType || "touch") as "touch" | "mouse" | "pen",
         camSlug,
-      };
+      });
+      if (!payload) return;
 
       bufferRef.current.push(payload);
 
-      // 4. Interactive Target / Where's Waldo Hit-Test (Debounced 350ms)
+      // Local tap hook for interactive viewport navigation
+      if (onTouchTap) {
+        try {
+          onTouchTap(payload);
+        } catch {}
+      }
+
+      // 4. Interactive Target / Scavenger Hit-Test (Debounced 350ms, active only when handler wired)
       const now = Date.now();
-      if (now - lastHitTestTimeRef.current > 350) {
+      if (now - lastHitTestTimeRef.current > 350 && onHitSuccess) {
         lastHitTestTimeRef.current = now;
         try {
           const res = await claimInteractiveTargetTap({ camSlug, roomId, nx, ny });
-          if (res.hit && onHitSuccess) {
+          if (res.hit) {
             onHitSuccess(res, { nx, ny });
           }
         } catch {}
@@ -175,7 +217,7 @@ export function useInvisibleTouchTelemetry(
         channelRef.current = null;
       }
     };
-  }, [enabled, camSlug, roomId, gridCols, heatmapBins, flushIntervalMs, flushBuffer, onHitSuccess, containerRef]);
+  }, [enabled, camSlug, roomId, gridCols, heatmapBins, flushIntervalMs, flushBuffer, onHitSuccess, onTouchTap, containerRef]);
 
   return {
     getPendingBatchCount: () => bufferRef.current.length,

@@ -1,141 +1,86 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Bell,
   Coins,
-  Megaphone,
-  Anchor,
-  Swords,
+  Package,
+  Gift,
   X,
-  Bomb,
   CheckCheck,
+  Scroll,
+  Flame,
 } from "lucide-react";
 import { ChromePanel } from "./ChromePanel";
 import { ConsoleButton } from "./ConsoleButton";
 import { ACTIVE_THEME } from "../../theme";
 
-export type TankNotificationCategory = "all" | "tokens" | "tts" | "tanktoys" | "wartoys";
+// Categories match real Tank events only — the previous set ("TTS",
+// "Wartoys" combat, tanktoys) mirrored features that were never actually
+// built, and every entry under them was hardcoded placeholder data (see
+// SEEDED_NOTIFICATIONS' removal below). "system" covers level-ups and
+// house announcements; the rest map 1:1 to real reward paths.
+export type TankNotificationCategory =
+  | "all"
+  | "tokens"
+  | "items"
+  | "drops"
+  | "missions"
+  | "system";
 
 export type TankNotificationItem = {
   id: string;
-  category: "tokens" | "tts" | "tanktoys" | "wartoys";
+  category: "tokens" | "items" | "drops" | "missions" | "system";
   body: string;
   time: string;
   read: boolean;
 };
 
-// Seed dataset provided from real Tank account history
-export const SEEDED_NOTIFICATIONS: TankNotificationItem[] = [
-  // Wartoys batch
-  { id: "w-1", category: "wartoys", body: "BIGR attacked you with a grenade for 936 XP", time: "6/24/25, 1:00 AM", read: false },
-  { id: "w-2", category: "wartoys", body: "BUM attacked you with a grenade for 970 XP", time: "6/23/25, 10:17 PM", read: false },
-  { id: "w-3", category: "wartoys", body: "akimbo attacked you with a grenade for 933 XP", time: "6/23/25, 9:50 PM", read: false },
-  { id: "w-4", category: "wartoys", body: "LUKEW attacked you with a grenade for 1015 XP", time: "6/23/25, 8:12 PM", read: false },
-  { id: "w-5", category: "wartoys", body: "BASED attacked you with a grenade for 955 XP", time: "6/23/25, 8:06 PM", read: false },
-  { id: "w-6", category: "wartoys", body: "Shitty_StarPress attacked you with a grenade for 884 XP", time: "6/23/25, 7:59 PM", read: false },
-  { id: "w-7", category: "wartoys", body: "Shitty_StarPress attacked you with a grenade for 856 XP", time: "6/23/25, 7:59 PM", read: false },
-  { id: "w-8", category: "wartoys", body: "JOSIE attacked you with a grenade for 846 XP", time: "6/23/25, 7:50 PM", read: false },
-  { id: "w-9", category: "wartoys", body: "Jlag96 attacked you with a grenade for 848 XP", time: "6/23/25, 7:43 PM", read: false },
-  { id: "w-10", category: "wartoys", body: "JadtheTaff attacked you with a grenade for 931 XP", time: "6/23/25, 6:04 PM", read: false },
-  { id: "w-11", category: "wartoys", body: "gpoore96 attacked you with a grenade for 1049 XP", time: "6/23/25, 5:53 PM", read: false },
-  { id: "w-12", category: "wartoys", body: "luca attacked you with a grenade for 955 XP", time: "6/23/25, 3:31 PM", read: false },
-  { id: "w-13", category: "wartoys", body: "luca attacked you with a grenade for 949 XP", time: "6/23/25, 3:14 PM", read: false },
-  { id: "w-14", category: "wartoys", body: "luca attacked you with a grenade for 1083 XP", time: "6/23/25, 3:14 PM", read: false },
-  { id: "w-15", category: "wartoys", body: "TNLS attacked you with a grenade for 868 XP", time: "6/23/25, 3:01 PM", read: false },
-  { id: "w-16", category: "wartoys", body: "RAPE attacked you with a grenade for 1163 XP", time: "6/23/25, 1:53 PM", read: false },
-  { id: "w-17", category: "wartoys", body: "oceansoos attacked you with a grenade for 995 XP", time: "6/23/25, 12:30 PM", read: false },
-  { id: "w-18", category: "wartoys", body: "Chaka attacked you with a grenade for 828 XP", time: "6/23/25, 12:25 PM", read: false },
-  { id: "w-19", category: "wartoys", body: "WHORE attacked you with a grenade for 800 XP", time: "6/23/25, 10:40 AM", read: false },
-  { id: "w-20", category: "wartoys", body: "WHORE attacked you with a grenade for 1065 XP", time: "6/23/25, 10:39 AM", read: false },
-  { id: "w-21", category: "wartoys", body: "WHORE attacked you with a grenade for 1094 XP", time: "6/23/25, 10:39 AM", read: false },
-  { id: "w-22", category: "wartoys", body: "AC attacked you with a grenade for 959 XP", time: "6/23/25, 9:16 AM", read: false },
-  { id: "w-23", category: "wartoys", body: "FENTLESSAPE attacked you with a grenade for 819 XP", time: "6/23/25, 5:18 AM", read: false },
-  { id: "w-24", category: "wartoys", body: "BigPat attacked you with a grenade for 981 XP", time: "6/23/25, 2:19 AM", read: false },
-  { id: "w-25", category: "wartoys", body: "BIGR attacked you with a grenade for 884 XP", time: "6/23/25, 12:28 AM", read: false },
-  { id: "w-26", category: "wartoys", body: "LUKEW attacked you with a grenade for 980 XP", time: "6/23/25, 12:20 AM", read: false },
-  { id: "w-27", category: "wartoys", body: "LUKEW attacked you with a grenade for 1009 XP", time: "6/23/25, 12:20 AM", read: false },
-  { id: "w-28", category: "wartoys", body: "SID55 attacked you with a grenade for 1108 XP", time: "6/23/25, 12:09 AM", read: false },
-  { id: "w-29", category: "wartoys", body: "MidSentry attacked you with a grenade for 1012 XP", time: "6/23/25, 12:07 AM", read: false },
-  { id: "w-30", category: "wartoys", body: "jackglisan attacked you with a grenade for 957 XP", time: "6/22/25, 10:26 PM", read: false },
-  { id: "w-31", category: "wartoys", body: "SHARK attacked you with a grenade for 1036 XP", time: "6/22/25, 8:29 PM", read: false },
-  { id: "w-32", category: "wartoys", body: "WHORE attacked you with a grenade for 865 XP", time: "6/22/25, 7:33 PM", read: false },
-  { id: "w-33", category: "wartoys", body: "WHORE attacked you with a grenade for 846 XP", time: "6/22/25, 7:33 PM", read: false },
-  { id: "w-34", category: "wartoys", body: "WHORE attacked you with a grenade for 897 XP", time: "6/22/25, 7:33 PM", read: false },
-  { id: "w-35", category: "wartoys", body: "BIGR attacked you with a grenade for 1118 XP", time: "6/22/25, 7:19 PM", read: false },
-  { id: "w-36", category: "wartoys", body: "SHARK attacked you with a grenade for 840 XP", time: "6/22/25, 7:03 PM", read: false },
-  { id: "w-37", category: "wartoys", body: "SHARK attacked you with a grenade for 984 XP", time: "6/22/25, 7:02 PM", read: false },
-  { id: "w-38", category: "wartoys", body: "RIP attacked you with a grenade for 897 XP", time: "6/22/25, 6:13 PM", read: false },
-  { id: "w-39", category: "wartoys", body: "Fluu attacked you with a grenade for 853 XP", time: "6/22/25, 5:54 PM", read: false },
-  { id: "w-40", category: "wartoys", body: "awesomealex118 attacked you with a grenade for 861 XP", time: "6/22/25, 5:46 PM", read: false },
-  { id: "w-41", category: "wartoys", body: "MULE attacked you with a grenade for 947 XP", time: "6/22/25, 5:20 PM", read: false },
-  { id: "w-42", category: "wartoys", body: "BIGR attacked you with a grenade for 906 XP", time: "6/22/25, 4:56 PM", read: false },
-  { id: "w-43", category: "wartoys", body: "BIGR attacked you with a grenade for 831 XP", time: "6/22/25, 4:56 PM", read: false },
-  { id: "w-44", category: "wartoys", body: "BIGR attacked you with a grenade for 1149 XP", time: "6/22/25, 4:54 PM", read: false },
-  { id: "w-45", category: "wartoys", body: "BIGR attacked you with a grenade for 1146 XP", time: "6/22/25, 4:53 PM", read: false },
-  { id: "w-46", category: "wartoys", body: "BIGR attacked you with a grenade for 804 XP", time: "6/22/25, 3:30 PM", read: false },
-  { id: "w-47", category: "wartoys", body: "BRUK attacked you with a grenade for 989 XP", time: "6/22/25, 2:42 PM", read: false },
-  { id: "w-48", category: "wartoys", body: "shadeval attacked you with a grenade for 1103 XP", time: "6/22/25, 2:07 PM", read: false },
-  { id: "w-49", category: "wartoys", body: "DustBunnie attacked you with a grenade for 1148 XP", time: "6/22/25, 1:47 PM", read: false },
-  { id: "w-50", category: "wartoys", body: "BIGR attacked you with a grenade for 1142 XP", time: "6/22/25, 1:34 PM", read: false },
-  { id: "w-51", category: "wartoys", body: "CUNNY attacked you with a grenade for 885 XP", time: "6/22/25, 1:33 PM", read: false },
-  { id: "w-52", category: "wartoys", body: "CUNNY attacked you with a grenade for 985 XP", time: "6/22/25, 1:33 PM", read: false },
-  { id: "w-53", category: "wartoys", body: "CUNNY attacked you with a grenade for 1082 XP", time: "6/22/25, 1:33 PM", read: false },
-  { id: "w-54", category: "wartoys", body: "CUNNY attacked you with a grenade for 917 XP", time: "6/22/25, 1:33 PM", read: false },
-  { id: "w-55", category: "wartoys", body: "CROSS attacked you with a grenade for 938 XP", time: "6/22/25, 7:15 AM", read: false },
-  { id: "w-56", category: "wartoys", body: "MULE attacked you with a grenade for 999 XP", time: "6/22/25, 7:15 AM", read: false },
-  { id: "w-57", category: "wartoys", body: "BGONE attacked you with a grenade for 1106 XP", time: "6/22/25, 5:53 AM", read: false },
-  { id: "w-58", category: "wartoys", body: "BIGR attacked you with a grenade for 897 XP", time: "6/22/25, 5:11 AM", read: false },
-  { id: "w-59", category: "wartoys", body: "BIGR attacked you with a grenade for 1121 XP", time: "6/22/25, 5:01 AM", read: false },
-  { id: "w-60", category: "wartoys", body: "YOHONII attacked you with a grenade for 820 XP", time: "6/22/25, 2:43 AM", read: false },
-  { id: "w-61", category: "wartoys", body: "BIGR attacked you with a grenade for 1195 XP", time: "6/22/25, 2:40 AM", read: false },
-  { id: "w-62", category: "wartoys", body: "BIGR attacked you with a grenade for 910 XP", time: "6/22/25, 2:25 AM", read: false },
-  { id: "w-63", category: "wartoys", body: "BIGR attacked you with a grenade for 1132 XP", time: "6/22/25, 2:24 AM", read: false },
-  { id: "w-64", category: "wartoys", body: "BIGR attacked you with a grenade for 1198 XP", time: "6/22/25, 2:02 AM", read: false },
-  { id: "w-65", category: "wartoys", body: "BIGR attacked you with a grenade for 863 XP", time: "6/22/25, 2:01 AM", read: false },
-  { id: "w-66", category: "wartoys", body: "BIGR attacked you with a grenade for 898 XP", time: "6/22/25, 2:01 AM", read: false },
-  { id: "w-67", category: "wartoys", body: "BIGR attacked you with a grenade for 951 XP", time: "6/22/25, 1:54 AM", read: false },
-  { id: "w-68", category: "wartoys", body: "loonbar attacked you with a grenade for 806 XP", time: "6/19/25, 6:00 PM", read: false },
-  { id: "w-69", category: "wartoys", body: "BASED attacked you with a grenade for 1073 XP", time: "6/19/25, 5:51 PM", read: false },
-  { id: "w-70", category: "wartoys", body: "SmallWang attacked you with a grenade for 1049 XP", time: "6/19/25, 3:59 PM", read: false },
-  { id: "w-71", category: "wartoys", body: "TrueCracker attacked you with a grenade for 905 XP", time: "6/19/25, 12:54 PM", read: false },
-  { id: "w-72", category: "wartoys", body: "FIST attacked you with a grenade for 950 XP", time: "6/19/25, 7:58 AM", read: false },
-  { id: "w-73", category: "wartoys", body: "CROSS attacked you with a grenade for 909 XP", time: "6/19/25, 7:54 AM", read: false },
-  { id: "w-74", category: "wartoys", body: "pristine attacked you with a grenade for 1100 XP", time: "6/19/25, 2:59 AM", read: false },
-  { id: "w-75", category: "wartoys", body: "DiabeticBruh421 attacked you with a grenade for 1164 XP", time: "6/18/25, 10:55 PM", read: false },
-  { id: "w-76", category: "wartoys", body: "BOOTY attacked you with a grenade for 989 XP", time: "6/18/25, 5:31 PM", read: false },
-  { id: "w-77", category: "wartoys", body: "Win attacked you with a grenade for 814 XP", time: "4/2/25, 10:24 AM", read: false },
-  { id: "w-78", category: "wartoys", body: "CHAOS attacked you with a grenade for 942 XP", time: "4/1/25, 10:04 PM", read: false },
-  { id: "w-79", category: "wartoys", body: "2fatfarmers attacked you with a grenade for 1055 XP", time: "3/9/25, 9:08 PM", read: false },
-  { id: "w-80", category: "wartoys", body: "CHAOS attacked you with a grenade for 843 XP", time: "3/9/25, 6:44 PM", read: false },
-  { id: "w-81", category: "wartoys", body: "CHAOS attacked you with a grenade for 1056 XP", time: "3/9/25, 6:43 PM", read: false },
-  { id: "w-82", category: "wartoys", body: "CAW attacked you with a grenade for 1119 XP", time: "3/3/25, 9:29 PM", read: false },
-  { id: "w-83", category: "wartoys", body: "CAW attacked you with a grenade for 1152 XP", time: "3/3/25, 9:29 PM", read: false },
-  { id: "w-84", category: "wartoys", body: "usernames attacked you with a grenade for 1113 XP", time: "3/3/25, 9:00 PM", read: false },
-
-  // Tokens batch
-  { id: "t-1", category: "tokens", body: "You were tipped ₮1 from trish!", time: "12/21/23, 12:08 AM", read: false },
-  { id: "t-2", category: "tokens", body: "You were tipped ₮1 from BuzzLightbeer!", time: "12/21/23, 12:00 AM", read: false },
-];
-
 export type NotificationsOverlayProps = {
   notifications?: TankNotificationItem[];
   onClose: () => void;
   onMarkAllRead?: () => void;
+  onNotificationRead?: (id: string) => void;
 };
 
 export function NotificationsOverlay({
-  notifications = SEEDED_NOTIFICATIONS,
+  notifications = [],
   onClose,
   onMarkAllRead,
+  onNotificationRead,
 }: NotificationsOverlayProps) {
   const [items, setItems] = useState<TankNotificationItem[]>(notifications);
   const [activeFilter, setActiveFilter] = useState<TankNotificationCategory>("all");
   const [unreadOnly, setUnreadOnly] = useState(false);
 
+  // Sync with prop updates — including down to zero. The old `length > 0`
+  // guard here meant a real empty state could never actually reach `items`
+  // once anything had rendered once; harmless while notifications were
+  // always-nonempty fake seed data, wrong now that "you have none yet" is a
+  // real, legitimate state.
+  useEffect(() => {
+    setItems(notifications);
+  }, [notifications]);
+
+  // Keyboard escape handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const handleMarkAll = () => {
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
     if (onMarkAllRead) onMarkAllRead();
+  };
+
+  const handleItemClick = (id: string) => {
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, read: true } : item))
+    );
+    if (onNotificationRead) onNotificationRead(id);
   };
 
   const filteredItems = items.filter((n) => {
@@ -143,6 +88,67 @@ export function NotificationsOverlay({
     if (unreadOnly && n.read) return false;
     return true;
   });
+
+  const getCategoryIcon = (category: TankNotificationItem["category"]) => {
+    switch (category) {
+      case "tokens":
+        return <Coins className="h-4 w-4 text-[#39ff6a]" />;
+      case "items":
+        return <Package className="h-4 w-4 text-[#ffc107]" />;
+      case "drops":
+        return <Gift className="h-4 w-4 text-[#a855f7]" />;
+      case "missions":
+        return <Scroll className="h-4 w-4 text-[#4a90e2]" />;
+      case "system":
+        return <Bell className="h-4 w-4 text-[#ff5722]" />;
+      default:
+        return <Bell className="h-4 w-4 text-white" />;
+    }
+  };
+
+  const filterButtons: {
+    key: TankNotificationCategory;
+    label: string;
+    icon: React.ReactNode;
+    colorClass: string;
+  }[] = [
+    {
+      key: "all",
+      label: "All",
+      icon: <Flame className="h-3.5 w-3.5 fill-white stroke-none" />,
+      colorClass: "bg-[#e85a4f]",
+    },
+    {
+      key: "tokens",
+      label: "Tokens",
+      icon: <Coins className="h-3.5 w-3.5" />,
+      colorClass: "bg-[#48a964]",
+    },
+    {
+      key: "items",
+      label: "Items",
+      icon: <Package className="h-3.5 w-3.5" />,
+      colorClass: "bg-[#d4a017]",
+    },
+    {
+      key: "drops",
+      label: "Drops",
+      icon: <Gift className="h-3.5 w-3.5" />,
+      colorClass: "bg-[#9333ea]",
+    },
+    {
+      key: "missions",
+      label: "Quests",
+      icon: <Scroll className="h-3.5 w-3.5" />,
+      colorClass: "bg-[#4a90e2]",
+    },
+    {
+      key: "system",
+      label: "System",
+      icon: <Bell className="h-3.5 w-3.5" />,
+      colorClass: "bg-[#dc2626]",
+    },
+  ];
 
   return (
     <div
@@ -160,7 +166,7 @@ export function NotificationsOverlay({
       {/* Floating ChromePanel positioned on top-right of viewport */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="pointer-events-auto relative flex w-full max-w-[360px] sm:max-w-[390px] max-h-[90vh] flex-col overflow-hidden animate-in slide-in-from-right-4 duration-200"
+        className="pointer-events-auto relative flex w-full max-w-[360px] sm:max-w-[420px] max-h-[92vh] flex-col overflow-hidden animate-in slide-in-from-right-4 duration-200"
       >
         <ChromePanel
           withScrews
@@ -172,15 +178,15 @@ export function NotificationsOverlay({
             <button
               onClick={onClose}
               aria-label="Close"
-              className="grid h-6 w-6 place-items-center rounded border border-black/40 bg-[#e85a4f] text-white shadow transition hover:brightness-110 active:scale-95"
+              className="grid h-6 w-6 place-items-center rounded border border-black/40 bg-[#e85a4f] text-white shadow transition hover:brightness-110 active:scale-95 cursor-pointer"
             >
               <X className="h-3.5 w-3.5 stroke-[3]" />
             </button>
           </div>
 
-          {/* ═══════════ HEADER: TITLE & 5 CATEGORY FILTER BLOCKS ═══════════ */}
-          <div className="px-8 pt-4 pb-3 border-b border-black/40 space-y-2.5">
-            <div className="flex items-center gap-2 pr-8">
+          {/* ═══════════ HEADER: TITLE & 6 CATEGORY FILTER ICONS ═══════════ */}
+          <div className="px-7 pt-4 pb-3 border-b border-black/40 space-y-2.5">
+            <div className="flex items-center justify-between pr-8">
               <h2
                 className="text-xs font-black uppercase tracking-widest text-[#241f14]"
                 style={{ fontFamily: ACTIVE_THEME.fonts.label }}
@@ -188,79 +194,43 @@ export function NotificationsOverlay({
                 Notifications
               </h2>
 
-              {/* 1. All Filter */}
-              <button
-                type="button"
-                onClick={() => setActiveFilter("all")}
-                className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition ${
-                  activeFilter === "all"
-                    ? "bg-[#e85a4f] ring-2 ring-yellow-400 text-white scale-105"
-                    : "bg-[#e85a4f]/75 text-white hover:brightness-110"
-                }`}
-                title="All Notifications"
-              >
-                <Bell className="h-3.5 w-3.5 fill-white stroke-none" />
-              </button>
+              {/* 6 Category Filter Icons */}
+              <div className="flex items-center gap-1.5">
+                {filterButtons.map((btn) => {
+                  const isActive = activeFilter === btn.key;
+                  return (
+                    <div key={btn.key} className="relative group">
+                      <button
+                        type="button"
+                        onClick={() => setActiveFilter(btn.key)}
+                        className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition cursor-pointer ${
+                          btn.colorClass
+                        } ${
+                          isActive
+                            ? "ring-2 ring-yellow-400 text-white scale-105 brightness-110 shadow-md"
+                            : "opacity-80 text-white hover:opacity-100 hover:brightness-110 hover:scale-105"
+                        }`}
+                        title={btn.label}
+                      >
+                        {btn.icon}
+                      </button>
 
-              {/* 2. Tokens Filter */}
-              <button
-                type="button"
-                onClick={() => setActiveFilter("tokens")}
-                className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition ${
-                  activeFilter === "tokens"
-                    ? "bg-[#48a964] ring-2 ring-yellow-400 text-white scale-105"
-                    : "bg-[#48a964]/75 text-white hover:brightness-110"
-                }`}
-                title="Tokens"
-              >
-                <Coins className="h-3.5 w-3.5" />
-              </button>
-
-              {/* 3. TTS/SFX Filter */}
-              <button
-                type="button"
-                onClick={() => setActiveFilter("tts")}
-                className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition ${
-                  activeFilter === "tts"
-                    ? "bg-[#4a90e2] ring-2 ring-yellow-400 text-white scale-105"
-                    : "bg-[#4a90e2]/75 text-white hover:brightness-110"
-                }`}
-                title="TTS / SFX"
-              >
-                <Megaphone className="h-3.5 w-3.5" />
-              </button>
-
-              {/* 4. Tanktoys Filter */}
-              <button
-                type="button"
-                onClick={() => setActiveFilter("tanktoys")}
-                className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition ${
-                  activeFilter === "tanktoys"
-                    ? "bg-[#d4a017] ring-2 ring-yellow-400 text-black scale-105"
-                    : "bg-[#d4a017]/75 text-black hover:brightness-110"
-                }`}
-                title="Tanktoys"
-              >
-                <Anchor className="h-3.5 w-3.5" />
-              </button>
-
-              {/* 5. Wartoys Filter */}
-              <button
-                type="button"
-                onClick={() => setActiveFilter("wartoys")}
-                className={`grid h-7 w-7 place-items-center rounded border border-black/40 shadow transition ${
-                  activeFilter === "wartoys"
-                    ? "bg-[#e85a4f] ring-2 ring-yellow-400 text-white scale-105"
-                    : "bg-[#e85a4f]/75 text-white hover:brightness-110"
-                }`}
-                title="Wartoys"
-              >
-                <Swords className="h-3.5 w-3.5" />
-              </button>
+                      {/* Active Label Pill below active icon */}
+                      {isActive && (
+                        <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none">
+                          <span className="bg-black/90 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded border border-white/20 shadow whitespace-nowrap">
+                            {btn.label}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Action Bar: Mark All Read + UNREAD ONLY Switch */}
-            <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center justify-between pt-2">
               <ConsoleButton
                 variant="orange"
                 onClick={handleMarkAll}
@@ -280,9 +250,11 @@ export function NotificationsOverlay({
                 <button
                   type="button"
                   onClick={() => setUnreadOnly((prev) => !prev)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors border border-black/40 ${
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors border border-black/40 cursor-pointer ${
                     unreadOnly ? "bg-[#e85a4f]" : "bg-black/60"
                   }`}
+                  aria-checked={unreadOnly}
+                  role="switch"
                 >
                   <span
                     className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
@@ -296,61 +268,62 @@ export function NotificationsOverlay({
 
           {/* ═══════════ NOTIFICATIONS INNER SCROLLABLE FEED ═══════════ */}
           <div
-            className="flex-1 overflow-y-auto px-8 py-3 pb-6 space-y-2 bg-gradient-to-b from-[#18191a] via-[#121314] to-[#0a0a0b]"
+            className="flex-1 overflow-y-auto px-7 py-3 pb-6 space-y-2 bg-gradient-to-b from-[#18191a] via-[#121314] to-[#0a0a0b]"
             style={{
-              maxHeight: "calc(90vh - 130px)",
+              maxHeight: "calc(92vh - 135px)",
               boxShadow: "inset 0 4px 12px rgba(0,0,0,0.8)",
             }}
           >
             {filteredItems.length === 0 ? (
               <div className="py-16 text-center text-xs font-bold text-slate-500">
-                No notifications...
+                {unreadOnly
+                  ? "No unread notifications"
+                  : "No notifications in this category"}
               </div>
             ) : (
-              filteredItems.map((n) => (
-                <div
-                  key={n.id}
-                  onClick={() => {
-                    setItems((prev) =>
-                      prev.map((item) => (item.id === n.id ? { ...item, read: true } : item))
-                    );
-                  }}
-                  className={`group relative flex items-start gap-2.5 rounded border p-2.5 transition cursor-pointer ${
-                    n.read
-                      ? "border-white/5 bg-black/40 opacity-70"
-                      : "border-black/60 bg-black/80 hover:border-yellow-400 shadow-md"
-                  }`}
-                >
-                  {/* Left Icon */}
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-black/60 border border-white/10">
-                    {n.category === "tokens" ? (
-                      <Coins className="h-4 w-4 text-[#39ff6a]" />
-                    ) : n.category === "tts" ? (
-                      <Megaphone className="h-4 w-4 text-[#4a90e2]" />
-                    ) : n.category === "tanktoys" ? (
-                      <Anchor className="h-4 w-4 text-yellow-400" />
-                    ) : (
-                      <Bomb className="h-4 w-4 text-[#ff3b2f]" />
-                    )}
-                  </span>
-
-                  {/* Content Body & Timestamp */}
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <p
-                      className="text-xs font-black uppercase tracking-wide text-white leading-snug"
-                      style={{ fontFamily: ACTIVE_THEME.fonts.label }}
-                    >
-                      {n.body}
-                    </p>
-
-                    <div className="flex justify-end">
-                      <span className="text-[10px] font-semibold text-slate-500">
-                        {n.time}
+              filteredItems.map((n) => {
+                return (
+                  <div
+                    key={n.id}
+                    onClick={() => handleItemClick(n.id)}
+                    className={`group relative flex items-start gap-3 rounded-lg border p-3 transition cursor-pointer select-none ${
+                      n.read
+                        ? "border-white/5 bg-[#1a1d24]/60 opacity-70 hover:opacity-90 hover:bg-[#1a1d24]/90"
+                        : "border-slate-700/80 bg-[#1e232f] hover:border-yellow-400 shadow-md ring-1 ring-white/10"
+                    }`}
+                  >
+                    {/* Unread indicator dot */}
+                    {!n.read && (
+                      <span className="absolute -top-1 -left-1 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500 border border-black" />
                       </span>
+                    )}
+
+                    {/* Left Category Icon */}
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-black/70 border border-white/10 shadow-inner mt-0.5">
+                      {getCategoryIcon(n.category)}
+                    </span>
+
+                    {/* Content Body & Timestamp */}
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <p
+                        className={`text-xs font-bold leading-snug ${
+                          n.read ? "text-slate-300" : "text-white font-black"
+                        }`}
+                      >
+                        {n.body}
+                      </p>
+
+                      <div className="flex justify-end">
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          {n.time}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </ChromePanel>
@@ -358,3 +331,4 @@ export function NotificationsOverlay({
     </div>
   );
 }
+export default NotificationsOverlay;

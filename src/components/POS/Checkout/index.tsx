@@ -2,7 +2,6 @@
 "use client";
 
 import { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
   PaymentElement,
@@ -10,9 +9,8 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import type { POSCartItem } from "../types";
+import { useStripeLane } from "@/lib/stripe/useStripeLane";
 import "./styles.scss";
-
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
 interface CheckoutProps {
   items: POSCartItem[];
@@ -159,9 +157,12 @@ function PaymentForm({
 
 // ── Public export: wraps with Stripe Elements provider ────────────────────────
 export function Checkout({ clientSecret, ...props }: CheckoutProps) {
+  const stripeLane = useStripeLane("pos");
+  if (stripeLane.error) return <div className="pos-checkout-error">{stripeLane.error}</div>;
+  if (!stripeLane.stripe) return <div className="pos-checkout-loading">Loading secure payment…</div>;
   return (
     <Elements
-      stripe={stripePromise}
+      stripe={stripeLane.stripe}
       options={{
         clientSecret,
         appearance: {

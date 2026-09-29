@@ -18,6 +18,10 @@ export type ManagerCamera = {
   // receiverManager.ts for how this + config.server.lanHost become the
   // media gateway's source URL for any camera, with no per-camera wiring.
   videoOutPort?: unknown;
+  // True when a sub-stream is chosen for this RTSP camera. Tank then asks the
+  // manager for its source (/api/cameras/<id>/rtsp/low-source, shared secret)
+  // and copies it as the -hls-low rung instead of decoding the 4K stream.
+  lowSubstream?: unknown;
 };
 
 function scopeSlug(value: unknown) {

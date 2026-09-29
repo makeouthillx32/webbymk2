@@ -6,3 +6,6 @@
 # that is plainly present — the same class of failure that took out kong.yml.
 *.sh text eol=lf
 mediamtx/mediamtx.yml text eol=lf
+
+# The kong.yml casualty itself — CRLF here has silently killed auth before.
+supabase/Kong.yml text eol=lf

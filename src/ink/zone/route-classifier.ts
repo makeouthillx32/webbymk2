@@ -34,7 +34,7 @@ export async function patchRouteClassifier(z: DerivedZone, onLine: OnLine): Prom
   const content = readFileSync(OVERRIDES_PATH, "utf-8").replace(/\r\n/g, "\n");
 
   // Guard: already registered
-  if (content.includes(`  ${z.key}:`)) {
+  if (content.includes(`  ${z.key}:`) || content.includes(`  ${JSON.stringify(z.key)}:`)) {
     onLine(`⚠ zone-overrides.ts already has an entry for "${z.key}" — skipping`);
     return;
   }
@@ -47,8 +47,9 @@ export async function patchRouteClassifier(z: DerivedZone, onLine: OnLine): Prom
     return;
   }
 
-  const padding = " ".repeat(Math.max(1, 9 - z.key.length));
-  const entry   = `  ${z.key}:${padding}{ layoutType: "${z.layoutType}", appFooter: "${z.appFooter}" },\n`;
+  const serializedKey = JSON.stringify(z.key);
+  const padding = " ".repeat(Math.max(1, 11 - serializedKey.length));
+  const entry   = `  ${serializedKey}:${padding}{ layoutType: "${z.layoutType}", appFooter: "${z.appFooter}" },\n`;
   const newContent = content.slice(0, anchorIdx + 1) + entry + content.slice(anchorIdx + 1);
 
   await writeFileAtomic(OVERRIDES_PATH, newContent);
@@ -65,7 +66,7 @@ export async function removeFromRouteClassifier(key: string, onLine: OnLine): Pr
 
   const content = readFileSync(OVERRIDES_PATH, "utf-8").replace(/\r\n/g, "\n");
 
-  if (!content.includes(`  ${key}:`)) {
+  if (!content.includes(`  ${key}:`) && !content.includes(`  ${JSON.stringify(key)}:`)) {
     onLine(`⚠ No entry for "${key}" in zone-overrides.ts — skipping`);
     return;
   }
@@ -74,7 +75,10 @@ export async function removeFromRouteClassifier(key: string, onLine: OnLine): Pr
   // Each entry occupies exactly one line in the format written above, so a
   // simple line-filter is safe — no brace-counting needed.
   const lines    = content.split("\n");
-  const filtered = lines.filter((line) => !line.trimStart().startsWith(`${key}:`));
+  const filtered = lines.filter((line) => {
+    const trimmed = line.trimStart();
+    return !trimmed.startsWith(`${key}:`) && !trimmed.startsWith(`${JSON.stringify(key)}:`);
+  });
 
   if (filtered.length === lines.length) {
     onLine(`⚠ Could not locate entry for "${key}" in zone-overrides.ts — remove it manually`);

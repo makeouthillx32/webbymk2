@@ -18,10 +18,13 @@
 
 import * as net from "net";
 
-// Dev mode: process is bun (hot-reload). Prod mode: compiled node binary.
-const IS_DEV_TUI = process.execPath.toLowerCase().includes("bun");
+declare const UNAXIS_VERSION: string | undefined;
+// Dev mode: running from source / watch mode. Prod mode: compiled binary/bundle (UNAXIS_VERSION is baked).
+const IS_DEV_TUI =
+  process.env["UNAXIS_DEV"] === "true" ||
+  (typeof UNAXIS_VERSION === "undefined" && process.env.NODE_ENV !== "production");
 
-export const IPC_PORT        = IS_DEV_TUI ? 50507 : 50505;
+export const IPC_PORT        = process.env["UNAXIS_PORT"] ? parseInt(process.env["UNAXIS_PORT"], 10) : (IS_DEV_TUI ? 50507 : 50505);
 export const IPC_HOST        = "0.0.0.0";
 export const REMOTE_IPC_PORT = 50506;   // kept for legacy compat — no longer started
 export const REMOTE_IPC_HOST = "0.0.0.0";

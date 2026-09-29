@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   User,
   Settings,
+  Sparkles,
   Bell,
   CreditCard,
   Key,
@@ -14,17 +15,17 @@ import {
   ChevronRight,
   Home,
   Shield,
+  ShoppingBag,
+  Video,
+  Minus,
 } from "lucide-react";
-import { ChromePanel } from "./ChromePanel";
-import { ConsoleButton } from "./ConsoleButton";
-import { ACTIVE_THEME } from "../../theme";
-import type { TankClanSummary, TankPlayerProfile } from "../../server/gamification";
-import { getLevelForXp } from "../../xpLevels";
+import type { TankPlayerProfile } from "../../server/gamification";
 
 export type ProfilePanelProps = {
   initialProfile: (TankPlayerProfile & { avatarUrl?: string | null; nameColor?: string | null }) | null;
-  userClan: TankClanSummary | null;
   signedIn: boolean;
+  merchHref: string;
+  onClaimDaily?: () => void;
   onOpenSettings: () => void;
   onOpenSignIn: () => void;
   onOpenProfile: () => void;
@@ -34,13 +35,15 @@ export type ProfilePanelProps = {
   onOpenHelp?: () => void;
   onOpenAppeals?: () => void;
   onSignOut: () => void;
+  onCollapseRail: () => void;
   unreadNotificationsCount?: number;
 };
 
 export function ProfilePanel({
   initialProfile,
-  userClan,
   signedIn,
+  merchHref,
+  onClaimDaily,
   onOpenSettings,
   onOpenSignIn,
   onOpenProfile,
@@ -50,10 +53,19 @@ export function ProfilePanel({
   onOpenHelp,
   onOpenAppeals,
   onSignOut,
+  onCollapseRail,
   unreadNotificationsCount = 0,
 }: ProfilePanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Standard menu-item icons pick up the viewer's own chosen profile color
+  // (same nameColor used for their chat username) instead of a fixed brand
+  // orange — a personal touch, and Tailwind can't express a runtime value
+  // via an arbitrary-value class, so these render via inline style instead
+  // of text-[#ff4d00]. Staff Room / Creator Dashboard keep their own fixed
+  // accent colors on purpose — those are role badges, not generic items.
+  const menuIconColor = initialProfile?.nameColor || "#ff4d00";
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -80,65 +92,81 @@ export function ProfilePanel({
 
   return (
     <div className="relative w-full" ref={menuRef}>
-      <ChromePanel withScrews className="w-full" contentClassName="!px-6 !py-4 space-y-3">
-        {/* Clickable Avatar & User Nameplate */}
+      <div
+        className="flex w-fit max-w-full items-center gap-1 border border-black/60 bg-[#202328]/90 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,.16),0_4px_12px_rgba(0,0,0,.55)] backdrop-blur-sm"
+        style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+        role="toolbar"
+        aria-label="Tank quick actions"
+      >
         <button
           type="button"
           onClick={handleClickNameplate}
-          className={`group flex w-full items-center gap-3 rounded-lg p-1 text-left transition-all hover:bg-black/10 active:scale-[0.98] ${
-            menuOpen ? "bg-black/15 ring-1 ring-yellow-400/50" : ""
+          className={`group relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden border bg-black/80 shadow transition hover:border-yellow-400 active:scale-95 ${
+            menuOpen ? "border-yellow-400 ring-1 ring-yellow-400/50" : "border-white/20"
           }`}
+          style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
           title={signedIn ? "Click to open user menu" : "Click to Sign In"}
+          aria-label={signedIn ? "Open profile menu" : "Sign in"}
         >
-          <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg border-2 border-[#7a8576] bg-black/80 shadow-md group-hover:border-yellow-400 group-hover:shadow-[0_0_8px_rgba(250,204,21,0.6)]">
             {initialProfile?.avatarUrl ? (
               <img
                 src={initialProfile.avatarUrl}
                 alt="Avatar"
-                className="h-full w-full object-contain p-0.5 drop-shadow-sm"
+                className="h-full w-full object-cover"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src =
                     "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png";
                 }}
               />
             ) : (
-              <User className="h-6 w-6 text-slate-400" />
+              <User className="h-4 w-4 text-slate-300" />
             )}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p
-              className="truncate text-xs font-black uppercase tracking-wide group-hover:underline"
-              style={{
-                color: initialProfile?.nameColor || "#241f14",
-                fontFamily: ACTIVE_THEME.fonts.label,
-              }}
-            >
-              {signedIn ? initialProfile?.displayName ?? "Viewer" : "Guest (Sign In)"}
-            </p>
-            {signedIn ? (
-              <p className="text-[10px] font-bold" style={{ color: "#4c4630" }}>
-                LVL {initialProfile ? getLevelForXp(initialProfile.xp ?? 0) : 1}
-                {userClan ? ` · [${userClan.tag}]` : ""}
-              </p>
-            ) : (
-              <p className="text-[10px] font-semibold text-slate-600">Spectator Mode</p>
-            )}
-          </div>
+          {unreadNotificationsCount > 0 && (
+            <span className="absolute right-0 top-0 h-2 w-2 rounded-full bg-[#ff3b2f] shadow-[0_0_5px_#ff3b2f]" />
+          )}
         </button>
 
-        {/* Buttons */}
-        <div className="flex gap-2">
-          <ConsoleButton className="flex-1" onClick={onOpenSettings}>
-            <Settings className="h-3.5 w-3.5" />
-            Settings
-          </ConsoleButton>
-          {!signedIn && (
-            <ConsoleButton variant="orange" className="flex-1" onClick={onOpenSignIn}>
-              Sign in
-            </ConsoleButton>
-          )}
-        </div>
-      </ChromePanel>
+        <button
+            type="button"
+            onClick={onClaimDaily}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-amber-900/80 bg-[#e9ae20] text-[#241500] shadow-[inset_0_1px_0_rgba(255,255,255,.45)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Daily bonus"
+            aria-label="Daily bonus"
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+          <Link
+            href={merchHref}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-orange-950/80 bg-[#f28c18] text-[#241500] shadow-[inset_0_1px_0_rgba(255,255,255,.45)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Merch"
+            aria-label="Merch"
+          >
+            <ShoppingBag className="h-4 w-4" />
+          </Link>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-white/15 bg-[#4e5964] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.25)] transition hover:brightness-110 active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-white/15" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={onCollapseRail}
+            className="grid h-8 w-8 shrink-0 place-items-center border border-red-950/80 bg-[#d94339] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.3)] transition hover:bg-[#ef5146] active:scale-95"
+            style={{ borderRadius: "var(--tank-border-radius, 0.25rem)" }}
+            title="Hide panels"
+            aria-label="Hide panels"
+          >
+            <Minus className="h-4 w-4" strokeWidth={3} />
+          </button>
+      </div>
 
       {/* ═══════════ TANK DROPDOWN MENU ═══════════ */}
       {menuOpen && signedIn && (
@@ -157,7 +185,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <User className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <User className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Profile</span>
           </button>
 
@@ -178,6 +206,26 @@ export function ProfilePanel({
             </Link>
           )}
 
+          {/* Creator Dashboard — same "who can stream" gate as /stream itself
+              (obsRooms.ts: admin or moderator). No "streamer" role/tag exists
+              in profiles yet, so this can't be scoped to streamers alone the
+              way it eventually should be — admin/moderator is the real
+              current boundary, streamer support is a follow-up once that
+              role exists. */}
+          {(initialProfile?.role === "admin" || initialProfile?.role === "moderator") && (
+            <Link
+              href="/stream"
+              onClick={() => setMenuOpen(false)}
+              className="flex w-full items-center gap-3 rounded border border-purple-500/50 bg-gradient-to-r from-purple-950/60 to-fuchsia-950/60 px-3 py-2.5 text-left text-sm font-black tracking-tight text-purple-200 transition hover:bg-purple-900/80 active:scale-[0.98] shadow-[0_0_10px_rgba(168,85,247,0.2)]"
+            >
+              <Video className="h-4 w-4 shrink-0 stroke-[2.5] text-purple-400" />
+              <span className="flex-1">Creator Dashboard</span>
+              <span className="rounded bg-purple-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-white shadow">
+                {initialProfile?.role === "moderator" ? "MOD" : "ADMIN"}
+              </span>
+            </Link>
+          )}
+
           {/* Notifications */}
           <button
             type="button"
@@ -187,7 +235,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <Bell className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <Bell className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Notifications</span>
             {unreadNotificationsCount > 0 && (
               <span className="rounded-full bg-[#ff4d00] px-1.5 py-0.2 text-[10px] font-black text-white">
@@ -205,7 +253,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <CreditCard className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <CreditCard className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Billing</span>
           </button>
 
@@ -218,7 +266,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <Megaphone className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <Megaphone className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Advertise</span>
           </button>
 
@@ -231,7 +279,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-white/10 active:scale-[0.98]"
           >
-            <HelpCircle className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <HelpCircle className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Help</span>
           </button>
 
@@ -247,7 +295,7 @@ export function ProfilePanel({
             }}
             className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm font-black tracking-tight text-white transition hover:bg-[#ff4d00]/20 hover:text-[#ff4d00] active:scale-[0.98]"
           >
-            <LogOut className="h-4 w-4 shrink-0 stroke-[2.5] text-[#ff4d00]" />
+            <LogOut className="h-4 w-4 shrink-0 stroke-[2.5]" style={{ color: menuIconColor }} />
             <span className="flex-1">Log Out</span>
           </button>
         </div>

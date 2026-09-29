@@ -86,14 +86,14 @@ ENV NEXT_PUBLIC_ZONE=blog
 # Give bun a writable home so it can write its transpiler cache.
 ENV HOME=/tmp
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# oven/bun:*-slim no longer guarantees Debian's adduser/addgroup helpers —
+# same fix as the root Dockerfile: use the `bun` user/group already baked
+# into the base image instead of creating a custom nextjs:nodejs one.
+COPY --from=builder --chown=bun:bun /app/public ./public
+COPY --from=builder --chown=bun:bun /app/.next/standalone ./
+COPY --from=builder --chown=bun:bun /app/.next/static ./.next/static
 
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
+USER bun
 
 EXPOSE 3000
 

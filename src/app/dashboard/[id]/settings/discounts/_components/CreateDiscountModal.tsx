@@ -80,7 +80,7 @@ export function CreateDiscountModal({ open, onClose, onCreate }: Props) {
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="BYRD"
+            placeholder="LABS10"
             className="mt-1 h-10 w-full rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm"
           />
         </div>

@@ -245,7 +245,7 @@ const CookieConsent = React.forwardRef<HTMLDivElement, CookieConsentProps>(
         containerClasses,
         variant === "mini"
           ? "left-0 right-0 sm:left-4 bottom-4 w-full sm:max-w-3xl"
-          : "bottom-0 left-0 right-0 sm:left-4 sm:bottom-4 w-full sm:max-w-md",
+          : "bottom-3 left-3 right-3 sm:left-4 sm:bottom-4 sm:right-auto w-auto sm:max-w-md",
       ),
       ...props,
     };
@@ -358,46 +358,58 @@ const CookieConsent = React.forwardRef<HTMLDivElement, CookieConsentProps>(
     if (variant === "default") {
       return (
         <div {...commonWrapperProps}>
-          <Card className="m-3 shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">We use cookies</CardTitle>
-              <Cookie className="h-5 w-5" />
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <CardDescription className="text-sm">
+          <div className="rounded-2xl border border-border/60 bg-background/90 backdrop-blur-md shadow-2xl p-3.5 sm:p-4 space-y-2.5 sm:space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="p-1 rounded-lg bg-primary/10 text-primary">
+                  <Cookie className="h-4 w-4" />
+                </span>
+                <span className="text-sm font-bold tracking-tight">Cookie Preferences</span>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 {description}
-              </CardDescription>
-              <a
-                href={learnMoreHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-primary underline underline-offset-4 hover:no-underline"
-              >
-                Learn more about our cookie policy
-              </a>
-            </CardContent>
-            <CardFooter className="flex gap-2 pt-2">
+              </p>
+              <div>
+                <a
+                  href={learnMoreHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-medium text-primary hover:underline underline-offset-2"
+                >
+                  Learn more about our cookie policy →
+                </a>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
               <Button
                 onClick={handleDeclineAll}
-                variant="secondary"
-                className="flex-1"
+                variant="outline"
+                size="sm"
+                className="flex-1 rounded-xl text-xs h-8 hover:bg-muted/50"
               >
                 Decline
               </Button>
               {showCustomize && (
                 <Button
                   onClick={() => setShowPreferences(true)}
-                  variant="outline"
-                  className="flex-1"
+                  variant="ghost"
+                  size="sm"
+                  className="flex-1 rounded-xl text-xs h-8 text-muted-foreground"
                 >
                   Customize
                 </Button>
               )}
-              <Button onClick={handleAcceptAll} className="flex-1">
+              <Button
+                onClick={handleAcceptAll}
+                size="sm"
+                className="flex-1 rounded-xl text-xs h-8 bg-primary text-primary-foreground font-semibold shadow-sm hover:opacity-90"
+              >
                 Accept All
               </Button>
-            </CardFooter>
-          </Card>
+            </div>
+          </div>
         </div>
       );
     }

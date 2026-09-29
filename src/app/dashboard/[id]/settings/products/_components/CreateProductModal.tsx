@@ -11,6 +11,7 @@ import { useCreateProduct } from "./create/use-create-product";
 import { CollapsibleSection } from "./create/collapsible-section";
 import { ImageSection } from "./create/image-section";
 import { VariantSection } from "./create/variant-section";
+import { TagSection } from "./create/tag-section";
 import { safeReadJson } from "./utils";
 
 export default function CreateProductModal({
@@ -29,6 +30,7 @@ export default function CreateProductModal({
   const [secVariantsOpen, setSecVariantsOpen] = React.useState(false);
   const [secCategoriesOpen, setSecCategoriesOpen] = React.useState(false);
   const [secCollectionsOpen, setSecCollectionsOpen] = React.useState(false);
+  const [secTagsOpen, setSecTagsOpen] = React.useState(false);
 
   // Load initial data for categories and collections
   useEffect(() => {
@@ -42,6 +44,10 @@ export default function CreateProductModal({
         const colRes = await fetch("/api/collections");
         const colJson = await safeReadJson(colRes);
         if (colRes.ok && colJson?.ok) actions.setAvailableCollections(colJson.data || []);
+
+        const tagRes = await fetch("/api/tags");
+        const tagJson = await safeReadJson(tagRes);
+        if (tagRes.ok && tagJson?.ok) actions.setAvailableTags(tagJson.data || []);
       } catch (err) {
         console.error("Failed to load modal data", err);
       }
@@ -193,6 +199,19 @@ export default function CreateProductModal({
                 </label>
               ))}
             </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Tags"
+            description="Traits used as filters. Type to coin a new one."
+            open={secTagsOpen}
+            onToggle={() => setSecTagsOpen(!secTagsOpen)}
+          >
+            <TagSection
+              available={state.availableTags}
+              selected={state.selectedTags}
+              onChange={actions.setSelectedTags}
+            />
           </CollapsibleSection>
 
           <div className="flex justify-end gap-2 pt-4">

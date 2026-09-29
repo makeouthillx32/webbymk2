@@ -17,3 +17,213 @@
     gap: 0.5rem;
   }
 }
+/* ── Card grid view ─────────────────────────────────────────────────────────
+   Dense scan-and-fix layout. Sized so a 3-up desktop grid still shows a full
+   product's variants without scrolling inside the card. */
+
+.inv-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+
+  &__empty {
+    padding: 48px 0;
+    text-align: center;
+    font-size: 14px;
+    color: hsl(var(--muted-foreground));
+  }
+}
+
+.inv-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  overflow: hidden;
+
+  &__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: hsl(var(--foreground));
+  }
+
+  &__stats {
+    display: flex;
+    flex-shrink: 0;
+    gap: 4px;
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 12px;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  &__rows {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.inv-pill {
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+
+  &--out {
+    border-color: hsl(var(--destructive) / 0.4);
+    background: hsl(var(--destructive) / 0.12);
+    color: hsl(var(--destructive));
+  }
+
+  &--low {
+    border-color: hsl(var(--primary) / 0.4);
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+}
+
+.inv-chip {
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  padding: 2px 9px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  transition: all 0.15s;
+  cursor: pointer;
+
+  &:hover { color: hsl(var(--foreground)); }
+
+  &.is-active {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+}
+
+.inv-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 8px 12px;
+  border-top: 1px solid hsl(var(--border) / 0.6);
+
+  /* A left rule carries stock state without spending colour on the whole row,
+     which would fight the editable fields for attention. */
+  border-left: 3px solid transparent;
+
+  &--out { border-left-color: hsl(var(--destructive)); }
+  &--low { border-left-color: hsl(var(--primary)); }
+  &--untracked { opacity: 0.55; }
+
+  &__id {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  &__variant {
+    font-size: 12px;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__sku {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  &__fields {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &__meta {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  &__move { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  &__touched { flex-shrink: 0; }
+}
+
+.inv-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+
+  &__prefix {
+    font-size: 11px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  &__input {
+    border: 1px solid hsl(var(--border));
+    border-radius: 4px;
+    background: hsl(var(--background));
+    padding: 3px 6px;
+    font-size: 12px;
+    text-align: right;
+    color: hsl(var(--foreground));
+
+    &:focus {
+      outline: none;
+      border-color: hsl(var(--ring));
+    }
+
+    /* Unsaved edits must be obvious — these fields commit on blur, so a value
+       left dirty is a change the user thinks they made and hasn't. */
+    &.is-dirty {
+      border-color: hsl(var(--primary));
+      background: hsl(var(--primary) / 0.08);
+    }
+  }
+}
+
+/* Dose badge on a row — the card title is the compound now, so the row has to
+   say which dose it is. */
+.inv-row__dose {
+  display: inline-block;
+  margin-right: 5px;
+  border-radius: 3px;
+  background: hsl(var(--primary) / 0.15);
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: hsl(var(--primary));
+}
+
+.inv-chip__n {
+  margin-left: 4px;
+  opacity: 0.6;
+  font-size: 9px;
+}

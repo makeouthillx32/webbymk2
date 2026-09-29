@@ -12,7 +12,9 @@
 # report a real status code.
 FROM bluenviron/mediamtx:1.20.0-ffmpeg
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl tini
 
-# Entrypoint and command are inherited from the base image on purpose — this
-# layer adds a binary and changes nothing about how MediaMTX starts.
+# tini runs as PID 1 to reap orphaned child processes (ffmpeg, curl, scripts)
+# spawned by MediaMTX hooks that MediaMTX does not reap itself.
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/mediamtx"]

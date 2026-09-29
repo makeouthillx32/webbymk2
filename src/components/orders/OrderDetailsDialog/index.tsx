@@ -7,10 +7,12 @@ import { AdminOrder } from '@/lib/orders/types';
 import {
   X, Printer, CheckCircle2, Package, MapPin,
   Star, User, Loader2, RefreshCw, ShoppingBag,
+  Upload, Check, Eye, AlertCircle, FileText, FlaskConical,
 } from 'lucide-react';
 import { PackagePicker } from '../PackagePicker';
 import { printStoredLabel } from '../Print';
 import { ReprintReceipt } from '../ReprintReceipt';
+import { ResearchFulfillmentPanel } from '../ResearchFulfillmentPanel';
 
 function gramsToOz(g: number) {
   return Math.round((g / 28.3495) * 100) / 100;
@@ -25,6 +27,7 @@ interface Props {
 }
 
 export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPrint }: Props) {
+  const isResearchOrder = Boolean(order.is_research || order.items?.some((i) => !!i.research_product_id));
   const [trackingNumber, setTrackingNumber] = useState(order.tracking_number ?? '');
   const [trackingUrl, setTrackingUrl]       = useState(order.tracking_url ?? '');
   const [extraWeightOz, setExtraWeightOz]   = useState('');
@@ -33,6 +36,19 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
   const [showPicker, setShowPicker]         = useState(false);
   const [reprinting, setReprinting]         = useState(false);
   const [labelError, setLabelError]         = useState<string | null>(null);
+
+  // Zelle verification state
+  const [paymentStatus, setPaymentStatus]   = useState(order.payment_status);
+  const [zelleFile, setZelleFile]           = useState<File | null>(null);
+  const [zellePreview, setZellePreview]     = useState<string | null>(null);
+  const [zelleValidating, setZelleValidating] = useState(false);
+  const [zelleError, setZelleError]         = useState<string | null>(null);
+  const [zelleSuccess, setZelleSuccess]     = useState(false);
+  const [proofUrl, setProofUrl]             = useState<string | null>(() => {
+    const match = order.internal_notes?.match(/\[Zelle.*Proof\]:\s*(https?:\/\/[^\s\n|]+)/);
+    return match ? match[1] : null;
+  });
+  const [showFullProof, setShowFullProof]   = useState(false);
 
   if (!open) return null;
 
@@ -86,6 +102,47 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
     }
   }
 
+  function handleZelleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      setZelleFile(file);
+      setZelleError(null);
+      const url = URL.createObjectURL(file);
+      setZellePreview(url);
+    }
+  }
+
+  async function handleValidateZelle() {
+    if (!zelleFile) {
+      setZelleError('Please choose or drop a confirmation screenshot first.');
+      return;
+    }
+    setZelleValidating(true);
+    setZelleError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', zelleFile);
+      fd.append('note', `Verified from Core Dashboard on ${new Date().toLocaleDateString()}`);
+
+      const res = await fetch(`/api/orders/${order.id}/validate-zelle`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPaymentStatus('paid');
+        setZelleSuccess(true);
+        if (data.proof_url) setProofUrl(data.proof_url);
+      } else {
+        setZelleError(data.error || 'Failed to validate Zelle payment.');
+      }
+    } catch (err: any) {
+      setZelleError(err.message || 'Failed to validate payment.');
+    } finally {
+      setZelleValidating(false);
+    }
+  }
+
   function HeaderActionButton() {
     if (order.is_pos) {
       return <ReprintReceipt order={order} />;
@@ -122,7 +179,7 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
         onClick={() => onOpenChange(false)}
       >
         <div
-          className="relative bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92dvh] overflow-y-auto"
+          className={`relative bg-white w-full ${isResearchOrder ? 'sm:max-w-3xl' : 'sm:max-w-lg'} rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92dvh] overflow-y-auto`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -133,6 +190,10 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
                 {order.is_pos ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-purple-50 text-purple-700 border-purple-200">
                     <ShoppingBag className="w-3 h-3" /> POS
+                  </span>
+                ) : isResearchOrder ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-teal-50 text-teal-700 border-teal-200">
+                    <FlaskConical className="w-3 h-3" /> Research Chemical
                   </span>
                 ) : order.is_member ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-yellow-50 text-yellow-700 border-yellow-200">
@@ -183,18 +244,179 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
             )}
 
             {/* Status badges */}
-            <div className="flex flex-wrap gap-2">
-              <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
-                isFulfilled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'
-              }`}>
-                {isFulfilled ? 'Fulfilled' : 'Unfulfilled'}
-              </span>
-              <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
-                order.payment_status === 'paid' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
-              }`}>
-                {order.payment_status?.toUpperCase()}
-              </span>
-            </div>
+            {(() => {
+              const isZelleOrder =
+                (order as any).payment_method === 'zelle' ||
+                (order as any).payment_method_brand === 'zelle' ||
+                order.internal_notes?.toLowerCase().includes('zelle') ||
+                (order as any).customer_notes?.toLowerCase().includes('zelle');
+
+              return (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                      isFulfilled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      {isFulfilled ? 'Fulfilled' : 'Unfulfilled'}
+                    </span>
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                      paymentStatus === 'paid' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      {paymentStatus?.toUpperCase()}
+                    </span>
+                    {isZelleOrder && (
+                      <span className="text-xs font-bold px-3 py-1 rounded-full border bg-purple-50 text-purple-700 border-purple-200">
+                        ZELLE
+                      </span>
+                    )}
+                  </div>
+
+                  {/* ── Zelle Payment Validation Card ── */}
+                  {isZelleOrder && (
+                    <section className="rounded-xl border border-purple-200 bg-purple-50/40 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">💳</span>
+                          <h3 className="text-sm font-bold text-gray-900">
+                            Zelle Payment Verification
+                          </h3>
+                        </div>
+                        <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                          paymentStatus === 'paid'
+                            ? 'bg-green-100 text-green-800 border border-green-200'
+                            : 'bg-amber-100 text-amber-800 border border-amber-200'
+                        }`}>
+                          {paymentStatus === 'paid' ? 'Verified & Paid' : 'Awaiting Screenshot Proof'}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Customer ordered via Zelle offline transfer to <code className="font-mono font-bold text-purple-900">labs@unenter.live</code>.
+                        {paymentStatus === 'paid'
+                          ? ' Payment receipt has been verified. Shipping label generation and fulfillment are ready.'
+                          : ' Upload a screenshot of your bank/Zelle confirmation receipt to verify payment and unlock fulfillment.'}
+                      </p>
+
+                      {zelleError && (
+                        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5 flex items-center gap-1.5 font-medium">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{zelleError}</span>
+                        </div>
+                      )}
+
+                      {/* If already paid / verified */}
+                      {paymentStatus === 'paid' && (
+                        <div className="flex items-center justify-between bg-white border border-purple-200 rounded-lg p-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-700">
+                              <Check className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-gray-900">Payment Verified</div>
+                              <div className="text-[11px] text-gray-500">
+                                {proofUrl ? 'Screenshot proof attached' : 'Marked as verified in records'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {proofUrl && (
+                            <div className="flex items-center gap-2">
+                              {proofUrl.startsWith('http') && (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowFullProof(true)}
+                                  className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 hover:text-purple-900 border border-purple-200 bg-purple-50 px-2.5 py-1 rounded-md"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  View Proof
+                                </button>
+                              )}
+                              <a
+                                href={proofUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                Open
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* If pending: File Upload area */}
+                      {paymentStatus !== 'paid' && (
+                        <div className="space-y-3 pt-1">
+                          <div className="flex items-center gap-3">
+                            <label className="flex-1 cursor-pointer">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleZelleFileChange}
+                                className="hidden"
+                              />
+                              <div className="border-2 border-dashed border-purple-200 hover:border-purple-400 bg-white rounded-lg p-3 text-center transition">
+                                <Upload className="w-4 h-4 mx-auto text-purple-600 mb-1" />
+                                <span className="text-xs font-semibold text-gray-700">
+                                  {zelleFile ? zelleFile.name : 'Choose confirmation screenshot'}
+                                </span>
+                                <p className="text-[10px] text-gray-400 mt-0.5">PNG, JPG, or WEBP up to 10MB</p>
+                              </div>
+                            </label>
+
+                            {zellePreview && (
+                              <div className="h-16 w-16 rounded-lg border border-purple-200 overflow-hidden bg-white shrink-0 relative">
+                                <img src={zellePreview} alt="Preview" className="h-full w-full object-cover" />
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleValidateZelle}
+                            disabled={zelleValidating || !zelleFile}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-700 text-white rounded-lg font-semibold text-xs hover:bg-purple-800 disabled:opacity-50 transition"
+                          >
+                            {zelleValidating ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Uploading & Verifying...
+                              </>
+                            ) : (
+                              <>
+                                <Check className="w-4 h-4" />
+                                Confirm Zelle Payment & Mark Paid
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </section>
+                  )}
+
+                  {/* Proof Modal Viewer */}
+                  {showFullProof && proofUrl && (
+                    <div
+                      onClick={() => setShowFullProof(false)}
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+                    >
+                      <div className="relative max-w-xl max-h-[85vh] bg-white rounded-2xl p-4 shadow-2xl space-y-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b pb-2">
+                          <h4 className="text-xs font-bold text-gray-900">Zelle Payment Proof Screenshot</h4>
+                          <button onClick={() => setShowFullProof(false)} className="text-gray-400 hover:text-gray-600">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="max-h-[70vh] overflow-auto rounded-lg border">
+                          <img src={proofUrl} alt="Zelle Proof" className="w-full h-auto object-contain" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Ship To — web orders */}
             {!order.is_pos && addr && (
@@ -285,110 +507,126 @@ export function OrderDetailsDialog({ order, open, onOpenChange, onFulfill, onPri
               </div>
             </section>
 
-            {/* Package weight — web orders */}
-            {!order.is_pos && (
-              <section>
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                  <Package className="w-3 h-3" /> Package Weight
-                </div>
-                {hasAllWeights ? (
-                  <div className="space-y-2">
-                    <div className="text-sm text-gray-600">
-                      Items: <span className="font-mono font-semibold">{totalWeightOz} oz</span>
+            {/* Research Fulfillment Gate */}
+            {isResearchOrder ? (
+              <ResearchFulfillmentPanel
+                order={order}
+                onLabelPurchased={(newTracking, newUrl) => {
+                  if (newTracking) setTrackingNumber(newTracking);
+                  if (newUrl) setTrackingUrl(newUrl);
+                }}
+                onFulfillSuccess={() => {
+                  setFulfilled(true);
+                }}
+              />
+            ) : (
+              <>
+                {/* Package weight — web orders */}
+                {!order.is_pos && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                      <Package className="w-3 h-3" /> Package Weight
                     </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-gray-500 shrink-0">+ Packaging (oz):</label>
-                      <input
-                        type="number" min="0" step="0.1" placeholder="0"
-                        value={extraWeightOz}
-                        onChange={(e) => setExtraWeightOz(e.target.value)}
-                        className="w-20 border border-gray-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black/10"
-                      />
-                    </div>
-                    <div className="text-sm font-semibold">
-                      Total: {packageLb > 0 ? `${packageLb} lb ` : ''}{packageRemOz} oz
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500">Some items are missing weight data — weigh manually.</p>
+                    {hasAllWeights ? (
+                      <div className="space-y-2">
+                        <div className="text-sm text-gray-600">
+                          Items: <span className="font-mono font-semibold">{totalWeightOz} oz</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-gray-500 shrink-0">+ Packaging (oz):</label>
+                          <input
+                            type="number" min="0" step="0.1" placeholder="0"
+                            value={extraWeightOz}
+                            onChange={(e) => setExtraWeightOz(e.target.value)}
+                            className="w-20 border border-gray-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black/10"
+                          />
+                        </div>
+                        <div className="text-sm font-semibold">
+                          Total: {packageLb > 0 ? `${packageLb} lb ` : ''}{packageRemOz} oz
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Some items are missing weight data — weigh manually.</p>
+                    )}
+                  </section>
                 )}
-              </section>
-            )}
 
-            {/* Tracking — web fulfilled orders */}
-            {!order.is_pos && isFulfilled && (trackingNumber || trackingUrl) && (
-              <section>
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                  Tracking
-                </div>
-                <div className="text-sm font-mono">{trackingNumber}</div>
-                {trackingUrl && (
-                  <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                    Track package →
-                  </a>
-                )}
-              </section>
-            )}
-
-            {/* ── Receipt reprint — POS orders only ── */}
-            {order.is_pos && (
-              <section>
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                  <Printer className="w-3 h-3" /> Receipt
-                </div>
-                <ReprintReceipt order={order} />
-              </section>
-            )}
-
-            {/* Mark fulfilled */}
-            {!isFulfilled && (
-              <section>
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                  <CheckCircle2 className="w-3 h-3" /> Mark Fulfilled
-                </div>
-                <div className="space-y-3">
-                  {!order.is_pos && (
-                    <div>
-                      <label htmlFor="tracking" className="block text-xs text-gray-500 mb-1">
-                        Tracking number
-                        {trackingNumber && <span className="text-green-600 ml-1">(auto-filled from label)</span>}
-                      </label>
-                      <input
-                        id="tracking" type="text"
-                        placeholder="e.g. 9400111899223397658538"
-                        value={trackingNumber}
-                        onChange={(e) => setTrackingNumber(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black/10"
-                      />
+                {/* Tracking — web fulfilled orders */}
+                {!order.is_pos && isFulfilled && (trackingNumber || trackingUrl) && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                      Tracking
                     </div>
-                  )}
-                  {!order.is_pos && !hasStoredLabel && !trackingNumber && (
-                    <button
-                      onClick={() => setShowPicker(true)}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-200 text-gray-500 rounded-lg text-sm hover:border-gray-300 hover:text-gray-700 transition-colors"
-                    >
-                      <Printer className="w-4 h-4" />
-                      Generate shipping label first (optional)
-                    </button>
-                  )}
-                  <button
-                    onClick={handleFulfill}
-                    disabled={fulfilling}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-black text-white rounded-lg font-semibold text-sm hover:bg-gray-800 disabled:opacity-50 transition-colors"
-                  >
+                    <div className="text-sm font-mono">{trackingNumber}</div>
+                    {trackingUrl && (
+                      <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                        Track package →
+                      </a>
+                    )}
+                  </section>
+                )}
+
+                {/* ── Receipt reprint — POS orders only ── */}
+                {order.is_pos && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                      <Printer className="w-3 h-3" /> Receipt
+                    </div>
+                    <ReprintReceipt order={order} />
+                  </section>
+                )}
+
+                {/* Mark fulfilled */}
+                {!isFulfilled && (
+                  <section>
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                      <CheckCircle2 className="w-3 h-3" /> Mark Fulfilled
+                    </div>
+                    <div className="space-y-3">
+                      {!order.is_pos && (
+                        <div>
+                          <label htmlFor="tracking" className="block text-xs text-gray-500 mb-1">
+                            Tracking number
+                            {trackingNumber && <span className="text-green-600 ml-1">(auto-filled from label)</span>}
+                          </label>
+                          <input
+                            id="tracking" type="text"
+                            placeholder="e.g. 9400111899223397658538"
+                            value={trackingNumber}
+                            onChange={(e) => setTrackingNumber(e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black/10"
+                          />
+                        </div>
+                      )}
+                      {!order.is_pos && !hasStoredLabel && !trackingNumber && (
+                        <button
+                          onClick={() => setShowPicker(true)}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-200 text-gray-500 rounded-lg text-sm hover:border-gray-300 hover:text-gray-700 transition-colors"
+                        >
+                          <Printer className="w-4 h-4" />
+                          Generate shipping label first (optional)
+                        </button>
+                      )}
+                      <button
+                        onClick={handleFulfill}
+                        disabled={fulfilling}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-black text-white rounded-lg font-semibold text-sm hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        {fulfilling ? 'Marking fulfilled…' : order.is_pos ? 'Mark as Complete' : 'Mark as Fulfilled'}
+                      </button>
+                    </div>
+                  </section>
+                )}
+
+                {/* Fulfilled confirmation */}
+                {isFulfilled && (
+                  <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-lg px-4 py-3 text-sm text-green-700 font-medium">
                     <CheckCircle2 className="w-4 h-4" />
-                    {fulfilling ? 'Marking fulfilled…' : order.is_pos ? 'Mark as Complete' : 'Mark as Fulfilled'}
-                  </button>
-                </div>
-              </section>
-            )}
-
-            {/* Fulfilled confirmation */}
-            {isFulfilled && (
-              <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-lg px-4 py-3 text-sm text-green-700 font-medium">
-                <CheckCircle2 className="w-4 h-4" />
-                {order.is_pos ? 'Sale complete.' : `This order has been fulfilled.${trackingNumber ? ` ${trackingNumber}` : ''}`}
-              </div>
+                    {order.is_pos ? 'Sale complete.' : `This order has been fulfilled.${trackingNumber ? ` ${trackingNumber}` : ''}`}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Internal notes */}

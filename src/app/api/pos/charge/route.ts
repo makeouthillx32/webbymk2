@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { requireAdmin } from "@/lib/require-admin";
+import { createCommerceStripe } from "@/lib/stripe/commerce";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
   // create-payment-intent routes via E2E checkout test, 2026-08-06.
   let stripe: Stripe;
   try {
-    stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    stripe = createCommerceStripe("pos").stripe;
   } catch (err: any) {
     return jsonError(500, "STRIPE_CONFIG", err?.message || "Stripe is not configured");
   }
@@ -213,6 +214,7 @@ export async function POST(req: NextRequest) {
       currency: "usd",
       automatic_payment_methods: { enabled: true },
       metadata: {
+        payment_lane: "pos",
         order_id: order.id,
         order_number: order.order_number,
         order_source: "pos",

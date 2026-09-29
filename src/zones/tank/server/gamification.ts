@@ -33,6 +33,15 @@ export type TankPlayerProfile = {
   profileSetupComplete?: boolean;
   freeRenameAvailable?: boolean;
   renameTicketQuantity?: number;
+  /**
+   * Season pass the viewer currently holds, or null.
+   *
+   * tank_profiles is already selected with *, so these columns were arriving
+   * and being dropped on the floor — which is why the header advertised a
+   * pass to people who had just bought one.
+   */
+  seasonPassTier?: "base" | "xl" | null;
+  seasonPassExpiresAt?: string | null;
 };
 
 export type TankSeason = {
@@ -106,7 +115,7 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
     } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const [{ data: tankData }, { data: mainProfile }, { data: renameTicket }] = await Promise.all([
+    const [{ data: tankData }, { data: mainProfile }, { data: renameTicket }, { data: savedSettings }] = await Promise.all([
       supabase
         .from("tank_profiles")
         .select("xp, level, tokens, display_name, display_name_confirmed_at, free_rename_used_at")
@@ -123,6 +132,7 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
         .eq("user_id", user.id)
         .eq("tank_inventory_items.slug", "rename-ticket")
         .maybeSingle(),
+      supabase.from("tank_user_settings").select("settings").eq("user_id", user.id).maybeSingle(),
     ]);
 
     const meta = user.user_metadata || {};
@@ -149,7 +159,12 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
         "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png",
       nameColor: meta.name_color || "#ff3b2f",
       bio: meta.bio || "",
-      settings: (meta.tank_settings as Record<string, unknown>) || null,
+      // tank_user_settings; the metadata copy is the pre-2026-09-19 location,
+      // kept as a fallback until every session has refreshed.
+      settings:
+        (savedSettings?.settings as Record<string, unknown> | undefined) ||
+        (meta.tank_settings as Record<string, unknown>) ||
+        null,
       role,
       emailVerified: Boolean(user.email_confirmed_at || user.confirmed_at),
       profileSetupComplete: Boolean(tankData?.display_name_confirmed_at),
@@ -164,13 +179,27 @@ export async function getCurrentTankProfile(): Promise<TankPlayerProfile | null>
 export async function getActiveSeason(): Promise<TankSeason | null> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("tank_seasons")
       .select("id, number, name, starts_at, ends_at")
       .eq("is_active", true)
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error || !data) {
+      try {
+        const admin = createAdminClient();
+        const res = await admin
+          .from("tank_seasons")
+          .select("id, number, name, starts_at, ends_at")
+          .eq("is_active", true)
+          .maybeSingle();
+        data = res.data;
+      } catch {
+        // ignore fallback error
+      }
+    }
+
+    if (!data) return null;
 
     return {
       id: data.id,
@@ -184,27 +213,111 @@ export async function getActiveSeason(): Promise<TankSeason | null> {
   }
 }
 
-export async function getActiveMissions(): Promise<TankMission[]> {
+export async function getHouseDayStartedAt(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    let { data, error } = await supabase
+      .from("tank_platform_settings")
+      .select("value")
+      .eq("key", "tank_house_day_counter_v1")
+      .maybeSingle();
+
+    if (error || !data) {
+      try {
+        const admin = createAdminClient();
+        const res = await admin
+          .from("tank_platform_settings")
+          .select("value")
+          .eq("key", "tank_house_day_counter_v1")
+          .maybeSingle();
+        data = res.data;
+      } catch {
+        // ignore fallback error
+      }
+    }
+
+    if (!data) return null;
+
+    const value = data.value as { startedAt?: unknown } | null;
+    const startedAt = value?.startedAt;
+    if (typeof startedAt !== "string") return null;
+
+    return Number.isFinite(new Date(startedAt).getTime()) ? startedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Deterministically select distinct daily missions for a specific user and date.
+ * If userId is provided, generates a personalized RNG daily challenge set for that user.
+ * If no userId is provided, falls back to a global daily seed.
+ */
+export function selectDailyMissions<T>(
+  missions: T[],
+  count = 3,
+  dateStr?: string,
+  userId?: string | null
+): T[] {
+  if (missions.length <= count) return missions;
+  const today = dateStr || new Date().toISOString().slice(0, 10);
+  const seedString = `${userId || "global"}_${today}`;
+
+  // 32-bit FNV-1a / Murmur-like hash for high entropy
+  let seed = 2166136261;
+  for (let i = 0; i < seedString.length; i++) {
+    seed ^= seedString.charCodeAt(i);
+    seed = Math.imul(seed, 16777619);
+  }
+
+  // Mulberry32 deterministic PRNG
+  let state = seed >>> 0;
+  const random = () => {
+    state += 0x6d2b79f5;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  // Fisher-Yates shuffle copy of missions array
+  const pool = [...missions];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    const temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+
+  return pool.slice(0, count);
+}
+
+export async function getActiveMissions(dailyCount = 3): Promise<TankMission[]> {
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const { data: missions, error } = await supabase
+    const { data: rawMissions, error } = await supabase
       .from("tank_missions")
       .select("id, title, description, reward_tokens, reward_xp, target_count")
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
 
-    if (error || !missions) return [];
+    if (error || !rawMissions) return [];
+
+    // Deterministically cycle to 2-3 active missions per user per day
+    const missions = selectDailyMissions(rawMissions, dailyCount, undefined, user?.id);
 
     let progressById = new Map<string, { progress: number; completed_at: string | null }>();
     if (user) {
+      const missionDay = new Date().toISOString().slice(0, 10);
       const { data: progress } = await supabase
         .from("tank_mission_progress")
         .select("mission_id, progress, completed_at")
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .eq("mission_day", missionDay);
       for (const row of progress ?? []) {
         progressById.set(row.mission_id, {
           progress: row.progress,

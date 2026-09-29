@@ -39,6 +39,10 @@ export interface UnaxisCredentials {
   ghcr_token_set_at?:   string
   /** OpenAI API key — sk-xxx */
   openai_api_key?:      string
+  /** Unstoppable Domains Resolution Service bearer key. */
+  unstoppable_api_key?: string
+  /** ISO timestamp of when unstoppable_api_key was last stored. */
+  unstoppable_api_key_set_at?: string
 
   /**
    * Active remote IPC bridge bearer token (hex-encoded 32 random bytes).

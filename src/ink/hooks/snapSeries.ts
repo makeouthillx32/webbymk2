@@ -88,7 +88,7 @@ export async function recordFrameSeries(
   if (!existsSync(root)) mkdirSync(root, { recursive: true });
   mkdirSync(dir, { recursive: true });
 
-  const isDev = process.execPath.toLowerCase().includes("bun");
+  const isDev = process.env.UNAXIS_DEV === "true" || process.execPath.toLowerCase().includes("bun");
   const t0 = Date.now();
   const frames: FrameEntry[] = [];
   let written = 0;

@@ -2,7 +2,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSupabaseClient, useUser } from '@supabase/auth-helpers-react';
 import { X } from 'lucide-react';
 import { ShowcaseSection } from '@/components/Layouts/dashboard/sidebar/showcase-section';
 import InviteGeneratorClient from './_components/InviteGeneratorClient';
@@ -10,39 +9,20 @@ import './_components/invites.scss';
 
 interface Invite {
   code: string;
-  role: string;               // raw role_id
+  role: string;               // role_id — already the plain role name (see api/invite/route.ts)
   inviter: {
     name: string | null;
     avatar: string;
   };
-  uses: number;
-  max_uses: number;
   expires_at: string | null;
 }
 
 export default function InvitesPage() {
-  const supabase = useSupabaseClient();
-  const user = useUser();
   const [invites, setInvites] = useState<Invite[]>([]);
-  const [rolesMap, setRolesMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deletingCode, setDeletingCode] = useState<string | null>(null);
   const [showGenerator, setShowGenerator] = useState(false);
-
-  // Load roles lookup
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      const { data, error } = await supabase
-        .from('roles')
-        .select('id, role');
-      if (!error && data) {
-        const map = data.reduce((acc, r) => ({ ...acc, [r.id]: r.role }), {} as Record<string, string>);
-        setRolesMap(map);
-      }
-    })();
-  }, [supabase, user]);
 
   // Fetch invites
   const loadInvites = async () => {
@@ -74,10 +54,13 @@ export default function InvitesPage() {
     setDeletingCode(null);
   };
 
-  // Handle new invite
-  const handleCreate = (newInvite: Invite) => {
-    setInvites((prev) => [newInvite, ...prev]);
-    setShowGenerator(false);
+  // Was `handleCreate(newInvite: Invite)` — dead code, never passed to
+  // InviteGeneratorClient, and its shape didn't match what /api/invite/create
+  // even returns (just an inviteLink, no role/inviter/expires_at). The modal
+  // stays open on creation (so the link stays visible to copy); this just
+  // makes sure the row shows up once it does.
+  const handleCreated = () => {
+    loadInvites();
   };
 
   return (
@@ -91,11 +74,10 @@ export default function InvitesPage() {
         </div>
 
         <div className="invites-table">
-          <div className="table-header grid grid-cols-6 gap-4 p-3">
+          <div className="table-header grid grid-cols-5 gap-4 p-3">
             <div>Role</div>
             <div>Inviter</div>
             <div>Invite Code</div>
-            <div>Uses</div>
             <div>Expires</div>
             <div></div>
           </div>
@@ -106,12 +88,11 @@ export default function InvitesPage() {
             <div className="empty p-4 text-center text-gray-500">No invites yet.</div>
           ) : (
             invites.map((inv) => {
-              const displayRole = rolesMap[inv.role] ?? inv.role;
               const displayName = inv.inviter.name ?? 'Unknown';
               const isDeleting = deletingCode === inv.code;
               return (
-                <div key={inv.code} className="invite-row grid grid-cols-6 gap-4 items-center p-3 border-t hover:bg-gray-50">
-                  <div className="capitalize font-medium">{displayRole}</div>
+                <div key={inv.code} className="invite-row grid grid-cols-5 gap-4 items-center p-3 border-t hover:bg-gray-50">
+                  <div className="capitalize font-medium">{inv.role}</div>
 
                   <div className="flex items-center space-x-2">
                     <img src={inv.inviter.avatar} alt={displayName} className="w-8 h-8 rounded-full" />
@@ -119,8 +100,6 @@ export default function InvitesPage() {
                   </div>
 
                   <div className="font-mono">{inv.code}</div>
-
-                  <div>{inv.uses} / {inv.max_uses}</div>
 
                   <div>
                     {inv.expires_at ? new Date(inv.expires_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Never'}
@@ -141,11 +120,11 @@ export default function InvitesPage() {
 
         {showGenerator && (
           <div className="generator-overlay fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="generator-modal relative bg-white rounded-lg p-6 max-w-md w-full shadow-lg">
+            <div className="generator-modal relative bg-white rounded-lg p-6 max-w-md w-full shadow-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
               <button className="absolute top-3 right-3 text-gray-600 hover:text-gray-800" onClick={() => setShowGenerator(false)}>
                 <X size={24} />
               </button>
-              <InviteGeneratorClient defaultRole="member" />
+              <InviteGeneratorClient defaultRole="member" onCreated={handleCreated} />
             </div>
           </div>
         )}

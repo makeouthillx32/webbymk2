@@ -199,6 +199,7 @@ export type TankSfxLibraryEntry = {
   soundKey: string;
   name: string;
   fileUrl: string;
+  iconUrl: string | null;
   category: string;
   defaultVolume: number;
   durationMs: number | null;
@@ -247,6 +248,23 @@ export type CameraDirectorySnapshot = {
   rooms: DerivedRoom[];
   audioSources?: TankAudioSource[];
   warning?: string;
+  /**
+   * Rooms an admin has switched off (tank_rooms.is_offline).
+   *
+   * `rooms` above already has them omitted, but `cameras` did NOT — so a room
+   * toggled off vanished from the room grid while its cameras, playback URLs
+   * and all, kept flowing out of /api/tank/cameras. toPublicCameraDirectory
+   * needs to know WHICH rooms were dropped in order to drop their cameras too,
+   * and once `rooms` is filtered that information is gone.
+   *
+   * Optional on purpose: absent means "no filtering", so a snapshot built
+   * without it behaves exactly as before. Deriving the same thing by diffing
+   * against `rooms` would instead fail CLOSED — an empty `rooms` would hide
+   * every camera on the site, which is a far worse failure than the bug.
+   *
+   * Admin-only: stripped from the public projection's output.
+   */
+  offlineRoomKeys?: string[];
 };
 
 export type TankChannel = {
@@ -280,6 +298,7 @@ export type ChatMessageType =
   | "text"
   | "action"
   | "item_use"
+  | "item_flex"
   | "rng_drop"
   | "level_up"
   | "dice_roll"
@@ -306,6 +325,7 @@ export type ChatMessageType =
 export const CONSOLE_MESSAGE_TYPES = [
   "action",
   "item_use",
+  "item_flex",
   "rng_drop",
   "level_up",
   "dice_roll",
@@ -329,6 +349,16 @@ export function isConsoleMessageType(type?: string | null): boolean {
 
 export type ChatRank = "Newbie" | "Regular" | "VIP" | "Legend";
 
+export type TankChatProvider = "tank" | "twitch" | "kick" | "youtube" | "trovo";
+
+export type ChatSearchResult = {
+  id: string;
+  user: string;
+  body: string;
+  createdAt: string;
+  messageType?: ChatMessageType;
+};
+
 export type ChatMessage = {
   id: string;
   userId?: string;
@@ -336,12 +366,23 @@ export type ChatMessage = {
   body: string;
   time: string;
   createdAt?: string;
-  role?: "viewer" | "member" | "regular" | "vip" | "moderator" | "admin";
+  // "system" is written by the server itself (see actions.ts / audioHttp.ts)
+  // for house-triggered console lines, which have no sender. It was missing
+  // here, which made the console's own check for it unreachable code.
+  role?: "viewer" | "member" | "regular" | "vip" | "moderator" | "admin" | "system";
   level?: number;
   xp?: number;
   rank?: ChatRank;
   avatarUrl?: string;
   nameColor?: string;
+  /** Origin of the real person's message. `tank` is native Tank chat. */
+  sourceProvider?: TankChatProvider;
+  /** Opaque provider ids used for dedupe/moderation; never OAuth credentials. */
+  sourceMessageId?: string;
+  sourceChannelId?: string;
+  sourceUserId?: string;
+  /** Provider-owned presentation badges such as subscriber or moderator. */
+  sourceBadges?: string[];
   clanTag?: string;
   clanColor?: string;
   messageType?: ChatMessageType;
@@ -402,6 +443,8 @@ export type AdminSection =
   | "channels"
   | "chat"
   | "economy"
+  | "drops"
+  | "tavern"
   | "webhooks"
   | "users"
   | "system";

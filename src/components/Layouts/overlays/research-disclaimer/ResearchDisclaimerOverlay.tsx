@@ -15,7 +15,7 @@ import { getCookie, setCookie } from "@/lib/cookieUtils";
 
 const CONSENT_COOKIE_NAME = "labs_research_disclaimer_accepted_v1";
 const CONSENT_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
-const EXIT_URL = "https://unenter.live";
+const EXIT_URL = "https://www.unenter.live";
 
 const DISCLAIMER_POINTS: string[] = [
   "The products listed on the Website are intended for laboratory research purposes only, and are not for human or animal consumption.",
@@ -83,10 +83,16 @@ export default function ResearchDisclaimerOverlay() {
     setOpen(false);
   }, []);
 
+  // "Accept All" checks every box so the visitor can see what they just
+  // agreed to — it does NOT also submit/close the dialog for them. That was
+  // the old behavior (setAck + grantAccess in the same tick meant the
+  // dialog unmounted before React ever painted the boxes as checked, so
+  // clicking Accept All just made the whole gate vanish with no visible
+  // confirmation). Now it only ticks the boxes; the visitor still has to
+  // hit "Submit & Enter" themselves, same as checking each box by hand.
   const handleAcceptAll = React.useCallback(() => {
     setAck(ALL_ACK);
-    grantAccess();
-  }, [grantAccess]);
+  }, []);
 
   const handleSubmit = React.useCallback(() => {
     if (!allChecked) return;

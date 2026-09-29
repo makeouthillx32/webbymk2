@@ -5,7 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { supabasePublicUrlFromImage } from "@/lib/images";
+import { supabasePublicUrlFromImage, supabaseTransformedUrlFromImage } from "@/lib/images";
+import { SmartProductImage } from "@/components/shop/_components/SmartProductImage";
 import { formatCurrency } from "@/lib/money";
 import { ChevronRight } from "lucide-react";
 
@@ -65,7 +66,9 @@ export default function CategoryPageClient({
   const [sortBy, setSortBy] = useState<SortOption>("featured");
 
   const getImageUrl = (image: ProductImage) =>
-    supabasePublicUrlFromImage(image) ?? "";
+    supabaseTransformedUrlFromImage(image, { width: 600, quality: 78 }) ??
+    supabasePublicUrlFromImage(image) ??
+    "";
 
   // Get primary image for a product
   const getPrimaryImage = (product: Product) => {
@@ -133,20 +136,21 @@ export default function CategoryPageClient({
         <h1 className="text-4xl font-bold mb-2">{category.name}</h1>
       </div>
 
-      {/* Subcategories Grid */}
+      {/* Subcategories */}
       {subcategories.length > 0 && (
-        <div className="mb-12">
-          <h2 className="text-lg font-semibold mb-4">Shop by Category</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="mb-8">
+          <h2 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
+            Subcategories
+          </h2>
+          <div className="flex flex-wrap gap-2.5">
             {subcategories.map((subcategory) => (
               <Link
                 key={subcategory.id}
                 href={`/${subcategory.slug}`}
-                className="group border rounded-lg p-6 hover:border-primary hover:shadow-md transition-all"
+                className="group inline-flex items-center px-4 py-2 rounded-full text-xs font-medium border border-border/70 bg-card/60 backdrop-blur-sm hover:border-primary hover:text-primary hover:bg-card transition-all duration-200 shadow-sm"
               >
-                <h3 className="font-medium text-center group-hover:text-primary transition-colors">
-                  {subcategory.name}
-                </h3>
+                <span>{subcategory.name}</span>
+                <ChevronRight className="w-3.5 h-3.5 ml-1 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
               </Link>
             ))}
           </div>
@@ -191,32 +195,27 @@ export default function CategoryPageClient({
               <Link
                 key={product.id}
                 href={`/products/${product.slug}`}
-                className="group"
+                className="group rounded-[calc(var(--radius)*3)] p-3 bg-transparent hover:bg-[hsl(var(--card))/0.5] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 flex flex-col justify-between"
               >
                 {/* Product Image */}
-                <div className="aspect-square relative bg-muted rounded-lg overflow-hidden mb-4">
-                  {primaryImage ? (
-                    <Image
-                      src={getImageUrl(primaryImage)}
-                      alt={primaryImage.alt_text || product.title}
-                      fill
-                      className="object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                      No image
-                    </div>
-                  )}
+                <div className="relative mb-3">
+                  <SmartProductImage
+                    src={primaryImage ? getImageUrl(primaryImage) : null}
+                    alt={primaryImage?.alt_text || product.title}
+                    sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
+                  />
 
                   {/* Badges */}
-                  <div className="absolute top-2 left-2 flex flex-col gap-2">
+                  <div className="absolute top-2 left-2 flex flex-col gap-1.5 z-10">
                     {product.badge && (
-                      <Badge className="bg-primary text-primary-foreground">
+                      <Badge className="bg-primary text-primary-foreground text-[10px] px-2 py-0.5 shadow-sm">
                         {product.badge}
                       </Badge>
                     )}
                     {product.is_featured && (
-                      <Badge variant="secondary">Featured</Badge>
+                      <Badge variant="secondary" className="text-[10px] px-2 py-0.5 backdrop-blur-md bg-background/80 shadow-sm">
+                        Featured
+                      </Badge>
                     )}
                   </div>
                 </div>

@@ -47,6 +47,11 @@ export interface Zone {
    * the same repo) builds and serves it.
    */
   hosting?: "docker" | "vercel";
+  /**
+   * Remote host port that the zone container is published to (e.g. 3001 for blog on L0VE).
+   * Undefined defaults to 3000 for direct remote containers, or the environment's proxyPort if > 0.
+   */
+  port?: number;
 }
 
 /** Proxy service identifiers */

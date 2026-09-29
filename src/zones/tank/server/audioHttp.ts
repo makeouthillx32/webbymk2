@@ -130,13 +130,17 @@ async function announceQueuedAudio(input: {
   if (!data) return;
   const channel = admin.channel(`room:${input.roomKey}:chat`);
   try {
-    await channel.httpSend("new_message", {
+    await channel.send({
+      type: "broadcast",
+      event: "new_message",
+      payload: {
       id: data.id,
       user: "HOUSE",
       body: input.body,
       time: new Date(data.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       messageType: "house_event",
       metadata: { audioRequestId: input.requestId },
+    },
     });
   } finally {
     await admin.removeChannel(channel);
@@ -147,7 +151,7 @@ export async function handleSfxGet() {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("tank_sfx_library")
-    .select("id, sound_key, name, file_url, category, default_volume, duration_ms, is_premium, required_item_slug, token_cost")
+    .select("id, sound_key, name, file_url, icon_url, category, default_volume, duration_ms, is_premium, required_item_slug, token_cost")
     .eq("is_active", true)
     .order("category")
     .order("name");
@@ -157,6 +161,7 @@ export async function handleSfxGet() {
     soundKey: row.sound_key,
     name: row.name,
     fileUrl: row.file_url,
+    iconUrl: row.icon_url ?? null,
     category: row.category,
     defaultVolume: row.default_volume,
     durationMs: row.duration_ms,

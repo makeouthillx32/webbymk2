@@ -46,16 +46,21 @@ function parseEnvValue(raw: string): string {
   return value.replace(/\\n/g, "\n").trim();
 }
 
-function loadEnvFile(file: string): void {
-  if (!existsSync(file)) return;
+function parseEnvFile(file: string): Record<string, string> {
+  if (!existsSync(file)) return {};
 
-  const text = readFileSync(file, "utf-8").replace(/^\uFEFF/, "");
-  for (const line of text.split(/\r?\n/)) {
+  const values: Record<string, string> = {};
+  const contents = readFileSync(file, "utf-8").replace(/^\uFEFF/, "");
+  for (const line of contents.split(/\r?\n/)) {
     const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!match) continue;
+    values[match[1]!] = parseEnvValue(match[2] ?? "");
+  }
+  return values;
+}
 
-    const key = match[1]!;
-    const value = parseEnvValue(match[2] ?? "");
+function loadEnvFile(file: string): void {
+  for (const [key, value] of Object.entries(parseEnvFile(file))) {
     if (!isPresent(process.env[key])) {
       process.env[key] = value;
     }
@@ -64,6 +69,21 @@ function loadEnvFile(file: string): void {
   if (!state.envFiles.includes(file)) {
     state.envFiles.push(file);
   }
+}
+
+/**
+ * Read the project's current .env files without mutating process.env.
+ * .env.local wins over .env, matching the normal runtime precedence. This is
+ * used by long-running operators immediately before a build/deploy so an env
+ * edit cannot be masked by values cached when the operator first started.
+ */
+export function readRuntimeEnvFiles(): Record<string, string> {
+  const root = resolveRuntimeProjectRoot();
+  if (!root) return {};
+  return {
+    ...parseEnvFile(join(root, ".env")),
+    ...parseEnvFile(join(root, ".env.local")),
+  };
 }
 
 // ── Migration helper ──────────────────────────────────────────────────────────

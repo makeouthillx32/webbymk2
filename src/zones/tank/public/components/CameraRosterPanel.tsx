@@ -6,6 +6,7 @@ import { ConsoleButton } from "./ConsoleButton";
 import { CameraPlayer } from "../CameraPlayer";
 import { ACTIVE_THEME } from "../../theme";
 import type { DiscoveredCamera } from "../../contracts";
+import { RoomTileCrtHover } from "./RoomTileCrtHover";
 
 const LED_GREEN = "#39ff6a";
 const LED_RED = "#ff3b2f";
@@ -63,6 +64,7 @@ export type CameraRosterItem = {
 export type CameraRosterPanelProps = {
   mode: "director" | "room" | "grid";
   onSetMode: (mode: "director" | "room") => void;
+  directorCamera?: DiscoveredCamera;
   anyHouseCameraOnline: boolean;
   onlineCameraCount: number;
   totalCameraCount: number;
@@ -74,6 +76,7 @@ export type CameraRosterPanelProps = {
 export function CameraRosterPanel({
   mode,
   onSetMode,
+  directorCamera,
   anyHouseCameraOnline,
   onlineCameraCount,
   totalCameraCount,
@@ -81,6 +84,17 @@ export function CameraRosterPanel({
   selectedRoomSlug,
   onSelectRoom,
 }: CameraRosterPanelProps) {
+  const rosterItems = [
+    {
+      roomKey: "__director__",
+      title: "Director",
+      camera: directorCamera,
+      isOnline: anyHouseCameraOnline,
+      isDirector: true,
+    },
+    ...rooms.map((room) => ({ ...room, isDirector: false })),
+  ];
+
   return (
     <ChromePanel
       withScrews
@@ -128,12 +142,23 @@ export function CameraRosterPanel({
         </div>
       </div>
 
-      {/* Camera Grid Cards under Director */}
+      {/* All Rooms matrix. Director is a first-class destination beside the
+          physical rooms, matching the mobile browser and reference layout. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
-        {rooms.map((room) => {
-          const isSelected = mode === "room" && selectedRoomSlug === room.roomKey;
+        {rosterItems.map((room) => {
+          const isSelected = room.isDirector
+            ? mode === "director"
+            : mode === "room" && selectedRoomSlug === room.roomKey;
           const isOnline = Boolean(room.isOnline);
-          const hasFeed = Boolean(room.camera?.playbackUrl);
+          const directorPreviewUrl = room.isDirector
+            ? (room.camera?.previewUrl ?? room.camera?.playbackUrl ?? null)
+            : null;
+          const directorPreviewProtocol = room.camera?.previewUrl
+            ? (room.camera.previewProtocol ?? "hls")
+            : (room.camera?.playbackProtocol ?? "none");
+          const hasFeed = Boolean(
+            room.isDirector ? directorPreviewUrl : room.camera?.playbackUrl,
+          );
           const loopUrl = room.camera?.recentClipUrl ?? null;
           const usesLivePreviewRung =
             room.camera?.protocol === "rtmp" ||
@@ -146,14 +171,24 @@ export function CameraRosterPanel({
             <button
               key={room.roomKey}
               type="button"
-              onClick={() => onSelectRoom(room.roomKey)}
-              className={`group relative flex aspect-video w-full flex-col overflow-hidden rounded-md border text-left transition-all ${
+              data-tank-room-tile
+              onClick={() =>
+                room.isDirector
+                  ? onSetMode("director")
+                  : onSelectRoom(room.roomKey)
+              }
+              aria-label={
+                room.isDirector ? "Open Director" : `Open ${room.title}`
+              }
+              className={`group relative flex aspect-video w-full flex-col overflow-hidden text-left transition-all border ${
                 isSelected
                   ? "border-[#4fd6ff] ring-2 ring-[#4fd6ff] shadow-[0_0_14px_rgba(79,214,255,0.6)]"
                   : "border-black/60 hover:border-white/40 shadow-lg"
               }`}
               style={{
-                backgroundColor: "#0d0e10",
+                backgroundColor: "var(--tank-color-dark, #0d0e10)",
+                borderRadius: "var(--tank-border-radius, 0.375rem)",
+                borderColor: isSelected ? "var(--tank-color-link, #4fd6ff)" : undefined,
               }}
             >
               {/*
@@ -171,7 +206,18 @@ export function CameraRosterPanel({
                   room.camera?.accent ?? "from-slate-800 via-slate-950 to-black"
                 } flex items-center justify-center pointer-events-none`}
               >
-                {usesLivePreviewRung && previewUrl ? (
+                {room.isDirector && hasFeed ? (
+                  <CameraPlayer
+                    key={room.camera?.id ?? room.roomKey}
+                    priority="thumbnail"
+                    playbackUrl={directorPreviewUrl}
+                    playbackProtocol={directorPreviewProtocol}
+                    online={isOnline}
+                    prerollLoopUrl={room.camera?.recentClipUrl ?? null}
+                    muted
+                    className="h-full w-full object-cover"
+                  />
+                ) : usesLivePreviewRung && previewUrl ? (
                   <CameraPlayer
                     key={room.camera?.id ?? room.roomKey}
                     priority="thumbnail"
@@ -185,8 +231,10 @@ export function CameraRosterPanel({
                   <RetryingLoopPreview url={loopUrl} online={isOnline} />
                 ) : null}
 
+                <RoomTileCrtHover />
+
                 {/* Subtle Room Name in Top-Left Corner */}
-                <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded bg-black/70 px-2 py-0.5 backdrop-blur-sm">
+                <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 rounded bg-black/70 px-2 py-0.5 backdrop-blur-sm">
                   <span
                     className="h-1.5 w-1.5 rounded-full"
                     style={{

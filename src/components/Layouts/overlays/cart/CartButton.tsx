@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 export default function CartButton() {
   const { itemCount, toggleCart } = useCart();
 
+  if (itemCount === 0) return null;
+
   return (
     <button
       onClick={toggleCart}

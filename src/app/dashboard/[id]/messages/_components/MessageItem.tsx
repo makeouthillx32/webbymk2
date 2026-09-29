@@ -123,7 +123,7 @@ export default function MessageItem({
       {!isCurrentUser && (
         <div className="flex-shrink-0 mr-2">
           <div className="message-avatar w-8 h-8 md:w-10 md:h-10 rounded-full overflow-hidden shadow-[var(--shadow-xs)]">
-            <div dangerouslySetInnerHTML={{ __html: renderAvatar(message.sender.avatar, message.sender.name) }} />
+            {renderAvatar(message.sender.avatar, message.sender.name)}
           </div>
         </div>
       )}
@@ -275,7 +275,7 @@ export default function MessageItem({
       {isCurrentUser && (
         <div className="flex-shrink-0 ml-2">
           <div className="message-avatar w-8 h-8 md:w-10 md:h-10 rounded-full overflow-hidden shadow-[var(--shadow-xs)]">
-            <div dangerouslySetInnerHTML={{ __html: renderAvatar(message.sender.avatar, message.sender.name) }} />
+            {renderAvatar(message.sender.avatar, message.sender.name)}
           </div>
         </div>
       )}

@@ -10,6 +10,8 @@ import { Input } from "@/components/Layouts/app/input";
 import { Label } from "@/components/ui/label";
 import SignInWithGoogle from "@/components/ui/SignInWithGoogle";
 import { Mail, Lock, User } from "lucide-react";
+import { createClient } from "@/utils/supabase/server";
+import RedeemInviteCard from "@/components/Auth/RedeemInviteCard";
 
 // ✅ If you added the breadcrumbs component earlier:
 import { AuthBreadcrumbs } from "@/components/Auth/AuthBreadcrumbs";
@@ -21,6 +23,8 @@ export const metadata: Metadata = {
 
 type SearchParams = Message & {
   invite?: string;
+  next?: string;
+  role?: string;
 };
 
 export default async function SignUpPage({
@@ -38,6 +42,30 @@ export default async function SignUpPage({
     typeof resolvedSearchParams?.invite === "string" ? resolvedSearchParams.invite : "";
   const inviteFromCookie = cookieStore.get("invite")?.value ?? "";
   const invite = inviteFromQuery || inviteFromCookie || "";
+
+  // A visitor who's already signed in and lands here via an invite link used
+  // to just see the ordinary "Create Account" form with zero acknowledgement
+  // they already have an account — submitting it either made a second,
+  // separate account or errored with "email already registered." Their real
+  // account's role was never touched. If they're signed in AND carrying an
+  // invite, redeem it against their existing account instead of pretending
+  // this is a fresh signup.
+  if (invite) {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      return (
+        <RedeemInviteCard
+          invite={invite}
+          role={resolvedSearchParams?.role}
+          next={resolvedSearchParams?.next}
+        />
+      );
+    }
+  }
 
   // ✅ Error/message state should still render as a “card”, not a full-screen wrapper
   if ("message" in resolvedSearchParams) {
@@ -78,6 +106,7 @@ export default async function SignUpPage({
       <form className="space-y-6" action={signUpAction}>
         {/* Hidden invite only (NO manual entry field) */}
         <input type="hidden" name="invite" value={invite} />
+        <input type="hidden" name="next" value={resolvedSearchParams?.next || ""} />
 
         {/* first + last name (matches signUpAction) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -211,7 +240,7 @@ export default async function SignUpPage({
       <p className="text-center text-sm mt-6 text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] leading-[1.5]">
         Already have an account?{" "}
         <Link
-          href="/sign-in"
+          href={resolvedSearchParams?.next ? `/sign-in?next=${encodeURIComponent(resolvedSearchParams.next)}` : "/sign-in"}
           className="text-[hsl(var(--sidebar-primary))] hover:underline transition-all duration-200"
         >
           Sign in

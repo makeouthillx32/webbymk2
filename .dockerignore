@@ -8,6 +8,8 @@ node_modules
 .pnp.js
 
 # Build output
+**/.next
+**/.next/**
 .next
 out
 build
@@ -22,6 +24,10 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+# Backups of .env carry the same secrets (.env.bak, .env.bak.preLive, …).
+# No Dockerfile copies them today; this keeps it that way.
+.env.bak*
+.env*.bak
 
 # VCS + dev tooling
 .git
@@ -36,12 +42,13 @@ supabase/.temp
 
 # Zone overlays — the core app build doesn't need them, BUT zone builds share
 # this repo-root context and COPY zones/<key>/src/app/ (see zones/*/Dockerfile).
-# Exclude the bulk, re-include exactly what zone builds copy.
-zones/
-!zones/auth/src
-!zones/auth/src/**
-!zones/tank/src
-!zones/tank/src/**
+# Exclude the bulk, re-include every zone's source overlay. Keep the directory
+# chain visible so Docker can traverse newly scaffolded zones; hard-coding
+# today's zone names breaks the one-click creation pipeline.
+zones/**
+!zones/**/
+!zones/unenter/src
+!zones/unenter/src/**
 
 # Platform packages — agent + updater have their own build contexts
 packages/
@@ -69,6 +76,48 @@ vault
 __pycache__
 .turbo
 .vercel
+.claude
+.codex
+.codex-tmp
+.cursor
+.ok
+.openclaw-scratch
+.trash
+.vscode
+coturn
+mediamtx
+openclaw
+automations
+Architecture
+users
+memory
+logs
+
+# Worker services build from the REPO ROOT context (unlike tank-audio-worker,
+# which uses its own directory), because they import the shared decoder and
+# detection catalog from src/zones/tank/ by relative path rather than keeping a
+# second copy. A bare `services` exclusion made every COPY in
+# services/tank-vision-worker/Dockerfile fail. Same shape as the zones block
+# below: exclude the files, keep the directory chain traversable, re-include
+# only what an image actually needs.
+services/**
+!services/**/
+!services/tank-vision-worker/src
+!services/tank-vision-worker/src/**
+!services/tank-vision-worker/package.json
+!services/tank-vision-worker/tsconfig.json
+!services/tank-vision-worker/bun.lock
+# The OSNet-AIN re-id model: names people from the graded gallery (galleryNaming.ts).
+!services/tank-vision-worker/models
+!services/tank-vision-worker/models/osnet_ain_x1_0.onnx
+# The AI-mode learner: its python package and tools only. Its weights, graded
+# gallery, run state and .venv are bind-mounted, never shipped in the image.
+!services/tank-vision-gpu/tank_vision
+!services/tank-vision-gpu/tank_vision/**
+!services/tank-vision-gpu/tools
+!services/tank-vision-gpu/tools/**
+services/tank-vision-gpu/**/__pycache__/**
+*.tsbuildinfo
 
 # ── Non-app repo cruft — host-only tooling, vendored clones, dumps, scratch ──
 # The core image only needs src/, public/, zones/ overlays, i18n/, and config

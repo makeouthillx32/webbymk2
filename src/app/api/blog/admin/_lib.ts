@@ -3,16 +3,18 @@
 
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireRoleClient } from "@/lib/require-admin";
 
 export function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ ok: false, error: { code, message, details } }, { status });
 }
 
+// Was authentication-only (any signed-in user passed, regardless of role) —
+// fixed 2026-09-22 alongside adding the "marketing" role, since blog content
+// is exactly the kind of thing that role should be able to edit and this was
+// the point where that needed a real check instead of none at all.
 export async function requireAdmin(supabase: SupabaseClient) {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return { ok: false as const, status: 401 as const, message: error.message };
-  if (!data.user) return { ok: false as const, status: 401 as const, message: "Authentication required" };
-  return { ok: true as const, user: data.user };
+  return requireRoleClient(supabase, ["admin", "marketing"]);
 }
 
 /** One slug implementation for client and server — see utils/slug.ts. */

@@ -45,15 +45,21 @@ export function RoomDescriptionPanel({
         <h1
           className={`${compact ? "text-base" : "text-xl"} font-black tracking-tight`}
           style={{
-            color: PANEL_TEXT,
+            color: "var(--tank-color-text-light, #e7e2d6)",
             fontFamily: ACTIVE_THEME.fonts.labelWide,
           }}
         >
           {title}
         </h1>
-        <CheckCircle2 className="h-4 w-4" style={{ color: LED_GREEN }} />
+        <CheckCircle2
+          className="h-4 w-4"
+          style={{ color: "var(--tank-color-primary, #39ff6a)" }}
+        />
       </div>
-      <p className="max-w-3xl text-xs leading-relaxed text-[#cfc9b8] sm:text-sm">
+      <p
+        className="max-w-3xl text-xs leading-relaxed text-[#cfc9b8] sm:text-sm"
+        style={{ color: "var(--tank-color-light, #cfc9b8)" }}
+      >
         {description}
       </p>
     </ChromePanel>

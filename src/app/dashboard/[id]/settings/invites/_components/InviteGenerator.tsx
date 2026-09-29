@@ -2,8 +2,15 @@
 
 import { useState } from "react";
 import { Copy } from "lucide-react";
+import { VALID_ROLES } from "@/actions/auth/types";
 
-export default function InviteGenerator({ defaultRole = "member" }: { defaultRole?: string }) {
+export default function InviteGenerator({
+  defaultRole = "member",
+  onCreated,
+}: {
+  defaultRole?: string;
+  onCreated?: () => void;
+}) {
   const [role, setRole] = useState(defaultRole);
   const [inviteLink, setInviteLink] = useState("");
   const [copied, setCopied] = useState(false);
@@ -23,6 +30,11 @@ export default function InviteGenerator({ defaultRole = "member" }: { defaultRol
     const data = await res.json();
     if (data.inviteLink) {
       setInviteLink(data.inviteLink);
+      // Row for this invite is now live in the invites table, but the list
+      // behind this modal was fetched before it existed and never refetches
+      // on its own — the modal used to just sit there showing a link that
+      // wasn't reflected in "Active Invite Links" until a manual reload.
+      onCreated?.();
     }
 
     setLoading(false);
@@ -49,11 +61,16 @@ export default function InviteGenerator({ defaultRole = "member" }: { defaultRol
         value={role}
         onChange={(e) => setRole(e.target.value)}
       >
-        <option value="guest">Guest</option>
-        <option value="member">Member</option>
-        <option value="researcher">Researcher</option>
-        <option value="affiliate">Affiliate</option>
-        <option value="admin">Admin</option>
+        {/* Options come from VALID_ROLES — the same list both redemption
+            paths (sign-up and apply-invite) actually honor. This used to be
+            a separately hand-maintained list that included "affiliate",
+            which neither path could ever grant: minting one produced an
+            invite link that silently downgraded to "member" on signup. */}
+        {VALID_ROLES.map((r) => (
+          <option key={r} value={r}>
+            {r.charAt(0).toUpperCase() + r.slice(1)}
+          </option>
+        ))}
       </select>
 
       <button

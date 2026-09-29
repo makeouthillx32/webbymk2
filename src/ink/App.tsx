@@ -28,7 +28,7 @@
 //   src/entrypoints/cli.tsx → src/main.tsx → src/replLauncher.tsx → App
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useRef } from "react";
 import { useApp } from "./runtimeInk.js";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ export function App() {
     anyBusy,
     logProcRef, logOpIdRef,
     runOp, runOpQueued, runOpVisible, runCreateZone, openLogs,
-    runDevModeOp, triggerDismissHook, triggerRestartHook,
+    runDevModeOp, runBareDevModeOp, triggerDismissHook, triggerRestartHook,
     registerPopout, dismissPopout,
   } = useBackgroundOps({ addNotification, refreshZones, setZones });
 
@@ -143,6 +143,25 @@ export function App() {
       (o) => stopDevContainer(zone, o),
     );
   }, [runDevModeOp]);
+
+  // Bare-metal sibling — zone already carries everything runBareDevModeOp
+  // needs (it looks up bareDevConfig internally), so this is a thinner
+  // wrapper than runDevMode. Views branch on bareDevConfig(zone) to pick
+  // this vs runDevMode, same as every other bare-metal-vs-Docker fork.
+  const runBareDevMode = useCallback((zone: Zone) => {
+    runBareDevModeOp(zone);
+  }, [runBareDevModeOp]);
+
+  // Survives ZonesView's own unmount/remount cycles (AppFrame only renders
+  // AppRoutes — and everything under it — while overlayOpId === null, so
+  // every background op's fullscreen overlay unmounts ZonesView and remounts
+  // it fresh on close). A ref here in App.tsx, which never unmounts, is what
+  // lets ZonesView restore its selection instead of resetting to the top of
+  // the list every time. See ZonesView's rememberedZoneKey prop doc.
+  const lastZoneKeyRef = useRef<string | null>(null);
+  const handleZoneFocusChange = useCallback((key: string | null) => {
+    lastZoneKeyRef.current = key;
+  }, []);
 
   const {
     stackFocused,
@@ -209,6 +228,7 @@ export function App() {
     navigateReplace,
     toggleStackFocus,
     toggleStackManager,
+    addNotification,
   });
   // ── Render ────────────────────────────────────────────────────────────────
   // Everything lives inside AlternateScreen so the TUI occupies the terminal's
@@ -288,6 +308,9 @@ export function App() {
         runOpQueued={runOpQueued}
         openLogs={openLogs}
         runDevMode={runDevMode}
+        runBareDevMode={runBareDevMode}
+        rememberedZoneKey={lastZoneKeyRef.current}
+        onZoneFocusChange={handleZoneFocusChange}
         forceRefreshZoneList={forceRefreshZoneList}
         checkInfra={checkInfra}
       />

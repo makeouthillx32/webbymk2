@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
     // Get variant details
     const { data: variant, error: variantError } = await supabase
       .from("product_variants")
-      .select("id, product_id, price_cents, inventory_qty, is_active")
+      .select("id, product_id, price_cents, inventory_qty, is_active, track_inventory, allow_backorder")
       .eq("id", variant_id)
       .single();
 
@@ -226,7 +226,12 @@ export async function POST(request: NextRequest) {
       return jsonError(400, "VARIANT_INACTIVE", "This product variant is no longer available");
     }
 
-    if (variant.inventory_qty < quantity) {
+    if (!Number.isFinite(variant.price_cents) || variant.price_cents <= 0) {
+      return jsonError(400, "PRICE_NOT_SET", "This product is not available for purchase yet");
+    }
+
+    const inventoryLimited = variant.track_inventory !== false && variant.allow_backorder !== true;
+    if (inventoryLimited && variant.inventory_qty < quantity) {
       return jsonError(400, "OUT_OF_STOCK", `Only ${variant.inventory_qty} items in stock`);
     }
 
@@ -246,7 +251,7 @@ export async function POST(request: NextRequest) {
     if (existingItem) {
       const newQuantity = existingItem.quantity + quantity;
 
-      if (variant.inventory_qty < newQuantity) {
+      if (inventoryLimited && variant.inventory_qty < newQuantity) {
         return jsonError(400, "OUT_OF_STOCK", `Only ${variant.inventory_qty} items in stock`);
       }
 

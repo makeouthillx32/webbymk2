@@ -59,30 +59,38 @@ interface CoreViewProps {
   onEnter?:        () => void;
 }
 
-// ── CoreViewRow Component ─────────────────────────────────────────────────────
-
 interface CoreViewRowProps {
-  label: string;
-  domain: string;
-  status: Status;
-  active: boolean;
+  label:    string;
+  domain:   string;
+  status:   Status;
+  active:   boolean;
+  envName?: string;
 }
 
-function CoreViewRow({ label, domain, status, active }: CoreViewRowProps) {
+function CoreViewRow({ label, domain, status, active, envName }: CoreViewRowProps) {
   const ref = React.useRef<any>(null);
   useScrollIntoView(ref, active);
+
+  const isRemote   = Boolean(envName && envName.toUpperCase() !== "POWER" && envName.toUpperCase() !== "LOCAL");
+  const badgeColor = isRemote ? "magenta" : "blue";
+  const badgeText  = envName ? `[${envName.toUpperCase()}]` : "[POWER]";
 
   return (
     <Box ref={ref} paddingX={1} gap={2}>
       <Text color={active ? "cyan" : undefined} bold={active}>
         {active ? "▶" : " "}
       </Text>
-      <Box width={18}>
+      <Box width={16}>
         <Text color={active ? "cyan" : undefined} bold={active}>
           {label}
         </Text>
       </Box>
-      <Box width={28}>
+      <Box width={8}>
+        <Text color={badgeColor} bold={isRemote}>
+          {badgeText}
+        </Text>
+      </Box>
+      <Box width={26}>
         <Text dimColor={!active}>{domain}</Text>
       </Box>
       <StatusBadge status={status} />
@@ -118,6 +126,19 @@ export function CoreView({
 
   const coreApp = zones.find(isCoreZone) ?? null;
   const host = useHostMonitor();
+
+  const [environments, setEnvironments] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    loadEnvironments().then((envs) => {
+      const map: Record<string, string> = {};
+      for (const e of envs) map[e.id] = e.name;
+      setEnvironments(map);
+    }).catch(() => {});
+  }, []);
+
+  const appEnvName = coreApp?.environmentId ? (environments[coreApp.environmentId] ?? "POWER") : "POWER";
+  const proxyEnvName = PROXY_ZONE.environmentId ? (environments[PROXY_ZONE.environmentId] ?? "POWER") : "POWER";
 
   // Rows: 0 = App, 1 = Proxy
   const [selected,   setSelected]   = useState(0);
@@ -308,6 +329,7 @@ export function CoreView({
         zone={activeZone}
         status={selected === 1 ? proxyStatus : (zoneStatuses[activeZone.key] ?? "missing")}
         selected={actionNav.selected}
+        envName={selected === 0 ? appEnvName : proxyEnvName}
       />
     );
   }
@@ -343,6 +365,7 @@ export function CoreView({
             domain={coreApp?.domain ?? "unenter.live"}
             status={appStatus}
             active={selected === 0}
+            envName={appEnvName}
           />
 
           {/* ── Proxy row ───────────────────────────────────────────────────── */}
@@ -351,6 +374,7 @@ export function CoreView({
             domain="unt_proxy  ·  :3080"
             status={proxyStatus}
             active={selected === 1}
+            envName={proxyEnvName}
           />
         </Box>
       </SectionFrame>

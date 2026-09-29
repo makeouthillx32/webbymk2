@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { resolve, join } from "path";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 
 // ── Project root ──────────────────────────────────────────────────────────────
@@ -173,12 +173,76 @@ export const STACK_IP_SAFE = _local?.stack.ip  ?? "";
 // pattern where the control plane owns compose state, not the Git checkout.
 //
 //   Windows:     %APPDATA%\unaxis\unenter\stacks\
+//   WSL:         /mnt/c/Users/<user>/AppData/Roaming/unaxis/unenter/stacks/
 //   macOS/Linux: ~/.unaxis/unenter/stacks/
+//
+// ── Why WSL needs its own case (2026-09-06) ─────────────────────────────────
+// After UNAXIS moved into WSL, process.platform became "linux" and homedir()
+// became /home/<user>, so this resolved to /home/skill/.unaxis/... — a path
+// that does not exist, because the artifact store still lives on the Windows
+// side under %APPDATA%. Worse, that Linux path was then handed to a Windows
+// docker binary, which read it as drive-relative and reported:
+//
+//   open Z:\home\skill\.unaxis\unenter\stacks\unenter-zones\docker-compose.yml
+//
+// A `shop` deploy therefore failed AFTER a successful build and push. The
+// store is not moved here: Docker Desktop and any Windows-side tooling still
+// need to read these files, so WSL reaches across to the same location.
 
-const _artifactBase =
-  process.platform === "win32"
-    ? join(process.env["APPDATA"] ?? join(homedir(), ".config"), "unaxis", "unenter", "stacks")
-    : join(homedir(), ".unaxis", "unenter", "stacks");
+/** True when running inside WSL (either WSL1 or WSL2). */
+function isWsl(): boolean {
+  if (process.platform !== "linux") return false;
+  if (process.env["WSL_DISTRO_NAME"] || process.env["WSL_INTEROP"]) return true;
+  try {
+    // The kernel string contains "microsoft" under WSL and nowhere else.
+    return readFileSync("/proc/version", "utf-8").toLowerCase().includes("microsoft");
+  } catch {
+    return false;
+  }
+}
+
+/** Windows %APPDATA% as seen from inside WSL, or null if it can't be located. */
+function wslAppData(): string | null {
+  // WSLENV/APPDATA are only present when the var was explicitly shared, so
+  // probe the standard mount instead — that works on a default WSL2 setup.
+  const candidates: string[] = [];
+  const winUser = process.env["WIN_USER"] || process.env["USER"] || process.env["USERNAME"];
+  if (winUser) candidates.push(`/mnt/c/Users/${winUser}/AppData/Roaming`);
+  try {
+    for (const name of readdirSync("/mnt/c/Users")) {
+      const p = `/mnt/c/Users/${name}/AppData/Roaming`;
+      if (!candidates.includes(p)) candidates.push(p);
+    }
+  } catch {
+    /* /mnt/c not mounted — fall through to null */
+  }
+  // Prefer a candidate that already holds the store, so a multi-user box picks
+  // the right profile rather than the first one alphabetically.
+  for (const base of candidates) {
+    if (existsSync(join(base, "unaxis", "unenter", "stacks"))) return base;
+  }
+  return candidates.find((c) => existsSync(c)) ?? null;
+}
+
+const _artifactBase = (() => {
+  // Explicit override always wins — the escape hatch for any layout the
+  // detection below doesn't anticipate.
+  const override = process.env["UNAXIS_ARTIFACT_DIR"];
+  if (override) return override;
+
+  if (process.platform === "win32") {
+    return join(process.env["APPDATA"] ?? join(homedir(), ".config"), "unaxis", "unenter", "stacks");
+  }
+
+  if (isWsl()) {
+    const appData = wslAppData();
+    if (appData) return join(appData, "unaxis", "unenter", "stacks");
+    // No /mnt/c — fall through to the Linux default rather than throwing, so a
+    // WSL box without drive mounts still starts.
+  }
+
+  return join(homedir(), ".unaxis", "unenter", "stacks");
+})();
 
 /**
  * Root of the UNAXIS artifact store.
