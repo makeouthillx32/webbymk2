@@ -51,6 +51,8 @@ const DEFAULT_UPSTREAM = process.env.UPSTREAM_UNENTER    ?? "http://unt_app:3000
 let zoneUpstreams = {};
 let coreDomain    = process.env.CORE_DOMAIN ?? "unenter.live";
 let coreUpstream  = DEFAULT_UPSTREAM;
+let mediaHlsUpstream  = process.env.MEDIA_HLS_UPSTREAM  ?? "http://unt_mediamtx:8888";
+let mediaWhepUpstream = process.env.MEDIA_WHEP_UPSTREAM ?? "http://unt_mediamtx:8889";
 
 /**
  * Zones deliberately taken offline via `zone off <key> "<reason>"`, keyed
@@ -67,6 +69,8 @@ function loadRoutes() {
 
     const newCoreDomain   = config.coreDomain    ?? coreDomain;
     const newCoreUpstream = config.coreUpstream  ?? coreUpstream;
+    const newMediaHlsUpstream  = config.mediaHlsUpstream  ?? process.env.MEDIA_HLS_UPSTREAM  ?? "http://unt_mediamtx:8888";
+    const newMediaWhepUpstream = config.mediaWhepUpstream ?? process.env.MEDIA_WHEP_UPSTREAM ?? "http://unt_mediamtx:8889";
     const zones           = config.zones         ?? {};
     const offlineZones    = config.offlineZones  ?? {};
 
@@ -90,8 +94,12 @@ function loadRoutes() {
     offlineHosts  = offlineMap;
     coreDomain    = newCoreDomain;
     coreUpstream  = newCoreUpstream;
+    mediaHlsUpstream  = newMediaHlsUpstream;
+    mediaWhepUpstream = newMediaWhepUpstream;
 
     console.log(`[proxy] routes loaded from ${ROUTES_FILE} (${Object.keys(map).length} hosts)`);
+    console.log(`  media HLS upstream  → ${mediaHlsUpstream}`);
+    console.log(`  media WHEP upstream → ${mediaWhepUpstream}`);
     for (const [host, target] of Object.entries(map)) {
       console.log(`  ${host.padEnd(40)} → ${target}`);
     }
@@ -299,9 +307,9 @@ function resolveTarget(req) {
     // which iOS Safari and cellular networks decode without cookie restrictions.
     req.headers["user-agent"] = "TankLivePlayer/1.0";
     if (pathname.includes("-hls") || /\.(m3u8|ts|mp4|m4s)$/.test(pathname)) {
-      return "http://unt_mediamtx:8888";
+      return mediaHlsUpstream;
     }
-    return "http://unt_mediamtx:8889";
+    return mediaWhepUpstream;
   }
 
   // 2. Host-based routing (production) — reads live snapshot

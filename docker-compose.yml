@@ -583,6 +583,7 @@ services:
     ports:
       - "8889:8889"        # WHEP (HTTP, WebRTC signaling)
       - "8189:8189/udp"    # WebRTC ICE media
+      - "8554:8554"        # RTSP backhaul (LAN & Tailscale)
       # OBS / Streamlabs ingest. Safe to expose ONLY because publishing is now
       # authorised per-attempt by Tank (authMethod: http in mediamtx.yml) —
       # the previous `user: any` publish grant would have made this an open
@@ -662,7 +663,7 @@ services:
   #   docker compose up -d coturn
   #
   # REQUIRES A ROUTER-LEVEL PORT FORWARD nothing in this repo can do:
-  # UDP+TCP 3478 and UDP 49160-49180 forwarded to this host's LAN IP. Ask
+  # UDP+TCP 3478 and UDP 49160-49360 forwarded to this host's LAN IP. Ask
   # for the exact router steps rather than assuming they're done.
   coturn:
     image: coturn/coturn:4.6-alpine
@@ -671,7 +672,7 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      - "49160-49180:49160-49180/udp"
+      - "49160-49360:49160-49360/udp"
     volumes:
       - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
     networks:
@@ -784,6 +785,58 @@ services:
       unaxis.project: "unenter.live"
       unaxis.domain: "unenter.live"
       unaxis.role: "tank-vision"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
+  # Renders the Director Programme browser source (the same URL an operator
+  # would paste into OBS — see docs/tank-director-program-output.md) inside a
+  # virtual display + virtual sound card, and publishes the result as one
+  # continuous RTMP feed into Tank's own obs/director ingest. Exists for
+  # consumers that only accept a played-back URL and not a browser source —
+  # TikTok LIVE Studio's Stream relay -> Stream link box is the reason this
+  # was built: its own browser-source capture path drops audio.
+  #
+  # Chromium needs real pixels + real audio to capture, so it runs HEADED
+  # inside Xvfb, not headless — see services/tank-program-relay/src/index.mjs
+  # for why, and for the health loop that restarts the whole pipeline
+  # (browser + ffmpeg together, never one alone) if either goes quiet.
+  #
+  # Profiled off by default: once enabled this publishes real audio+video
+  # 24/7, which is meaningless load while nothing downstream is watching the
+  # relay link. Enable with `--profile relay` / `COMPOSE_PROFILES=relay`.
+  tank-program-relay:
+    image: unenter/tank-program-relay:0.1.0
+    build:
+      context: ./services/tank-program-relay
+      dockerfile: Dockerfile
+    container_name: unt_tank_relay
+    profiles: ["relay"]
+    restart: unless-stopped
+    # Chromium's shared-memory usage under Docker's default 64m shm routinely
+    # crashes the renderer ("Failed to load libGL" / silent tab death).
+    shm_size: "1gb"
+    # Measured ~1.7 GB steady-state (Chromium + ffmpeg encoding 1080p30) —
+    # 2g left almost no headroom before an OOM kill under any load spike.
+    mem_limit: 3g
+    environment:
+      RELAY_SOURCE_URL: ${TANK_RELAY_SOURCE_URL:-http://unt_tank:3000/obs/director?volume=100&theme=cctv}
+      RELAY_RTMP_URL: rtmp://unt_mediamtx:1935/obs/director?user=director&pass=${TANK_DIRECTOR_PROGRAM_STREAM_KEY}
+      RELAY_WIDTH: ${TANK_RELAY_WIDTH:-1920}
+      RELAY_HEIGHT: ${TANK_RELAY_HEIGHT:-1080}
+      RELAY_FPS: ${TANK_RELAY_FPS:-30}
+      RELAY_VIDEO_BITRATE: ${TANK_RELAY_VIDEO_BITRATE:-4500k}
+    depends_on:
+      mediamtx:
+        condition: service_started
+      app:
+        condition: service_healthy
+    networks:
+      - unenter
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "tank-relay"
       unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
   # The AI-mode learner (services/tank-vision-gpu/tools/live_learner.py).

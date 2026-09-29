@@ -33,6 +33,7 @@ describe("deriveHlsLowUrl", () => {
       `${B}/previews/obs-admin/index.m3u8`,
     );
     expect(deriveHlsLowUrl(`${B}/obs/admin-whep/whep`)).toBe(`${B}/obs/admin/index.m3u8`);
+    expect(deriveHlsLowUrl(`${B}/obs/admin/whep`)).toBe(`${B}/obs/admin/index.m3u8`);
   });
 
   test("never returns a WHEP endpoint", () => {
@@ -40,6 +41,7 @@ describe("deriveHlsLowUrl", () => {
       `${B}/cameras/cam-1/whep`,
       `${B}/previews/obs-admin/whep`,
       `${B}/obs/admin-whep/whep`,
+      `${B}/obs/admin/whep`,
     ]) {
       expect(deriveHlsLowUrl(input).endsWith("/whep")).toBe(false);
       expect(deriveHlsLowUrl(input)).toContain(".m3u8");
@@ -66,6 +68,11 @@ describe("deriveHlsUrl", () => {
     expect(deriveHlsUrl(`${B}/previews/obs-admin/whep`)).toBe(
       `${B}/previews/obs-admin/index.m3u8`,
     );
+  });
+
+  test("obs/* resolves to its playlist rather than passing through", () => {
+    expect(deriveHlsUrl(`${B}/obs/admin-whep/whep`)).toBe(`${B}/obs/admin/index.m3u8`);
+    expect(deriveHlsUrl(`${B}/obs/admin/whep`)).toBe(`${B}/obs/admin/index.m3u8`);
   });
 });
 

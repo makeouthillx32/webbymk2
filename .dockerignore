@@ -24,6 +24,10 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+# Backups of .env carry the same secrets (.env.bak, .env.bak.preLive, …).
+# No Dockerfile copies them today; this keeps it that way.
+.env.bak*
+.env*.bak
 
 # VCS + dev tooling
 .git

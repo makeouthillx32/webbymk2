@@ -7,7 +7,11 @@ import { useTankCameras } from "../public/useTankCameras";
 import { useServerDirector } from "../director/useServerDirector";
 import { useBuildReload } from "./useBuildReload";
 import type { PlaybackProtocol } from "../contracts";
-import { hasNewDecodedPicture, readVideoPictureProbe } from "./directorPlayback";
+import {
+  deriveDirectorHlsUrl,
+  hasNewDecodedPicture,
+  readVideoPictureProbe,
+} from "./directorPlayback";
 import { useGimbalVideoDriver } from "../director/useGimbalVideoDriver";
 
 export interface DirectorObsSceneProps {
@@ -246,9 +250,7 @@ export function DirectorObsScene({ documentBuildId }: DirectorObsSceneProps = {}
     // and a WHEP URL is not decodable media — assigning it to video.src is
     // what produced a permanently black programme feed. Derive the HLS
     // sibling instead, and only ever hand the element a real playlist.
-    const playbackUrl = url.includes("/whep")
-      ? url.replace(/\/(cameras\/[^/]+?)(?:-hls(?:-low)?)?\/whep(\?.*)?$/, "/$1-hls/index.m3u8")
-      : url;
+    const playbackUrl = deriveDirectorHlsUrl(url) ?? url;
 
     if (playbackUrl.includes(".m3u8") && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, lowLatencyMode: true });

@@ -27,6 +27,11 @@ export function deriveHlsUrl(url: string, direct = false): string {
   if (/\/previews\//.test(url)) {
     return url.replace(/\/(previews\/[^/]+)\/(?:whep|index\.m3u8)(\?.*)?$/, "/$1/index.m3u8$2");
   }
+  if (/\/obs\//.test(url)) {
+    return url
+      .replace(/-whep\/(?:whep|index\.m3u8)(\?.*)?$/, "/index.m3u8$1")
+      .replace(/\/whep(\?.*)?$/, "/index.m3u8$1");
+  }
   if (/-whep\//.test(url)) {
     return url.replace(/-whep\/(?:whep|index\.m3u8)(\?.*)?$/, "/index.m3u8$1");
   }

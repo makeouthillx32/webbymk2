@@ -60,6 +60,9 @@ describe("deriveDirectorHlsUrl", () => {
     expect(
       deriveDirectorHlsUrl("https://media.tank.unenter.live/obs/admin-room-whep/whep"),
     ).toBe("https://media.tank.unenter.live/obs/admin-room/index.m3u8");
+    expect(
+      deriveDirectorHlsUrl("https://media.tank.unenter.live/obs/admin/whep"),
+    ).toBe("https://media.tank.unenter.live/obs/admin/index.m3u8");
   });
 
   test("preserves query strings and rejects unknown endpoints", () => {

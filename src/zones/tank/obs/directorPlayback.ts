@@ -65,6 +65,10 @@ export function deriveDirectorHlsUrl(url: string): string | null {
     return url.replace(/-whep\/whep(\?.*)?$/, "/index.m3u8$1");
   }
 
+  if (/\/obs\/[^/]+\/whep(?:\?.*)?$/.test(url)) {
+    return url.replace(/\/whep(\?.*)?$/, "/index.m3u8$1");
+  }
+
   if (/\/cameras\/[^/]+\/whep(?:\?.*)?$/.test(url)) {
     return url.replace(/\/(cameras\/[^/]+)\/whep(\?.*)?$/, "/$1-hls/index.m3u8$2");
   }
