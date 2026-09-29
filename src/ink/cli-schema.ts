@@ -40,6 +40,29 @@ export const UNAXIS_CLI_SCHEMA = {
         { name: "zone", type: "string", required: false }
       ]
     },
+    media: {
+      description: "Media topology: which UNAXIS host runs which media role (origin, edge, turn, ingress, camera-receiver), port-forward checks, viewer capacity, and config generated from it.",
+      subcommands: ["topology", "facts", "place", "unplace", "gateway", "render", "apply", "edge", "seed"],
+      arguments: [
+        { name: "target", type: "string", required: false },
+        { name: "detail", type: "string", required: false }
+      ],
+      options: {
+        "--json":        { type: "boolean", description: "topology: output as JSON." },
+        "--discover":    { type: "boolean", description: "facts: read addresses/cores/load from the host's agent." },
+        "--lan-ip":      { type: "string",  description: "facts: host LAN address." },
+        "--tailnet-ip":  { type: "string",  description: "facts: host tailnet address." },
+        "--public-ip":   { type: "string",  description: "facts/gateway: public address." },
+        "--uplink":      { type: "number",  description: "facts: measured upload of the host's internet connection, Mbps." },
+        "--gateway":     { type: "string",  description: "facts: home-router gateway key the host sits behind, or 'none'." },
+        "--primary":     { type: "boolean", description: "place media-edge: serve the public HLS path." },
+        "--public-whep": { type: "boolean", description: "place media-edge: also answer public WebRTC." },
+        "--key":         { type: "string",  description: "place: custom placement key." },
+        "--config":      { type: "string",  description: "place: role config overrides as JSON." },
+        "--forwards":    { type: "string",  description: "gateway: the router's port-forwards as a JSON array." },
+        "--dry-run":     { type: "boolean", description: "apply: show drift without writing." }
+      }
+    },
     "build-mem": {
       description: "Snapshot every container's memory usage + limit (run during a build to watch the builder).",
     },

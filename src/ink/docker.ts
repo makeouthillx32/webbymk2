@@ -604,9 +604,10 @@ export async function recreateZoneService(
   if (zone.environmentId) {
     let env: UnaxisEnvironment | null = null;
     try { env = dbGetEnvironmentById(zone.environmentId); } catch {}
-    if (env && env.type !== "local-docker") {
-      onLine?.(`✗ ${zone.label} is assigned to ${env.name}; local .env cannot be applied remotely.`);
-      return 1;
+    if (env && env.type !== "local-docker" && env.agentUrl) {
+      onLine?.(`Applying updated configuration to ${zone.label} on ${env.name} via agent…`);
+      const { deployRemoteZoneManifest } = await import("./zone-build.js");
+      return deployRemoteZoneManifest(zone, env, onLine ?? (() => {}));
     }
   }
 

@@ -41,7 +41,8 @@ import { getCredential }                     from "../utils/secureStorage/index.
 import { log }                               from "./logger.ts";
 import { deployRemoteZone, fetchContainers, type ZoneDeployManifest } from "./agent-client.ts";
 import type { UnaxisEnvironment }            from "./environment-store.ts";
-import { ensureRuntimeEnv }                  from "../utils/runtimeEnv.js";
+import { dbCoreLanIp }                      from "./control-db.ts";
+import { ensureRuntimeEnv, readRuntimeEnvFiles } from "../utils/runtimeEnv.js";
 
 declare const UNAXIS_VERSION: string | undefined;
 
@@ -79,12 +80,13 @@ function loadBuildEnvKeys(zone: Zone): string[] | null {
 
 function loadBuildArgs(zone: Zone): string[] {
   const args: string[] = [];
+  const currentEnv = { ...process.env, ...readRuntimeEnvFiles() };
 
   // ── Pass 1: build.env manifest (preferred) ──────────────────────────────────
   const manifestKeys = loadBuildEnvKeys(zone);
   if (manifestKeys !== null) {
     for (const key of manifestKeys) {
-      const value = process.env[key];
+      const value = currentEnv[key];
       if (typeof value === "string" && value.length > 0) {
         args.push("--build-arg", `${key}=${value}`);
       }
@@ -904,6 +906,7 @@ export async function deployRemoteZoneManifest(
   try {
     ensureRuntimeEnv(true);
   } catch {}
+  const currentEnv = { ...process.env, ...readRuntimeEnvFiles() };
 
   const prov = gitProvenance();
   const depTarget = prov.branch === "main" ? "production" : "preview";
@@ -939,10 +942,16 @@ export async function deployRemoteZoneManifest(
             if (p.PublicPort) usedPorts.add(p.PublicPort);
           }
         }
-        if (zone.key === "blog" && !usedPorts.has(3001)) {
+        if (zone.port && !usedPorts.has(zone.port)) {
+          targetPort = zone.port;
+        } else if (zone.key === "blog" && !usedPorts.has(3001)) {
           targetPort = 3001;
         } else if (zone.key === "docs" && !usedPorts.has(3002)) {
           targetPort = 3002;
+        } else if (zone.key === "shop" && !usedPorts.has(3003)) {
+          targetPort = 3003;
+        } else if (zone.key === "auth" && !usedPorts.has(3004)) {
+          targetPort = 3004;
         } else {
           let candidate = 3001;
           while (usedPorts.has(candidate)) candidate++;
@@ -954,8 +963,14 @@ export async function deployRemoteZoneManifest(
     onLine(`  (could not query remote containers for port, defaulting to ${targetPort})`);
   }
 
-  // 2. Private LAN Kong gateway on POWER for server-side container traffic
-  const kongHost = process.env.POWER_LAN_IP || "192.168.50.204";
+  // 2. The core host's Kong gateway on the LAN, for server-side container
+  // traffic. From the UNAXIS topology (unaxis media facts <core> --lan-ip);
+  // CORE_LAN_IP / POWER_LAN_IP still override it.
+  const kongHost = currentEnv.CORE_LAN_IP || currentEnv.POWER_LAN_IP || dbCoreLanIp();
+  if (!kongHost) {
+    onLine("  ✗ core host LAN address unknown — run: unaxis media facts <core-env> --lan-ip <ip>");
+    return 1;
+  }
   const supabaseLanUrl = `http://${kongHost}:8001`;
 
   // 3. Assemble environment variables
@@ -963,13 +978,13 @@ export async function deployRemoteZoneManifest(
     NODE_ENV: "production",
     PORT: "3000",
     NEXT_PUBLIC_ZONE: zone.key,
-    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live",
-    NEXT_PUBLIC_APP_TITLE: process.env.NEXT_PUBLIC_APP_TITLE || "unenter.live",
-    NEXT_PUBLIC_COMPANY_NAME: process.env.NEXT_PUBLIC_COMPANY_NAME || "unenter",
-    NEXT_PUBLIC_SUPABASE_URL_BROWSER: process.env.NEXT_PUBLIC_SUPABASE_URL_BROWSER || "https://db.unenter.live",
+    NEXT_PUBLIC_SITE_URL: currentEnv.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live",
+    NEXT_PUBLIC_APP_TITLE: currentEnv.NEXT_PUBLIC_APP_TITLE || "unenter.live",
+    NEXT_PUBLIC_COMPANY_NAME: currentEnv.NEXT_PUBLIC_COMPANY_NAME || "unenter",
+    NEXT_PUBLIC_SUPABASE_URL_BROWSER: currentEnv.NEXT_PUBLIC_SUPABASE_URL_BROWSER || "https://db.unenter.live",
     NEXT_PUBLIC_SUPABASE_URL: supabaseLanUrl,
     SUPABASE_URL: supabaseLanUrl,
-    API_EXTERNAL_URL: process.env.API_EXTERNAL_URL || "https://db.unenter.live",
+    API_EXTERNAL_URL: currentEnv.API_EXTERNAL_URL || "https://db.unenter.live",
   };
 
   const keysToCopy = [
@@ -985,16 +1000,23 @@ export async function deployRemoteZoneManifest(
   ];
 
   for (const k of keysToCopy) {
-    if (process.env[k]) {
-      containerEnv[k] = process.env[k]!;
+    if (currentEnv[k]) {
+      containerEnv[k] = currentEnv[k]!;
+    }
+  }
+
+  // Forward runtime Stripe keys and mode configuration to remote zones
+  for (const [k, v] of Object.entries(currentEnv)) {
+    if (k.startsWith("STRIPE_") && v) {
+      containerEnv[k] = v;
     }
   }
 
   const buildKeys = loadBuildEnvKeys(zone);
   if (buildKeys) {
     for (const k of buildKeys) {
-      if (process.env[k] && !containerEnv[k]) {
-        containerEnv[k] = process.env[k]!;
+      if (currentEnv[k] && !containerEnv[k]) {
+        containerEnv[k] = currentEnv[k]!;
       }
     }
   }

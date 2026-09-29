@@ -46,6 +46,7 @@ import os from "os";
 import type { Zone } from "../config/zones.ts";
 import { PROJECT_DIR } from "../config/zones.ts";
 import { STACK_HOST } from "../config/stack.ts";
+import { dbCoreLanIp } from "./control-db.ts";
 import { addZoneRoute, removeZoneRoute } from "./proxy-config.ts";
 import { npmAddDevHost } from "./npm-api.ts";
 import { deleteZoneNpmHost } from "./zone/npm-cleanup.ts";
@@ -64,12 +65,15 @@ export type BareDevConfig = {
 // zone NOT listed here is completely unaffected — dev-container.ts's
 // Docker path is still the only thing that ever runs for them.
 const BARE_METAL_DEV_ZONES: Record<string, BareDevConfig> = {
-  tank: { port: 3012, script: "zones/tank/dev-bare.ps1", host: "192.168.50.204" },
+  // host "" = the core host, resolved from the UNAXIS topology in bareDevConfig().
+  tank: { port: 3012, script: "zones/tank/dev-bare.ps1", host: "" },
 };
 
 /** Null when this zone doesn't opt into bare-metal dev mode. */
 export function bareDevConfig(zone: Zone): BareDevConfig | null {
-  return BARE_METAL_DEV_ZONES[zone.key] ?? null;
+  const cfg = BARE_METAL_DEV_ZONES[zone.key];
+  if (!cfg) return null;
+  return cfg.host ? cfg : { ...cfg, host: process.env.BARE_DEV_HOST || dbCoreLanIp() || "127.0.0.1" };
 }
 
 function stateDir(): string {

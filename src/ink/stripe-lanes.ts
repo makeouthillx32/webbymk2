@@ -14,6 +14,7 @@ export type StripeLaneStatus = {
   mode: StripeMode;
   serverKey: "missing" | "invalid" | "test" | "live";
   publicKey: "missing" | "invalid" | "test" | "live";
+  webhookReady: boolean;
 };
 
 export type StripeLaneSnapshot = {
@@ -77,8 +78,20 @@ function statuses(values: Map<string, string>): StripeLaneStatus[] {
       mode,
       serverKey: secretKeyClass(laneKey(values, lane, mode, "secret")),
       publicKey: publicKeyClass(laneKey(values, lane, mode, "public")),
+      webhookReady: laneWebhookReady(values, lane, mode),
     };
   });
+}
+
+function laneWebhookReady(
+  values: Map<string, string>,
+  lane: StripeLane,
+  mode: StripeMode,
+): boolean {
+  const modePart = mode === "live" ? "LIVE_" : "";
+  const laneSecret = values.get(`STRIPE_${lane.toUpperCase()}_${modePart}WEBHOOK_SECRET`);
+  const fallback = values.get(`STRIPE_${modePart}WEBHOOK_SECRET`);
+  return (laneSecret || fallback)?.startsWith("whsec_") === true;
 }
 
 export function readStripeLaneSnapshot(projectDir = PROJECT_DIR): StripeLaneSnapshot {
@@ -106,10 +119,11 @@ export function validateStripeLaneChange(
 ): void {
   if (mode !== "live") return;
   if (!confirmLive) throw new Error("Live mode requires --confirm-live or explicit TUI confirmation.");
-  if (!snapshot.liveWebhookReady) throw new Error("STRIPE_LIVE_WEBHOOK_SECRET is missing or invalid.");
-
   const values = parseEnv(snapshot.original);
   for (const lane of stripeLanesForTarget(target)) {
+    if (!laneWebhookReady(values, lane, "live")) {
+      throw new Error(`${lane} has no valid live webhook secret.`);
+    }
     if (secretKeyClass(laneKey(values, lane, "live", "secret")) !== "live") {
       throw new Error(`${lane} has no valid live server key.`);
     }
@@ -160,7 +174,8 @@ export function formatStripeLaneStatus(snapshot: StripeLaneSnapshot): string[] {
   const lines = ["Stripe lane status (credentials are never printed):"];
   for (const status of snapshot.statuses) {
     lines.push(
-      `  ${status.lane.padEnd(5)} mode=${status.mode.padEnd(4)} server-key=${status.serverKey} public-key=${status.publicKey}`,
+      `  ${status.lane.padEnd(5)} mode=${status.mode.padEnd(4)} server-key=${status.serverKey} public-key=${status.publicKey}`
+        + ` webhook=${status.webhookReady ? "ready" : "missing"}`,
     );
   }
   lines.push(`  test-webhook=${snapshot.testWebhookReady ? "ready" : "missing"}`);

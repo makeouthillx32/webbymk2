@@ -327,6 +327,13 @@ const MIGRATIONS: string[] = [
   // environments (e.g. 3001 for blog on L0VE) so NPM and proxy routing derive
   // the exact bound port instead of hardcoding :3000.
   `ALTER TABLE zones ADD COLUMN port INTEGER;`,
+
+  // 012 — host network facts. Everything the media topology needs to decide
+  // where a role can run and how the pieces reach each other: LAN / tailnet /
+  // public addresses, cores, measured upload. JSON, not columns — a cloud VM,
+  // a home box and a volunteer's machine know different things about
+  // themselves. See media-topology.ts. Roles themselves are `services` rows.
+  `ALTER TABLE environments ADD COLUMN host_facts TEXT NOT NULL DEFAULT '{}';`,
 ];
 
 function runMigrations(db: Database): void {
@@ -1251,7 +1258,9 @@ export interface UnaxisService {
   name:           string;
   description:    string;
   environmentId:  string | null;
-  serviceType:    "mail" | "media" | "gateway" | "agent" | "utility" | "custom";
+  serviceType:    "mail" | "media" | "gateway" | "agent" | "utility" | "custom"
+    // Media topology roles — see media-topology.ts.
+    | "media-origin" | "media-edge" | "turn" | "ingress" | "camera-receiver";
   container:      string;
   host:           string;
   port:           number;
@@ -1395,6 +1404,59 @@ export function dbUpsertService(svc: {
   );
 }
 
+/**
+ * The core host's LAN address — the default-target environment's recorded
+ * `lanIp` (unaxis media facts <env> --lan-ip), else its agent URL when that is
+ * a private address. Null when unknown: callers must say so, never fall back
+ * to a literal machine address baked into this (public) package.
+ */
+export function dbCoreLanIp(): string | null {
+  const core = dbGetEnvironments().find((e) => e.isDefaultTarget);
+  if (!core) return null;
+  const facts = dbGetHostFacts(core.id);
+  if (typeof facts.lanIp === "string" && facts.lanIp) return facts.lanIp;
+  try {
+    const host = new URL(core.agentUrl).hostname;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return host;
+  } catch {
+    // no agent URL
+  }
+  return null;
+}
+
+/** Hostname from an environment's agent URL, unless it is loopback. */
+function agentHost(env: { agentUrl?: string } | undefined): string {
+  try {
+    const host = env?.agentUrl ? new URL(env.agentUrl).hostname : "";
+    return host === "127.0.0.1" || host === "localhost" ? "" : host;
+  } catch {
+    return "";
+  }
+}
+
+/** Network facts for an environment (migration 012) — see media-topology.ts. */
+export function dbGetHostFacts(envId: string): Record<string, any> {
+  const row = getControlDb().query("SELECT host_facts FROM environments WHERE id = ?")
+    .get(envId) as { host_facts: string } | undefined;
+  try {
+    return JSON.parse(row?.host_facts || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** Merges into an environment's facts; a null value removes that key. */
+export function dbPatchHostFacts(envId: string, patch: Record<string, any>): Record<string, any> {
+  const next = { ...dbGetHostFacts(envId) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else if (value !== undefined) next[key] = value;
+  }
+  getControlDb().run("UPDATE environments SET host_facts = ?, updated_at = datetime('now') WHERE id = ?",
+    [JSON.stringify(next), envId]);
+  return next;
+}
+
 export function dbDeleteService(key: string): void {
   const db = getControlDb();
   db.run("DELETE FROM services WHERE key = ?", [key]);
@@ -1420,7 +1482,7 @@ export function dbSeedDefaultServices(): void {
       environmentId: l0v3Id,
       serviceType: "mail",
       container: "poste",
-      host: l0v3?.agentUrl ? new URL(l0v3.agentUrl).hostname : "192.168.50.75",
+      host: agentHost(l0v3),
       port: 25,
       adminPort: 8082,
       adminUrl: "https://mail.unenter.live",
@@ -1434,7 +1496,7 @@ export function dbSeedDefaultServices(): void {
       environmentId: powerId,
       serviceType: "media",
       container: "unt_mediamtx",
-      host: "192.168.50.204",
+      host: dbCoreLanIp() ?? agentHost(power),
       port: 1935,
       adminPort: 8889,
       adminUrl: "https://media.unenter.live",
@@ -1449,7 +1511,7 @@ export function dbSeedDefaultServices(): void {
       environmentId: powerId,
       serviceType: "media",
       container: "unt_tank_vision",
-      host: "192.168.50.204",
+      host: dbCoreLanIp() ?? agentHost(power),
       // Headless by design — it opens no listener. It is a pure consumer:
       // MediaMTX in, director telemetry out. 0 is the honest value here rather
       // than inventing a port the operator could try to open.

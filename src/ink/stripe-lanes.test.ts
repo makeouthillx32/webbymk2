@@ -61,6 +61,16 @@ describe("UNAXIS Stripe lane configuration", () => {
     expect(() => validateStripeLaneChange(snapshot, "tank", "live", true)).toThrow("Tank live approval");
   });
 
+  test("accepts a lane-specific live webhook instead of the shared fallback", () => {
+    const snapshot = readStripeLaneSnapshot(fixture([
+      "STRIPE_SHOP_LIVE_SECRET_KEY=sk_live_shop_example",
+      "NEXT_PUBLIC_STRIPE_SHOP_LIVE_PUBLISHABLE_KEY=pk_live_shop_example",
+      "STRIPE_SHOP_LIVE_WEBHOOK_SECRET=whsec_shop_example",
+    ].join("\n")));
+
+    expect(() => validateStripeLaneChange(snapshot, "shop", "live", true)).not.toThrow();
+  });
+
   test("an all-lane failure restores env and reapplies the failed lane too", async () => {
     const dir = fixture("STRIPE_SHOP_MODE=live\nSTRIPE_LABS_MODE=live\nSTRIPE_POS_MODE=live\nSTRIPE_TANK_MODE=live");
     const original = readStripeLaneSnapshot(dir).original;

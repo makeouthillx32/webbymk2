@@ -82,13 +82,15 @@ export function StripePaymentsSettings({
               );
             }
             const status = snapshot.statuses.find((candidate) => candidate.lane === target)!;
-            const ready = status.serverKey === status.mode && status.publicKey === status.mode;
+            const ready = status.serverKey === status.mode
+              && status.publicKey === status.mode
+              && status.webhookReady;
             return (
               <Box key={target} gap={2} flexShrink={0}>
                 <Text color={selected === index ? "cyan" : "gray"}>{selected === index ? "›" : " "}</Text>
                 <Text bold={selected === index}>{target.padEnd(7)}</Text>
                 <Text color={status.mode === "live" ? "yellow" : "green"}>{status.mode.padEnd(5)}</Text>
-                <Text color={ready ? "green" : "red"}>{ready ? "keys ready" : "keys missing/invalid"}</Text>
+                <Text color={ready ? "green" : "red"}>{ready ? "account ready" : "keys/webhook missing"}</Text>
               </Box>
             );
           })}

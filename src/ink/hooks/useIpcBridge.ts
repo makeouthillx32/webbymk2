@@ -72,6 +72,28 @@ import { UNAXIS_CLI_SCHEMA } from "../cli-schema.js";
 import { fetchZoneVisibility, setZoneVisibility, type ZoneVisibility } from "../zone-visibility.js";
 import type { NotificationType, NotificationPriority, NotificationOptions } from "../components/Notifications.js";
 import { formatDockerWslVhdReport, inspectDockerWslVhd } from "../windows-wsl-vhd-guard.js";
+import {
+  formatTopology,
+  isMediaRole,
+  MEDIA_ROLES,
+  renderDerivedConfig,
+  renderEdgeConfig,
+  type PortForward,
+} from "../media-topology.js";
+import {
+  applyDerived,
+  computeDrift,
+  deployEdge,
+  discoverHostFacts,
+  findEnv,
+  loadTopology,
+  placeRole,
+  seedFromLive,
+  setGateway,
+  unplaceRole,
+  type ApplyTarget,
+} from "../media-topology-store.js";
+import { dbPatchHostFacts } from "../control-db.js";
 
 declare const UNAXIS_VERSION: string;
 
@@ -1834,6 +1856,123 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // limit. Run repeatedly during a build to watch the buildx builder
       // (buildx_buildkit_*) climb: a hard cap below ~31GB → recreate builder
       // with more memory; usage climbing to the cap → SSG runaway (reduce SSG).
+      // unaxis media <topology|facts|place|unplace|gateway|render|apply|edge|seed>
+      // Which UNAXIS host does which media job — see media-topology.ts. Every
+      // host-dependent media setting derives from these placements instead of
+      // being typed into a file.
+      media: async (args, onLine) => {
+        const sub = args[0] ?? "topology";
+        // Positionals after the subcommand, skipping flags and the values of
+        // flags that take one.
+        const valueFlags = new Set(["--lan-ip", "--tailnet-ip", "--public-ip", "--uplink", "--gateway", "--key", "--config", "--forwards"]);
+        const pos = args.filter((a, i) => i > 0 && !a.startsWith("--") && !valueFlags.has(args[i - 1]));
+        const flag = (name: string) => argValue(args, name);
+
+        if (sub === "topology") {
+          const t = loadTopology();
+          if (args.includes("--json")) { onLine(JSON.stringify(t, null, 2)); return 0; }
+          for (const line of formatTopology(t)) onLine(line);
+          return 0;
+        }
+
+        if (sub === "facts") {
+          const target = pos[0];
+          const envs = target ? [findEnv(target)].filter(Boolean) as NonNullable<ReturnType<typeof findEnv>>[] : (await loadEnvironments());
+          if (!envs.length) { onLine(`✗ environment not found: ${target}`); return 1; }
+          for (const env of envs) {
+            if (args.includes("--discover") || !target) {
+              const facts = await discoverHostFacts(env, onLine);
+              onLine(`✓ ${env.name}: ${JSON.stringify(facts)}`);
+            }
+            const patch: Record<string, any> = {};
+            const num = (v?: string) => (v == null ? undefined : Number(v));
+            if (flag("--lan-ip")) patch.lanIp = flag("--lan-ip");
+            if (flag("--tailnet-ip")) patch.tailnetIp = flag("--tailnet-ip");
+            if (flag("--public-ip")) patch.publicIp = flag("--public-ip");
+            if (flag("--uplink")) patch.uplinkMbps = num(flag("--uplink"));
+            if (flag("--gateway")) patch.gateway = flag("--gateway") === "none" ? null : flag("--gateway");
+            if (Object.keys(patch).length) onLine(`✓ ${env.name}: ${JSON.stringify(dbPatchHostFacts(env.id, patch))}`);
+          }
+          return 0;
+        }
+
+        if (sub === "place") {
+          const [role, envName] = pos;
+          if (!role || !isMediaRole(role) || !envName) {
+            onLine(`usage: unaxis media place <${MEDIA_ROLES.join("|")}> <env> [--primary] [--public-whep] [--key k] [--config '{json}']`);
+            return 2;
+          }
+          const env = findEnv(envName);
+          if (!env) { onLine(`✗ environment not found: ${envName}`); return 1; }
+          let config: Record<string, any> = {};
+          try { config = flag("--config") ? JSON.parse(flag("--config")!) : {}; } catch { onLine("✗ --config must be JSON"); return 2; }
+          if (args.includes("--primary")) config.primary = true;
+          if (args.includes("--public-whep")) config.publicWhep = true;
+          const key = placeRole(role, env, config, flag("--key"));
+          onLine(`✓ placed ${key}`);
+          return 0;
+        }
+
+        if (sub === "unplace") {
+          const key = pos[0];
+          if (!key) { onLine("usage: unaxis media unplace <key>"); return 2; }
+          return unplaceRole(key) ? (onLine(`✓ removed ${key}`), 0) : (onLine(`✗ no media role "${key}"`), 1);
+        }
+
+        if (sub === "gateway") {
+          const key = pos[0];
+          const publicIp = flag("--public-ip");
+          if (!key || !publicIp) {
+            onLine(`usage: unaxis media gateway <key> --public-ip <ip> [--forwards '[{"external":"3478","internal":"3478","targetIp":"…","protocol":"BOTH"}]']`);
+            return 2;
+          }
+          let forwards: PortForward[] | undefined;
+          try { forwards = flag("--forwards") ? JSON.parse(flag("--forwards")!) : undefined; } catch { onLine("✗ --forwards must be JSON"); return 2; }
+          setGateway(key, publicIp, forwards);
+          onLine(`✓ gateway ${key} (${publicIp})${forwards ? `, ${forwards.length} forwards recorded` : ""}`);
+          return 0;
+        }
+
+        if (sub === "render" || sub === "apply") {
+          const t = loadTopology();
+          const derived = renderDerivedConfig(t);
+          for (const n of derived.notes) onLine(`⚠ ${n}`);
+          const drift = computeDrift(derived);
+          for (const d of drift) {
+            const same = d.current === d.derived;
+            onLine(`${same ? "✓" : "≠"} ${d.target.padEnd(8)} ${d.field.padEnd(26)} ${same ? d.current : `${d.current ?? "(unset)"} → ${d.derived ?? "(can't derive)"}`}`);
+          }
+          if (sub === "render") return drift.every((d) => d.current === d.derived) ? 0 : 4;
+          const valid: ApplyTarget[] = ["routes", "coturn", "mediamtx", "env"];
+          const wanted = pos.length ? pos.filter((p): p is ApplyTarget => (valid as string[]).includes(p)) : valid;
+          if (args.includes("--dry-run")) { onLine("(dry run — nothing written)"); return 0; }
+          const { changed, followUp } = applyDerived(derived, wanted, onLine);
+          if (!changed.length) onLine("✓ nothing to apply — files already match the topology");
+          for (const f of followUp) onLine(`→ ${f}`);
+          return 0;
+        }
+
+        if (sub === "edge") {
+          const action = pos[0];
+          const key = pos[1];
+          if (!key || (action !== "render" && action !== "deploy")) { onLine("usage: unaxis media edge <render|deploy> <placement-key>"); return 2; }
+          if (action === "render") {
+            try { for (const l of renderEdgeConfig(loadTopology(), key).split("\n")) onLine(l); return 0; }
+            catch (error) { onLine(`✗ ${error instanceof Error ? error.message : error}`); return 1; }
+          }
+          return deployEdge(key, onLine);
+        }
+
+        if (sub === "seed") {
+          onLine("• recording the roles running today (by container, on every environment)…");
+          await seedFromLive(onLine);
+          return 0;
+        }
+
+        onLine("usage: unaxis media <topology|facts|place|unplace|gateway|render|apply|edge|seed>");
+        return 2;
+      },
+
       "build-mem": async (_args, onLine) => {
         onLine(`mem @ ${new Date().toLocaleTimeString()}`);
         return dockerRun(["stats", "--no-stream", "--format", "{{.Name}}  {{.MemUsage}}  ({{.MemPerc}})"], onLine);
