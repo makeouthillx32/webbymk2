@@ -155,3 +155,6 @@ services/tank-vision-gpu/out/
 /.cursor/
 /.codex/
 /.claude/worktrees/
+
+# Generated character sheets of real people — local only, never in the public repo.
+artifacts/higgsfield-character-sheets/
