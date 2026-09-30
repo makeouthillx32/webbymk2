@@ -1260,7 +1260,9 @@ export interface UnaxisService {
   environmentId:  string | null;
   serviceType:    "mail" | "media" | "gateway" | "agent" | "utility" | "custom"
     // Media topology roles — see media-topology.ts.
-    | "media-origin" | "media-edge" | "turn" | "ingress" | "camera-receiver";
+    | "media-origin" | "media-edge" | "turn" | "ingress" | "camera-receiver"
+    // Git forge (Forgejo) — see forge.ts.
+    | "forge";
   container:      string;
   host:           string;
   port:           number;
