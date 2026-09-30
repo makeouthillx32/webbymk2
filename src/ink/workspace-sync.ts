@@ -94,8 +94,9 @@ export function syncOverlay(root: string, onLine: Line, opts: { push?: boolean; 
   if (isPublicHost(remote)) { onLine("✗ overlay remote points at a public host — refusing to sync"); return 2; }
 
   onLine("• selecting ignored files…");
-  const { files, tooBig } = selectOverlayFiles(root);
+  const { files, tooBig, nestedRepos } = selectOverlayFiles(root);
   for (const b of tooBig) onLine(`  ⚠ skipped (over 50 MB): ${b.path} (${(b.bytes / 1e6).toFixed(0)} MB)`);
+  for (const r of nestedRepos) onLine(`  · skipped nested git repo (has its own history): ${r}`);
 
   const tracked = og(root, ["ls-files", "-z"]).stdout.split("\0").filter(Boolean);
   const drop = removals(tracked, files);
@@ -106,6 +107,14 @@ export function syncOverlay(root: string, onLine: Line, opts: { push?: boolean; 
   if (files.length) {
     const r = og(root, ["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], files.join("\0"));
     if (r.status !== 0) { onLine(`✗ git add failed: ${r.stderr.trim().slice(0, 300)}`); return 1; }
+  }
+
+  // git silently skips some paths (e.g. inside a repo it treats as embedded);
+  // say so instead of claiming they're versioned.
+  const nowTracked = new Set(og(root, ["ls-files", "-z"]).stdout.split("\0").filter(Boolean));
+  const dropped = files.filter((f) => !nowTracked.has(f));
+  if (dropped.length) {
+    onLine(`  ⚠ ${dropped.length} selected file(s) were not added by git, e.g. ${dropped.slice(0, 3).join(", ")}`);
   }
 
   const changed = og(root, ["diff", "--cached", "--name-status"]).stdout.trim().split("\n").filter(Boolean);

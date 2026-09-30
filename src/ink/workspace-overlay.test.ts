@@ -31,6 +31,9 @@ put(".obsidian/plugins/tasks/data.json");
 put("tsconfig.tsbuildinfo");
 put(".claude/worktrees/w1/file.ts");
 writeFileSync(join(root, "big.bin"), Buffer.alloc(51 * 1024 * 1024));
+// A cloned repo inside an ignored folder: git won't add its files.
+put("vault/clones/upstream/README.md");
+spawnSync("git", ["init", "-q"], { cwd: join(root, "vault/clones/upstream") });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe("selectOverlayFiles", () => {
@@ -49,6 +52,11 @@ describe("selectOverlayFiles", () => {
       ".obsidian/plugins/tasks/main.js", "tsconfig.tsbuildinfo", ".claude/worktrees/w1/file.ts", ".gitignore"]) {
       expect(files).not.toContain(not);
     }
+  });
+
+  test("nested git repos are skipped and named", () => {
+    expect(files).not.toContain("vault/clones/upstream/README.md");
+    expect(selectOverlayFiles(root).nestedRepos).toEqual(["vault/clones/upstream"]);
   });
 
   test("files over the size cap are reported, not added", () => {

@@ -66,7 +66,12 @@ supabase-instances/*/docker/volumes/logs/
 !.obsidian/plugins/*/manifest.json
 `;
 
-export type OverlaySelection = { files: string[]; tooBig: Array<{ path: string; bytes: number }> };
+export type OverlaySelection = {
+  files: string[];
+  tooBig: Array<{ path: string; bytes: number }>;
+  /** Folders that are their own git repos (clones); git won't add files inside them. */
+  nestedRepos: string[];
+};
 
 function git(root: string, args: string[], input?: string) {
   return spawnSync("git", args, { cwd: root, encoding: "utf8", input, maxBuffer: 256 * 1024 * 1024 });
@@ -94,6 +99,7 @@ export function selectOverlayFiles(root: string, ignored = mainRepoIgnored(root)
   const ig = overlayMatcher(root);
   const files: string[] = [];
   const tooBig: OverlaySelection["tooBig"] = [];
+  const nestedRepos: string[] = [];
 
   const visit = (rel: string) => {
     const isDir = rel.endsWith("/");
@@ -106,6 +112,7 @@ export function selectOverlayFiles(root: string, ignored = mainRepoIgnored(root)
       if (ig.ignores(`${clean}/`)) return;
       let entries: string[] = [];
       try { entries = readdirSync(join(root, clean)); } catch { return; }
+      if (entries.includes(".git")) { nestedRepos.push(clean); return; }
       for (const e of entries) visit(`${clean}/${e}${lstatSafeIsDir(join(root, clean, e)) ? "/" : ""}`);
       return;
     }
@@ -116,7 +123,8 @@ export function selectOverlayFiles(root: string, ignored = mainRepoIgnored(root)
 
   for (const rel of ignored) visit(rel);
   files.sort();
-  return { files, tooBig };
+  nestedRepos.sort();
+  return { files, tooBig, nestedRepos };
 }
 
 function lstatSafeIsDir(p: string): boolean {

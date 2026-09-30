@@ -1879,9 +1879,10 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return syncOverlay(root, onLine, { push: !args.includes("--no-push"), message: argValue(args, "--message") });
         }
         if (sub === "files") {
-          const { files, tooBig } = selectOverlayFiles(root);
+          const { files, tooBig, nestedRepos } = selectOverlayFiles(root);
           files.forEach((f) => onLine(f));
           tooBig.forEach((b) => onLine(`(skipped, ${(b.bytes / 1e6).toFixed(0)} MB) ${b.path}`));
+          nestedRepos.forEach((r) => onLine(`(skipped, nested git repo) ${r}/`));
           onLine(`✓ ${files.length} file(s) would be in the overlay`);
           return 0;
         }

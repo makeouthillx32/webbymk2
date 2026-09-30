@@ -1,0 +1,15 @@
+# Project rules for `unaxis workspace` (gitignore syntax), on top of the UNAXIS
+# defaults in src/ink/workspace-overlay.ts. Lines here are things the overlay
+# should NOT keep even though the main repo ignores them.
+
+# Tank vision caches, rebuilt from the archive; test and bake-off output.
+# The graded gallery, gallery-archive, archive-labels and label-review are
+# hand-made and stay in the overlay.
+services/tank-vision-gpu/out/archive-index/
+services/tank-vision-gpu/out/archive-index-smoke/
+services/tank-vision-gpu/out/archive-thumbs/
+services/tank-vision-gpu/out/smoke/
+services/tank-vision-gpu/out/bakeoff-cache/
+services/tank-vision-gpu/out/live/
+services/tank-vision-gpu/out/live-captures/
+services/tank-vision-gpu/out/live-tests/
