@@ -1860,6 +1860,104 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // Which UNAXIS host does which media job — see media-topology.ts. Every
       // host-dependent media setting derives from these placements instead of
       // being typed into a file.
+      // ── unaxis workspace status|init|sync|files ──────────────────────────
+      // The workspace overlay: everything .gitignore leaves out (secrets, .env,
+      // notes, state), versioned in its own repo that only lives on the forge.
+      workspace: async (args, onLine) => {
+        const { initOverlay, overlayStatus, syncOverlay } = await import("../workspace-sync.ts");
+        const { selectOverlayFiles } = await import("../workspace-overlay.ts");
+        const { PROJECT_DIR } = await import("../../config/stack.ts");
+        const root = argValue(args, "--dir") ?? PROJECT_DIR;
+        const sub = args[0] ?? "status";
+        if (sub === "status") return overlayStatus(root, onLine);
+        if (sub === "init") {
+          const remote = argValue(args, "--remote");
+          if (!remote) { onLine("✗ usage: workspace init --remote <forge ssh url> [--dir <project>]"); return 2; }
+          return initOverlay(root, remote, onLine);
+        }
+        if (sub === "sync") {
+          return syncOverlay(root, onLine, { push: !args.includes("--no-push"), message: argValue(args, "--message") });
+        }
+        if (sub === "files") {
+          const { files, tooBig } = selectOverlayFiles(root);
+          files.forEach((f) => onLine(f));
+          tooBig.forEach((b) => onLine(`(skipped, ${(b.bytes / 1e6).toFixed(0)} MB) ${b.path}`));
+          onLine(`✓ ${files.length} file(s) would be in the overlay`);
+          return 0;
+        }
+        onLine("✗ usage: workspace status | init --remote <url> | sync [--no-push] [--message <m>] | files   [--dir <project>]");
+        return 2;
+      },
+
+      // ── unaxis forge status|place|deploy|backup|backup-target|set ─────────
+      // The self-hosted git forge (Forgejo), placed on any UNAXIS host.
+      forge: async (args, onLine) => {
+        const { backupForge, deployForge, forgeStatus, getForge, patchForge, placeForge } = await import("../forge-store.ts");
+        const { formatBackupTarget, parseBackupTarget } = await import("../forge.ts");
+        const sub = args[0] ?? "status";
+        const flag = (name: string) => argValue(args, name);
+        const settable: Record<string, string> = {
+          "--root-url": "rootUrl", "--http-port": "httpPort", "--ssh-port": "sshPort", "--image": "image",
+          "--keep-in-volume": "keepInVolume", "--keep-per-dir": "keepPerDir",
+        };
+        const patchFromFlags = () => {
+          const patch: Record<string, any> = {};
+          for (const [f, k] of Object.entries(settable)) {
+            const v = flag(f);
+            if (v !== undefined) patch[k] = /Port$|^keep/.test(k) ? Number(v) : v;
+          }
+          return patch;
+        };
+
+        if (sub === "status") return forgeStatus(onLine);
+
+        if (sub === "place") {
+          const env = args[1] && !args[1].startsWith("--") ? findEnv(args[1]) : null;
+          if (!env) { onLine("✗ usage: forge place <env> [--root-url <url>] [--http-port N] [--ssh-port N]"); return 2; }
+          const key = placeForge(env, patchFromFlags());
+          onLine(`✓ placed ${key} — next: forge deploy`);
+          return 0;
+        }
+
+        if (sub === "set") {
+          const patch = patchFromFlags();
+          if (!Object.keys(patch).length) { onLine(`✗ usage: forge set ${Object.keys(settable).join(" | ")} <value>`); return 2; }
+          if (!patchForge(patch)) { onLine("✗ no forge placed"); return 1; }
+          onLine(`✓ updated ${Object.keys(patch).join(", ")} — run forge deploy to apply`);
+          return 0;
+        }
+
+        if (sub === "deploy") return deployForge(onLine);
+        if (sub === "backup") return backupForge(onLine);
+
+        if (sub === "backup-target") {
+          const f = getForge();
+          if (!f) { onLine("✗ no forge placed"); return 1; }
+          const [action, raw] = [args[1], args.slice(2).join(" ")];
+          let targets = f.config.backupTargets;
+          if (action === "list" || !action) {
+            targets.forEach((t) => onLine(t));
+            if (!targets.length) onLine("(none)");
+            return 0;
+          }
+          if (!raw || !["add", "remove"].includes(action)) {
+            onLine("✗ usage: forge backup-target list | add <dir | env:NAME> | remove <dir | env:NAME>");
+            return 2;
+          }
+          const t = parseBackupTarget(raw);
+          if (typeof t === "string") { onLine(`✗ ${t}`); return 2; }
+          if (t.kind === "env" && !findEnv(t.env)) { onLine(`✗ environment not found: ${t.env}`); return 1; }
+          const value = formatBackupTarget(t);
+          targets = action === "add" ? [...new Set([...targets, value])] : targets.filter((x) => x !== value);
+          patchForge({ backupTargets: targets });
+          onLine(`✓ backup targets: ${targets.join(", ") || "(none)"}`);
+          return 0;
+        }
+
+        onLine("✗ usage: forge status | place <env> | set <flags> | deploy | backup | backup-target list|add|remove <dir | env:NAME>");
+        return 2;
+      },
+
       media: async (args, onLine) => {
         const sub = args[0] ?? "topology";
         // Positionals after the subcommand, skipping flags and the values of
@@ -3682,9 +3780,30 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // unaxis logs proxy|db|npm [--tail <lines>]
       logs: async (args, onLine) => {
         const target = args[0];
-        if (!target || !["proxy", "db", "npm"].includes(target)) {
+        if (!target || !["proxy", "db", "npm", "router"].includes(target)) {
           onLine("✗ usage: logs proxy|db|npm [--tail <lines>]");
+          onLine("         logs router [--tail <lines>] [--grep <regex>] [--date YYYY-MM-DD | --days <n>]");
           return 2;
+        }
+
+        // ── logs router — remote syslog files kept by the `syslog` service ──────
+        // Network gear (the router) logs to this host; history survives the
+        // router's own few-minute buffer. Files are per UTC day.
+        if (target === "router") {
+          const { readRouterLog, parseRouterLogArgs, routerLogDir } = await import("../router-log.ts");
+          const { PROJECT_DIR } = await import("../../config/stack.ts");
+          const q = parseRouterLogArgs(args.slice(1), parseTail(args.slice(1)));
+          if (typeof q === "string") { onLine(`✗ ${q}`); return 2; }
+          const dir = routerLogDir(PROJECT_DIR);
+          const { lines, days } = readRouterLog(dir, q);
+          if (days.length === 0) {
+            onLine(`✗ no syslog files in ${dir}`);
+            onLine("  Is the syslog service up, and is the router's Remote Log Server set to this host, port 5514?");
+            return 1;
+          }
+          lines.forEach(onLine);
+          onLine(`✓ router log: ${lines.length} line(s) from ${days.join(", ")} (UTC)`);
+          return 0;
         }
 
         // ── logs npm — fetch nginx-proxy-manager logs via the environment agent ──

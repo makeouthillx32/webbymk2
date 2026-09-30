@@ -63,6 +63,33 @@ export const UNAXIS_CLI_SCHEMA = {
         "--dry-run":     { type: "boolean", description: "apply: show drift without writing." }
       }
     },
+    workspace: {
+      description: "Workspace overlay: version everything .gitignore leaves out (.env, secrets, notes, state) in a second repo that lives only on the forge.",
+      subcommands: ["status", "init", "sync", "files"],
+      arguments: [],
+      options: {
+        "--remote":  { type: "string",  description: "init: forge SSH URL of the overlay repo (public hosts are refused)." },
+        "--dir":     { type: "string",  description: "Project folder (default: this UNAXIS project's root)." },
+        "--no-push": { type: "boolean", description: "sync: commit only." },
+        "--message": { type: "string",  description: "sync: commit message." }
+      }
+    },
+    forge: {
+      description: "Self-hosted git forge (Forgejo): place it on any UNAXIS host, deploy it through that host's agent, and back it up to several places.",
+      subcommands: ["status", "place", "set", "deploy", "backup", "backup-target"],
+      arguments: [
+        { name: "target", type: "string", required: false },
+        { name: "path", type: "string", required: false }
+      ],
+      options: {
+        "--root-url":       { type: "string", description: "place/set: public URL override (default http://<tailnet-or-LAN-ip>:<http-port>/)." },
+        "--http-port":      { type: "number", description: "place/set: host port for the web UI (default 3300)." },
+        "--ssh-port":       { type: "number", description: "place/set: host port for git over SSH (default 2222)." },
+        "--image":          { type: "string", description: "set: Forgejo image to run on the next deploy." },
+        "--keep-in-volume": { type: "number", description: "set: dumps kept inside the forge's volume (default 7)." },
+        "--keep-per-dir":   { type: "number", description: "set: dumps kept in each backup directory (default 14)." }
+      }
+    },
     "build-mem": {
       description: "Snapshot every container's memory usage + limit (run during a build to watch the builder).",
     },

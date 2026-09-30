@@ -158,3 +158,5 @@ services/tank-vision-gpu/out/
 
 # Generated character sheets of real people — local only, never in the public repo.
 artifacts/higgsfield-character-sheets/
+# Workspace overlay: secrets + ignored files, versioned only on the forge (unaxis workspace)
+/.git-workspace/
