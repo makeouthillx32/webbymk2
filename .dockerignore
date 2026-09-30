@@ -31,6 +31,7 @@ npm-debug.log*
 
 # VCS + dev tooling
 .git
+.git-workspace
 .gitignore
 .eslintcache
 *.md
@@ -86,6 +87,7 @@ __pycache__
 .vscode
 coturn
 mediamtx
+syslog
 openclaw
 automations
 Architecture

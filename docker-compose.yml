@@ -685,6 +685,36 @@ services:
       unaxis.role: "media"
       unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
 
+  # ── Remote syslog receiver ────────────────────────────────────────────────
+  # The router keeps only a few minutes of its own log, so point its "Remote
+  # Log Server" at this host, port 5514 (UDP). One file per UTC day lands in
+  # logs/syslog/ (gitignored); `unaxis logs router` reads it over IPC.
+  # LAN only: do NOT port-forward 5514. Files older than 30 days are pruned.
+  #   docker compose -p unenterlive up -d --no-deps syslog
+  syslog:
+    image: balabit/syslog-ng:4.11.0
+    container_name: unt_syslog
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        (while true; do find /var/log/remote -name '*.log' -mtime +30 -delete; sleep 86400; done) &
+        exec /usr/sbin/syslog-ng -F --no-caps
+    mem_limit: 256m
+    ports:
+      - "5514:5514/udp"
+      - "5514:5514/tcp"
+    volumes:
+      - ./syslog/syslog-ng.conf:/etc/syslog-ng/syslog-ng.conf:ro
+      - ./logs/syslog:/var/log/remote
+    labels:
+      unaxis.managed: "true"
+      unaxis.version: "${UNAXIS_VERSION:-dev}"
+      unaxis.project: "unenter.live"
+      unaxis.domain: "unenter.live"
+      unaxis.role: "infra"
+      unaxis.source-ref: "${UNAXIS_SOURCE_REF:-unknown}"
+
   app:
     image: ghcr.io/makeouthillx32/unenter:latest
     build:
