@@ -1871,6 +1871,47 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // ── unaxis workspace status|init|sync|files ──────────────────────────
       // The workspace overlay: everything .gitignore leaves out (secrets, .env,
       // notes, state), versioned in its own repo that only lives on the forge.
+      // ── unaxis secrets status|place|deploy|dump ───────────────────────────
+      // The secrets manager (Infisical), placed on any UNAXIS host.
+      secrets: async (args, onLine) => {
+        const sm = await import("../secrets-manager-store.ts");
+        const sub = args[0] ?? "status";
+        if (sub === "status") return sm.secretsStatus(onLine);
+        if (sub === "dump") return sm.dumpSecretsDb(onLine);
+        if (sub === "place") {
+          const env = args[1] && !args[1].startsWith("--") ? findEnv(args[1]) : null;
+          if (!env) { onLine("✗ usage: secrets place <env> [--http-port N] [--site-url <url>]"); return 2; }
+          const patch: Record<string, any> = {};
+          if (argValue(args, "--http-port")) patch.httpPort = Number(argValue(args, "--http-port"));
+          if (argValue(args, "--site-url")) patch.siteUrl = argValue(args, "--site-url");
+          onLine(`✓ placed ${sm.placeSecretsManager(env, patch)} — next: secrets deploy`);
+          return 0;
+        }
+        if (sub === "deploy") {
+          const runner = async (line: (value: string) => void) => {
+            const code = await sm.deploySecretsManager(line);
+            if (code === 0) {
+              // Its keys + db dumps must ride the nightly backup.
+              const bs = await import("../backup-store.ts");
+              const cfg = bs.loadBackupConfig();
+              if (!cfg.sources.some((x) => x.name === "unaxis-secrets")) {
+                bs.saveBackupConfig({ ...cfg, sources: [...cfg.sources, { name: "unaxis-secrets", path: sm.SECRETS_MANAGER_DIR }] });
+                line(`✓ added ${sm.SECRETS_MANAGER_DIR} to the nightly backup`);
+              }
+            }
+            return code;
+          };
+          if (args.includes("--bg")) {
+            runOpQueued("Deploy secrets manager", runner);
+            onLine("⚡ Secrets manager deploy queued — watch: unaxis stacks");
+            return 3;
+          }
+          return runOpVisible("Deploy secrets manager", runner, onLine);
+        }
+        onLine("✗ usage: secrets status | place <env> | deploy [--bg] | dump");
+        return 2;
+      },
+
       // ── unaxis backup status|run|snapshots|source|target|schedule ─────────
       // restic snapshots of the dev drive to several targets (see backup.ts).
       backup: async (args, onLine) => {

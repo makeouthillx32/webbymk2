@@ -192,6 +192,14 @@ export async function runBackup(onLine: Line, only?: string): Promise<number> {
 }
 
 async function runBackupLocked(onLine: Line, only?: string): Promise<number> {
+  // Databases that live in Docker volumes are dumped into a backed-up folder
+  // first (a live data directory can't be copied consistently).
+  try {
+    const { dumpSecretsDb } = await import("./secrets-manager-store.ts");
+    await dumpSecretsDb(onLine);
+  } catch (e) {
+    onLine(`⚠ pre-backup dump skipped: ${e instanceof Error ? e.message : e}`);
+  }
   const cfg = loadBackupConfig();
   if (!cfg.sources.length) { onLine("✗ nothing to back up — add one: backup source add <name> <path>"); return 1; }
   const targets = cfg.targets.filter((t) => !only || t.name === only);

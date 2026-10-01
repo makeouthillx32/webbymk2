@@ -63,6 +63,16 @@ export const UNAXIS_CLI_SCHEMA = {
         "--dry-run":     { type: "boolean", description: "apply: show drift without writing." }
       }
     },
+    secrets: {
+      description: "Secrets manager (self-hosted Infisical): per-project, per-environment secrets with per-person and per-agent access. Placed on any UNAXIS host; its database is dumped before every backup.",
+      subcommands: ["status", "place", "deploy", "dump"],
+      arguments: [{ name: "env", type: "string", required: false }],
+      options: {
+        "--http-port": { type: "number", description: "place: host port for the web UI (default 8222)." },
+        "--site-url":  { type: "string", description: "place: public URL override (default http://<tailnet-or-LAN-ip>:<port>)." },
+        "--bg":        { type: "boolean", description: "deploy: run as a background stack op." }
+      }
+    },
     backup: {
       description: "Workspace backups with restic: encrypted, versioned snapshots of the dev drive to several targets (folders, or rest-server on any UNAXIS host). Nightly by default.",
       subcommands: ["status", "run", "snapshots", "source", "target", "schedule"],

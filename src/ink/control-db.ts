@@ -1262,7 +1262,9 @@ export interface UnaxisService {
     // Media topology roles — see media-topology.ts.
     | "media-origin" | "media-edge" | "turn" | "ingress" | "camera-receiver"
     // Git forge (Forgejo) — see forge.ts.
-    | "forge";
+    | "forge"
+    // Secrets manager (Infisical) — see secrets-manager.ts.
+    | "secrets";
   container:      string;
   host:           string;
   port:           number;

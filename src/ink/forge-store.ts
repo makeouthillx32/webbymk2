@@ -85,11 +85,11 @@ function demux(buf: Buffer): string {
   return out || buf.toString("utf8");
 }
 
-export async function execIn(env: UnaxisEnvironment, container: string, cmd: string[], user = "git", timeoutMs = 600_000): Promise<{ code: number; output: string }> {
+export async function execIn(env: UnaxisEnvironment, container: string, cmd: string[], user = "git", timeoutMs = 600_000, workDir = "/data"): Promise<{ code: number; output: string }> {
   const create = await dockerFetch(env, `/containers/${container}/exec`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ Cmd: cmd, User: user, WorkingDir: "/data", AttachStdout: true, AttachStderr: true }),
+    body: JSON.stringify({ Cmd: cmd, User: user, WorkingDir: workDir, AttachStdout: true, AttachStderr: true }),
   });
   if (!create.ok) return { code: -1, output: `exec create failed (${create.status}): ${(await create.text()).slice(0, 200)}` };
   const { Id } = (await create.json()) as { Id: string };
