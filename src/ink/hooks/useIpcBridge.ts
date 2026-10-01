@@ -3687,7 +3687,10 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         if (action === "build" || action === "rebuild") {
           const noCache = action === "rebuild" || args.includes("--no-cache");
-          const verb = noCache ? "Rebuild" : "Build";
+          // --ref <branch|tag|sha>: build that exact forge commit from a clean
+          // checkout instead of the dev drive (see build-ref.ts).
+          const ref = argValue(args, "--ref");
+          const verb = `${noCache ? "Rebuild" : "Build"}${ref ? ` @${ref}` : ""}`;
 
           // Vercel-hosted zones skip Docker entirely: "build" is a scoped
           // git add+commit+push of the zone's own source. An external
@@ -3708,14 +3711,14 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           // wait). Lets the operator fire several zone builds concurrently and
           // watch them via `unaxis stacks` instead of blocking for ~5 min.
           if (args.includes("--bg")) {
-            runOpQueued(`${verb}  ${zone.label}`, (bgLine) => buildAndDeploy(zone, bgLine, { noCache }));
+            runOpQueued(`${verb}  ${zone.label}`, (bgLine) => buildAndDeploy(zone, bgLine, { noCache, ref }));
             if (args.includes("--json")) onLine(JSON.stringify({ status: "queued", taskId: `${verb}  ${zone.label}` }));
             else onLine(`⚡ ${verb} ${zone.label} queued — watch: unaxis stacks`);
             return 3;
           }
           // Foreground build still blocks + returns the exit code to the IPC
           // caller, but now ALSO appears in the human's stack (tees to both).
-          return runOpVisible(`${verb}  ${zone.label}`, (l) => buildAndDeploy(zone, l, { noCache }), onLine);
+          return runOpVisible(`${verb}  ${zone.label}`, (l) => buildAndDeploy(zone, l, { noCache, ref }), onLine);
         }
 
         if (action === "deploy") {

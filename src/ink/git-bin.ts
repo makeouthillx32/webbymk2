@@ -72,3 +72,9 @@ export function runGit(cwd: string, args: string[], opts: { input?: string; time
     p.stdin.end(opts.input ?? "");
   });
 }
+
+/** A path argument git can read: Windows git.exe under WSL needs X:/… not /mnt/x/…. */
+export function gitPathArg(cwd: string, p: string): string {
+  const m = /^\/mnt\/([a-z])(\/.*)?$/.exec(p);
+  return m && resolveGitBin(cwd).endsWith(".exe") ? `${m[1].toUpperCase()}:${m[2] ?? "/"}` : p;
+}

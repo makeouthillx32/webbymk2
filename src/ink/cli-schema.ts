@@ -266,6 +266,7 @@ export const UNAXIS_CLI_SCHEMA = {
       ],
       options: {
         "--bg": { type: "boolean", description: "Run operation in background." },
+        "--ref": { type: "string", description: "build/rebuild: build this exact forge branch, tag or commit from a clean checkout instead of the dev drive." },
         "--json": { type: "boolean", description: "Output output/task status as JSON." }
       }
     },

@@ -519,6 +519,12 @@ export function ZonesView({
     // One-key ship: build → push → pull + up the HIGHLIGHTED zone, no menu.
     // Same path as [↵] → [b]; the build case guards no-Dockerfile zones.
     if (input === "b") { const z = visibleZones[selected]; if (z) executeAction("build", z); return; }
+    // Production ship: the forge's main, from a clean checkout — not the dev drive.
+    if (input === "B") {
+      const z = visibleZones[selected];
+      if (z) runOp(`Build @main  ${z.label}`, (o) => buildAndDeploy(z, o, { ref: "main" }));
+      return;
+    }
     if (input === "H" || input === "h") { const z = visibleZones[selected]; if (z) { onOpenDeployments?.(z.key); return; } }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }

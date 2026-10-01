@@ -70,6 +70,7 @@ const HINTS = [
   { k: "/",  label: "search"          },
   { k: "↵",  label: "actions"         },
   { k: "b",  label: "ship (build+deploy)" },
+  { k: "B",  label: "ship forge main" },
   { k: "l",  label: "logs"            },
   { k: "n",  label: "new zone"        },
   { k: "g",  label: "git push"        },

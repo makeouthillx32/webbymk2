@@ -593,10 +593,11 @@ async function tagAndPush(
 // the original afterward, so the file goes back to its checked-in,
 // all-zones form and a hand edit mid-session doesn't leave a confusing
 // diff.
-const DOCKERIGNORE_PATH = join(PROJECT_DIR, ".dockerignore");
+const dockerignorePath = (root: string) => join(root, ".dockerignore");
 const ZONE_REINCLUDE_PATTERN = new RegExp("^!zones/\\*/src(/\\*\\*)?$", "gm");
 
-function scopeDockerignoreToZone(zoneKey: string): () => void {
+function scopeDockerignoreToZone(zoneKey: string, root: string = PROJECT_DIR): () => void {
+  const DOCKERIGNORE_PATH = dockerignorePath(root);
   const original = readFileSync(DOCKERIGNORE_PATH, "utf8");
   const scoped = original.replace(ZONE_REINCLUDE_PATTERN, (match) =>
     match.replace("*", zoneKey),
@@ -625,12 +626,24 @@ function scopeDockerignoreToZone(zoneKey: string): () => void {
 export async function buildZone(
   zone:   Zone,
   onLine: (l: string) => void,
-  opts:   { noCache?: boolean } = {},
+  opts:   { noCache?: boolean; ref?: string } = {},
 ): Promise<number> {
-  onLine(`▶ Initializing build for ${zone.label}...`);
+  onLine(`▶ Initializing build for ${zone.label}${opts.ref ? ` from forge ${opts.ref}` : ""}...`);
   const dockerfile = zone.dockerfile ?? "Dockerfile";
+
+  // --ref: build an exact forge commit from a clean checkout (build-ref.ts)
+  // instead of the dev drive. Secrets/build args still come from the dev
+  // drive's .env for now.
+  let refSource: import("./build-ref.ts").RefSource | null = null;
+  if (opts.ref) {
+    const { checkoutRef } = await import("./build-ref.ts");
+    refSource = await checkoutRef(zone.key, opts.ref, onLine);
+    if (!refSource) return 1;
+  }
+  const contextDir = refSource?.dir ?? null;
+
   const dockerCfg  = await createBuildDockerConfig();
-  const restoreDockerignore = scopeDockerignoreToZone(zone.key);
+  const restoreDockerignore = scopeDockerignoreToZone(zone.key, contextDir ?? PROJECT_DIR);
   const t0         = Date.now();
 
   log.info("build", "started", {
@@ -652,7 +665,12 @@ export async function buildZone(
     // SOURCE; the UNAXIS version becomes a label (build tool, not app version).
     // buildId is unique per build (ms) AND carries provenance — it doubles as
     // the SOURCE_REF cache-bust so the source layer always recompiles fresh.
-    const prov       = await gitProvenanceAsync();
+    const prov: GitProvenance = refSource
+      ? {
+          shortSha: refSource.shortSha, fullSha: refSource.sha, dirty: false,
+          branch: refSource.ref, commitMsg: refSource.commitMsg, author: refSource.author,
+        }
+      : await gitProvenanceAsync();
     const unaxisVer  = resolveUnaxisVersion();
     const createdIso = new Date().toISOString();
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
@@ -662,15 +680,18 @@ export async function buildZone(
     // Publish the exact source being built to the forge first, so every image
     // traces back to code that lives off this machine (see build-source.ts).
     // Best-effort: a forge outage warns and the build carries on.
-    try {
-      const { publishBuildSource } = await import("./build-source.ts");
-      await publishBuildSource(PROJECT_DIR, zone.key, gitContentTag(prov), prov, logBuild);
-    } catch (e) {
-      logBuild(`⚠ source not published to the forge: ${e instanceof Error ? e.message : e}`);
+    // (A --ref build is already a forge commit — nothing to publish.)
+    if (!refSource) {
+      try {
+        const { publishBuildSource } = await import("./build-source.ts");
+        await publishBuildSource(PROJECT_DIR, zone.key, gitContentTag(prov), prov, logBuild);
+      } catch (e) {
+        logBuild(`⚠ source not published to the forge: ${e instanceof Error ? e.message : e}`);
+      }
     }
     // Secrets and ignored files (workspace overlay) go up alongside, in the
     // background so they never hold the build up.
-    void (async () => {
+    if (!refSource) void (async () => {
       try {
         const { overlayExists, syncOverlay } = await import("./workspace-sync.ts");
         if (overlayExists(PROJECT_DIR)) await syncOverlay(PROJECT_DIR, (l) => logBuild(`[workspace] ${l}`));
@@ -780,10 +801,10 @@ export async function buildZone(
       // hash-collide with prior builds of the same zone, reusing a stale
       // `next build` layer with the PREVIOUS zone's code.
       ...(opts.noCache ? ["--no-cache"] : []),
-      "-f", dockerfile,
+      "-f", contextDir ? join(contextDir, dockerfile) : dockerfile,
       ...buildArgs,
       "-t", zone.image,
-      ".",
+      contextDir ?? ".",
     ];
 
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
@@ -864,6 +885,7 @@ export async function buildZone(
   } finally {
     dockerCfg.cleanup();
     restoreDockerignore();
+    if (refSource) await refSource.cleanup().catch(() => {});
     await parkBuildxBuilder(onLine).catch(() => {});
   }
 }
@@ -879,9 +901,9 @@ export async function buildZone(
 export async function buildAndDeploy(
   zone:   Zone,
   onLine: (l: string) => void,
-  opts:   { noCache?: boolean } = {},
+  opts:   { noCache?: boolean; ref?: string } = {},
 ): Promise<number> {
-  onLine(`=== Shipping ${zone.label} (${zone.key}) ===`);
+  onLine(`=== Shipping ${zone.label} (${zone.key})${opts.ref ? ` from forge ${opts.ref}` : ""} ===`);
   // Vercel-hosted zones never touch Docker — "build" is a git push instead.
   // This check lives HERE (not just in the IPC dispatcher) because the TUI's
   // own [b]/[R] keybindings call buildAndDeploy directly, bypassing that
