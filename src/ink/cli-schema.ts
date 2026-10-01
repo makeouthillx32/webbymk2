@@ -63,6 +63,20 @@ export const UNAXIS_CLI_SCHEMA = {
         "--dry-run":     { type: "boolean", description: "apply: show drift without writing." }
       }
     },
+    backup: {
+      description: "Workspace backups with restic: encrypted, versioned snapshots of the dev drive to several targets (folders, or rest-server on any UNAXIS host). Nightly by default.",
+      subcommands: ["status", "run", "snapshots", "source", "target", "schedule"],
+      arguments: [
+        { name: "action", type: "string", required: false },
+        { name: "name", type: "string", required: false },
+        { name: "path", type: "string", required: false }
+      ],
+      options: {
+        "--dir":  { type: "string", description: "target add: a folder on the control-plane host." },
+        "--env":  { type: "string", description: "target add: deploy an append-only rest-server on this UNAXIS host and use it." },
+        "--port": { type: "number", description: "target add --env: rest-server port (default 8010)." }
+      }
+    },
     workspace: {
       description: "Workspace overlay: version everything .gitignore leaves out (.env, secrets, notes, state) in a second repo that lives only on the forge.",
       subcommands: ["status", "init", "sync", "files"],

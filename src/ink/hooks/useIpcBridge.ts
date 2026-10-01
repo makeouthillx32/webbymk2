@@ -1871,6 +1871,73 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
       // ── unaxis workspace status|init|sync|files ──────────────────────────
       // The workspace overlay: everything .gitignore leaves out (secrets, .env,
       // notes, state), versioned in its own repo that only lives on the forge.
+      // ── unaxis backup status|run|snapshots|source|target|schedule ─────────
+      // restic snapshots of the dev drive to several targets (see backup.ts).
+      backup: async (args, onLine) => {
+        const store = await import("../backup-store.ts");
+        const { validName } = await import("../backup.ts");
+        const sub = args[0] ?? "status";
+        const pos = args.filter((a, i) => i > 0 && !a.startsWith("--") && !["--dir", "--env", "--port"].includes(args[i - 1]));
+        if (sub === "status") return store.backupStatus(onLine);
+        if (sub === "run") {
+          const runner = (line: (value: string) => void) => store.runBackup(line, pos[0]);
+          if (args.includes("--bg")) {
+            runOpQueued("Backup (restic)", runner);
+            onLine("⚡ Backup queued — watch: unaxis stacks");
+            return 3;
+          }
+          return runOpVisible("Backup (restic)", runner, onLine);
+        }
+        if (sub === "snapshots") return store.listSnapshots(onLine, pos[0]);
+
+        if (sub === "source" || sub === "target") {
+          const [action, name, path] = pos;
+          const cfg = store.loadBackupConfig();
+          if (action === "remove" && name) {
+            if (sub === "source") cfg.sources = cfg.sources.filter((s) => s.name !== name);
+            else cfg.targets = cfg.targets.filter((t) => t.name !== name);
+            store.saveBackupConfig(cfg);
+            onLine(`✓ removed ${sub} ${name}`);
+            return 0;
+          }
+          if (action !== "add" || !name || !validName(name)) {
+            onLine(sub === "source"
+              ? "✗ usage: backup source add <name> <path> | remove <name>   (name: a-z 0-9 -)"
+              : "✗ usage: backup target add <name> --dir <path> | --env <ENV> [--port N] | remove <name>");
+            return 2;
+          }
+          if (sub === "source") {
+            if (!path) { onLine("✗ give the folder to back up"); return 2; }
+            cfg.sources = [...cfg.sources.filter((s) => s.name !== name), { name, path }];
+          } else {
+            const dir = argValue(args, "--dir");
+            const envName = argValue(args, "--env");
+            if (envName) {
+              const port = Number(argValue(args, "--port") ?? 8010);
+              const code = await store.deployRestServer(envName, onLine, port);
+              if (code !== 0) return code;
+              cfg.targets = [...cfg.targets.filter((t) => t.name !== name), { name, kind: "env", env: envName, port }];
+            } else if (dir) {
+              cfg.targets = [...cfg.targets.filter((t) => t.name !== name), { name, kind: "dir", path: dir }];
+            } else { onLine("✗ target needs --dir <path> or --env <ENV>"); return 2; }
+          }
+          store.saveBackupConfig(cfg);
+          onLine(`✓ ${sub} ${name} saved`);
+          return 0;
+        }
+
+        if (sub === "schedule") {
+          const when = pos[0];
+          if (!when || !(when === "off" || /^\d{1,2}:\d{2}$/.test(when))) { onLine("✗ usage: backup schedule HH:MM | off"); return 2; }
+          store.saveBackupConfig({ ...store.loadBackupConfig(), schedule: when === "off" ? null : when });
+          onLine(`✓ nightly backup ${when === "off" ? "off" : `at ${when}`}`);
+          return 0;
+        }
+
+        onLine("✗ usage: backup status | run [target] | snapshots [target] | source add|remove | target add|remove | schedule HH:MM|off");
+        return 2;
+      },
+
       workspace: async (args, onLine) => {
         const { initOverlay, overlayStatus, syncOverlay } = await import("../workspace-sync.ts");
         const { selectOverlayFiles } = await import("../workspace-overlay.ts");
@@ -4126,6 +4193,22 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
     if (autoColdStartFired) return;
     autoColdStartFired = true;
     void runOpVisible("Startup self-heal (unaxis up)", (onLine) => coldStartCoreStack(onLine, { noRecreate: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Nightly workspace backup ──────────────────────────────────────────────
+  // Checks every 5 minutes; runs as a visible stack op once the scheduled time
+  // has passed and today's run hasn't happened. A lock file keeps the dev and
+  // prod TUIs from both running it.
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const { backupDue, runScheduledBackup } = await import("../backup-store.ts");
+        if (backupDue()) void runOpVisible("Nightly backup (restic)", (onLine) => runScheduledBackup(onLine));
+      } catch { /* control DB not ready yet — next tick */ }
+    };
+    const timer = setInterval(() => { void tick(); }, 5 * 60_000);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

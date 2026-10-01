@@ -85,7 +85,7 @@ function demux(buf: Buffer): string {
   return out || buf.toString("utf8");
 }
 
-async function execIn(env: UnaxisEnvironment, container: string, cmd: string[], user = "git", timeoutMs = 600_000): Promise<{ code: number; output: string }> {
+export async function execIn(env: UnaxisEnvironment, container: string, cmd: string[], user = "git", timeoutMs = 600_000): Promise<{ code: number; output: string }> {
   const create = await dockerFetch(env, `/containers/${container}/exec`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
