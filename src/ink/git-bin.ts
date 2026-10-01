@@ -13,6 +13,23 @@
 import { existsSync } from "fs";
 import { spawn, spawnSync } from "child_process";
 
+// Every git the TUI spawns runs with core.fsmonitor off. The repo enables the
+// fsmonitor daemon (for editors); when the first git call starts that daemon,
+// the daemon inherits the call's stdout pipe and holds it open, so the call
+// "hangs" until its timeout kills it. That is why every image from 2026-09-27
+// on was tagged gnogit: `git log` started the daemon and timed out.
+// GIT_CONFIG_COUNT/KEY/VALUE apply to child processes without touching the
+// repo's config; WSLENV carries them across to Windows git.exe under WSL.
+if (!process.env.GIT_CONFIG_COUNT) {
+  process.env.GIT_CONFIG_COUNT = "1";
+  process.env.GIT_CONFIG_KEY_0 = "core.fsmonitor";
+  process.env.GIT_CONFIG_VALUE_0 = "false";
+  if (process.platform === "linux") {
+    const passthrough = "GIT_CONFIG_COUNT:GIT_CONFIG_KEY_0:GIT_CONFIG_VALUE_0";
+    process.env.WSLENV = process.env.WSLENV ? `${process.env.WSLENV}:${passthrough}` : passthrough;
+  }
+}
+
 const cache = new Map<string, string>();
 
 export function resolveGitBin(cwd: string): string {

@@ -433,6 +433,8 @@ interface GitProvenance {
   branch:    string;
   commitMsg: string;
   author:    string;
+  /** Why the commit couldn't be read, when shortSha is "nogit". */
+  gitError?: string;
 }
 
 /** Windows git.exe under WSL for repos on a Windows drive — see git-bin.ts. */
@@ -462,6 +464,7 @@ function gitProvenance(): GitProvenance {
   let shortSha = "nogit";
   let commitMsg = "";
   let author = "makeouthillx32";
+  let gitError: string | undefined;
 
   try {
     // 10 s, not 1.2 s: under build load (Docker starting, a busy disk) a
@@ -480,8 +483,12 @@ function gitProvenance(): GitProvenance {
         commitMsg = (parts[2] ?? "").trim();
         author = (parts[3] ?? "").trim() || "makeouthillx32";
       }
+    } else {
+      gitError = `${gitBin} log → status ${logRes.status}${logRes.signal ? ` (${logRes.signal})` : ""}: ${(logRes.error?.message || logRes.stderr || "").trim().slice(0, 200)}`;
     }
-  } catch {}
+  } catch (e) {
+    gitError = `${gitBin} log threw: ${e instanceof Error ? e.message : e}`;
+  }
 
   let dirty = false;
   try {
@@ -507,6 +514,7 @@ function gitProvenance(): GitProvenance {
     branch,
     commitMsg,
     author,
+    gitError,
   };
   _provCache = { data, expiresAt: now + 15_000 };
   return data;
@@ -614,6 +622,7 @@ export async function buildZone(
     const unaxisVer  = resolveUnaxisVersion();
     const createdIso = new Date().toISOString();
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
+    if (prov.gitError) logBuild(`⚠ couldn't read the commit (image will be tagged gnogit): ${prov.gitError}`);
     if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
 
     // Publish the exact source being built to the forge first, so every image
