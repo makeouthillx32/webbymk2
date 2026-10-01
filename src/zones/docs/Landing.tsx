@@ -68,7 +68,7 @@ export default function DocsLanding() {
             <div>
               <div className={styles.eyebrow}>
                 <span className={styles.statusDot} aria-hidden="true" />
-                Self-hosted · run by UNAXIS
+                Self-hosted · run by UNAXIS · built from our own forge
               </div>
               <h1 id="landing-title">
                 One domain. Many apps. Our own hardware.
