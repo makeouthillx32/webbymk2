@@ -272,20 +272,31 @@ export async function fetchSecrets(environment?: string): Promise<FetchedSecrets
 }
 
 /**
- * For builds: the secrets when the manager is connected and reachable, else
- * null with a line saying why (the build then uses .env, as before).
+ * For builds. Returns the manager's values only when `useForBuilds` is on and
+ * the manager is reachable; otherwise null and the build uses .env exactly as
+ * before. With it off (the default) this is a shadow check: it reads the
+ * manager and logs which KEY NAMES differ from .env, so the switch can be
+ * flipped once there are none. Never fails a build.
  */
-export async function secretsForBuild(onLine: Line): Promise<Record<string, string> | null> {
+export async function secretsForBuild(onLine: Line, localEnv: Record<string, string>): Promise<Record<string, string> | null> {
   const s = getSecretsManager();
   if (!s?.config.projectId) return null;
+  let f: FetchedSecrets;
   try {
-    const f = await fetchSecrets();
-    onLine(`✓ build secrets from the secrets manager (${f.label})`);
-    return f.values;
+    f = await fetchSecrets();
   } catch (e) {
-    onLine(`⚠ secrets manager unavailable (${e instanceof Error ? e.message : e}) — using .env`);
+    onLine(`${s.config.useForBuilds ? "⚠" : "·"} secrets manager not read (${e instanceof Error ? e.message : e}) — using .env`);
     return null;
   }
+  if (s.config.useForBuilds) {
+    onLine(`✓ build secrets from the secrets manager (${f.label})`);
+    return f.values;
+  }
+  const differ = Object.keys(f.values).filter((k) => k in localEnv && localEnv[k] !== f.values[k]).sort();
+  onLine(differ.length
+    ? `· shadow check: ${differ.length} key(s) differ from .env (${differ.join(", ")}) — builds use .env`
+    : `· shadow check: secrets manager matches .env (${f.label}) — ready for \`secrets use-for-builds on\``);
+  return null;
 }
 
 // ── Status + database dump ───────────────────────────────────────────────────
@@ -305,6 +316,7 @@ export async function secretsStatus(onLine: Line): Promise<number> {
   onLine(`  web                ${up ? "answering" : "not answering"}`);
   onLine(`  project            ${s.config.projectId ? `${s.config.projectId} (${s.config.environment})` : "not connected — secrets connect <projectId>"}`);
   onLine(`  UNAXIS identity    ${existsSync(IDENTITY_FILE) ? "present" : `missing — ${IDENTITY_FILE}`}`);
+  onLine(`  builds use         ${s.config.useForBuilds ? "the secrets manager" : ".env (secrets manager is shadow-checked only)"}`);
   const dumps = existsSync(DUMPS_DIR) ? readdirSync(DUMPS_DIR).filter((f) => f.endsWith(".dump")).sort() : [];
   onLine(`  db dumps           ${dumps.length}${dumps.length ? ` (newest ${dumps.at(-1)})` : ""} in ${DUMPS_DIR}`);
   return 0;

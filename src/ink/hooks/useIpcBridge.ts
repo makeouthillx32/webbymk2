@@ -1879,6 +1879,17 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         if (sub === "status") return sm.secretsStatus(onLine);
         if (sub === "dump") return sm.dumpSecretsDb(onLine);
 
+        if (sub === "use-for-builds") {
+          const s = sm.getSecretsManager();
+          const on = args[1] === "on" ? true : args[1] === "off" ? false : null;
+          if (!s || on === null) { onLine("✗ usage: secrets use-for-builds on|off"); return 2; }
+          sm.placeSecretsManager(s.env, { useForBuilds: on });
+          onLine(on
+            ? "✓ builds now take build args from the secrets manager (it wins over .env); off again with: secrets use-for-builds off"
+            : "✓ builds use .env again; the secrets manager is only compared (shadow check)");
+          return 0;
+        }
+
         if (sub === "connect") {
           const projectId = args[1] && !args[1].startsWith("--") ? args[1] : null;
           const s = sm.getSecretsManager();

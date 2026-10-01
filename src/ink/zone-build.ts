@@ -668,7 +668,7 @@ export async function buildZone(
     let fromSecretsManager: Record<string, string> | null = null;
     try {
       const { secretsForBuild } = await import("./secrets-manager-store.ts");
-      fromSecretsManager = await secretsForBuild(logBuild);
+      fromSecretsManager = await secretsForBuild(logBuild, readRuntimeEnvFiles() as Record<string, string>);
     } catch { /* not set up — .env as before */ }
     const buildArgs = loadBuildArgs(zone, fromSecretsManager);
     const dockerEnvBuild = { DOCKER_CONFIG: dockerCfg.tmpDir };

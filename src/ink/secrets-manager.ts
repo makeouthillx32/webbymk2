@@ -28,6 +28,12 @@ export type SecretsConfig = {
   /** Infisical project UNAXIS reads from, and the environment slug (dev/staging/prod). */
   projectId?: string;
   environment: string;
+  /**
+   * Off (default): builds keep using .env and only compare against the
+   * manager (shadow mode, names logged). On: the manager's values win.
+   * Flip it once `secrets check` shows no differences.
+   */
+  useForBuilds: boolean;
 };
 
 export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
@@ -38,6 +44,7 @@ export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
     siteUrl: raw.siteUrl ? String(raw.siteUrl).replace(/\/+$/, "") : undefined,
     projectId: raw.projectId ? String(raw.projectId) : undefined,
     environment: raw.environment ? String(raw.environment) : "prod",
+    useForBuilds: raw.useForBuilds === true,
   };
 }
 

@@ -65,7 +65,7 @@ export const UNAXIS_CLI_SCHEMA = {
     },
     secrets: {
       description: "Secrets manager (self-hosted Infisical): per-project, per-environment secrets with per-person and per-agent access. Placed on any UNAXIS host; its database is dumped before every backup.",
-      subcommands: ["status", "place", "deploy", "connect", "check", "pull", "dump"],
+      subcommands: ["status", "place", "deploy", "connect", "check", "pull", "use-for-builds", "dump"],
       arguments: [{ name: "target", type: "string", required: false }],
       options: {
         "--environment": { type: "string", description: "connect/check/pull: Infisical environment slug (default prod)." },
