@@ -200,6 +200,14 @@ async function runBackupLocked(onLine: Line, only?: string): Promise<number> {
   } catch (e) {
     onLine(`⚠ pre-backup dump skipped: ${e instanceof Error ? e.message : e}`);
   }
+  // The forge's repos and database live in a Docker volume restic can't read
+  // consistently; its own dump goes to the forge's backup targets.
+  try {
+    const { getForge, backupForge } = await import("./forge-store.ts");
+    if (getForge()) await backupForge((l) => onLine(`[forge] ${l}`));
+  } catch (e) {
+    onLine(`⚠ forge backup skipped: ${e instanceof Error ? e.message : e}`);
+  }
   const cfg = loadBackupConfig();
   if (!cfg.sources.length) { onLine("✗ nothing to back up — add one: backup source add <name> <path>"); return 1; }
   const targets = cfg.targets.filter((t) => !only || t.name === only);
