@@ -10,7 +10,7 @@
 //   backup/rest-password   — rest-server login for the `unaxis` user
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
 import { spawn } from "child_process";
@@ -182,6 +182,16 @@ async function ensureRepo(cfg: BackupConfig, t: BackupTarget, onLine: Line): Pro
 
 /** Back up every source to every target (or one). Records the outcome for the scheduler. */
 export async function runBackup(onLine: Line, only?: string): Promise<number> {
+  const release = takeRunLock();
+  if (!release) { onLine("• a backup is already running — skipped"); return 0; }
+  try {
+    return await runBackupLocked(onLine, only);
+  } finally {
+    release();
+  }
+}
+
+async function runBackupLocked(onLine: Line, only?: string): Promise<number> {
   const cfg = loadBackupConfig();
   if (!cfg.sources.length) { onLine("✗ nothing to back up — add one: backup source add <name> <path>"); return 1; }
   const targets = cfg.targets.filter((t) => !only || t.name === only);
@@ -226,37 +236,38 @@ export function backupStatus(onLine: Line): number {
   return 0;
 }
 
-// ── Nightly ──────────────────────────────────────────────────────────────────
-
-let schedulerRunning = false;
+// ── Nightly + run lock ───────────────────────────────────────────────────────
 
 /**
- * Called on a timer by the TUI. A lock file in the artifact dir stops the dev
- * and prod TUIs (both running on the control plane) from backing up twice.
+ * One backup at a time, across the dev and prod TUIs and across manual and
+ * nightly runs: a lock file in the artifact dir. Returns a release function,
+ * or null when another run holds it. A lock older than 6 h is a crashed run.
  */
-export function backupDue(now = new Date()): boolean {
-  const cfg = loadBackupConfig();
-  return !schedulerRunning && cfg.targets.length > 0 && isDue(cfg.schedule, cfg.lastRun?.at, now);
-}
-
-export async function runScheduledBackup(onLine: Line): Promise<number> {
-  const lock = join(SECRETS_DIR, "nightly.lock");
+function takeRunLock(): (() => void) | null {
+  const lock = join(SECRETS_DIR, "run.lock");
   mkdirSync(SECRETS_DIR, { recursive: true });
   try {
     writeFileSync(lock, String(process.pid), { flag: "wx" });
   } catch {
-    // Another TUI holds it. A lock older than 6 h is a crashed run: take it over.
     try {
-      const age = Date.now() - (await import("fs")).statSync(lock).mtimeMs;
-      if (age < 6 * 3600_000) return 0;
+      if (Date.now() - statSync(lock).mtimeMs < 6 * 3600_000) return null;
       writeFileSync(lock, String(process.pid));
-    } catch { return 0; }
+    } catch { return null; }
   }
-  schedulerRunning = true;
-  try {
-    return await runBackup(onLine);
-  } finally {
-    schedulerRunning = false;
-    try { (await import("fs")).rmSync(lock, { force: true }); } catch {}
-  }
+  return () => { try { rmSync(lock, { force: true }); } catch {} };
+}
+
+export function backupRunning(): boolean {
+  const lock = join(SECRETS_DIR, "run.lock");
+  try { return Date.now() - statSync(lock).mtimeMs < 6 * 3600_000; } catch { return false; }
+}
+
+/** Called on a timer by the TUI. */
+export function backupDue(now = new Date()): boolean {
+  const cfg = loadBackupConfig();
+  return cfg.targets.length > 0 && !backupRunning() && isDue(cfg.schedule, cfg.lastRun?.at, now);
+}
+
+export async function runScheduledBackup(onLine: Line): Promise<number> {
+  return runBackup(onLine);
 }
