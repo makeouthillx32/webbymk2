@@ -226,10 +226,11 @@ async function dockerRun(
 // so it can ALSO run automatically once at TUI boot (see the "self-heal on
 // startup" effect near the end of this hook) — one code path for "I typed
 // `unaxis up`" and "the TUI just launched and the stack is cold". Idempotent:
-// running services are untouched; hydration UPSERTs.
+// running services are untouched (the startup run passes --no-recreate, see
+// below); hydration UPSERTs.
 export async function coldStartCoreStack(
   onLine: (l: string) => void,
-  opts: { skipHydrate?: boolean } = {},
+  opts: { skipHydrate?: boolean; noRecreate?: boolean } = {},
 ): Promise<number> {
   onLine("── unaxis up · core stack cold-start ──");
 
@@ -260,7 +261,14 @@ export async function coldStartCoreStack(
 
   // 2. Core compose project up (root docker-compose.yml, project `unenter`)
   onLine("→ compose up -d (core stack)…");
-  const ccode = await composeRun(["up", "-d"], onLine);
+  // --no-recreate for the automatic startup run: compose recreates any
+  // container whose config hash changed, and the services carry
+  // unaxis.version / unaxis.source-ref labels from env, which differ between
+  // the dev and prod TUIs and change with every commit. So a plain `up -d` on
+  // every dev-TUI restart recreated the whole core stack (db, auth, kong,
+  // proxy, mediamtx) — a real outage, seen three times on 2026-09-30. A
+  // self-heal should only start what's stopped or missing.
+  const ccode = await composeRun(opts.noRecreate ? ["up", "-d", "--no-recreate"] : ["up", "-d"], onLine);
   if (ccode !== 0) {
     onLine("✗ compose up failed — see lines above");
     return ccode;
@@ -4117,7 +4125,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
   useEffect(() => {
     if (autoColdStartFired) return;
     autoColdStartFired = true;
-    void runOpVisible("Startup self-heal (unaxis up)", (onLine) => coldStartCoreStack(onLine));
+    void runOpVisible("Startup self-heal (unaxis up)", (onLine) => coldStartCoreStack(onLine, { noRecreate: true }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
