@@ -1,9 +1,9 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
-import { isPublicHost, removals, selectOverlayFiles } from "./workspace-overlay";
+import { isPublicHost, removals, selectOverlayFiles, type OverlaySelection } from "./workspace-overlay";
 
 const root = mkdtempSync(join(tmpdir(), "overlay-"));
 const put = (rel: string, body = "x") => {
@@ -37,7 +37,9 @@ spawnSync("git", ["init", "-q"], { cwd: join(root, "vault/clones/upstream") });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe("selectOverlayFiles", () => {
-  const { files, tooBig } = selectOverlayFiles(root);
+  let files: string[] = [];
+  let sel: OverlaySelection;
+  beforeAll(async () => { sel = await selectOverlayFiles(root); files = sel.files; });
 
   test("keeps secrets, notes, and instance config", () => {
     for (const want of [".env", "vault/Notes/a.md", "supabase-instances/one/docker/.env",
@@ -56,12 +58,12 @@ describe("selectOverlayFiles", () => {
 
   test("nested git repos are skipped and named", () => {
     expect(files).not.toContain("vault/clones/upstream/README.md");
-    expect(selectOverlayFiles(root).nestedRepos).toEqual(["vault/clones/upstream"]);
+    expect(sel.nestedRepos).toEqual(["vault/clones/upstream"]);
   });
 
   test("files over the size cap are reported, not added", () => {
     expect(files).not.toContain("big.bin");
-    expect(tooBig.map((b) => b.path)).toEqual(["big.bin"]);
+    expect(sel.tooBig.map((b) => b.path)).toEqual(["big.bin"]);
   });
 });
 

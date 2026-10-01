@@ -71,6 +71,8 @@ describe("backup targets", () => {
     expect(parseBackupTarget(win, "linux")).toEqual({ kind: "dir", path: "/mnt/c/Users/a/backups" });
     expect(parseBackupTarget(String.raw`C:\Users\a`, "win32")).toEqual({ kind: "dir", path: String.raw`C:\Users\a` });
     expect(parseBackupTarget("/srv/backups", "linux")).toEqual({ kind: "dir", path: "/srv/backups" });
+    // A path stored while the TUI ran under WSL still works when it runs on Windows.
+    expect(parseBackupTarget("/mnt/c/Users/a/backups", "win32")).toEqual({ kind: "dir", path: String.raw`C:\Users\a\backups` });
   });
 
   test("relative paths and unmounted shares are refused with a reason", () => {

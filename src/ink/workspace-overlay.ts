@@ -10,12 +10,14 @@
 // Its git dir is `.git-workspace/` in the project root (ignored by the main
 // repo) and its work tree is the project root itself, so both histories see
 // the same files and neither needs history rewriting to keep secrets private.
+// Everything here is async so a sync never freezes the TUI.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { lstat, readdir } from "fs/promises";
 import { join } from "path";
-import { spawnSync } from "child_process";
 import ignore from "ignore";
+import { runGit } from "./git-bin.ts";
 
 export const OVERLAY_GIT_DIR = ".git-workspace";
 export const OVERLAY_RULES_FILE = ".workspace-overlay";
@@ -73,13 +75,9 @@ export type OverlaySelection = {
   nestedRepos: string[];
 };
 
-function git(root: string, args: string[], input?: string) {
-  return spawnSync("git", args, { cwd: root, encoding: "utf8", input, maxBuffer: 256 * 1024 * 1024 });
-}
-
 /** Paths (files, or directories ending in "/") the main repo ignores. */
-export function mainRepoIgnored(root: string): string[] {
-  const r = git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]);
+export async function mainRepoIgnored(root: string): Promise<string[]> {
+  const r = await runGit(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]);
   if (r.status !== 0) throw new Error(`git ls-files failed: ${r.stderr.trim()}`);
   return r.stdout.split("\0").filter(Boolean);
 }
@@ -93,42 +91,39 @@ export function overlayMatcher(root: string) {
 
 /**
  * Every file the overlay should hold: walk what the main repo ignores, prune
- * excluded directories without descending into them, cap file size.
+ * excluded directories without descending into them, skip nested repos, cap
+ * file size.
  */
-export function selectOverlayFiles(root: string, ignored = mainRepoIgnored(root)): OverlaySelection {
+export async function selectOverlayFiles(root: string, ignored?: string[]): Promise<OverlaySelection> {
   const ig = overlayMatcher(root);
   const files: string[] = [];
   const tooBig: OverlaySelection["tooBig"] = [];
   const nestedRepos: string[] = [];
 
-  const visit = (rel: string) => {
-    const isDir = rel.endsWith("/");
-    const clean = isDir ? rel.slice(0, -1) : rel;
-    if (ig.ignores(isDir ? `${clean}/` : clean)) return;
+  const visit = async (rel: string): Promise<void> => {
+    const clean = rel.endsWith("/") ? rel.slice(0, -1) : rel;
     let st;
-    try { st = lstatSync(join(root, clean)); } catch { return; }
+    try { st = await lstat(join(root, clean)); } catch { return; }
     if (st.isSymbolicLink()) return;
     if (st.isDirectory()) {
       if (ig.ignores(`${clean}/`)) return;
       let entries: string[] = [];
-      try { entries = readdirSync(join(root, clean)); } catch { return; }
+      try { entries = await readdir(join(root, clean)); } catch { return; }
       if (entries.includes(".git")) { nestedRepos.push(clean); return; }
-      for (const e of entries) visit(`${clean}/${e}${lstatSafeIsDir(join(root, clean, e)) ? "/" : ""}`);
+      for (const e of entries) await visit(`${clean}/${e}`);
       return;
     }
-    if (!st.isFile()) return;
+    if (!st.isFile() || ig.ignores(clean)) return;
+    // Windows device names (a stray `NUL` from a `> NUL` typo, etc.) can't be read as files.
+    if (/^(con|prn|aux|nul|com\d|lpt\d)(\.[^/]*)?$/i.test(clean.split("/").pop() ?? "")) return;
     if (st.size > MAX_FILE_BYTES) { tooBig.push({ path: clean, bytes: st.size }); return; }
     files.push(clean);
   };
 
-  for (const rel of ignored) visit(rel);
+  for (const rel of ignored ?? (await mainRepoIgnored(root))) await visit(rel);
   files.sort();
   nestedRepos.sort();
   return { files, tooBig, nestedRepos };
-}
-
-function lstatSafeIsDir(p: string): boolean {
-  try { return lstatSync(p).isDirectory(); } catch { return false; }
 }
 
 /** The overlay must only ever live on the forge. */

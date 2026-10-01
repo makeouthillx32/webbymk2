@@ -140,6 +140,11 @@ export function parseBackupTarget(raw: string, platform: string = process.platfo
       ? { kind: "dir", path: t }
       : "network shares aren't visible here — mount the share and give its mount path, or use env:<NAME>";
   }
+  // The TUI runs under WSL or native Windows; stored paths work from either.
+  const mnt = /^\/mnt\/([a-z])(?:\/(.*))?$/.exec(t);
+  if (mnt && platform === "win32") {
+    return { kind: "dir", path: `${mnt[1].toUpperCase()}:\\${(mnt[2] ?? "").replace(/\//g, "\\")}`.replace(/\\+$/, "") };
+  }
   const win = /^([A-Za-z]):[\\/](.*)$/.exec(t);
   if (win && platform !== "win32") {
     return { kind: "dir", path: `/mnt/${win[1].toLowerCase()}/${win[2].replace(/\\/g, "/")}`.replace(/\/+$/, "") };

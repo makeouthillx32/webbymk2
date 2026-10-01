@@ -23,6 +23,7 @@
 // base64 token.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { resolveGitBin as resolveGitBinFor } from "./git-bin.ts";
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir, homedir }   from "os";
 import { join }              from "path";
@@ -434,24 +435,9 @@ interface GitProvenance {
   author:    string;
 }
 
-let _cachedGitBin: string | null = null;
+/** Windows git.exe under WSL for repos on a Windows drive — see git-bin.ts. */
 export function resolveGitBin(cwd: string = PROJECT_DIR): string {
-  if (_cachedGitBin) return _cachedGitBin;
-  if (process.platform === "linux" && cwd.startsWith("/mnt/")) {
-    if (existsSync("/mnt/c/program files/git/cmd/git.exe")) {
-      return (_cachedGitBin = "/mnt/c/program files/git/cmd/git.exe");
-    }
-    if (existsSync("/mnt/c/Program Files/Git/cmd/git.exe")) {
-      return (_cachedGitBin = "/mnt/c/Program Files/Git/cmd/git.exe");
-    }
-    try {
-      const probe = spawnSync("which", ["git.exe"], { encoding: "utf-8", timeout: 300 });
-      if (probe.status === 0 && probe.stdout.trim()) {
-        return (_cachedGitBin = probe.stdout.trim());
-      }
-    } catch {}
-  }
-  return (_cachedGitBin = "git");
+  return resolveGitBinFor(cwd);
 }
 
 let _provCache: { data: GitProvenance; expiresAt: number } | null = null;
@@ -478,10 +464,13 @@ function gitProvenance(): GitProvenance {
   let author = "makeouthillx32";
 
   try {
+    // 10 s, not 1.2 s: under build load (Docker starting, a busy disk) a
+    // ~100 ms git call regularly blew the old budget and every image since
+    // 2026-09-27 was tagged gnogit-dirty.
     const logRes = spawnSync(gitBin, ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], {
       cwd: PROJECT_DIR,
       encoding: "utf-8",
-      timeout: 1200,
+      timeout: 10_000,
     });
     if (logRes.status === 0 && logRes.stdout) {
       const parts = logRes.stdout.split("\0");
@@ -498,10 +487,15 @@ function gitProvenance(): GitProvenance {
   try {
     // Non-empty porcelain = uncommitted changes → the image matches no commit.
     // Pass -uno (untracked-files=no) to prevent 30+ second filesystem scans over 9p DrvFs mounts in WSL.
-    const statusRes = spawnSync(gitBin, ["status", "--porcelain", "-uno"], {
+    // Live runtime state the proxy rewrites (proxy-config/) and bytecode
+    // caches are tracked but never enter an image (.dockerignore drops them),
+    // so they don't make the build dirty.
+    const statusRes = spawnSync(gitBin, [
+      "status", "--porcelain", "-uno", "--", ".", ":(exclude)proxy-config", ":(exclude)__pycache__",
+    ], {
       cwd: PROJECT_DIR,
       encoding: "utf-8",
-      timeout: 1200,
+      timeout: 10_000,
     });
     dirty = statusRes.status === 0 && (statusRes.stdout ?? "").trim().length > 0;
   } catch {}
@@ -621,6 +615,26 @@ export async function buildZone(
     const createdIso = new Date().toISOString();
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
     if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
+
+    // Publish the exact source being built to the forge first, so every image
+    // traces back to code that lives off this machine (see build-source.ts).
+    // Best-effort: a forge outage warns and the build carries on.
+    try {
+      const { publishBuildSource } = await import("./build-source.ts");
+      await publishBuildSource(PROJECT_DIR, zone.key, gitContentTag(prov), prov, logBuild);
+    } catch (e) {
+      logBuild(`⚠ source not published to the forge: ${e instanceof Error ? e.message : e}`);
+    }
+    // Secrets and ignored files (workspace overlay) go up alongside, in the
+    // background so they never hold the build up.
+    void (async () => {
+      try {
+        const { overlayExists, syncOverlay } = await import("./workspace-sync.ts");
+        if (overlayExists(PROJECT_DIR)) await syncOverlay(PROJECT_DIR, (l) => logBuild(`[workspace] ${l}`));
+      } catch (e) {
+        logBuild(`[workspace] ⚠ overlay not synced: ${e instanceof Error ? e.message : e}`);
+      }
+    })();
 
     const depTarget = prov.branch === "main" ? "production" : "preview";
     const dep = dbCreateDeployment({
