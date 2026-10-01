@@ -23,7 +23,7 @@
 // base64 token.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { resolveGitBin as resolveGitBinFor } from "./git-bin.ts";
+import { resolveGitBin as resolveGitBinFor, runGit } from "./git-bin.ts";
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir, homedir }   from "os";
 import { join }              from "path";
@@ -444,6 +444,40 @@ export function resolveGitBin(cwd: string = PROJECT_DIR): string {
 
 let _provCache: { data: GitProvenance; expiresAt: number } | null = null;
 
+/**
+ * Async provenance for the build path. Inside the long-running TUI on Windows,
+ * the synchronous `git log` above timed out within ~1 s even with a 10 s
+ * budget (every image since 2026-09-27 was tagged gnogit), while the same call
+ * through an async spawn returns in ~100 ms. Fills the same cache, so later
+ * sync callers during the build reuse it.
+ */
+async function gitProvenanceAsync(): Promise<GitProvenance> {
+  const now = Date.now();
+  if (_provCache && _provCache.expiresAt > now) return _provCache.data;
+  let branch = "main";
+  try {
+    const head = readFileSync(join(PROJECT_DIR, ".git", "HEAD"), "utf-8").trim();
+    if (head.startsWith("ref: refs/heads/")) branch = head.replace("ref: refs/heads/", "");
+  } catch {}
+  const [logRes, statusRes] = await Promise.all([
+    runGit(PROJECT_DIR, ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], { timeoutMs: 15_000 }),
+    runGit(PROJECT_DIR, ["status", "--porcelain", "-uno", "--", ".", ":(exclude)proxy-config", ":(exclude)__pycache__"], { timeoutMs: 15_000 }),
+  ]);
+  const parts = logRes.status === 0 ? logRes.stdout.split("\0") : [];
+  const fullSha = (parts[0] ?? "").trim();
+  const data: GitProvenance = {
+    shortSha: (parts[1] ?? "").trim() || (fullSha ? fullSha.slice(0, 8) : "nogit"),
+    fullSha,
+    dirty: statusRes.status === 0 && statusRes.stdout.trim().length > 0,
+    branch,
+    commitMsg: (parts[2] ?? "").trim(),
+    author: (parts[3] ?? "").trim() || "makeouthillx32",
+    gitError: parts.length >= 4 ? undefined : `git log → status ${logRes.status}: ${logRes.stderr.trim().slice(0, 200)}`,
+  };
+  _provCache = { data, expiresAt: Date.now() + 15_000 };
+  return data;
+}
+
 /** Source provenance of the build context — best-effort; degrades to "nogit". */
 function gitProvenance(): GitProvenance {
   const now = Date.now();
@@ -618,7 +652,7 @@ export async function buildZone(
     // SOURCE; the UNAXIS version becomes a label (build tool, not app version).
     // buildId is unique per build (ms) AND carries provenance — it doubles as
     // the SOURCE_REF cache-bust so the source layer always recompiles fresh.
-    const prov       = gitProvenance();
+    const prov       = await gitProvenanceAsync();
     const unaxisVer  = resolveUnaxisVersion();
     const createdIso = new Date().toISOString();
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
