@@ -202,7 +202,14 @@ bun dev
 export async function startDevContainer(
   zone:   Zone,
   onLine: (l: string) => void,
+  opts:   { container?: boolean } = {},
 ): Promise<number> {
+  // Dev mode is bare metal for every zone (bare-dev.ts); the Docker container
+  // below only runs when explicitly asked for (`dev start --container`).
+  if (!opts.container) {
+    const bare = await import("./bare-dev.ts");
+    if (bare.bareDevConfig(zone)) return bare.startBareDev(zone, onLine);
+  }
   const container = devContainerName(zone);
   const volume     = devModulesVolume(zone);
   const appVolume  = devAppVolume(zone);
@@ -307,6 +314,14 @@ export async function startDevContainer(
   });
 }
 
+/** Is this zone's dev server up — bare-metal process or Docker dev container? */
+export async function isDevRunning(zone: Zone): Promise<boolean> {
+  const bare = await import("./bare-dev.ts");
+  if (bare.bareDevConfig(zone) && (await bare.isBareDevRunning(zone))) return true;
+  const st = await getStatus(devContainerName(zone));
+  return st === "running" || st === "starting";
+}
+
 /**
  * Stop and fully remove a zone's dev container.
  *
@@ -320,6 +335,13 @@ export async function stopDevContainer(
   zone:   Zone,
   onLine: (l: string) => void,
 ): Promise<number> {
+  const bare = await import("./bare-dev.ts");
+  if (bare.bareDevConfig(zone)) {
+    // Also clear a Docker dev container left from before dev mode went bare metal.
+    const st = await getStatus(devContainerName(zone));
+    if (st === "running" || st === "starting") await dockerRmForce(devContainerName(zone), () => {});
+    return bare.stopBareDev(zone, onLine);
+  }
   const container = devContainerName(zone);
   const routeKey  = devRouteKey(zone);
 

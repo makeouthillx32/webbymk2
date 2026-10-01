@@ -139,12 +139,29 @@ export const STACK_HOST = {
   get proxyPort() { return requireConfig().stack.proxyPort; },
 } as const;
 
+// Where Nginx Proxy Manager lives comes from the UNAXIS topology first: the
+// host holding the `ingress` role (control-db.ts registers the lookup, so
+// this module stays free of DB imports). config.json's npm.ip is only the
+// fallback — it once kept pointing at L0V3 for weeks after NPM moved to OPT1,
+// and every NPM call failed quietly.
+type NpmLocation = { ip: string; port: number; source: string };
+let npmLocator: (() => NpmLocation | null) | null = null;
+export function setNpmLocator(fn: () => NpmLocation | null): void { npmLocator = fn; }
+function npmLocation(): NpmLocation {
+  try {
+    const found = npmLocator?.();
+    if (found?.ip) return found;
+  } catch { /* fall back to config.json */ }
+  const c = requireConfig().npm;
+  return { ip: c.ip, port: c.port, source: "config.json" };
+}
+
 export const NPM_HOST = {
-  label:    "L0VE / NPM (fallback)",
-  get ip()      { return requireConfig().npm.ip; },
-  get port()    { return requireConfig().npm.port; },
-  get apiUrl()  { const c = requireConfig().npm; return `http://${c.ip}:${c.port}/api`; },
-  get uiUrl()   { const c = requireConfig().npm; return `http://${c.ip}:${c.port}`; },
+  get label()   { return `NPM (${npmLocation().source})`; },
+  get ip()      { return npmLocation().ip; },
+  get port()    { return npmLocation().port; },
+  get apiUrl()  { const l = npmLocation(); return `http://${l.ip}:${l.port}/api`; },
+  get uiUrl()   { const l = npmLocation(); return `http://${l.ip}:${l.port}`; },
   get email()   { return process.env["NPM_EMAIL"]    ?? requireConfig().npm.email; },
   /** @deprecated Use Vault via getActiveEnvironmentCredentials() — never store passwords in config.json. */
   get password(){ return process.env["NPM_PASSWORD"] ?? requireConfig().npm.password; },

@@ -21,6 +21,7 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import type { Zone } from "../config/zones.ts";
 import { PROJECT_DIR } from "../config/zones.ts";
+import { setNpmLocator } from "../config/stack.ts";
 import { spawnSync } from "child_process";
 import type {
   UnaxisEnvironment,
@@ -1920,3 +1921,25 @@ export function dbGetInfo(): ControlDbInfo {
   const migs   = (db.query("SELECT COUNT(*) as n FROM _migrations").get() as { n: number }).n;
   return { path, zoneCount: zones, envCount: envs, migrations: migs };
 }
+
+// ── Where Nginx Proxy Manager lives ─────────────────────────────────────────
+// NPM_HOST (config/stack.ts) follows the topology: the host holding the
+// `ingress` role, its LAN address (tailnet as a fallback), port from the
+// placement's config.adminPort or 81. Cached briefly; config.json is used
+// only when the topology has no answer.
+let npmLocated: { at: number; value: { ip: string; port: number; source: string } | null } | null = null;
+setNpmLocator(() => {
+  if (npmLocated && Date.now() - npmLocated.at < 30_000) return npmLocated.value;
+  let value: { ip: string; port: number; source: string } | null = null;
+  try {
+    const ingress = dbGetAllServices().find((x) => x.enabled && x.serviceType === "ingress" && x.environmentId);
+    const env = ingress ? dbGetEnvironments().find((e) => e.id === ingress.environmentId) : undefined;
+    if (ingress && env) {
+      const facts = dbGetHostFacts(env.id);
+      const ip = String(facts.lanIp || facts.tailnetIp || "");
+      if (ip) value = { ip, port: Number(ingress.config?.adminPort) || 81, source: `ingress@${env.name}` };
+    }
+  } catch { /* DB not ready — config.json */ }
+  npmLocated = { at: Date.now(), value };
+  return value;
+});

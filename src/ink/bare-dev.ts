@@ -39,7 +39,7 @@
 // -----------------------------------------------------------------------------
 
 import { spawn, execFile } from "child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, openSync, statSync, readSync, closeSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, openSync, statSync, readSync, closeSync, writeFileSync } from "fs";
 import { join } from "path";
 import os from "os";
 
@@ -61,19 +61,49 @@ export type BareDevConfig = {
   host: string;
 };
 
-// Add an entry here to give another zone the bare-metal dev path. Every
-// zone NOT listed here is completely unaffected — dev-container.ts's
-// Docker path is still the only thing that ever runs for them.
-const BARE_METAL_DEV_ZONES: Record<string, BareDevConfig> = {
-  // host "" = the core host, resolved from the UNAXIS topology in bareDevConfig().
-  tank: { port: 3012, script: "zones/tank/dev-bare.ps1", host: "" },
+// Zones with their own hand-written launcher. Every other zone uses the
+// generic one, scripts/dev-bare.ts, which assembles the zone as its own Next
+// project next to the repo (see that file's header) — so since 2026-10-01
+// EVERY zone's dev mode is bare metal. The Docker dev container is still
+// there as a fallback (`zone <key> dev start --container`).
+const BARE_METAL_DEV_ZONES: Record<string, Omit<BareDevConfig, "host">> = {
+  tank: { port: 3012, script: "zones/tank/dev-bare.ps1" },
 };
 
-/** Null when this zone doesn't opt into bare-metal dev mode. */
+const GENERIC_SCRIPT = "scripts/dev-bare.ts";
+const FIRST_GENERIC_PORT = 3101;
+
+/**
+ * A stable port per zone, assigned once and remembered, so a zone's dev URL
+ * and proxy route stay the same across restarts and new zones never collide.
+ */
+function assignedPort(zoneKey: string): number {
+  const file = join(stateDir(), "ports.json");
+  let ports: Record<string, number> = {};
+  try { ports = JSON.parse(readFileSync(file, "utf8")); } catch { /* first use */ }
+  if (ports[zoneKey]) return ports[zoneKey];
+  const taken = new Set([...Object.values(ports), ...Object.values(BARE_METAL_DEV_ZONES).map((c) => c.port)]);
+  let port = FIRST_GENERIC_PORT;
+  while (taken.has(port)) port++;
+  ports[zoneKey] = port;
+  writeFileSync(file, JSON.stringify(ports, null, 2));
+  return port;
+}
+
+/** Every zone has a bare-metal dev config (its own launcher, or the generic one). */
 export function bareDevConfig(zone: Zone): BareDevConfig | null {
-  const cfg = BARE_METAL_DEV_ZONES[zone.key];
-  if (!cfg) return null;
-  return cfg.host ? cfg : { ...cfg, host: process.env.BARE_DEV_HOST || dbCoreLanIp() || "127.0.0.1" };
+  const host = process.env.BARE_DEV_HOST || dbCoreLanIp() || "127.0.0.1";
+  const own = BARE_METAL_DEV_ZONES[zone.key];
+  if (own) return { ...own, host };
+  if (!existsSync(join(PROJECT_DIR, GENERIC_SCRIPT))) return null;
+  return { port: assignedPort(zone.key), script: GENERIC_SCRIPT, host };
+}
+
+/** The last `lines` lines of a bare-metal dev server's log. */
+export function bareDevLogTail(zone: Zone, lines: number): string[] {
+  const file = logFile(zone);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-lines);
 }
 
 function stateDir(): string {
@@ -127,6 +157,11 @@ export async function startBareDev(
     return 1;
   }
 
+  if (await isBareDevRunning(zone)) {
+    onLine(`✓ bare-metal dev server already running for ${zone.label} on :${cfg.port}`);
+    return 0;
+  }
+
   onLine(`Starting bare-metal dev server for ${zone.label}…`);
   onLine(`  script : ${cfg.script}`);
   onLine(`  port   : ${cfg.port}  (also reachable directly at http://localhost:${cfg.port})`);
@@ -137,12 +172,13 @@ export async function startBareDev(
   // `detached: true`) is what actually gets the child out of this
   // process's job object on Windows — see the file header for why.
   const out = openSync(logFile(zone), "a");
+  // A .ps1 launcher (Tank's own) or the generic bun launcher with zone + port.
+  const launcher = cfg.script.endsWith(".ps1")
+    ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath]
+    : ["bun", scriptPath, zone.key, String(cfg.port)];
   const proc = spawn(
     "cmd.exe",
-    [
-      "/d", "/c", "start", "", "/B",
-      "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath,
-    ],
+    ["/d", "/c", "start", "", "/B", ...launcher],
     { cwd: PROJECT_DIR, windowsHide: true, stdio: ["ignore", out, out] },
   );
   proc.unref();

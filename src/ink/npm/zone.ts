@@ -133,7 +133,7 @@ export async function npmAddZone(
   onLine("Checking NPM connectivity...");
   if (!await npmPing()) {
     onLine(`✗ Cannot reach NPM at ${NPM_HOST.apiUrl}`);
-    onLine(`  Is L0VE (${NPM_HOST.ip}) online?`);
+    onLine(`  Is ${NPM_HOST.ip} (${NPM_HOST.label}) online?`);
     return 1;
   }
   onLine("✓ NPM reachable");

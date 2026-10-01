@@ -4,7 +4,7 @@ import type { RuntimeInstance } from "../zone/supabase-factory.ts";
 import type { Zone } from "../../config/zones.ts";
 import { PROXY } from "../../config/zones.ts";
 import { backupDatabase, startCoreStack, stopCoreStack, restartCoreStack, removeCoreStack, healCoreStack } from "../db-api.ts";
-import { devContainerName, devDomain, startDevContainer, stopDevContainer } from "../dev-container.ts";
+import { devContainerName, devDomain, isDevRunning, startDevContainer, stopDevContainer } from "../dev-container.ts";
 import { getStatus, getStatuses, composeRun, pullAndUp, removeZoneDockerArtifacts, recreateCoreService, syncSharedZonesCompose } from "../docker.ts";
 import { startIpcServer, startRemoteIpcBridge } from "../ipc-server.ts";
 import { captureDockerLogs, parseTail } from "../log-snapshot.ts";
@@ -394,10 +394,10 @@ export function useIpcBridge({
     };
 
     const formatDevStatus = async (zone: Zone): Promise<string> => {
-      const status = await getStatus(devContainerName(zone));
-      if (status === "running") return "● running";
-      if (status === "starting") return "◌ starting";
-      return "○ stopped";
+      const { bareDevConfig } = await import("../bare-dev.ts");
+      const bare = bareDevConfig(zone);
+      const where = bare ? `bare metal :${bare.port}` : devContainerName(zone);
+      return `${(await isDevRunning(zone)) ? "● running" : "○ stopped"} (${where})`;
     };
 
     const printZoneStatus = async (zone: Zone, onLine: (line: string) => void) => {
@@ -410,7 +410,7 @@ export function useIpcBridge({
       } catch (error) {
         onLine(`  footer    : unavailable (${error instanceof Error ? error.message : String(error)})`);
       }
-      onLine(`  dev       : ${await formatDevStatus(zone)} (${devContainerName(zone)})`);
+      onLine(`  dev       : ${await formatDevStatus(zone)} → ${devDomain(zone)}`);
       onLine(`✓ zone status`);
       return 0;
     };
@@ -539,12 +539,7 @@ export function useIpcBridge({
         if (!zoneName) { onLine("✗ usage: dev <zone-key>"); return 1; }
         const zone = await resolveZone(zoneName);
         if (!zone) { onLine(`✗ zone not found: "${zoneName}"`); return 1; }
-        const status = await getStatus(devContainerName(zone));
-        if (status === "running" || status === "starting") {
-          onLine(`Stopping dev container for ${zone.label}…`);
-          return stopDevContainer(zone, onLine);
-        }
-        onLine(`Starting dev container for ${zone.label}…`);
+        if (await isDevRunning(zone)) return stopDevContainer(zone, onLine);
         return startDevContainer(zone, onLine);
       },
 
@@ -3326,7 +3321,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         const reachable = await npmPing();
         if (!reachable) {
-          onLine(`✗ NPM unreachable — check that L0VE is up and the agent is running`);
+          onLine(`✗ NPM unreachable at ${NPM_HOST.apiUrl} (${NPM_HOST.label}) — is that host up?`);
           return 1;
         }
 
@@ -3403,7 +3398,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return 0;
         }
 
-        onLine(`NPM Proxy Hosts on ${NPM_HOST.ip}  (${filtered.length}${search ? ` matching "${search}"` : ""} of ${hosts.length} total)`);
+        onLine(`NPM Proxy Hosts on ${NPM_HOST.ip}, ${NPM_HOST.label}  (${filtered.length}${search ? ` matching "${search}"` : ""} of ${hosts.length} total)`);
         onLine("");
 
         for (const h of filtered) {
@@ -3514,9 +3509,8 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         }
 
         if (wantsDev) {
-          const status = await getStatus(devContainerName(zone));
-          if (status === "running" || status === "starting") {
-            onLine(`✓ dev container already ${status} for ${zone.label}`);
+          if (await isDevRunning(zone)) {
+            onLine(`✓ dev server already running for ${zone.label}`);
           } else {
             if (session) appendTimeline(session, "zone.dev.start", { zone: zone.key, container: devContainerName(zone) });
             const code = await startDevContainer(zone, onLine);
@@ -3897,6 +3891,13 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         if (verb === "logs") {
           const tail = parseTail(args.slice(3));
+          const { bareDevConfig, bareDevLogTail } = await import("../bare-dev.ts");
+          if (bareDevConfig(zone) && !(await getStatus(devContainerName(zone))).startsWith("run")) {
+            const lines = bareDevLogTail(zone, tail);
+            lines.forEach((l) => onLine(l));
+            onLine(`✓ zone dev logs: ${zone.key} (${lines.length} lines, bare metal)`);
+            return 0;
+          }
           const container = devContainerName(zone);
           const result = await captureDockerLogs({
             label: `${zone.key}-dev`,
@@ -3908,12 +3909,12 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         }
 
         if (verb === "start") {
-          const status = await getStatus(devContainerName(zone));
-          if (status === "running" || status === "starting") {
-            onLine(`✓ dev container already running for ${zone.label}`);
+          if (await isDevRunning(zone)) {
+            onLine(`✓ dev server already running for ${zone.label}`);
             return 0;
           }
-          return startDevContainer(zone, onLine);
+          // --container: the old Docker dev container instead of bare metal.
+          return startDevContainer(zone, onLine, { container: args.includes("--container") });
         }
 
         if (verb === "stop") {
