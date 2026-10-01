@@ -28,7 +28,10 @@ Runtime is **Bun** for tooling/TUI, Next.js for the web app. Dev machine is Wind
 
 ## Environment model
 
-- Two machines: **POWER** (dev, this repo, TUI, `192.168.50.204`) and **L0V3** (agent host, `192.168.50.75`). Both Windows + Docker Desktop.
+- Hosts (UNAXIS environments): **POWER** (`192.168.50.204` — dev workspace, TUI, core stack + DB, self-hosted Forgejo, Infisical, media origin), **L0V3** (`192.168.50.75` — docs/blog/shop zones, restic backup target), **OPT1** (Linux — Nginx Proxy Manager / ingress, SRT camera receiver, media edge). POWER and L0V3 are Windows + Docker Desktop.
+- Code: `origin` is the self-hosted **Forgejo** (source of truth); it push-mirrors only `main` and listed branches to GitHub. `main` is protected — changes from others arrive as pull requests.
+- Secrets: self-hosted **Infisical** (`unaxis secrets`); builds read `.env` and only shadow-compare until `secrets use-for-builds on`. Backups: `unaxis backup` (restic, nightly 03:30). Details: `vault/Architecture/Self-hosted forge (Forgejo).md`.
+- UNAXIS's live local config is `%APPDATA%\unaxis\unenter\config.json` (not the repo-root `config.json`); NPM's address follows the topology's `ingress` placement.
 - Compose project namespace is `unenter` (`-p unenter`). Key ports: TUI IPC `50505` (prod) / `50507` (dev), Postgres `5433`, Next dev `3000`, proxy `3080`.
 - Volatile runtime state (versions, active stacks) lives in `vault/CRITICAL_FACTS.md` — verify via CLI before acting, don't trust cached notes.
 - All environments are live nodes; `is_default_target` selects the default target (no "active" env concept).
@@ -39,6 +42,8 @@ Runtime is **Bun** for tooling/TUI, Next.js for the web app. Dev machine is Wind
 ## Build & deploy rules (hard-won)
 
 - `unaxis <env> zone <key> build` is the **complete ship pipeline** — build, push, pull, force-recreate, proxy reload. Do NOT run `deploy` after a successful `build`.
+- Production ships from Forgejo: `zone <key> build --ref main` (TUI **B**) builds that exact commit from a clean checkout (tag `g<sha>`). Plain `build` (TUI **b**) builds the dev drive as-is and records the tree on Forgejo under `refs/unaxis/builds/`.
+- Dev mode (`zone <key> dev start`) is bare metal for every zone (`scripts/dev-bare.ts`, ~5 s hot reload); `--container` is the old Docker path. Saving anything under `src/ink` restarts the dev TUI and cancels its running builds.
 - **Build ONE zone at a time.** Parallel builds OOM the Docker daemon (queue busy-check reads stale IPC state). Fire one, poll `unaxis stacks`, then the next.
 - Build hangs at "Generating static pages (0/N)" = SSG fork-ENOMEM, not network. Fix is `experimental: { cpus: 2 }` in `next.config.js`; diagnose with `unaxis build-doctor` / `build-mem`; unstick zombie builders with `unaxis builder-reset`.
 - Changes under shared `src/` compile into **every** zone image — rebuild each public zone that must receive them. Changes under `zones/<key>/` affect only that zone.
