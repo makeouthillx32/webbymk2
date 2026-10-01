@@ -28,7 +28,7 @@ const pillars = [
     number: "02",
     title: "Self-hosted, fully owned",
     description:
-      "Our hardware, our data, our deploys. No rented platform between the code and the internet.",
+      "Our hardware, our code, our data, our deploys. No rented platform between the code and the internet.",
   },
   {
     number: "03",
