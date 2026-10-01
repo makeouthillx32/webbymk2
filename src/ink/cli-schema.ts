@@ -65,9 +65,11 @@ export const UNAXIS_CLI_SCHEMA = {
     },
     secrets: {
       description: "Secrets manager (self-hosted Infisical): per-project, per-environment secrets with per-person and per-agent access. Placed on any UNAXIS host; its database is dumped before every backup.",
-      subcommands: ["status", "place", "deploy", "dump"],
-      arguments: [{ name: "env", type: "string", required: false }],
+      subcommands: ["status", "place", "deploy", "connect", "check", "pull", "dump"],
+      arguments: [{ name: "target", type: "string", required: false }],
       options: {
+        "--environment": { type: "string", description: "connect/check/pull: Infisical environment slug (default prod)." },
+        "--out":         { type: "string", description: "pull: file to write (default .env.from-secrets; .env itself is backed up first)." },
         "--http-port": { type: "number", description: "place: host port for the web UI (default 8222)." },
         "--site-url":  { type: "string", description: "place: public URL override (default http://<tailnet-or-LAN-ip>:<port>)." },
         "--bg":        { type: "boolean", description: "deploy: run as a background stack op." }
@@ -88,7 +90,7 @@ export const UNAXIS_CLI_SCHEMA = {
       }
     },
     workspace: {
-      description: "Workspace overlay: version everything .gitignore leaves out (.env, secrets, notes, state) in a second repo that lives only on the forge.",
+      description: "REPLACED by `backup` (restic) and `secrets` (Infisical); kept to read the old overlay archive. Workspace overlay: everything .gitignore leaves out, in a second repo on the forge.",
       subcommands: ["status", "init", "sync", "files"],
       arguments: [],
       options: {

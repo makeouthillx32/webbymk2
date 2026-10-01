@@ -1878,6 +1878,50 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         const sub = args[0] ?? "status";
         if (sub === "status") return sm.secretsStatus(onLine);
         if (sub === "dump") return sm.dumpSecretsDb(onLine);
+
+        if (sub === "connect") {
+          const projectId = args[1] && !args[1].startsWith("--") ? args[1] : null;
+          const s = sm.getSecretsManager();
+          if (!s) { onLine("✗ not placed — run: secrets place <env>"); return 1; }
+          if (!projectId || !/^[0-9a-f-]{36}$/i.test(projectId)) { onLine("✗ usage: secrets connect <projectId> [--environment prod]"); return 2; }
+          sm.placeSecretsManager(s.env, { projectId, environment: argValue(args, "--environment") ?? s.config.environment });
+          onLine(`✓ connected to project ${projectId} (${argValue(args, "--environment") ?? s.config.environment}) — next: secrets check`);
+          return 0;
+        }
+
+        // check: can UNAXIS log in and read? Compares KEY NAMES with .env — never prints values.
+        if (sub === "check" || sub === "pull") {
+          const { parseDotenv, diffKeys } = await import("../secrets-manager.ts");
+          const { PROJECT_DIR } = await import("../../config/stack.ts");
+          const { existsSync, readFileSync, writeFileSync, copyFileSync } = await import("fs");
+          const { join, isAbsolute } = await import("path");
+          let fetched;
+          try { fetched = await sm.fetchSecrets(argValue(args, "--environment")); }
+          catch (e) { onLine(`✗ ${e instanceof Error ? e.message : e}`); return 1; }
+          onLine(`✓ read ${fetched.label} from the secrets manager`);
+          const envPath = join(PROJECT_DIR, ".env");
+          const local = existsSync(envPath) ? parseDotenv(readFileSync(envPath, "utf8")) : {};
+          const d = diffKeys(local, fetched.values);
+          onLine(`  in both, same value   ${Object.keys(local).length - d.onlyLocal.length - d.changed.length}`);
+          onLine(`  in both, different    ${d.changed.length}${d.changed.length ? `: ${d.changed.join(", ")}` : ""}`);
+          onLine(`  only in .env          ${d.onlyLocal.length}${d.onlyLocal.length ? `: ${d.onlyLocal.join(", ")}` : ""}`);
+          onLine(`  only in the manager   ${d.onlyRemote.length}${d.onlyRemote.length ? `: ${d.onlyRemote.join(", ")}` : ""}`);
+          if (sub === "check") return 0;
+
+          // pull: write a .env-format file from the manager. Default target is a
+          // new file; writing .env itself keeps a timestamped copy first.
+          const out = argValue(args, "--out") ?? ".env.from-secrets";
+          const outPath = isAbsolute(out) ? out : join(PROJECT_DIR, out);
+          if (existsSync(outPath) && outPath === envPath) {
+            const bak = `${envPath}.bak-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`;
+            copyFileSync(envPath, bak);
+            onLine(`  kept a copy of .env → ${bak}`);
+          }
+          const body = Object.keys(fetched.values).sort().map((k) => `${k}=${fetched.values[k]}`).join("\n") + "\n";
+          writeFileSync(outPath, body, { mode: 0o600 });
+          onLine(`✓ wrote ${Object.keys(fetched.values).length} values → ${outPath}`);
+          return 0;
+        }
         if (sub === "place") {
           const env = args[1] && !args[1].startsWith("--") ? findEnv(args[1]) : null;
           if (!env) { onLine("✗ usage: secrets place <env> [--http-port N] [--site-url <url>]"); return 2; }
@@ -1908,7 +1952,7 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           }
           return runOpVisible("Deploy secrets manager", runner, onLine);
         }
-        onLine("✗ usage: secrets status | place <env> | deploy [--bg] | dump");
+        onLine("✗ usage: secrets status | place <env> | deploy [--bg] | connect <projectId> | check | pull [--out <file>] | dump");
         return 2;
       },
 

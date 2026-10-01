@@ -528,12 +528,12 @@ export function ZonesView({
     if (input === "H" || input === "h") { const z = visibleZones[selected]; if (z) { onOpenDeployments?.(z.key); return; } }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }
-    // Same as `unaxis workspace sync`: .env, secrets and other ignored files
-    // → the private workspace repo on the forge (never GitHub).
+    // Same as `unaxis backup run`: restic snapshot of the dev drive to every
+    // backup target, right now instead of waiting for the nightly run.
     if (input === "w") {
-      runOp("Workspace sync  (.env + secrets → forge)", async (o) => {
-        const { syncOverlay } = await import("../workspace-sync.ts");
-        return syncOverlay(PROJECT_DIR, o);
+      runOp("Backup now (restic)", async (o) => {
+        const { runBackup } = await import("../backup-store.ts");
+        return runBackup(o);
       });
       return;
     }

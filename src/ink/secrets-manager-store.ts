@@ -223,6 +223,71 @@ export async function deploySecretsManager(onLine: Line): Promise<number> {
   return 1;
 }
 
+// ── Reading secrets (machine identity, Universal Auth) ───────────────────────
+//
+// UNAXIS reads secrets as a machine identity the user creates in Infisical
+// (Organization → Access Control → Identities → Universal Auth) and gives
+// read access to the project. Its client ID/secret live in a file the user
+// writes on the control plane — never in the control DB, never in a repo:
+//   <SECRETS_MANAGER_DIR>/unaxis-identity.json  {"clientId": "...", "clientSecret": "..."}
+
+export const IDENTITY_FILE = join(SECRETS_MANAGER_DIR, "unaxis-identity.json");
+
+let tokenCache: { url: string; token: string; expiresAt: number } | null = null;
+
+async function accessToken(url: string): Promise<string> {
+  if (tokenCache && tokenCache.url === url && tokenCache.expiresAt > Date.now() + 30_000) return tokenCache.token;
+  if (!existsSync(IDENTITY_FILE)) throw new Error(`no machine identity — create ${IDENTITY_FILE}`);
+  const { clientId, clientSecret } = JSON.parse(readFileSync(IDENTITY_FILE, "utf8"));
+  if (!clientId || !clientSecret) throw new Error(`${IDENTITY_FILE} needs clientId and clientSecret`);
+  const r = await fetch(`${url}/api/v1/auth/universal-auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, clientSecret }), signal: AbortSignal.timeout(10_000),
+  });
+  if (!r.ok) throw new Error(`login refused (${r.status})`);
+  const j = (await r.json()) as { accessToken: string; expiresIn: number };
+  tokenCache = { url, token: j.accessToken, expiresAt: Date.now() + j.expiresIn * 1000 };
+  return j.accessToken;
+}
+
+export type FetchedSecrets = { values: Record<string, string>; label: string };
+
+/** Every secret in the configured project + environment (root path), as KEY → value. */
+export async function fetchSecrets(environment?: string): Promise<FetchedSecrets> {
+  const s = getSecretsManager();
+  if (!s) throw new Error("secrets manager not placed");
+  if (!s.config.projectId) throw new Error("no project connected — run: secrets connect <projectId>");
+  const url = siteUrl(s.config, s.host ?? "");
+  const envSlug = environment ?? s.config.environment;
+  const token = await accessToken(url);
+  const q = `workspaceId=${encodeURIComponent(s.config.projectId)}&environment=${encodeURIComponent(envSlug)}&secretPath=%2F`;
+  const r = await fetch(`${url}/api/v3/secrets/raw?${q}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) throw new Error(`read refused (${r.status}) — does the identity have access to ${envSlug}?`);
+  const j = (await r.json()) as { secrets: Array<{ secretKey: string; secretValue: string }> };
+  const values: Record<string, string> = {};
+  for (const x of j.secrets ?? []) values[x.secretKey] = x.secretValue;
+  return { values, label: `${envSlug}, ${Object.keys(values).length} values` };
+}
+
+/**
+ * For builds: the secrets when the manager is connected and reachable, else
+ * null with a line saying why (the build then uses .env, as before).
+ */
+export async function secretsForBuild(onLine: Line): Promise<Record<string, string> | null> {
+  const s = getSecretsManager();
+  if (!s?.config.projectId) return null;
+  try {
+    const f = await fetchSecrets();
+    onLine(`✓ build secrets from the secrets manager (${f.label})`);
+    return f.values;
+  } catch (e) {
+    onLine(`⚠ secrets manager unavailable (${e instanceof Error ? e.message : e}) — using .env`);
+    return null;
+  }
+}
+
 // ── Status + database dump ───────────────────────────────────────────────────
 
 export async function secretsStatus(onLine: Line): Promise<number> {
@@ -238,6 +303,8 @@ export async function secretsStatus(onLine: Line): Promise<number> {
   let up = false;
   try { up = (await fetch(`${url}/api/status`, { signal: AbortSignal.timeout(4000) })).ok; } catch {}
   onLine(`  web                ${up ? "answering" : "not answering"}`);
+  onLine(`  project            ${s.config.projectId ? `${s.config.projectId} (${s.config.environment})` : "not connected — secrets connect <projectId>"}`);
+  onLine(`  UNAXIS identity    ${existsSync(IDENTITY_FILE) ? "present" : `missing — ${IDENTITY_FILE}`}`);
   const dumps = existsSync(DUMPS_DIR) ? readdirSync(DUMPS_DIR).filter((f) => f.endsWith(".dump")).sort() : [];
   onLine(`  db dumps           ${dumps.length}${dumps.length ? ` (newest ${dumps.at(-1)})` : ""} in ${DUMPS_DIR}`);
   return 0;

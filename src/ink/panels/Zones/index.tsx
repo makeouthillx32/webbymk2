@@ -74,7 +74,7 @@ const HINTS = [
   { k: "l",  label: "logs"            },
   { k: "n",  label: "new zone"        },
   { k: "g",  label: "git push"        },
-  { k: "w",  label: "sync .env → forge" },
+  { k: "w",  label: "back up now" },
   { k: "S",  label: "sync routes"     },
   { k: "R",  label: "rebuild proxy"   },
   { k: "a",  label: "build+push all"  },

@@ -25,6 +25,9 @@ export type SecretsConfig = {
   httpPort: number;
   /** Overrides the derived URL, e.g. once a public hostname exists. */
   siteUrl?: string;
+  /** Infisical project UNAXIS reads from, and the environment slug (dev/staging/prod). */
+  projectId?: string;
+  environment: string;
 };
 
 export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
@@ -33,6 +36,8 @@ export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
     image: String(raw.image || SECRETS_DEFAULTS.image),
     httpPort: Number.isInteger(port) && port > 0 ? port : SECRETS_DEFAULTS.httpPort,
     siteUrl: raw.siteUrl ? String(raw.siteUrl).replace(/\/+$/, "") : undefined,
+    projectId: raw.projectId ? String(raw.projectId) : undefined,
+    environment: raw.environment ? String(raw.environment) : "prod",
   };
 }
 
@@ -64,4 +69,25 @@ export function validKeys(k: Partial<SecretsKeys>): k is SecretsKeys {
   return /^[0-9a-f]{32}$/.test(k.encryptionKey ?? "")
     && Buffer.from(k.authSecret ?? "", "base64").length === 32
     && (k.dbPassword ?? "").length >= 24;
+}
+
+/** Parses KEY=VALUE lines the way the .env files are written (no expansion). */
+export function parseDotenv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(raw);
+    if (!m) continue;
+    let v = m[2];
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    out[m[1]] = v;
+  }
+  return out;
+}
+
+/** Names only — never values — for showing what differs between .env and the secrets manager. */
+export function diffKeys(local: Record<string, string>, remote: Record<string, string>) {
+  const onlyLocal = Object.keys(local).filter((k) => !(k in remote)).sort();
+  const onlyRemote = Object.keys(remote).filter((k) => !(k in local)).sort();
+  const changed = Object.keys(local).filter((k) => k in remote && local[k] !== remote[k]).sort();
+  return { onlyLocal, onlyRemote, changed };
 }

@@ -79,9 +79,10 @@ function loadBuildEnvKeys(zone: Zone): string[] | null {
   }
 }
 
-function loadBuildArgs(zone: Zone): string[] {
+function loadBuildArgs(zone: Zone, fromSecretsManager: Record<string, string> | null = null): string[] {
   const args: string[] = [];
-  const currentEnv = { ...process.env, ...readRuntimeEnvFiles() };
+  // The secrets manager, when connected, wins over the dev drive's .env files.
+  const currentEnv = { ...process.env, ...readRuntimeEnvFiles(), ...(fromSecretsManager ?? {}) };
 
   // ── Pass 1: build.env manifest (preferred) ──────────────────────────────────
   const manifestKeys = loadBuildEnvKeys(zone);
@@ -98,6 +99,12 @@ function loadBuildArgs(zone: Zone): string[] {
   }
 
   // ── Fallback: parse .env directly for NEXT_PUBLIC_* (old-zone compat) ───────
+  if (fromSecretsManager) {
+    for (const [k, v] of Object.entries(currentEnv)) {
+      if (k.startsWith("NEXT_PUBLIC_") && typeof v === "string") args.push("--build-arg", `${k}=${v}`);
+    }
+    return args;
+  }
   // .env may be CRLF on Windows — split on both line endings.
   try {
     const content = readFileSync(join(PROJECT_DIR, ".env"), "utf-8");
@@ -658,7 +665,12 @@ export async function buildZone(
   const logPush  = (l: string) => { onLine(l); log.docker(zone.key, "push",  l); };
 
   try {
-    const buildArgs = loadBuildArgs(zone);
+    let fromSecretsManager: Record<string, string> | null = null;
+    try {
+      const { secretsForBuild } = await import("./secrets-manager-store.ts");
+      fromSecretsManager = await secretsForBuild(logBuild);
+    } catch { /* not set up — .env as before */ }
+    const buildArgs = loadBuildArgs(zone, fromSecretsManager);
     const dockerEnvBuild = { DOCKER_CONFIG: dockerCfg.tmpDir };
 
     // Provenance for tags + OCI labels. The git content tag identifies the
@@ -689,16 +701,6 @@ export async function buildZone(
         logBuild(`⚠ source not published to the forge: ${e instanceof Error ? e.message : e}`);
       }
     }
-    // Secrets and ignored files (workspace overlay) go up alongside, in the
-    // background so they never hold the build up.
-    if (!refSource) void (async () => {
-      try {
-        const { overlayExists, syncOverlay } = await import("./workspace-sync.ts");
-        if (overlayExists(PROJECT_DIR)) await syncOverlay(PROJECT_DIR, (l) => logBuild(`[workspace] ${l}`));
-      } catch (e) {
-        logBuild(`[workspace] ⚠ overlay not synced: ${e instanceof Error ? e.message : e}`);
-      }
-    })();
 
     const depTarget = prov.branch === "main" ? "production" : "preview";
     const dep = dbCreateDeployment({
