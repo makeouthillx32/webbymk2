@@ -156,7 +156,7 @@ export default function DocsLanding() {
         <div className={styles.shell}>
           <p>
             Built and operated by Tyler · payments secured by Stripe · powered
-            by UNAXIS.
+            by UNAXIS · shipped from our own forge.
           </p>
           <span>docs.unenter.live</span>
         </div>
