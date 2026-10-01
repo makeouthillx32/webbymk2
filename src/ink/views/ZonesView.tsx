@@ -522,6 +522,15 @@ export function ZonesView({
     if (input === "H" || input === "h") { const z = visibleZones[selected]; if (z) { onOpenDeployments?.(z.key); return; } }
     if (input === "n") { onNewZone(); return; }
     if (input === "g") { runOp("Git push",         (o) => gitPush(o));           return; }
+    // Same as `unaxis workspace sync`: .env, secrets and other ignored files
+    // → the private workspace repo on the forge (never GitHub).
+    if (input === "w") {
+      runOp("Workspace sync  (.env + secrets → forge)", async (o) => {
+        const { syncOverlay } = await import("../workspace-sync.ts");
+        return syncOverlay(PROJECT_DIR, o);
+      });
+      return;
+    }
     if (input === "R") {
       runOp("Rebuild proxy  (image rebuild)", (o) => reloadProxy(o));
       return;
