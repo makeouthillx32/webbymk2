@@ -230,19 +230,33 @@ if (publish) {
   // `npm update -g` only bumps within the installed semver range and often
   // skips the version just published.  `install -g @latest` always fetches
   // the exact version we just pushed.
-  print('  Auto-updating global CLI...')
-  const updateResult = spawnSync('npm', ['install', '-g', '@untsystems/unaxis@latest'], {
-    stdio:   ['ignore', 'pipe', 'pipe'],
-    shell:   true,
-    timeout: 60_000,
-    env:     { ...process.env, CI: '1', NO_UPDATE_NOTIFIER: '1' },
-  })
-  if (updateResult.stdout?.length) writeSync(1, updateResult.stdout)
-  if (updateResult.stderr?.length) writeSync(2, updateResult.stderr)
-  if (!updateResult.error && updateResult.status === 0) {
-    print('  ✓ Global CLI updated to v' + current)
+  // npm accepts a publish before it serves it ("may take a few minutes to
+  // become available"). Installing @latest straight away installed the
+  // PREVIOUS version while this printed the new one (seen on 0.0.87). Wait
+  // until the registry serves this exact version, install it by number, and
+  // report what actually got installed.
+  const npmQuiet = { stdio: ['ignore', 'pipe', 'pipe'] as const, shell: true, env: { ...process.env, CI: '1', NO_UPDATE_NOTIFIER: '1' } }
+  print('  Waiting for npm to serve v' + current + '...')
+  let available = false
+  for (let i = 0; i < 18 && !available; i++) {
+    const v = spawnSync('npm', ['view', `@untsystems/unaxis@${current}`, 'version', '--prefer-online'], { ...npmQuiet, timeout: 20_000 })
+    available = String(v.stdout ?? '').trim() === current
+    if (!available) await new Promise((r) => setTimeout(r, 10_000))
+  }
+  if (!available) {
+    printerr('  ⚠ npm is not serving v' + current + ' yet (3 min) — install it later: npm install -g @untsystems/unaxis@' + current)
   } else {
-    printerr('  ⚠ Global CLI auto-update failed — run manually: npm install -g @untsystems/unaxis@latest')
+    print('  Auto-updating global CLI...')
+    const updateResult = spawnSync('npm', ['install', '-g', `@untsystems/unaxis@${current}`], { ...npmQuiet, timeout: 120_000 })
+    if (updateResult.stdout?.length) writeSync(1, updateResult.stdout)
+    if (updateResult.stderr?.length) writeSync(2, updateResult.stderr)
+    const ls = spawnSync('npm', ['ls', '-g', '--depth=0', '@untsystems/unaxis'], { ...npmQuiet, timeout: 30_000 })
+    const installed = /@untsystems\/unaxis@(\S+)/.exec(String(ls.stdout ?? ''))?.[1] ?? 'unknown'
+    if (installed === current) {
+      print('  ✓ Global CLI updated to v' + installed)
+    } else {
+      printerr('  ⚠ Global CLI is v' + installed + ', not v' + current + ' — run: npm install -g @untsystems/unaxis@' + current)
+    }
   }
 
 }
