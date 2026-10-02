@@ -2093,7 +2093,10 @@ const CameraPlayerInner = forwardRef<CameraPlayerHandle, CameraPlayerProps>(
           <video
             key={prerollLoopUrl}
             src={prerollLoopUrl}
-            className={`absolute inset-0 z-0 h-full w-full object-cover transition-opacity duration-500 ${
+            className={`absolute inset-0 z-0 h-full w-full ${
+              // Match the live surface's fit so the frame doesn't jump when it fades in.
+              className?.includes("object-contain") ? "object-contain" : "object-cover"
+            } transition-opacity duration-500 ${
               // Fully visible while waiting, verifying, or offline; fades smoothly once live is stable.
               awaitingSlot || !isLiveStable || isOffline ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}

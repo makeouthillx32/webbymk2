@@ -205,7 +205,10 @@ describe("Tank All Rooms layout", () => {
     expect(source).toContain("lg:col-start-1 lg:row-start-1");
     expect(source).toContain("lg:col-start-2 lg:row-start-1 lg:h-full lg:w-full");
     expect(source).toContain("lg:col-start-3 lg:row-start-1 lg:h-full");
-    expect(source).toContain('className="absolute inset-0 h-full w-full object-cover"');
+    // The focus stage is rarely 16:9: show the whole frame there, crop elsewhere.
+    expect(source).toContain('const heroVideoFit: "cover" | "contain" = desktopFocusView ? "contain" : "cover";');
+    expect(source).toContain('heroVideoFit === "contain" ? "object-contain" : "object-cover"');
+    expect(source).toContain("videoFit={heroVideoFit}");
     expect(source).toContain('desktopFocusView ? "lg:!contents" : ""');
     expect(source).toContain("lg:col-start-1 lg:row-start-1 lg:z-10 lg:mb-4 lg:ml-4");
     expect(source).toContain("lg:col-start-3 lg:row-start-1 lg:z-10 lg:mb-3 lg:mr-3");

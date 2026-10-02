@@ -1855,7 +1855,7 @@ export function TankExperience({
       e.clientY,
       rect,
       16 / 9,
-      "cover",
+      heroVideoFit,
       mode === "director" ? serverDirector.ptzState : null,
     );
     if (!isInsideVideo) return;
@@ -2241,6 +2241,10 @@ export function TankExperience({
 
   const desktopFocusView =
     !desktopRailVisible && desktopChatSize === "hidden" && mode !== "grid";
+  // Focus view gives the video whatever box is left between its side
+  // panels, which is rarely 16:9 — show the whole frame there instead of
+  // cropping it. Tap-to-aim and overlays map through the same fit.
+  const heroVideoFit: "cover" | "contain" = desktopFocusView ? "contain" : "cover";
 
   const labelWide: React.CSSProperties = {
     fontFamily: ACTIVE_THEME.fonts.labelWide,
@@ -2809,7 +2813,7 @@ export function TankExperience({
                 onClick={handleHeroTap}
                 className={`relative aspect-video max-h-[52vh] w-full overflow-hidden rounded landscape:max-h-[calc(100dvh-2.5rem)] ${
                   desktopFocusView
-                    ? "lg:col-start-2 lg:row-start-1 lg:h-full lg:w-full lg:max-h-none lg:aspect-auto lg:rounded-none"
+                    ? "lg:col-start-2 lg:row-start-1 lg:h-full lg:w-full lg:max-h-none lg:aspect-auto lg:rounded-none lg:bg-black lg:bg-none"
                     : "lg:max-h-[65vh]"
                 } ${
                   heroOnline
@@ -2834,7 +2838,7 @@ export function TankExperience({
                     prerollLoopUrl={mode === "director" ? null : heroLive?.recentClipUrl ?? null}
                     muted={heroMuted}
                     volume={heroVolume}
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className={`absolute inset-0 h-full w-full ${heroVideoFit === "contain" ? "object-contain" : "object-cover"}`}
                     ptzTarget={heroPtzTarget}
                     ptzSnapKey={serverDirector.activeCameraId}
                     priority="hero"
@@ -2857,6 +2861,7 @@ export function TankExperience({
                     roomSlug={portalSourceRoomSlug ?? activeRoomSlug}
                     portals={activeRoomPortals}
                     onSelectRoom={openRoom}
+                    videoFit={heroVideoFit}
                   />
                 )}
 
