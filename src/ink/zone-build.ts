@@ -308,6 +308,7 @@ async function spawnDocker(
   onLine:        (l: string) => void,
   extraEnv:      Record<string, string> = {},
   idleTimeoutMs?: number,
+  cwd:           string = PROJECT_DIR,
 ): Promise<number> {
   const env = {
     ...(process.env as Record<string, string>),
@@ -318,7 +319,7 @@ async function spawnDocker(
     ...extraEnv,
   };
   const proc = spawn("docker", args, {
-    cwd:   PROJECT_DIR,
+    cwd,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -806,11 +807,15 @@ export async function buildZone(
       // hash-collide with prior builds of the same zone, reusing a stale
       // `next build` layer with the PREVIOUS zone's code.
       ...(opts.noCache ? ["--no-cache"] : []),
-      "-f", contextDir ? join(contextDir, dockerfile) : dockerfile,
+      // Relative to the working directory, never absolute: under WSL
+      // `docker` can be a wrapper for Windows docker.exe, which can't open
+      // /mnt/c/... paths but does get the working directory translated.
+      "-f", dockerfile,
       ...buildArgs,
       "-t", zone.image,
-      contextDir ?? ".",
+      ".",
     ];
+    const buildCwd = contextDir ?? PROJECT_DIR;
 
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
     logBuild(`docker buildx build (builder=${BUILDX_BUILDER}, network=unenter) -t ${zone.image} .`);
@@ -823,11 +828,11 @@ export async function buildZone(
       ? parseInt(process.env.UNAXIS_BUILD_IDLE_TIMEOUT_MS, 10)
       : 420_000;
 
-    let buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs);
+    let buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs, buildCwd);
     if (buildCode === DOCKER_IDLE_TIMEOUT_CODE) {
       await resetBuildxBuilder(logBuild);
       logBuild(`--- retrying build once against the fresh builder ---`);
-      buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs);
+      buildCode = await spawnDocker(buildCmd, logBuild, dockerEnvBuild, idleTimeoutMs, buildCwd);
     }
     if (buildCode !== 0) {
       log.error("build", "docker build failed", { zone: zone.key, exit: buildCode, ms: Date.now() - t0 });
