@@ -674,25 +674,22 @@ export function ChatConsolePanel({
 
   return (
     <>
-      {/* Sleek Mini Opener Pill when Chat is Hidden */}
+      {/* Closed chat leaves nothing over the video. Portrait reopens it from
+          the bottom dock's chat button; the dock is hidden in landscape, so
+          there a small corner button does it. */}
       {mobileSize === "hidden" && (
-        <div className="fixed inset-x-2 bottom-[3.8rem] z-30 flex duration-200 animate-in slide-in-from-bottom-2 lg:hidden">
-          <button
-            type="button"
-            onClick={() => onMobileSizeChange?.("half")}
-            className="flex w-full items-center justify-between rounded border border-black/60 bg-black/85 px-3.5 py-2 text-xs font-black text-white shadow-2xl backdrop-blur-md active:scale-95"
-            style={{ fontFamily: ACTIVE_THEME.fonts.label }}
-          >
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-[#39ff6a] shadow-[0_0_6px_#39ff6a]" />
-              <span>LIVE CHAT ({onlineCount} ONLINE)</span>
-            </span>
-            <span className="flex items-center gap-1 text-[11px] font-black uppercase text-[#ff4d00]">
-              <span>Open</span>
-              <Plus className="h-3.5 w-3.5" />
-            </span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => onMobileSizeChange?.("half")}
+          aria-label={`Open chat, ${onlineCount} online`}
+          title="Open chat"
+          className="fixed bottom-2 right-2 z-30 hidden h-10 w-10 place-items-center rounded-full border border-black/60 bg-black/80 text-white shadow-2xl backdrop-blur-md duration-200 animate-in fade-in active:scale-95 landscape:grid lg:!hidden"
+        >
+          <MessageSquare className="h-4 w-4" />
+          <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full border border-black bg-[#39ff6a] px-1 text-[9px] font-black text-black">
+            {onlineCount}
+          </span>
+        </button>
       )}
 
       {/* Main Bottom-Sliding Chat Console Drawer */}

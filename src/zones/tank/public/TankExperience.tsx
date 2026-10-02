@@ -3855,9 +3855,14 @@ export function TankExperience({
               else setMobileChatSize("half");
             }}
             className="!px-2.5 !py-1"
-            ariaLabel="Toggle Chat"
+            ariaLabel={mobileChatSize === "hidden" ? `Open chat, ${onlineCount} online` : "Toggle Chat"}
           >
             <MessageSquare className="h-4 w-4" />
+            {mobileChatSize === "hidden" && (
+              <span className="pointer-events-none absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full border border-black bg-[#39ff6a] px-1 text-[9px] font-black text-black">
+                {onlineCount}
+              </span>
+            )}
           </ConsoleButton>
         </div>
       </div>
