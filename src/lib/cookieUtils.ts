@@ -337,13 +337,21 @@ export const storage = {
         const key = store.key(i);
         if (!key) continue;
 
+        // Only entries written by storage.set (a JSON object with `value` +
+        // `timestamp`) are ours to expire. Everything else in the store
+        // belongs to other code and is left alone: this used to delete every
+        // value that wasn't valid JSON, on every page load — which wiped plain
+        // strings like Tank's saved chat size ("hidden") and its tab-local
+        // room/chat target, so the chat re-opened after every refresh.
         try {
           const item = store.getItem(key);
           if (!item) continue;
-          const parsed: StorageItem<any> = JSON.parse(item);
-          if ((parsed as any).expiry && Date.now() > (parsed as any).expiry) keysToRemove.push(key);
+          const parsed = JSON.parse(item) as Partial<StorageItem<unknown>> | null;
+          const isOurs =
+            parsed !== null && typeof parsed === "object" && "value" in parsed && "timestamp" in parsed;
+          if (isOurs && parsed.expiry && Date.now() > parsed.expiry) keysToRemove.push(key);
         } catch {
-          keysToRemove.push(key);
+          // not JSON → not ours
         }
       }
 
