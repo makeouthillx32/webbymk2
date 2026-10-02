@@ -686,6 +686,9 @@ export async function buildZone(
     const unaxisVer  = resolveUnaxisVersion();
     const createdIso = new Date().toISOString();
     const buildId    = `${gitContentTag(prov)}@${Date.now()}`;
+    // The deploy ledger records THIS source (the changelog diffs ledger rows),
+    // not a fresh read of the workspace after the build.
+    lastBuiltSource.set(zone.key, gitContentTag(prov));
     if (prov.gitError) logBuild(`⚠ couldn't read the commit (image will be tagged gnogit): ${prov.gitError}`);
     if (prov.dirty) logBuild(`⚠ building from a DIRTY working tree — image will be tagged ${gitContentTag(prov)} (matches no commit)`);
 
@@ -925,18 +928,24 @@ export async function buildAndDeploy(
   // own explicit proxy reload once real route/env changes land, which is
   // the only time this container actually needs to be recreated.
   const deployCode = await pullAndUp(zone, onLine, undefined, { skipProxyReload: true });
-  if (deployCode === 0) recordZoneLedger(zone, "build+deploy");
+  if (deployCode === 0) recordZoneLedger(zone, "build+deploy", lastBuiltSource.get(zone.key));
   return deployCode;
 }
 
+/** zone key → `g<sha>[-dirty]` of the source its last build actually used. */
+const lastBuiltSource = new Map<string, string>();
+
 /** Best-effort deploy-ledger entry: correlates this zone's source identity
  *  (git sha + dirty) with its image. Never throws — ledger is observability. */
-function recordZoneLedger(zone: Zone, action: string): void {
+function recordZoneLedger(zone: Zone, action: string, sourceRef?: string): void {
   try {
     dbRecordLedger({
       zoneKey:       zone.key,
       action,
-      sourceRef:     gitContentTag(gitProvenance()),
+      // What the build used (exact for --ref builds too). Re-reading git here
+      // recorded "gnogit-dirty" for every deploy: the sync git call fails
+      // inside the TUI and would read the dev drive, not the built commit.
+      sourceRef:     sourceRef ?? gitContentTag(gitProvenance()),
       image:         zone.image,
       environmentId: (zone as any).environmentId ?? null,
     });

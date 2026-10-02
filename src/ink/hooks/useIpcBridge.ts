@@ -1962,6 +1962,72 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         return 2;
       },
 
+      // ── unaxis changelog [<zone>|core|unaxis|services [<name>]] ──────────
+      // One changelog per part of the platform, from commit messages and the
+      // deploy ledger (see changelog.ts / changelog-scopes.ts).
+      changelog: async (args, onLine) => {
+        const cl = await import("../changelog.ts");
+        const { dbGetZones } = await import("../control-db.ts");
+        const pos = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--limit");
+        const limitArg = Number(argValue(args, "--limit"));
+        const json = args.includes("--json");
+        const zones = dbGetZones().map((z) => z.key);
+        const what = pos[0];
+
+        if (!what) {
+          // Overview: every zone's deploy state, then the shared scopes.
+          onLine("unaxis changelog — one per zone, plus core, unaxis and services");
+          onLine("");
+          const rows: any[] = [];
+          for (const key of zones) {
+            const log = await cl.zoneChangelog(key, 1);
+            const d = log.deploys[0];
+            // Newer deploys without a commit make the count an upper bound.
+            const ahead = log.unshipped === null ? "?" : `${log.unrecorded > 0 ? "≤" : ""}${log.unshipped.length}`;
+            const last = (log.lastDeployAt ?? "").slice(0, 16) || "never";
+            rows.push({ zone: key, lastDeployAt: log.lastDeployAt, deployed: d?.sourceRef ?? null, unrecorded: log.unrecorded, unshipped: d ? ahead : null });
+            if (!json) onLine(`  ${key.padEnd(12)} last deploy ${last.padEnd(16)}  ${d ? `commit ${(log.unrecorded > 0 ? "?" : d.sourceRef).padEnd(18)} not deployed yet: ${ahead}` : "no deploy has recorded its commit yet"}`);
+          }
+          if (json) { onLine(JSON.stringify(rows, null, 2)); return 0; }
+          onLine("");
+          for (const kind of ["core", "unaxis", "services"] as const) {
+            const [last] = await cl.scopeChangelog({ kind }, 1);
+            onLine(`  ${kind.padEnd(12)} ${last ? `${last.date}  ${last.sha}  ${last.subject}` : "(no commits)"}`);
+          }
+          onLine("");
+          onLine("  unaxis changelog <zone> | core | unaxis | services [<name>]   [--limit N] [--json]");
+          return 0;
+        }
+
+        if (zones.includes(what)) {
+          const log = await cl.zoneChangelog(what, limitArg > 0 ? limitArg : 10);
+          if (json) { onLine(JSON.stringify(log, null, 2)); return 0; }
+          onLine(`${what} — deploys and the commits each one shipped (zone source + core)`);
+          onLine("");
+          for (const l of cl.formatZoneChangelog(log)) onLine(l);
+          return 0;
+        }
+
+        if (what === "core" || what === "unaxis" || what === "services") {
+          const target: import("../changelog-scopes.ts").ChangelogTarget = what === "services" ? { kind: "services", name: pos[1] } : { kind: what };
+          const commits = await cl.scopeChangelog(target, limitArg > 0 ? limitArg : 30);
+          if (json) { onLine(JSON.stringify(commits, null, 2)); return 0; }
+          const heading = {
+            core:     "core — shared site code; ships in every zone image",
+            unaxis:   "unaxis — the control plane (TUI, CLI, build/deploy tooling)",
+            services: pos[1] ? `services — ${pos[1]}` : "services — workers, agents, proxy, media, Supabase, compose",
+          }[what];
+          onLine(heading);
+          onLine("");
+          if (commits.length === 0) onLine("  (no commits in recent history)");
+          for (const l of cl.formatByDay(commits)) onLine(l);
+          return 0;
+        }
+
+        onLine(`✗ unknown changelog "${what}" — zones: ${zones.join(", ")}; or core | unaxis | services [<name>]`);
+        return 2;
+      },
+
       // ── unaxis backup status|run|snapshots|source|target|schedule ─────────
       // restic snapshots of the dev drive to several targets (see backup.ts).
       backup: async (args, onLine) => {

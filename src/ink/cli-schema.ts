@@ -319,14 +319,15 @@ export const UNAXIS_CLI_SCHEMA = {
         { name: "action", type: "string", enum: ["public", "local", "toggle", "status"], required: false, default: "status" }
       ]
     },
-    "project changelog": {
-      description: "Per-zone changelog derived from the deploy ledger — walks consecutive pushes for a zone and lists the git commits (by subject) that landed between each, filtered to that zone's own source plus shared code. No new authoring required; sourced from existing commit messages.",
+    changelog: {
+      description: "One changelog per part of the platform, from commit messages and the deploy ledger. <zone>: each deploy and the commits it shipped (the zone's own source + core), plus what is committed but not deployed yet. core / unaxis / services [<name>]: recent commits by day. No argument: every zone's deploy state and the latest change in each scope.",
       arguments: [
-        { name: "zone", type: "string", required: true }
+        { name: "target", type: "string", required: false, description: "A zone key, core, unaxis, or services." },
+        { name: "name",   type: "string", required: false, description: "services only: one service (e.g. tank-vision-worker, proxy, mediamtx, compose)." }
       ],
       options: {
-        "--limit": { type: "number", description: "How many recent pushes to include. Default: 15." },
-        "--json":  { type: "boolean", description: "Emit machine-readable JSON instead of formatted lines." }
+        "--limit": { type: "number",  description: "Zone: deploys to show (default 10). Scopes: commits (default 30)." },
+        "--json":  { type: "boolean", description: "Machine-readable output." }
       }
     },
     up: {
