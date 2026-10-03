@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Zone } from "../config/zones.ts";
-import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone, dbEnableZone, dbSetZoneHosting, dbGetZoneOfflineReason, dbSetZoneOfflineReason, dbClearZoneOfflineReason } from "./control-db.ts";
+import { dbGetZones, dbUpsertZone, dbDeleteZone, dbDisableZone, dbEnableZone, dbSetZoneHosting, dbSetZoneEnvironment, dbGetZoneOfflineReason, dbSetZoneOfflineReason, dbClearZoneOfflineReason } from "./control-db.ts";
 
 // In-memory cache (still useful to avoid repeated SQLite reads on tight loops)
 
@@ -120,5 +120,11 @@ export function getZoneOfflineReason(key: string): string {
 /** Set a zone's hosting mode ('docker' | 'vercel') and bust the cache. */
 export function setZoneHosting(key: string, hosting: "docker" | "vercel"): void {
   dbSetZoneHosting(key, hosting);
+  invalidateZoneCache();
+}
+
+/** Move a zone to another UNAXIS host (null = local/default) and bust the cache. */
+export function setZoneEnvironment(key: string, environmentId: string | null): void {
+  dbSetZoneEnvironment(key, environmentId);
   invalidateZoneCache();
 }

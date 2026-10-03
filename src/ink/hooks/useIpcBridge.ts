@@ -3877,6 +3877,22 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return runOpVisible(`${verb}  ${zone.label}`, (l) => buildAndDeploy(zone, l, { noCache, ref }), onLine);
         }
 
+        // move <env>: deploy the zone on another host, then retire the old container.
+        if (action === "move") {
+          const target = args.find((a, i) => i > 1 && !a.startsWith("--") && args[i - 1] !== "--ref");
+          if (!target) { onLine("✗ usage: zone <key> move <env> [--ref <ref>] [--bg]"); return 2; }
+          if (zone.hosting === "vercel") { onLine(`✗ ${zone.label} is vercel-hosted — nothing to move`); return 1; }
+          const ref = argValue(args, "--ref");
+          const { moveZone } = await import("../zone-move.ts");
+          const runner = (l: (line: string) => void) => moveZone(zone, target, l, { ref });
+          if (args.includes("--bg")) {
+            runOpQueued(`Move  ${zone.label} → ${target}`, runner);
+            onLine(`⚡ Move ${zone.label} → ${target} queued — watch: unaxis stacks`);
+            return 3;
+          }
+          return runOpVisible(`Move  ${zone.label} → ${target}`, runner, onLine);
+        }
+
         if (action === "deploy") {
           if (zone.hosting === "vercel") {
             onLine(`✗ ${zone.label} is vercel-hosted — there's no Docker container to deploy. Use "build" to push source instead.`);

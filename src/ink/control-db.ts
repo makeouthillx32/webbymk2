@@ -1038,6 +1038,15 @@ export function dbSetZoneHosting(key: string, hosting: "docker" | "vercel"): voi
   );
 }
 
+/** Put a zone on another UNAXIS host (null = the local/default host). */
+export function dbSetZoneEnvironment(key: string, environmentId: string | null): void {
+  const db = getControlDb();
+  db.run(
+    "UPDATE zones SET environment_id = ?, updated_at = datetime('now') WHERE key = ?",
+    [environmentId, key],
+  );
+}
+
 /** Hard-delete a zone row by key. */
 export function dbDeleteZone(key: string): void {
   const db = getControlDb();

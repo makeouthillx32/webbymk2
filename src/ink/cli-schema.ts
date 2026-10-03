@@ -270,7 +270,8 @@ export const UNAXIS_CLI_SCHEMA = {
             "pull",
             "delete",
             "doctor",
-            "dev"
+            "dev",
+            "move"
           ],
           required: false,
           default: "status"
@@ -278,7 +279,7 @@ export const UNAXIS_CLI_SCHEMA = {
       ],
       options: {
         "--bg": { type: "boolean", description: "Run operation in background." },
-        "--ref": { type: "string", description: "build/rebuild: build this exact forge branch, tag or commit from a clean checkout instead of the dev drive." },
+        "--ref": { type: "string", description: "build/rebuild/move <env>: move deploys the zone on another host, then removes the old container; build this exact forge branch, tag or commit from a clean checkout instead of the dev drive." },
         "--json": { type: "boolean", description: "Output output/task status as JSON." }
       }
     },
