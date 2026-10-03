@@ -294,6 +294,9 @@ describe("fixed-camera low rung", () => {
     expect(command).toContain("-i rtsp://127.0.0.1:8554/cameras/cam-fixed ");
     expect(command).toContain("-map 0:v:0 -map 1:a:0?");
     expect(command).toContain("-c:a aac");
+    // When the main path's audio ends, the rung must end too (and be restarted)
+    // rather than publish a silent track HLS readers block on forever.
+    expect(command).toContain("-shortest");
     // The main path's audio is already normalised; no second loudnorm pass.
     expect(command).not.toContain("loudnorm");
     expect(command).toMatch(/rtsp:\/\/127\.0\.0\.1:8554\/cameras\/cam-fixed-hls-low$/);

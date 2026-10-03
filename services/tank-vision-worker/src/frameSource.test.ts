@@ -141,6 +141,22 @@ describe("FramePuller produces frames the decoder can undo", () => {
     expect(puller.stats.lastError).not.toBeNull();
     puller.stop();
   }, 30_000);
+
+  // A Tank redeploy made the roster retarget pullers while a restart was
+  // already pending: two ffmpegs per camera, the first never killed, and its
+  // exit cleared the live child — every camera stuck at running=false.
+  test("overlapping starts and a retarget leave exactly one ffmpeg running", async () => {
+    if (!ffmpegAvailable) return;
+    const puller = new FramePuller("race-cam", clipPath);
+    await Promise.all([puller.start(), puller.start()]);
+    puller.retarget(clipPath + "?again");
+    await puller.start();
+    await Bun.sleep(1500);
+    expect(puller.childCount).toBeLessThanOrEqual(1);
+    puller.stop();
+    await Bun.sleep(300);
+    expect(puller.childCount).toBe(0);
+  }, 30_000);
 });
 
 describe("audio level holds instead of cliffing to zero", () => {

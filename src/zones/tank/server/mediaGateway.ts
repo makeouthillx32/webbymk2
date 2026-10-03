@@ -228,12 +228,19 @@ export function buildSubstreamLowRungCommand(sourceUrl: string, mainPath: string
   const inputOptions = sourceUrl.startsWith("rtsp://") ? " -rtsp_transport tcp -timeout 5000000" : "";
   // Two live inputs: the default 8-packet queue per input blocks whenever one
   // bursts while the other is still being read.
+  //
+  // -shortest: when the main path drops (a camera reconnect, a Tank restart
+  // re-provisioning paths), the audio input ends but the sub-stream video
+  // keeps flowing. Without this, ffmpeg kept publishing a rung whose audio
+  // track never got another packet; HLS readers block on that audio playlist,
+  // and on 2026-10-02 the vision worker sat blind for ~20 h. Ending here lets
+  // MediaMTX's runOnInitRestart rebuild the rung against the live main path.
   return `ffmpeg -hide_banner -loglevel warning${inputOptions} -probesize 10M -analyzeduration 2M` +
     ` -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero` +
     ` -thread_queue_size 512 -i "${sourceUrl}"` +
     ` -rtsp_transport tcp -timeout 5000000 -thread_queue_size 512 -i rtsp://127.0.0.1:8554/${mainPath}` +
     ` -map 0:v:0 -map 1:a:0? -c:v copy -bsf:v dump_extra` +
-    ` -af aresample=async=1000:min_hard_comp=0.100000:first_pts=0 -c:a aac -b:a 96k` +
+    ` -af aresample=async=1000:min_hard_comp=0.100000:first_pts=0 -c:a aac -b:a 96k -shortest` +
     ` -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/${lowPath}`;
 }
 

@@ -106,6 +106,16 @@ export class FramePuller {
   private latest: Frame | null = null;
   private geometry: { letterbox: LetterboxInfo; width: number; height: number } | null = null;
   private stopped = false;
+  /**
+   * Bumped by every start(). A start that finds a newer one began while it was
+   * probing gives up, so overlapping starts (retarget + a scheduled restart,
+   * seen when the roster refreshed during a Tank redeploy) can't both spawn
+   * ffmpeg. The loser used to be orphaned: never killed, still holding a
+   * MediaMTX reader, and its exit later cleared the live child reference.
+   */
+  private startGen = 0;
+  /** Every ffmpeg this puller has spawned that hasn't exited yet. */
+  private readonly liveChildren = new Set<ChildProcessByStdio<null, Readable, Readable>>();
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private framesSeen = 0;
   private lastFrameAt = 0;
@@ -157,8 +167,10 @@ export class FramePuller {
 
   async start(): Promise<void> {
     if (this.stopped) return;
+    const gen = ++this.startGen;
     try {
       const probed = await probeStream(this.url);
+      if (gen !== this.startGen || this.stopped) return; // a newer start owns the puller now
       this.geometry = {
         width: probed.width,
         height: probed.height,
@@ -168,14 +180,23 @@ export class FramePuller {
       this.spawnFfmpeg();
       this.lastError = null;
     } catch (error) {
+      if (gen !== this.startGen) return;
       this.lastError = error instanceof Error ? error.message : String(error);
       this.scheduleRestart();
     }
   }
 
+  /** ffmpeg processes still running for this camera; 1 when healthy, never more. */
+  get childCount(): number {
+    return this.liveChildren.size;
+  }
+
   private spawnFfmpeg() {
     const geo = this.geometry;
     if (!geo || this.stopped) return;
+    // One ffmpeg per camera, always: retire any previous one before spawning.
+    this.child?.kill("SIGKILL");
+    this.child = null;
 
     const nw = Math.round(geo.width * geo.letterbox.scale);
     const nh = Math.round(geo.height * geo.letterbox.scale);
@@ -224,10 +245,13 @@ export class FramePuller {
       shell: false,
     });
     this.child = child;
+    this.liveChildren.add(child);
     this.lastFrameAt = Date.now();
     this.startWatchdog();
 
-    child.stdout.on("data", (chunk: Buffer) => this.onBytes(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.child === child) this.onBytes(chunk);
+    });
     child.stderr.on("data", (chunk) => {
       const text = String(chunk);
       // ebur128 loudness reports share stderr with real errors. Consume the
@@ -239,12 +263,19 @@ export class FramePuller {
         this.lastError = remainder.slice(-500);
       }
     });
+    // A replaced ffmpeg's error/exit must not touch the puller: by then
+    // this.child is its successor, and nulling it is what left cameras
+    // "running=false" with nothing ever restarting them.
     child.once("error", (error) => {
+      this.liveChildren.delete(child);
+      if (this.child !== child) return;
       this.lastError = error.message;
       this.child = null;
       this.scheduleRestart();
     });
     child.once("exit", (code, signal) => {
+      this.liveChildren.delete(child);
+      if (this.child !== child) return;
       this.child = null;
       if (!this.stopped) {
         this.lastError = `ffmpeg exited ${code ?? signal}${this.lastError ? `: ${this.lastError}` : ""}`;
@@ -408,7 +439,9 @@ export class FramePuller {
 
   stop() {
     this.stopped = true;
+    this.startGen += 1;
     this.stopWatchdog();
+    for (const c of this.liveChildren) c.kill("SIGKILL");
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
