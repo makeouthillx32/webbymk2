@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { enrollableMember, enrollmentSlug } from "./enrollmentStore";
+import { enrollableMember, enrollmentSlug, requestedEnrollmentSlug, startsNewEnrollment } from "./enrollmentStore";
 import { followableWithGuests, followDisplayName, isFollowableSlug, memberPresence } from "./followMember";
 
 describe("Enroll Guest", () => {
+  test("naming someone new replaces an unfinished session instead of resuming it", () => {
+    const nick = { slug: "guest-nick", name: "nick", kind: "guest" as const, startedAt: "2026-10-01T02:34:43Z", finishedAt: null, by: "admin:x" };
+    expect(startsNewEnrollment(nick, requestedEnrollmentSlug("Sam"))).toBe(true);
+    expect(startsNewEnrollment(nick, requestedEnrollmentSlug("Nick"))).toBe(false);
+    expect(startsNewEnrollment(nick, requestedEnrollmentSlug(""))).toBe(false);
+    expect(startsNewEnrollment(null, requestedEnrollmentSlug(""))).toBe(true);
+  });
+
   test("a guest's name becomes the slug the learner labels them with", () => {
     expect(enrollmentSlug("Andy")).toBe("guest-andy");
     expect(enrollmentSlug("  Mary Jane ")).toBe("guest-mary-jane");

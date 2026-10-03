@@ -55,6 +55,24 @@ export function enrollableMember(slug: string): { slug: string; displayName: str
   return member ? { slug: member.slug, displayName: member.displayName } : null;
 }
 
+/** The slug a start request is asking for: a housemate's, or the guest name's. */
+export function requestedEnrollmentSlug(name: string, member?: string | null): string | null {
+  if (member) return enrollableMember(member)?.slug ?? null;
+  return name.trim() ? enrollmentSlug(name) : null;
+}
+
+/**
+ * Whether a request should open a new session rather than resume the open one.
+ * Picking Enroll with nobody named resumes; naming someone else starts theirs.
+ * (An unfinished session used to swallow every later request: a friend
+ * enrolled on 2026-10-02 was silently collected as the guest from two days
+ * before, because "nick" had never been finished.)
+ */
+export function startsNewEnrollment(open: EnrollmentSession | null, requested: string | null): boolean {
+  if (!open) return true;
+  return requested !== null && requested !== open.slug;
+}
+
 /**
  * Start teaching the house a person. `member` (a housemate's slug) enrolls that
  * housemate in new poses; otherwise `name` becomes a new guest.

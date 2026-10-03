@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkStaff, staffDenialResponse } from "@/zones/tank/server/staffAuth";
 import { FOLLOWABLE_MEMBERS, followableWithGuests, isFollowableSlug } from "@/zones/tank/server/followMember";
-import { finishEnrollment, listKnownGuests, loadEnrollment, startEnrollment } from "@/zones/tank/server/enrollmentStore";
+import { finishEnrollment, listKnownGuests, loadEnrollment, requestedEnrollmentSlug, startEnrollment, startsNewEnrollment } from "@/zones/tank/server/enrollmentStore";
 import {
   getEffectiveMode,
   getFollowMember,
@@ -86,14 +86,14 @@ export async function POST(request: Request) {
     }
   }
 
-  // Starting one needs the guest's name; switching back to Enroll while a
-  // session is open just resumes it.
+  // Starting one needs the guest's name. Switching back to Enroll with nobody
+  // named resumes the open session; naming someone else starts theirs.
   if (body?.mode === "enroll") {
     try {
       const open = await loadEnrollment(true);
-      if (!open) {
-        const name = typeof body?.enrollName === "string" ? body.enrollName : "";
-        const member = typeof body?.enrollMember === "string" ? body.enrollMember : null;
+      const name = typeof body?.enrollName === "string" ? body.enrollName : "";
+      const member = typeof body?.enrollMember === "string" ? body.enrollMember : null;
+      if (startsNewEnrollment(open, requestedEnrollmentSlug(name, member))) {
         if (!member && !name.trim()) {
           return NextResponse.json({ error: "Pick a housemate or name the guest you are enrolling." }, { status: 400 });
         }
