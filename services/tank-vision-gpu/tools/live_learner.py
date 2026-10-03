@@ -447,6 +447,9 @@ class _CameraTracker:
                 predictor.trackers = self.trackers[self.camera]
             elif hasattr(predictor, "trackers"):
                 del predictor.trackers  # a new camera starts with a fresh tracker
+        # Always persist: each camera keeps its own ByteTrack between frames.
+        # Callers must not pass persist themselves (that crash-looped the learner).
+        kwargs.pop("persist", None)
         result = self.model.track(frame, persist=True, **kwargs)
         self.trackers[self.camera] = self.model.predictor.trackers
         return result
@@ -993,7 +996,7 @@ def main() -> None:
                     continue
                 motion_ref[cam] = small
                 worked = True
-                res = models.detector(cam, args.yolo).track(frame, persist=True, tracker="bytetrack.yaml", classes=list(COCO), conf=0.35,
+                res = models.detector(cam, args.yolo).track(frame, tracker="bytetrack.yaml", classes=list(COCO), conf=0.35,
                                            imgsz=args.imgsz, verbose=False)[0]
                 tracks = live[cam]
                 if res.boxes is not None and res.boxes.id is not None:
