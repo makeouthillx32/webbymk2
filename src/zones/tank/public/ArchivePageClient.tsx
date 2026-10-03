@@ -8,14 +8,14 @@ import {
   Lock,
   X,
   Clock,
-  Video,
   Smartphone,
   Radio,
   Tv,
   Film,
-  CheckCircle2,
 } from "lucide-react";
 import { ACTIVE_THEME } from "../theme";
+import { ArchiveDayPlayer } from "./components/ArchiveDayPlayer";
+import type { ArchivePlayback } from "../archivePlayback";
 
 // Archives browser: Days → Rooms on Day → Footage.
 //
@@ -67,6 +67,7 @@ type BrowseResponse = {
   roomsOnDay: DayRoomFootage[];
   selectedRoom: string | null;
   segments: Segment[];
+  playback: ArchivePlayback | null;
 };
 
 const ARCHIVE_PUBLIC_DAYS = 5;
@@ -97,12 +98,6 @@ function formatDuration(totalSeconds: number): string {
   const m = Math.round((totalSeconds % 3600) / 60);
   if (h >= 1) return m > 0 ? `${h}h ${m}m` : `${h}h`;
   return `${Math.max(1, m)}m`;
-}
-
-function formatClock(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function Dropdown({
@@ -184,10 +179,7 @@ export function ArchivePageClient() {
 
   const [data, setData] = useState<BrowseResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(0);
-
   const stripRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const setParams = useCallback(
     (next: Record<string, string | null>) => {
@@ -215,7 +207,6 @@ export function ArchivePageClient() {
       .then((json: BrowseResponse) => {
         if (!active) return;
         setData(json);
-        setActiveIndex(0);
 
         const resolvedSeason = season || json.seasons?.[json.seasons.length - 1]?.slug;
         const resolvedDate = date || json.selectedDate;
@@ -241,24 +232,8 @@ export function ArchivePageClient() {
     };
   }, [season, date, room, setParams]);
 
-  const playable = useMemo(
-    () => (data?.segments ?? []).filter((s) => s.playbackUrl),
-    [data?.segments],
-  );
-
-  const activeSegment = playable[activeIndex] ?? null;
-
   const av1Supported = useMemo(() => canPlayAv1(), []);
   const viewingAv1 = (data?.segments ?? []).some((x) => x.codec === "av1");
-
-  const handleEnded = useCallback(() => {
-    setActiveIndex((i) => (i + 1 < playable.length ? i + 1 : i));
-  }, [playable.length]);
-
-  useEffect(() => {
-    const v = videoRef.current;
-    if (v && activeSegment) void v.play().catch(() => {});
-  }, [activeSegment?.id]);
 
   const scrollStrip = (direction: -1 | 1) => {
     stripRef.current?.scrollBy({ left: direction * 400, behavior: "smooth" });
@@ -521,84 +496,40 @@ export function ArchivePageClient() {
               </div>
             )}
 
-            {/* Video Player */}
-            <div className="relative mx-auto aspect-video w-full max-w-5xl overflow-hidden rounded-xl border-2 border-black/70 bg-black shadow-2xl">
-              {activeSegment?.playbackUrl ? (
-                <video
-                  ref={videoRef}
-                  key={activeSegment.id}
-                  src={activeSegment.playbackUrl}
-                  className="h-full w-full object-contain"
-                  controls
-                  autoPlay
-                  playsInline
-                  onEnded={handleEnded}
-                />
-              ) : (
-                <div className="grid h-full w-full place-items-center px-6 text-center">
-                  {loading ? (
-                    <p className="text-sm font-mono text-white/70">Loading archives…</p>
-                  ) : !isMember ? (
-                    <div className="flex flex-col items-center gap-2 text-white/80">
-                      <Lock className="h-6 w-6" />
-                      <p className="text-sm font-bold">Archives are for members</p>
-                      <a
-                        href="https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Farchives"
-                        className="mt-1 rounded bg-[#f26d4b] px-3 py-1 text-xs font-black uppercase text-white"
-                      >
-                        Sign in
-                      </a>
-                    </div>
-                  ) : activeDate && playable.length === 0 ? (
-                    <p className="text-sm font-mono text-white/70">
-                      No footage recorded for {activeRoom?.name || "this room"} on this date.
-                    </p>
-                  ) : (
-                    <p className="text-sm font-mono text-white/70">
-                      Select a date and camera feed above to begin playback.
-                    </p>
-                  )}
-                </div>
-              )}
+            {/* The day's one recording: a 24-hour file once built, the day's
+                segments played as one until then (see archivePlayback.ts). */}
+            <div className="mx-auto w-full max-w-5xl">
+              <ArchiveDayPlayer
+                playback={data?.playback ?? null}
+                frameClassName="relative aspect-video w-full overflow-hidden rounded-xl border-2 border-black/70 bg-black shadow-2xl"
+                placeholder={
+                  <div className="grid h-full w-full place-items-center px-6 text-center">
+                    {loading ? (
+                      <p className="text-sm font-mono text-white/70">Loading archives…</p>
+                    ) : !isMember ? (
+                      <div className="flex flex-col items-center gap-2 text-white/80">
+                        <Lock className="h-6 w-6" />
+                        <p className="text-sm font-bold">Archives are for members</p>
+                        <a
+                          href="https://auth.unenter.live/sign-in?next=https%3A%2F%2Ftank.unenter.live%2Farchives"
+                          className="mt-1 rounded bg-[#f26d4b] px-3 py-1 text-xs font-black uppercase text-white"
+                        >
+                          Sign in
+                        </a>
+                      </div>
+                    ) : activeDate ? (
+                      <p className="text-sm font-mono text-white/70">
+                        No recorded footage for {activeRoom?.name || "this room"} on this date.
+                      </p>
+                    ) : (
+                      <p className="text-sm font-mono text-white/70">
+                        Select a date and camera feed above to begin playback.
+                      </p>
+                    )}
+                  </div>
+                }
+              />
             </div>
-
-            {/* If 24-Hour Consolidated Master exists */}
-            {activeRoom?.hasMasterArchive && (
-              <div className="mx-auto mt-3 flex max-w-5xl items-center justify-between rounded border border-black/20 bg-[#1c1f26] px-3.5 py-2 text-xs text-slate-300 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  <span className="font-bold text-white">Full 24-Hour Continuous Master Recording</span>
-                </div>
-                <span className="text-[11px] text-slate-400">
-                  Lossless stream-copy consolidation · Seamless 24h scrubber
-                </span>
-              </div>
-            )}
-
-            {/* Segment rail — for today's active chunks */}
-            {playable.length > 1 && (
-              <div className="mx-auto mt-3 max-w-5xl rounded-md border border-black/30 bg-[#1c1f26] p-3 shadow-inner">
-                <p className="pb-1.5 text-xs font-bold text-white/90">
-                  Timeline Recording Segments ({playable.length} chunks):
-                </p>
-                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
-                  {playable.map((s, i) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => setActiveIndex(i)}
-                      className={`rounded border px-2 py-1 text-[11px] font-bold transition ${
-                        i === activeIndex
-                          ? "border-black bg-[#f26d4b] text-white shadow-sm"
-                          : "border-black/30 bg-white/90 text-[#241f14] hover:bg-white"
-                      }`}
-                    >
-                      {formatClock(s.segmentStart)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* AV1 Hardware compatibility warning */}
             {isMember && viewingAv1 && !av1Supported && (
@@ -609,13 +540,6 @@ export function ArchivePageClient() {
               </p>
             )}
 
-            {/* Cold segments notice */}
-            {isMember && activeDate && (data?.segments.length ?? 0) > playable.length && (
-              <p className="mx-auto mt-2 max-w-5xl text-center text-[11px] text-white/70">
-                {(data!.segments.length - playable.length)} recording(s) from this date are stored
-                in cold storage.
-              </p>
-            )}
           </div>
         </div>
       </div>

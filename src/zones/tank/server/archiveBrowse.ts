@@ -3,6 +3,8 @@
 // Server-only utilities, no "use server" directive — see archiveDrain.ts.
 import { createClient } from "@/utils/supabase/server";
 import { getRoomArchiveDay, signArchiveSegments, type SignedSegment } from "./archiveSegments";
+import { existingArchivePaths } from "./archiveFiles";
+import { buildArchivePlayback, type ArchivePlayback, type PlayableMaster } from "../archivePlayback";
 
 // Rooms that exist in tank_rooms but are not physical camera rooms, so they
 // must never appear in an archive room picker. `global` is the chat scope.
@@ -95,6 +97,8 @@ export type ArchiveBrowseData = {
   roomsOnDay: DayRoomFootage[];
   selectedRoom: string | null;
   segments: SignedSegment[];
+  /** The one recording to show for the selected room and day (see archivePlayback.ts). */
+  playback: ArchivePlayback | null;
 };
 
 function formatDuration(totalSeconds: number): string {
@@ -390,9 +394,11 @@ export async function getArchiveBrowseData(params: {
 
   // 5. Mint signed segment links for the selected room and date
   let segments: SignedSegment[] = [];
+  let playback: ArchivePlayback | null = null;
   if (selectedDate && selectedRoom) {
     const raw = await getRoomArchiveDay(selectedRoom, selectedDate);
     segments = await signArchiveSegments(raw);
+    playback = buildArchivePlayback(await getDayMaster(selectedRoom, selectedDate), segments);
   }
 
   return {
@@ -403,6 +409,30 @@ export async function getArchiveBrowseData(params: {
     roomsOnDay,
     selectedRoom,
     segments,
+    playback,
+  };
+}
+
+/** The day's 24-hour master for a signed-in viewer, if its file is on disk. */
+async function getDayMaster(room: string, date: string): Promise<PlayableMaster | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data } = await supabase
+    .from("tank_archives")
+    .select("id, storage_path, duration_seconds, recorded_date")
+    .eq("room_slug", room)
+    .eq("recorded_date", date)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data?.storage_path || !(Number(data.duration_seconds) > 0)) return null;
+  const present = await existingArchivePaths([data.storage_path]);
+  if (!present.has(data.storage_path)) return null;
+  return {
+    url: `/api/tank/archive/file/${data.id}`,
+    startedAt: `${data.recorded_date}T00:00:00`,
+    durationSeconds: Number(data.duration_seconds),
   };
 }
 

@@ -4,6 +4,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { ARCHIVE_BUCKET } from "../mediaPlayback";
+import { existingArchivePaths } from "./archiveFiles";
 
 // The continuous room archive: one row per finished MediaMTX recording segment.
 //
@@ -225,11 +226,15 @@ export async function signArchiveSegments(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return segments.map((s) => ({ ...s, playbackUrl: null }));
 
+  // Only offer what is actually on disk: an index row whose file is gone is a
+  // player stuck at 0:00, which is what the archive showed for weeks.
+  const stored = (s: ArchiveSegment) => s.coldPath || s.storagePath || "";
+  const present = await existingArchivePaths(segments.filter((s) => s.tier !== "expired").map(stored).filter(Boolean));
+
   return segments.map((s) => ({
     ...s,
-    // Anything already drained off this host has no local file to stream.
     playbackUrl:
-      s.tier !== "expired" && (s.storagePath || s.coldPath)
+      s.tier !== "expired" && present.has(stored(s))
         ? `/api/tank/archive/file/${s.id}`
         : null,
   }));

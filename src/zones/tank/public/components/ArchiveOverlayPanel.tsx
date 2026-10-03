@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ArchiveDayPlayer } from "./ArchiveDayPlayer";
+import type { ArchivePlayback } from "../../archivePlayback";
 import { ChevronLeft, ChevronRight, ExternalLink, Lock, Clock, Film } from "lucide-react";
 
 // The Archives section inside the live experience.
@@ -49,6 +51,7 @@ type BrowseResponse = {
   roomsOnDay: DayRoomFootage[];
   selectedRoom: string | null;
   segments: Segment[];
+  playback: ArchivePlayback | null;
 };
 
 const ARCHIVE_PUBLIC_DAYS = 5;
@@ -68,11 +71,6 @@ function formatDuration(totalSeconds: number): string {
   return `${Math.max(1, m)}m`;
 }
 
-function clock(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 function canPlayAv1(): boolean {
   if (typeof document === "undefined") return true;
   const v = document.createElement("video");
@@ -85,7 +83,6 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
   const [season, setSeason] = useState("");
   const [data, setData] = useState<BrowseResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(0);
   const stripRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -102,7 +99,6 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
       .then((json: BrowseResponse) => {
         if (!active) return;
         setData(json);
-        setActiveIndex(0);
 
         if (!season && json.seasons?.length) setSeason(json.seasons[json.seasons.length - 1].slug);
         if (!date && json.selectedDate) setDate(json.selectedDate);
@@ -124,19 +120,8 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
   const roomsOnDay = data?.roomsOnDay ?? [];
   const activeRoom = roomsOnDay.find((r) => r.slug === room) ?? roomsOnDay[0] ?? null;
 
-  const playable = useMemo(
-    () => (data?.segments ?? []).filter((s) => s.playbackUrl),
-    [data?.segments],
-  );
-
-  const active = playable[activeIndex] ?? null;
-
   const av1Supported = useMemo(() => canPlayAv1(), []);
   const viewingAv1 = (data?.segments ?? []).some((x) => x.codec === "av1");
-
-  const onEnded = useCallback(() => {
-    setActiveIndex((i) => (i + 1 < playable.length ? i + 1 : i));
-  }, [playable.length]);
 
   const fullPageHref = `/archives?${new URLSearchParams({
     ...(season ? { season } : {}),
@@ -278,48 +263,22 @@ export function ArchiveOverlayPanel({ initialRoomSlug }: { initialRoomSlug?: str
         </div>
       )}
 
-      {/* Step 3: Player */}
-      <div className="overflow-hidden rounded border border-black/60 bg-black/95 shadow-inner">
-        {active?.playbackUrl ? (
-          <video
-            key={active.id}
-            src={active.playbackUrl}
-            className="aspect-video w-full"
-            controls
-            autoPlay
-            playsInline
-            onEnded={onEnded}
-          />
-        ) : (
-          <div className="grid aspect-video w-full place-items-center px-4 text-center">
+      {/* Step 3: the day's one recording */}
+      <ArchiveDayPlayer
+        playback={data?.playback ?? null}
+        frameClassName="relative aspect-video w-full overflow-hidden rounded border border-black/60 bg-black/95 shadow-inner"
+        placeholder={
+          <div className="grid h-full w-full place-items-center px-4 text-center">
             <p className="text-xs font-mono text-slate-400">
-              {date && playable.length === 0
-                ? "No streamable footage for this camera sector on this day."
-                : "Select a date and camera feed above to initiate playback."}
+              {loading
+                ? "Loading archives…"
+                : date
+                  ? "No recorded footage for this room on this day."
+                  : "Select a date and camera feed above to initiate playback."}
             </p>
           </div>
-        )}
-      </div>
-
-      {/* Segment rail */}
-      {playable.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {playable.map((s, i) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setActiveIndex(i)}
-              className={`rounded border px-2 py-1 font-mono text-[10px] font-black transition ${
-                i === activeIndex
-                  ? "border-yellow-400 bg-gradient-to-b from-[#ff8a7a] to-[#ff3b2f] text-white shadow-[0_0_8px_rgba(234,179,8,0.5)]"
-                  : "border-black/40 bg-black/80 text-yellow-400/90 hover:bg-black"
-              }`}
-            >
-              {clock(s.segmentStart)}
-            </button>
-          ))}
-        </div>
-      )}
+        }
+      />
 
       {/* Device can't decode what it's being handed */}
       {viewingAv1 && !av1Supported && (

@@ -1,7 +1,7 @@
 import { createReadStream, statSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { resolveWithinArchive } from "@/zones/tank/server/archiveFiles";
 
 // Streams one archived segment off the archive disk.
 //
@@ -18,20 +18,6 @@ import { createClient } from "@/utils/supabase/server";
 // members-only rule here to drift out of step with the first.
 
 export const dynamic = "force-dynamic";
-
-const ARCHIVE_ROOT = process.env.TANK_ARCHIVE_LOCAL_ROOT || "/archive";
-
-/**
- * Resolves a stored path to a real file, refusing anything that escapes the
- * archive root. The path comes from our own database rather than the request,
- * but a traversal check is cheap and this is the one place that turns a string
- * into a filesystem read.
- */
-function resolveWithinArchive(storagePath: string): string | null {
-  const full = normalize(join(ARCHIVE_ROOT, storagePath));
-  if (full !== ARCHIVE_ROOT && !full.startsWith(ARCHIVE_ROOT + sep)) return null;
-  return full;
-}
 
 export async function GET(
   request: Request,
