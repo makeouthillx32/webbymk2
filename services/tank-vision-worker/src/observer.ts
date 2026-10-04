@@ -330,6 +330,11 @@ export class HouseObserver {
           )
         : null;
 
+    // Declared before the loop: nameByHistogram below reads it, and calling
+    // that (for every pet, and every person the gallery can't name) while this
+    // was still declared after the loop threw "Cannot access 'roomScope' before
+    // initialization" and failed the whole pass for that camera.
+    const roomScope = camera.roomScope;
     const named: Array<TrackedBox & { targetName?: string }> = [];
     boxes.forEach((box, index) => {
       if (gallery && box.label === "person") {
@@ -351,7 +356,6 @@ export class HouseObserver {
       named.push(nameByHistogram(box, index));
     });
 
-    const roomScope = camera.roomScope;
     function nameByHistogram(box: TrackedBox, index: number): TrackedBox & { targetName?: string } {
         if (!IDENTIFIABLE.has(box.label)) return box;
         const match = appearance.get(String(index)) ?? null;
