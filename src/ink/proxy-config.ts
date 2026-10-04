@@ -307,6 +307,16 @@ export async function reconcileProxyRoutes(
   const next: Record<string, string> = {};
   const envById = new Map<string, UnaxisEnvironment>(environments.map((e) => [e.id, e]));
 
+  // A host we can't ask is not a host with nothing running. When the local
+  // engine was wedged (2026-10-04) every container read as "missing" and this
+  // deleted the routes for tank, labs and unenter — tank.unenter.live then fell
+  // through to the core app, whose director never hears from the vision worker.
+  // Unreachable hosts keep the routes they had.
+  const { isDockerEngineReachable } = await import("./docker.js");
+  const localReachable = await isDockerEngineReachable();
+  if (!localReachable) onLine?.("  ⚠ local Docker engine not answering — keeping its routes as they are");
+  const unreachableEnvs = new Set<string>();
+
   // Cache remote container lists — one agent call per environment.
   const remoteCache = new Map<string, Map<string, string>>();
 
@@ -314,6 +324,7 @@ export async function reconcileProxyRoutes(
     if (!remoteCache.has(env.id)) {
       const { fetchContainers } = await import("./agent-client.js");
       const list = await fetchContainers(env).catch(() => null);
+      if (list === null) unreachableEnvs.add(env.id);
       const byName = new Map<string, string>();
       for (const c of list ?? []) {
         for (const n of c.Names) {
@@ -330,9 +341,19 @@ export async function reconcileProxyRoutes(
     const env     = zone.environmentId ? (envById.get(zone.environmentId) ?? null) : null;
     const isLocal = !env || env.type === "local-docker";
 
+    if (isLocal && !localReachable) {
+      if (current.zones[zone.key]) next[zone.key] = current.zones[zone.key];
+      continue;
+    }
+
     const status = isLocal
       ? await getLocalContainerStatus(zone.container)
       : await getRemoteContainerStatus(env!, zone.container);
+
+    if (!isLocal && unreachableEnvs.has(env!.id)) {
+      if (current.zones[zone.key]) next[zone.key] = current.zones[zone.key];
+      continue;
+    }
 
     if (status === "running" || status === "starting") {
       next[zone.key] = deriveZoneUpstream(zone, env);
@@ -342,6 +363,7 @@ export async function reconcileProxyRoutes(
   // Dev routes — always local (dev containers run on POWER only).
   for (const [key] of Object.entries(current.zones)) {
     if (!key.startsWith("dev")) continue;
+    if (!localReachable) { next[key] = current.zones[key]; continue; }
     const suffix    = key === "dev" ? "core" : key.slice(4);
     const container = `dev-${suffix}`;
     const status    = await getLocalContainerStatus(container);

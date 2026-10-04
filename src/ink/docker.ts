@@ -343,6 +343,30 @@ export async function composeRun(
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
+/**
+ * Whether the local Docker engine answers at all, within `timeoutMs`.
+ *
+ * A wedged engine (POWER, 2026-10-04: dockerd stuck restoring GPU containers
+ * after an NVIDIA driver broke) makes every `docker` call hang or fail, and the
+ * status helpers below then report every container as "missing". Callers that
+ * act on "missing" — deleting routes, recreating stacks — must check this first.
+ */
+export function isDockerEngineReachable(timeoutMs = 8_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => { if (!done) { done = true; resolve(ok); } };
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn("docker", ["version", "--format", "{{.Server.Version}}"], { env: makeDockerEnv(), stdio: ["ignore", "pipe", "ignore"] });
+    } catch { return finish(false); }
+    let out = "";
+    proc.stdout!.on("data", (d: Buffer) => { out += d.toString(); });
+    const timer = setTimeout(() => { proc.kill(); finish(false); }, timeoutMs);
+    proc.on("close", (code) => { clearTimeout(timer); finish(code === 0 && out.trim().length > 0); });
+    proc.on("error", () => { clearTimeout(timer); finish(false); });
+  });
+}
+
 export async function getStatus(container: string): Promise<Status> {
   return (await getStatuses([container]))[container] ?? "missing";
 }
