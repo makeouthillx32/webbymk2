@@ -20,6 +20,7 @@ import { dockerFetch } from "./agent-client.ts";
 import { DOCKER_ENV } from "./utils/dockerEnv.ts";
 import { execIn } from "./forge-store.ts";
 import { forgeHost, parseBackupTarget } from "./forge.ts";
+import { dockerBindPath, wslEnvFor } from "./backup.ts";
 import type { HostFacts } from "./media-topology.ts";
 import {
   BACKUP_DEFAULTS,
@@ -79,12 +80,14 @@ function targetHost(t: BackupTarget): string | null {
 /** A stored path in the form the docker CLI on this side expects (Windows ↔ WSL). */
 export function nativePath(p: string): string {
   const t = parseBackupTarget(p);
-  return typeof t === "object" && t.kind === "dir" ? t.path : p;
+  return dockerBindPath(typeof t === "object" && t.kind === "dir" ? t.path : p);
 }
 
 function docker(args: string[], onLine: Line, extraEnv: Record<string, string> = {}): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const p = spawn("docker", args, { env: { ...DOCKER_ENV, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
+    const env: Record<string, string | undefined> = { ...DOCKER_ENV, ...extraEnv };
+    if (process.platform === "linux" && Object.keys(extraEnv).length) env.WSLENV = wslEnvFor(Object.keys(extraEnv), env.WSLENV ?? "");
+    const p = spawn("docker", args, { env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     const feed = (d: Buffer) => {
       const text = d.toString("utf8");

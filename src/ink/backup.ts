@@ -94,3 +94,31 @@ export function isDue(schedule: string | null, lastRunAt: string | undefined, no
 export function validName(name: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,30}$/.test(name);
 }
+
+/**
+ * Variables for `docker run -e NAME` must reach the docker CLI's environment.
+ * Under WSL, `docker` is a wrapper for Windows docker.exe, and WSL hands a
+ * Windows program only the variables listed in WSLENV — so every RESTIC_* was
+ * dropped and restic ran with no repository ("Please specify repository
+ * location"): every backup failed from 2026-10-02 once the TUI moved to WSL.
+ */
+export function wslEnvFor(names: string[], current = process.env.WSLENV ?? ""): string {
+  const have = new Set(current.split(":").filter(Boolean).map((e) => e.split("/")[0]));
+  const add = names.filter((n) => !have.has(n));
+  return [current, ...add].filter(Boolean).join(":");
+}
+
+/**
+ * A host folder as `docker run -v` should name it: drive-letter form.
+ * Docker Desktop accepts `Z:/...` from both Windows and WSL, but a WSL path
+ * (`/mnt/z/...`) given to docker.exe — which is what `docker` is under WSL —
+ * names a folder inside Docker's VM instead, and Docker quietly creates it
+ * empty. Backups then snapshotted 0 B (2026-10-05).
+ */
+export function dockerBindPath(p: string): string {
+  const mnt = /^\/mnt\/([a-z])(?:\/(.*))?$/.exec(p);
+  if (mnt) return `${mnt[1].toUpperCase()}:/${mnt[2] ?? ""}`.replace(/\/+$/, "") || `${mnt[1].toUpperCase()}:/`;
+  const win = /^([A-Za-z]):[\\/](.*)$/.exec(p);
+  if (win) return `${win[1].toUpperCase()}:/${win[2].replace(/\\/g, "/")}`.replace(/\/+$/, "");
+  return p;
+}

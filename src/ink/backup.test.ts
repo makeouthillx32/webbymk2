@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { backupArgs, backupConfig, isDue, repoUrl, validName } from "./backup";
+import { backupArgs, backupConfig, isDue, repoUrl, validName, wslEnvFor, dockerBindPath } from "./backup";
 
 describe("schedule", () => {
   const at = (s: string) => new Date(s);
@@ -39,5 +39,22 @@ describe("restic invocation", () => {
     expect(backupConfig({ schedule: null }).schedule).toBeNull();
     expect(validName("l0v3")).toBe(true);
     expect(validName("Bad Name")).toBe(false);
+  });
+});
+
+describe("WSL hands docker.exe only what WSLENV lists", () => {
+  test("restic's variables are added, nothing already there is duplicated", () => {
+    expect(wslEnvFor(["RESTIC_PASSWORD", "RESTIC_REPOSITORY"], "")).toBe("RESTIC_PASSWORD:RESTIC_REPOSITORY");
+    expect(wslEnvFor(["RESTIC_REPOSITORY"], "GIT_CONFIG_COUNT:RESTIC_REPOSITORY/u")).toBe("GIT_CONFIG_COUNT:RESTIC_REPOSITORY/u");
+    expect(wslEnvFor(["A"], "B")).toBe("B:A");
+  });
+});
+
+describe("docker gets drive-letter paths", () => {
+  test("WSL and Windows forms both become X:/...", () => {
+    expect(dockerBindPath("/mnt/z/WEBSITES/webbymk2")).toBe("Z:/WEBSITES/webbymk2");
+    expect(dockerBindPath("Z:/WEBSITES/webbymk2")).toBe("Z:/WEBSITES/webbymk2");
+    expect(dockerBindPath("C:\\Users\\skill\\AppData\\Roaming\\unaxis")).toBe("C:/Users/skill/AppData/Roaming/unaxis");
+    expect(dockerBindPath("/var/lib/thing")).toBe("/var/lib/thing");
   });
 });
