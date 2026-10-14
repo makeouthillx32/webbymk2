@@ -142,17 +142,23 @@ function docker(args: string[], timeoutMs = 30_000): Promise<{ out: string; code
   });
 }
 
-/** Connect without sending anything; a healthy listener holds the line. */
+/**
+ * Connect without sending anything; a healthy listener holds the line.
+ * The connect itself must complete — a SYN that is never answered (filtered
+ * port, hung forwarder) is dead, not "held open".
+ */
 export function probePort(host: string, port: number, holdMs = PROBE_HOLD_MS): Promise<ProbeResult> {
   return new Promise((resolve) => {
     let settled = false;
+    let connected = false;
     let bytes = 0;
     const sock = net.connect({ host, port });
     const done = (r: ProbeResult) => { if (!settled) { settled = true; sock.destroy(); resolve(r); } };
+    sock.on("connect", () => { connected = true; });
     sock.on("data", (b) => { bytes += b.length; done("ok"); });   // banner = alive
     sock.on("close", () => done(bytes > 0 ? "ok" : "dead"));
     sock.on("error", () => done("dead"));
-    sock.setTimeout(holdMs, () => done("ok"));
+    sock.setTimeout(holdMs, () => done(connected ? "ok" : "dead"));
   });
 }
 

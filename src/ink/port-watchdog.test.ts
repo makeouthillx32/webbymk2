@@ -117,6 +117,11 @@ describe("probePort", () => {
     srv.close();
   });
 
+  test("a connect that is never answered is dead, not held open", async () => {
+    // TEST-NET-1 (RFC 5737): routable nowhere, so the SYN goes unanswered.
+    expect(await probePort("192.0.2.1", 9, 300)).toBe("dead");
+  });
+
   test("refused is dead", async () => {
     const srv = await listen(() => {});
     const port = portOf(srv);
