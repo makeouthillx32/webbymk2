@@ -20,9 +20,12 @@ $secure = Read-Host "Client Secret (hidden)" -AsSecureString
 $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try { $clientSecret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr).Trim() }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
-if ($clientSecret.Length -lt 20) { Write-Host "The secret looks too short — copy the whole value." -ForegroundColor Red; exit 1 }
+if ($clientSecret.Length -lt 20) { Write-Host "The secret looks too short - copy the whole value." -ForegroundColor Red; exit 1 }
 
-@{ clientId = $clientId; clientSecret = $clientSecret } | ConvertTo-Json | Set-Content -Path $file -Encoding utf8
+# No byte-order mark: Windows PowerShell's "utf8" adds one, and UNAXIS's JSON reader rejects it.
+$json = @{ clientId = $clientId; clientSecret = $clientSecret } | ConvertTo-Json
+[IO.File]::WriteAllText($file, $json, (New-Object Text.UTF8Encoding $false))
+Remove-Variable json
 Remove-Variable clientSecret
 
 # Owner-only: drop inherited access, grant just this account.
