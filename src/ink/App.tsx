@@ -41,6 +41,7 @@ import { useCopyOnSelect } from "./hooks/useCopyOnSelect.ts";
 import { useOperationChrome } from "./hooks/useOperationChrome.ts";
 import { useGlobalAppInput } from "./hooks/useGlobalAppInput.ts";
 import { useIpcBridge } from "./hooks/useIpcBridge.ts";
+import { usePortWatchdog } from "./hooks/usePortWatchdog.ts";
 
 // ── Layout / chrome ───────────────────────────────────────────────────────────
 import { AppFrame } from "./AppFrame.tsx";
@@ -89,6 +90,7 @@ export function App() {
   // ── Cross-cutting utilities ────────────────────────────────────────────────
   const { copy, didCopy } = useCopyOnSelect();
   const { notifications, addNotification } = useNotifications();
+  usePortWatchdog(addNotification);
 
   const {
     view, history,
