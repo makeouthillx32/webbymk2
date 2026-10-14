@@ -55,7 +55,7 @@ export function siteUrl(c: SecretsConfig, host: string): string {
 export type SecretsKeys = { encryptionKey: string; authSecret: string; dbPassword: string };
 
 /** Infisical's environment. Telemetry off; signups are closed by the admin in the UI after the first account. */
-export function renderAppEnv(c: SecretsConfig, host: string, k: SecretsKeys): string[] {
+export function renderAppEnv(c: SecretsConfig, host: string, k: SecretsKeys, mail: string[] = []): string[] {
   return [
     `ENCRYPTION_KEY=${k.encryptionKey}`,
     `AUTH_SECRET=${k.authSecret}`,
@@ -64,6 +64,25 @@ export function renderAppEnv(c: SecretsConfig, host: string, k: SecretsKeys): st
     `SITE_URL=${siteUrl(c, host)}`,
     "TELEMETRY_ENABLED=false",
     "NODE_ENV=production",
+    ...mail,
+  ];
+}
+
+/**
+ * Infisical's mail settings from the site's own SMTP settings in .env.
+ * Without mail, "Forgot password" can't send anything — on 2026-10-14 the only
+ * admin was locked out with no way back in. Empty when the site has no SMTP.
+ */
+export function infisicalMailEnv(env: Record<string, string>): string[] {
+  const host = env.SMTP_HOST, user = env.SMTP_USER, pass = env.SMTP_PASS, from = env.SMTP_ADMIN_EMAIL;
+  if (!host || !user || !pass || !from) return [];
+  return [
+    `SMTP_HOST=${host}`,
+    `SMTP_PORT=${env.SMTP_PORT || "587"}`,
+    `SMTP_USERNAME=${user}`,
+    `SMTP_PASSWORD=${pass}`,
+    `SMTP_FROM_ADDRESS=${from}`,
+    `SMTP_FROM_NAME=${env.SMTP_SENDER_NAME ? `${env.SMTP_SENDER_NAME} secrets` : "Infisical"}`,
   ];
 }
 

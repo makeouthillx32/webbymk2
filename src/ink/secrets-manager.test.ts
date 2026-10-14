@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffKeys, parseDotenv, renderAppEnv, renderDbEnv, secretsConfig, siteUrl, validKeys } from "./secrets-manager";
+import { diffKeys, parseDotenv, renderAppEnv, renderDbEnv, secretsConfig, siteUrl, validKeys, infisicalMailEnv } from "./secrets-manager";
 
 describe(".env handling", () => {
   test("parses the way .env files are written, CRLF included", () => {
@@ -33,5 +33,19 @@ describe("secrets manager config", () => {
     expect(validKeys(keys)).toBe(true);
     expect(validKeys({ ...keys, encryptionKey: "short" })).toBe(false);
     expect(validKeys({ ...keys, authSecret: "abc" })).toBe(false);
+  });
+});
+
+describe("Infisical mail comes from the site's SMTP", () => {
+  test("maps the site's names to Infisical's, so Forgot password can send", () => {
+    const env = infisicalMailEnv({ SMTP_HOST: "smtp.example", SMTP_PORT: "587", SMTP_USER: "u", SMTP_PASS: "p", SMTP_ADMIN_EMAIL: "a@example", SMTP_SENDER_NAME: "site" });
+    expect(env).toContain("SMTP_HOST=smtp.example");
+    expect(env).toContain("SMTP_USERNAME=u");
+    expect(env).toContain("SMTP_PASSWORD=p");
+    expect(env).toContain("SMTP_FROM_ADDRESS=a@example");
+  });
+
+  test("no SMTP on the site means no mail settings, not half of them", () => {
+    expect(infisicalMailEnv({ SMTP_HOST: "smtp.example" })).toEqual([]);
   });
 });

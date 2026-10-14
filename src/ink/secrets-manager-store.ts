@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
-import { ARTIFACT_STORE_DIR } from "../config/stack.ts";
+import { ARTIFACT_STORE_DIR, PROJECT_DIR } from "../config/stack.ts";
 import { dbGetAllServices, dbGetEnvironments, dbGetHostFacts, dbGetServiceByKey, dbUpsertService } from "./control-db.ts";
 import { dockerFetch } from "./agent-client.ts";
 import { execIn } from "./forge-store.ts";
@@ -23,6 +23,8 @@ import type { HostFacts } from "./media-topology.ts";
 import {
   SECRETS_DEFAULTS as D,
   renderAppEnv,
+  infisicalMailEnv,
+  parseDotenv,
   renderDbEnv,
   secretsConfig,
   siteUrl,
@@ -63,6 +65,13 @@ export function placeSecretsManager(env: UnaxisEnvironment, patch: Record<string
     sortOrder: 47,
   });
   return key;
+}
+
+/** The site's SMTP settings, mapped for Infisical (see infisicalMailEnv). */
+function siteMailEnv(): string[] {
+  try {
+    return infisicalMailEnv(parseDotenv(readFileSync(join(PROJECT_DIR, ".env"), "utf8")));
+  } catch { return []; }
 }
 
 /** Generated once; never regenerated (a new ENCRYPTION_KEY would orphan every stored secret). */
@@ -176,7 +185,7 @@ export async function deploySecretsManager(onLine: Line): Promise<number> {
   const migName = `${D.app}_migrate`;
   await dockerFetch(env, `/containers/${migName}?force=true`, { method: "DELETE" });
   const mig = await createAndStart(env, migName, {
-    Image: s.config.image, Cmd: ["npm", "run", "migration:latest"], Env: renderAppEnv(s.config, s.host ?? "", keys),
+    Image: s.config.image, Cmd: ["npm", "run", "migration:latest"], Env: renderAppEnv(s.config, s.host ?? "", keys, siteMailEnv()),
     Labels: labels("secrets"), HostConfig: { LogConfig: logCfg }, ...net,
   }, onLine);
   if (!mig) return 1;
@@ -195,7 +204,7 @@ export async function deploySecretsManager(onLine: Line): Promise<number> {
     await dockerFetch(env, `/containers/${D.app}?force=true`, { method: "DELETE" });
   }
   if (!(await createAndStart(env, D.app, {
-    Image: s.config.image, Env: renderAppEnv(s.config, s.host ?? "", keys),
+    Image: s.config.image, Env: renderAppEnv(s.config, s.host ?? "", keys, siteMailEnv()),
     Labels: { ...labels("secrets"), "unaxis.placement": s.key },
     ExposedPorts: { "8080/tcp": {} },
     HostConfig: {
