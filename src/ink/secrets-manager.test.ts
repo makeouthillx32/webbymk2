@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffKeys, parseDotenv, renderAppEnv, renderDbEnv, secretsConfig, siteUrl, validKeys, infisicalMailEnv } from "./secrets-manager";
+import { diffKeys, parseDotenv, renderAppEnv, renderDbEnv, secretsConfig, siteUrl, validKeys, infisicalMailEnv, vaultLinkFor, vaultProjectUrl, infisicalProjectFile } from "./secrets-manager";
 
 describe(".env handling", () => {
   test("parses the way .env files are written, CRLF included", () => {
@@ -47,5 +47,25 @@ describe("Infisical mail comes from the site's SMTP", () => {
 
   test("no SMTP on the site means no mail settings, not half of them", () => {
     expect(infisicalMailEnv({ SMTP_HOST: "smtp.example" })).toEqual([]);
+  });
+});
+
+describe("each UNAXIS project has its own vault project", () => {
+  const P = "0b775aa1-1617-4d9d-80be-d201d3ae6545", O = "bc905aa3-16f3-4d34-bab6-4393bf854c64";
+  test("links are kept per project; bad ids are dropped", () => {
+    const c = secretsConfig({ projects: { "unenter.live": { projectId: P, orgId: O, environment: "dev" }, junk: { projectId: "x", orgId: O } } });
+    expect(vaultLinkFor(c, "unenter.live")).toEqual({ projectId: P, orgId: O, environment: "dev" });
+    expect(vaultLinkFor(c, "junk")).toBeNull();
+    expect(vaultLinkFor(c, "other")).toBeNull();
+  });
+
+  test("the web UI link opens that project", () => {
+    expect(vaultProjectUrl("http://100.78.83.20:8222/", { orgId: O, projectId: P }))
+      .toBe(`http://100.78.83.20:8222/organizations/${O}/projects/secret-management/${P}/overview`);
+  });
+
+  test(".infisical.json carries ids only, no secrets and no server address", () => {
+    const f = JSON.parse(infisicalProjectFile({ projectId: P, environment: "dev" }));
+    expect(f).toEqual({ workspaceId: P, defaultEnvironment: "dev", gitBranchToEnvironmentMapping: null });
   });
 });

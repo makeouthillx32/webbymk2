@@ -14,16 +14,21 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
 import { ARTIFACT_STORE_DIR, PROJECT_DIR } from "../config/stack.ts";
-import { dbGetAllServices, dbGetEnvironments, dbGetHostFacts, dbGetServiceByKey, dbUpsertService } from "./control-db.ts";
+import { dbGetAllServices, dbGetEnvironments, dbGetHostFacts, dbGetProjectBySlug, dbGetProjects, dbGetServiceByKey, dbUpsertService } from "./control-db.ts";
 import { dockerFetch } from "./agent-client.ts";
 import { execIn } from "./forge-store.ts";
-import { forgeHost, untarSingle } from "./forge.ts";
+import { forgeHost, parseBackupTarget, untarSingle } from "./forge.ts";
 import type { UnaxisEnvironment } from "./environment-store.ts";
 import type { HostFacts } from "./media-topology.ts";
 import {
   SECRETS_DEFAULTS as D,
   renderAppEnv,
   infisicalMailEnv,
+  infisicalProjectFile,
+  isVaultId,
+  vaultLinkFor,
+  vaultProjectUrl,
+  type VaultLink,
   parseDotenv,
   renderDbEnv,
   secretsConfig,
@@ -323,8 +328,10 @@ export async function secretsStatus(onLine: Line): Promise<number> {
   let up = false;
   try { up = (await fetch(`${url}/api/status`, { signal: AbortSignal.timeout(4000) })).ok; } catch {}
   onLine(`  web                ${up ? "answering" : "not answering"}`);
-  onLine(`  project            ${s.config.projectId ? `${s.config.projectId} (${s.config.environment})` : "not connected — secrets connect <projectId>"}`);
-  onLine(`  UNAXIS identity    ${existsSync(IDENTITY_FILE) ? "present" : `missing — ${IDENTITY_FILE}`}`);
+  for (const p of dbGetProjects()) {
+    const link = vaultLinkFor(s.config, p.slug);
+    onLine(`  ${p.slug.padEnd(18)} ${link ? `vault ${link.projectId} (${link.environment}) — secrets open ${p.slug}` : "no vault linked — secrets link <vaultProjectId>"}`);
+  }
   onLine(`  builds use         ${s.config.useForBuilds ? "the secrets manager" : ".env (secrets manager is shadow-checked only)"}`);
   const dumps = existsSync(DUMPS_DIR) ? readdirSync(DUMPS_DIR).filter((f) => f.endsWith(".dump")).sort() : [];
   onLine(`  db dumps           ${dumps.length}${dumps.length ? ` (newest ${dumps.at(-1)})` : ""} in ${DUMPS_DIR}`);
@@ -353,3 +360,59 @@ export async function dumpSecretsDb(onLine: Line): Promise<number> {
   return 0;
 }
 
+// ── Per-project vault links ──────────────────────────────────────────────────
+//
+// Each UNAXIS project reads its own vault project. Linking writes the
+// Infisical CLI's .infisical.json into the project's repo, so every clone on
+// every device knows its vault project; each device then signs in as its
+// person with `infisical login` — nothing here hands out secrets.
+
+/** The UNAXIS project a command means: the slug given, else the only/first one. */
+export function resolveProjectSlug(slug?: string | null): string | null {
+  if (slug) return dbGetProjectBySlug(slug) ? slug : null;
+  return dbGetProjects()[0]?.slug ?? null;
+}
+
+/** Org of a vault project, read from the vault's own database. */
+async function vaultOrgOf(s: SecretsPlacement, projectId: string): Promise<string | null> {
+  const q = `select "orgId" from projects where id = '${projectId}'`;
+  const r = await execIn(s.env, D.db, ["psql", "-U", "infisical", "-d", "infisical", "-At", "-c", q], "postgres", 30_000, "/");
+  // Docker's exec stream prefixes frames with binary headers; keep printable text.
+  const id = r.output.replace(/[^\x20-\x7e\n]/g, "").trim().split("\n").pop()?.trim() ?? "";
+  return r.code === 0 && isVaultId(id) ? id : null;
+}
+
+export async function linkVaultProject(projectSlug: string, vaultProjectId: string, environment: string, onLine: Line): Promise<number> {
+  const s = getSecretsManager();
+  if (!s) { onLine("✗ no secrets manager placed — run: secrets place <env>"); return 1; }
+  const project = dbGetProjectBySlug(projectSlug);
+  if (!project) { onLine(`✗ no UNAXIS project "${projectSlug}"`); return 2; }
+  if (!isVaultId(vaultProjectId)) { onLine("✗ the vault project id is a UUID (Infisical → project → Settings)"); return 2; }
+  const orgId = await vaultOrgOf(s, vaultProjectId);
+  if (!orgId) { onLine(`✗ no vault project ${vaultProjectId} on ${s.env.name}`); return 1; }
+
+  const link: VaultLink = { projectId: vaultProjectId, orgId, environment };
+  placeSecretsManager(s.env, { projects: { ...s.config.projects, [projectSlug]: link } });
+  onLine(`✓ ${projectSlug} → vault project ${vaultProjectId} (${environment})`);
+
+  // Roots are stored as Windows paths; under WSL that's /mnt/<drive>/….
+  const parsed = project.rootPath ? parseBackupTarget(project.rootPath) : null;
+  const root = parsed && typeof parsed === "object" && parsed.kind === "dir" ? parsed.path : null;
+  if (root && existsSync(root)) {
+    writeFileSync(join(root, ".infisical.json"), infisicalProjectFile(link));
+    onLine(`✓ wrote .infisical.json in ${project.rootPath} — commit it so every clone knows its vault project`);
+  } else {
+    onLine(`⚠ couldn't reach ${project.rootPath || "the project folder"} to write .infisical.json`);
+  }
+  onLine(`  web UI: ${vaultProjectUrl(siteUrl(s.config, s.host ?? ""), link)}`);
+  return 0;
+}
+
+/** The vault web UI for a project (its own vault project once linked, else the vault's home). */
+export function vaultUrlFor(projectSlug: string | null): { url: string; linked: boolean } | null {
+  const s = getSecretsManager();
+  if (!s) return null;
+  const base = siteUrl(s.config, s.host ?? "");
+  const link = projectSlug ? vaultLinkFor(s.config, projectSlug) : null;
+  return link ? { url: vaultProjectUrl(base, link), linked: true } : { url: base, linked: false };
+}

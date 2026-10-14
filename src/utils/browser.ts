@@ -55,6 +55,11 @@ export async function openBrowser(url: string): Promise<boolean> {
       }
       await execFileAsync('rundll32', ['url,OpenURL', url])
       return true
+    } else if (platform === 'linux' && (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP)) {
+      // Under WSL there is no Linux browser (xdg-open is usually absent):
+      // hand the URL to Windows so it opens in the person's default browser.
+      await execFileAsync('rundll32.exe', ['url.dll,FileProtocolHandler', url])
+      return true
     } else {
       const command =
         browserEnv || (platform === 'darwin' ? 'open' : 'xdg-open')

@@ -34,7 +34,15 @@ export type SecretsConfig = {
    * Flip it once `secrets check` shows no differences.
    */
   useForBuilds: boolean;
+  /**
+   * UNAXIS project slug → its vault project. Each UNAXIS project reads its own
+   * vault project; `projectId`/`environment` above stay as the default for a
+   * project that hasn't been linked.
+   */
+  projects: Record<string, VaultLink>;
 };
+
+export type VaultLink = { projectId: string; orgId: string; environment: string };
 
 export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
   const port = Number(raw.httpPort);
@@ -45,7 +53,34 @@ export function secretsConfig(raw: Record<string, any> = {}): SecretsConfig {
     projectId: raw.projectId ? String(raw.projectId) : undefined,
     environment: raw.environment ? String(raw.environment) : "prod",
     useForBuilds: raw.useForBuilds === true,
+    projects: Object.fromEntries(
+      Object.entries((raw.projects ?? {}) as Record<string, any>)
+        .filter(([, v]) => v && UUID.test(String(v.projectId)) && UUID.test(String(v.orgId)))
+        .map(([k, v]) => [k, { projectId: String(v.projectId), orgId: String(v.orgId), environment: String(v.environment || "dev") }]),
+    ),
   };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isVaultId = (v: string) => UUID.test(v);
+
+/** The vault project a UNAXIS project reads, or null when it has none linked. */
+export function vaultLinkFor(c: SecretsConfig, projectSlug: string): VaultLink | null {
+  return c.projects[projectSlug] ?? null;
+}
+
+/** The vault project's page in the Infisical web UI. */
+export function vaultProjectUrl(base: string, link: Pick<VaultLink, "orgId" | "projectId">): string {
+  return `${base.replace(/\/+$/, "")}/organizations/${link.orgId}/projects/secret-management/${link.projectId}/overview`;
+}
+
+/**
+ * .infisical.json for a project's repo root: the Infisical CLI's own file, so
+ * any clone on any device knows its vault project. IDs only — no secrets, no
+ * server address (each device's `infisical login --domain` holds that).
+ */
+export function infisicalProjectFile(link: Pick<VaultLink, "projectId" | "environment">): string {
+  return JSON.stringify({ workspaceId: link.projectId, defaultEnvironment: link.environment, gitBranchToEnvironmentMapping: null }, null, 2) + "\n";
 }
 
 export function siteUrl(c: SecretsConfig, host: string): string {

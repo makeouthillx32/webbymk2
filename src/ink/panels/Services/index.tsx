@@ -41,6 +41,7 @@ interface ServicesPanelProps {
 const HINTS_SERVICES = [
   { k: "↑↓/jk", label: "navigate" },
   { k: "r",     label: "restart service" },
+  { k: "w",     label: "open web UI" },
   { k: "R",     label: "refresh" },
   { k: "1/2",   label: "services/discovery" },
   { k: "x",     label: "remove" },
@@ -54,6 +55,22 @@ const HINTS_DISCOVERY = [
   { k: "1/2",   label: "services/discovery" },
   { k: "q/←",   label: "back" },
 ];
+
+async function openServiceWebUi(svc: UnaxisService): Promise<{ text: string; tone: "success" | "error" | "info" }> {
+  let url: string | null = null;
+  if (svc.serviceType === "secrets") {
+    const sm = await import("../../secrets-manager-store.ts");
+    url = sm.vaultUrlFor(sm.resolveProjectSlug(null))?.url ?? null;
+  } else if (svc.serviceType === "forge") {
+    const fs = await import("../../forge-store.ts");
+    const { forgeRootUrl } = await import("../../forge.ts");
+    const f = fs.getForge();
+    url = f?.host ? forgeRootUrl(f.config, f.host) : null;
+  }
+  if (!url) return { text: `${svc.name} has no web UI`, tone: "info" };
+  const { openBrowser } = await import("../../../utils/browser.ts");
+  return (await openBrowser(url)) ? { text: `Opened ${url}`, tone: "success" } : { text: `Open ${url}`, tone: "info" };
+}
 
 export function ServicesPanel({ onGoBack, activeEnv, addNotification }: ServicesPanelProps) {
   const [subView, setSubView] = useState<"services" | "discovery">("services");
@@ -188,6 +205,12 @@ export function ServicesPanel({ onGoBack, activeEnv, addNotification }: Services
       }
       if (input === "R") {
         refreshAll();
+        return;
+      }
+      // Services with a web UI: the vault opens this project's vault page,
+      // the forge opens Forgejo.
+      if (input === "w" && services[selectedIdx]) {
+        void openServiceWebUi(services[selectedIdx]).then((msg) => addNotification?.(msg.text, msg.tone));
         return;
       }
       if (input === "x" && services[selectedIdx]) {

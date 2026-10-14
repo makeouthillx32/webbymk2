@@ -35,7 +35,7 @@ import {
   statSync, symlinkSync, unlinkSync, watch, writeFileSync,
 } from "fs";
 import { dirname, join, resolve } from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const [zone, portArg] = process.argv.slice(2);
@@ -191,18 +191,49 @@ function writeProjectFiles(): void {
 
 // ── Environment (same rules as zones/tank/dev-bare.ps1) ─────────────────────
 
+function parseDotenvText(text: string, into: Record<string, string>): void {
+  for (const raw of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
+    if (!m) continue;
+    let v = m[2].trim();
+    if (v.length >= 2 && ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'")))) v = v.slice(1, -1);
+    into[m[1]] = v;
+  }
+}
+
+/**
+ * The project's vault environment, read as the person signed in on this device
+ * (`infisical login`). .infisical.json in the repo says which vault project and
+ * environment. null when the CLI is missing, not signed in, or the vault can't
+ * be reached — dev mode then runs on .env as before.
+ */
+function vaultEnv(): string | null {
+  const cfg = join(REPO, ".infisical.json");
+  if (!existsSync(cfg)) return null;
+  let project: { workspaceId?: string; defaultEnvironment?: string };
+  try { project = JSON.parse(readFileSync(cfg, "utf8")); } catch { return null; }
+  if (!project.workspaceId) return null;
+  const envSlug = process.env.UNAXIS_VAULT_ENV || project.defaultEnvironment || "dev";
+  const r = spawnSync("infisical", ["export", "--format=dotenv", `--env=${envSlug}`, `--projectId=${project.workspaceId}`, "--silent"], {
+    cwd: REPO, encoding: "utf8", timeout: 20_000, shell: process.platform === "win32",
+  });
+  if (r.status !== 0 || !r.stdout?.trim()) {
+    const why = r.error ? "infisical CLI not installed" : ((r.stderr || "not signed in").trim().split("\n").pop() ?? "");
+    log(`vault: not used (${why}) — using .env`);
+    return null;
+  }
+  log(`vault: ${envSlug} environment of project ${project.workspaceId.slice(0, 8)}…`);
+  return r.stdout;
+}
+
 function loadEnv(): Record<string, string> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  // .env first, then the vault on top: the vault is the source of truth, and
+  // a key it doesn't have still comes from the local file.
   const file = join(REPO, ".env");
-  if (existsSync(file)) {
-    for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
-      if (!m) continue;
-      let v = m[2].trim();
-      if (v.length >= 2 && ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'")))) v = v.slice(1, -1);
-      env[m[1]] = v;
-    }
-  }
+  if (existsSync(file)) parseDotenvText(readFileSync(file, "utf8"), env);
+  const fromVault = vaultEnv();
+  if (fromVault) parseDotenvText(fromVault, env);
   // Docker-network names don't resolve from a host process.
   const browserSupabase = env.NEXT_PUBLIC_SUPABASE_URL_BROWSER;
   for (const [k, v] of Object.entries(env)) {

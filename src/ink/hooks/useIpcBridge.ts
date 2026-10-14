@@ -1872,6 +1872,27 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         const sm = await import("../secrets-manager-store.ts");
         const sub = args[0] ?? "status";
         if (sub === "status") return sm.secretsStatus(onLine);
+
+        // link [<project>] <vaultProjectId> [--environment dev]: this UNAXIS
+        // project reads that vault project; writes .infisical.json into its repo.
+        if (sub === "link") {
+          const pos = args.slice(1).filter((a, i, all) => !a.startsWith("--") && all[i - 1] !== "--environment");
+          const vaultId = pos.find((a) => /^[0-9a-f-]{36}$/i.test(a));
+          const slug = sm.resolveProjectSlug(pos.find((a) => a !== vaultId) ?? null);
+          if (!vaultId || !slug) { onLine("✗ usage: secrets link [<project>] <vaultProjectId> [--environment dev]"); return 2; }
+          return sm.linkVaultProject(slug, vaultId, argValue(args, "--environment") ?? "dev", onLine);
+        }
+
+        // open [<project>]: the project's vault in the browser (the vault home if unlinked).
+        if (sub === "open") {
+          const slug = sm.resolveProjectSlug(args[1] && !args[1].startsWith("--") ? args[1] : null);
+          const target = sm.vaultUrlFor(slug);
+          if (!target) { onLine("✗ no secrets manager placed — run: secrets place <env>"); return 1; }
+          const { openBrowser } = await import("../../utils/browser.ts");
+          const opened = await openBrowser(target.url);
+          onLine(`${opened ? "✓ opened" : "→ open"} ${target.url}${target.linked ? "" : `  (${slug ?? "project"} isn't linked yet — secrets link <vaultProjectId>)`}`);
+          return 0;
+        }
         if (sub === "dump") return sm.dumpSecretsDb(onLine);
 
         if (sub === "use-for-builds") {
