@@ -56,9 +56,12 @@ export function resolveGitBin(cwd: string): string {
 export type GitRun = { status: number; stdout: string; stderr: string };
 
 /** Runs git without blocking the event loop (the TUI keeps rendering). */
-export function runGit(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<GitRun> {
+export function runGit(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number; native?: boolean } = {}): Promise<GitRun> {
   return new Promise((resolve) => {
-    const p = spawn(resolveGitBin(cwd), args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    // native: this process's own git even on a Windows drive under WSL. Large
+    // pulls from the forge stall in Windows git.exe (any ssh, LAN or tailnet —
+    // reproduced 2026-10-14) while Linux git completes them.
+    const p = spawn(opts.native ? "git" : resolveGitBin(cwd), args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     const timer = opts.timeoutMs ? setTimeout(() => p.kill(), opts.timeoutMs) : null;

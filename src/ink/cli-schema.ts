@@ -314,6 +314,32 @@ export const UNAXIS_CLI_SCHEMA = {
         "--max-frames":  { type: "number",  description: "Limit inline unique frames. Default: all unique frames." }
       }
     },
+    "project set": {
+      description: "Where a project's code lives: its git remote (the forge) and default branch. A project is a record, not a folder.",
+      arguments: [{ name: "slug", type: "string", required: true }],
+      options: {
+        "--remote": { type: "string", description: "Git remote URL (ssh://… or https://…)." },
+        "--branch": { type: "string", description: "Default branch (default: main)." }
+      }
+    },
+    "project clone": {
+      description: "A new workspace: clone the project from its remote into <home>/unaxis/workspaces/<slug> (or --to) and register it. The first workspace becomes the active one on this machine.",
+      arguments: [{ name: "slug", type: "string", required: true }],
+      options: {
+        "--to":     { type: "string",  description: "Folder to clone into (default <home>/unaxis/workspaces/<slug>; UNAXIS_WORKSPACES_ROOT overrides the base)." },
+        "--branch": { type: "string",  description: "Branch to check out (default: the project's)." },
+        "--bg":     { type: "boolean", description: "Run as a background stack op." }
+      }
+    },
+    "project use": {
+      description: "Work in this checkout of the project on this machine (see project workspaces for ids).",
+      arguments: [{ name: "slug", type: "string", required: true }, { name: "workspaceId", type: "string", required: true }]
+    },
+    "project forget": {
+      description: "Drop a workspace record. --delete also removes its folder, only if the checkout has no uncommitted changes. The active workspace can't be forgotten.",
+      arguments: [{ name: "slug", type: "string", required: true }, { name: "workspaceId", type: "string", required: true }],
+      options: { "--delete": { type: "boolean", description: "Also delete the folder (clean checkouts only)." } }
+    },
     "project studio": {
       description: "Toggle public access to core Supabase Studio via the NPM proxy (studio.unenter.live).",
       arguments: [

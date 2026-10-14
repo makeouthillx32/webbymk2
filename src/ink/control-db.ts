@@ -335,6 +335,11 @@ const MIGRATIONS: string[] = [
   // a home box and a volunteer's machine know different things about
   // themselves. See media-topology.ts. Roles themselves are `services` rows.
   `ALTER TABLE environments ADD COLUMN host_facts TEXT NOT NULL DEFAULT '{}';`,
+
+  // 013 — which checkout of a project this machine works in. A project is a
+  // record (slug, forge remote); workspaces are its checkouts, created by
+  // `project clone`. See project-workspaces.ts.
+  `ALTER TABLE projects ADD COLUMN active_workspace_id TEXT;`,
 ];
 
 function runMigrations(db: Database): void {
@@ -498,6 +503,8 @@ export interface Project {
   id: string; slug: string; name: string;
   gitRemote: string; defaultBranch: string; rootPath: string;
   policy: Record<string, unknown>;
+  /** The workspace (checkout) this machine works in; null until one is chosen. */
+  activeWorkspaceId: string | null;
   createdAt?: string; updatedAt?: string;
 }
 
@@ -716,8 +723,16 @@ function rowToProject(r: any): Project {
   return {
     id: r.id, slug: r.slug, name: r.name,
     gitRemote: r.git_remote, defaultBranch: r.default_branch, rootPath: r.root_path,
-    policy, createdAt: r.created_at, updatedAt: r.updated_at,
+    policy, activeWorkspaceId: r.active_workspace_id ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
   };
+}
+
+export function dbSetActiveWorkspace(projectId: string, workspaceId: string | null): void {
+  getControlDb().run(
+    "UPDATE projects SET active_workspace_id = ?, updated_at = datetime('now') WHERE id = ?",
+    [workspaceId, projectId],
+  );
 }
 
 export function dbGetProjects(): Project[] {

@@ -3271,7 +3271,11 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           onLine("unaxis project — projects, workspaces, and the deploy ledger");
           onLine("");
           onLine("  project ls                      — list registered projects (control.db)");
-          onLine("  project workspaces              — list workspaces (provider, root, env)");
+          onLine("  project workspaces              — each project's checkouts (● = the one this machine works in)");
+          onLine("  project set <slug> --remote <url> [--branch main]  — where the project's code lives (the forge)");
+          onLine("  project clone <slug> [--to <dir>] [--branch <b>]  — a new checkout from that remote");
+          onLine("  project use <slug> <workspaceId> — work in that checkout on this machine");
+          onLine("  project forget <slug> <workspaceId> [--delete]  — drop a workspace (--delete removes a clean checkout's folder)");
           onLine("  project ledger [<zone>]         — recent source→image→deploy ledger entries");
           onLine("  project studio <public|local|toggle|status>  — core Studio exposure");
           return 0;
@@ -3316,16 +3320,31 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
 
         if (sub === "workspaces" || sub === "ws") {
           await seedDefaultProject();
-          const { dbGetWorkspaces } = await import("../control-db.js");
-          const ws = dbGetWorkspaces();
-          if (args.includes("--json")) { onLine(JSON.stringify(ws, null, 2)); return 0; }
-          if (ws.length === 0) { onLine("  (no workspaces)"); return 0; }
-          for (const w of ws) {
-            onLine(`  ${w.id.slice(0, 8)}  provider=${w.provider.padEnd(13)} state=${w.lifecycleState}`);
-            onLine(`     root: ${w.root || "—"}   env: ${w.environmentId ?? "—"}`);
-          }
-          onLine(`✓ ${ws.length} workspace${ws.length !== 1 ? "s" : ""}`);
+          const { dbGetWorkspaces, dbGetProjects } = await import("../control-db.js");
+          if (args.includes("--json")) { onLine(JSON.stringify(dbGetWorkspaces(), null, 2)); return 0; }
+          const { describeWorkspaces } = await import("../project-workspaces-store.ts");
+          for (const l of describeWorkspaces(dbGetProjects())) onLine(l);
           return 0;
+        }
+
+        // set / clone / use — a project is a record, a workspace is a checkout of it.
+        if (sub === "set" || sub === "clone" || sub === "use" || sub === "forget") {
+          const ws = await import("../project-workspaces-store.ts");
+          const slug = args[1] && !args[1].startsWith("--") ? args[1] : "";
+          if (!slug) { onLine(`✗ usage: project ${sub} <slug> …`); return 2; }
+          if (sub === "set") {
+            const remote = argValue(args, "--remote");
+            if (!remote) { onLine("✗ usage: project set <slug> --remote <url> [--branch main]"); return 2; }
+            return ws.setProjectSource(slug, remote, argValue(args, "--branch"), onLine);
+          }
+          if (sub === "use" || sub === "forget") {
+            const id = args[2] && !args[2].startsWith("--") ? args[2] : "";
+            if (!id) { onLine(`✗ usage: project ${sub} <slug> <workspaceId>${sub === "forget" ? " [--delete]" : ""}`); return 2; }
+            return sub === "use" ? ws.useWorkspace(slug, id, onLine) : ws.forgetWorkspace(slug, id, args.includes("--delete"), onLine);
+          }
+          const runner = (l: (line: string) => void) => ws.cloneProject(slug, { to: argValue(args, "--to"), branch: argValue(args, "--branch") }, l);
+          if (args.includes("--bg")) { runOpQueued(`Clone  ${slug}`, runner); onLine(`⚡ Clone ${slug} queued — watch: unaxis stacks`); return 3; }
+          return runOpVisible(`Clone  ${slug}`, runner, onLine);
         }
 
         if (sub === "ledger") {
