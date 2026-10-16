@@ -123,7 +123,18 @@ export async function forgetWorkspace(slug: string, idPrefix: string, deleteFold
     const local = toLocalPath(w.root);
     const st = existsSync(local) ? await runGit(local, ["status", "--porcelain"]) : null;
     if (st && (st.status !== 0 || st.stdout.trim())) { onLine(`✗ ${w.root} has uncommitted changes — not deleting it`); return 1; }
-    if (st) rmSync(local, { recursive: true, force: true });
+    if (st) {
+      if (local.startsWith("/mnt/")) {
+        // A Windows-drive checkout holds what Windows tools made (bun's
+        // junctions, read-only files) and WSL can't delete those (EACCES).
+        // Windows' rmdir removes junction links without following them.
+        const { spawnSync } = await import("child_process");
+        const r = spawnSync("cmd.exe", ["/d", "/c", "rmdir", "/s", "/q", toWindowsPath(local)], { encoding: "utf8", timeout: 600_000 });
+        if (existsSync(local)) { onLine(`⚠ couldn't fully delete ${w.root}: ${(r.stderr || r.stdout || "").trim().split("\n").pop()}`); }
+      } else {
+        rmSync(local, { recursive: true, force: true });
+      }
+    }
     onLine(`✓ deleted ${w.root}`);
   }
   const { getControlDb } = await import("./control-db.ts");
