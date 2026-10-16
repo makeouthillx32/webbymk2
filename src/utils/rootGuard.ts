@@ -42,6 +42,17 @@ type UnaxisSettingsFile = { default_project?: string }
 
 const REQUIRED_MARKERS = [
   'docker-compose.yml',
+] as const
+
+/**
+ * Plus at least one of these. `src/ink` (UNAXIS's own source) used to be
+ * required, which meant the only folder UNAXIS could treat as a project was
+ * the one it lives in. A project is recognised by its own files instead;
+ * src/ink still counts, so today's checkout keeps working.
+ */
+const PROJECT_MARKERS = [
+  'zones',
+  '.infisical.json',
   'src/ink',
 ] as const
 
@@ -56,6 +67,7 @@ const SUPPORTING_MARKERS = [
 
 function hasRequiredMarkers(dir: string): boolean {
   return REQUIRED_MARKERS.every(m => existsSync(join(dir, m)))
+    && PROJECT_MARKERS.some(m => existsSync(join(dir, m)))
 }
 
 function walkUp(from: string): string | null {
@@ -157,7 +169,9 @@ export function detectProjectRoot(): RootState {
  * Used by WrongRootScreen for diagnostic display.
  */
 export function missingMarkers(dir: string): string[] {
-  return REQUIRED_MARKERS.filter(m => !existsSync(join(dir, m)))
+  const missing: string[] = REQUIRED_MARKERS.filter(m => !existsSync(join(dir, m)))
+  if (!PROJECT_MARKERS.some(m => existsSync(join(dir, m)))) missing.push(`one of: ${PROJECT_MARKERS.join(', ')}`)
+  return missing
 }
 
 /**
