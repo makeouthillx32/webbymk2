@@ -2004,9 +2004,10 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
           return runOpVisible(title, run, onLine);
         };
         if (sub === "deploy") return queued("Deploy object store", os.deployObjectStore);
+        if (sub === "backup") return queued("Postgres base backup", os.baseBackup);
         if (sub === "archive" && args[1] === "setup") return queued("Postgres archive setup", os.setupPgArchive);
         if (sub === "archive" && args[1] === "enable") return os.enablePgArchive(onLine);
-        onLine("✗ usage: data status | place <env> | deploy [--bg] | archive setup [--bg] | archive enable");
+        onLine("✗ usage: data status | place <env> | deploy [--bg] | backup [--bg] | archive setup [--bg] | archive enable");
         return 2;
       },
 

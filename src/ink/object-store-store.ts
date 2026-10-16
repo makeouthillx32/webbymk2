@@ -8,6 +8,7 @@
 //                             backup now (no restart, nothing changes for Postgres)
 //   data archive enable       ALTER SYSTEM archive_mode/command/timeout —
 //                             takes effect on the next Postgres restart
+//   data backup               a base backup now (also nightly, before restic)
 //   data status               object store + archiver + base backups
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -22,11 +23,14 @@ import { execIn } from "./forge-store.ts";
 import { forgeHost, tarSingle } from "./forge.ts";
 import {
   OBJECTS_DEFAULTS as D,
+  archiveHealth,
   archiveSettings,
+  parseArchiverRow,
   parseKeyCreate,
   parseNodeId,
   renderGarageToml,
   renderWalgConfig,
+  type ArchiveSummary,
   type ObjectStoreKeys,
 } from "./object-store.ts";
 
@@ -73,6 +77,8 @@ export function placeObjectStore(env: UnaxisEnvironment): string {
   dbUpsertService({
     key,
     name: `Object store on ${env.name}`,
+    host: forgeHost(dbGetHostFacts(env.id) as HostFacts, env.agentUrl) ?? "",
+    port: D.s3Port,
     description: "Garage (S3-compatible) — live copies of production data: Postgres WAL + base backups. Managed by `unaxis data`.",
     environmentId: env.id,
     serviceType: "objects",
@@ -197,12 +203,7 @@ export async function setupPgArchive(onLine: Line): Promise<number> {
   await execIn(db, DB_CONTAINER, ["sh", "-c", `chown postgres:postgres ${WALG_CONFIG} && chmod 600 ${WALG_CONFIG}`], "root", 30_000, "/");
   onLine(`✓ WAL-G config in ${DB_CONTAINER}:${WALG_CONFIG} → s3 ${store.env.name}`);
 
-  onLine("• base backup (wal-g backup-push)…");
-  const b = await execIn(db, DB_CONTAINER, ["/usr/local/bin/wal-g", "--config", WALG_CONFIG, "backup-push", PGDATA], "postgres", 1_800_000, "/");
-  const out = clean(b.output);
-  if (b.code !== 0) { onLine(`✗ base backup failed: ${out.split("\n").slice(-3).join(" | ")}`); return 1; }
-  onLine(`✓ base backup done: ${/Wrote backup with name (\S+)/.exec(out)?.[1] ?? "ok"}`);
-  return 0;
+  return baseBackup(onLine);
 }
 
 /** Turns archiving on (ALTER SYSTEM). archive_mode only takes effect after a Postgres restart. */
@@ -220,30 +221,59 @@ export async function enablePgArchive(onLine: Line): Promise<number> {
   return 0;
 }
 
-export async function dataStatus(onLine: Line): Promise<number> {
-  const store = getObjectStore();
-  onLine(`object store   ${store ? `${store.key} → http://${store.host ?? "?"}:${D.s3Port}` : "not placed — data place <env>"}`);
-  if (store?.env.agentUrl) {
-    const st = await dockerFetch(store.env, `/containers/${D.container}/json`).catch(() => null);
-    onLine(`  ${D.container}      ${st?.ok ? ((await st.json()) as any).State.Status : "not found"}`);
+/** Everything the TUI shows about the live copy, read live. Never throws. */
+export async function getArchiveSummary(opts: { backups?: boolean } = {}): Promise<ArchiveSummary> {
+  const s: ArchiveSummary = { store: null, mode: null, archived: 0, lastWal: null, lastAt: null, failed: 0, lastFailAt: null, pending: 0, baseBackups: null, newestBase: null };
+  const p = getObjectStore();
+  if (p) {
+    let state = "unknown";
+    try {
+      const r = await dockerFetch(p.env, `/containers/${D.container}/json`, { signal: AbortSignal.timeout(8000) });
+      state = r.ok ? ((await r.json()) as { State: { Status: string } }).State.Status : "not found";
+    } catch { state = "unreachable"; }
+    s.store = { key: p.key, envName: p.env.name, url: `http://${p.host ?? "?"}:${D.s3Port}`, state };
   }
   const db = dbEnv();
-  if (!db) return 0;
-  const a = clean((await psql(db, "SELECT current_setting('archive_mode') || '|' || coalesce(last_archived_wal,'-') || '|' || coalesce(last_archived_time::text,'-') || '|' || failed_count || '|' || coalesce(last_failed_time::text,'-') FROM pg_stat_archiver")).output);
-  const [mode, lastWal, lastAt, failed, lastFail] = a.split("\n").pop()!.split("|");
-  onLine(`postgres       archive_mode=${mode}  last archived ${lastWal} at ${lastAt}  failures ${failed}${failed !== "0" ? ` (last ${lastFail})` : ""}`);
-  if (existsSync(KEYS_FILE)) {
-    const list = await execIn(db, DB_CONTAINER, ["/usr/local/bin/wal-g", "--config", WALG_CONFIG, "backup-list"], "postgres", 60_000, "/");
-    const rows = clean(list.output).split("\n").filter((l) => /^base_/.test(l));
-    onLine(`base backups   ${rows.length}${rows.length ? ` (newest ${rows.at(-1)!.split(/\s+/)[0]})` : ""}`);
+  if (!db) return s;
+  try {
+    const r = await psql(db, "SELECT current_setting('archive_mode') || '|' || archived_count || '|' || coalesce(last_archived_wal,'-') || '|' || coalesce(last_archived_time::text,'-') || '|' || failed_count || '|' || coalesce(last_failed_time::text,'-') || '|' || (SELECT count(*) FROM pg_ls_archive_statusdir() WHERE name LIKE '%.ready') FROM pg_stat_archiver");
+    if (r.code === 0) Object.assign(s, parseArchiverRow(clean(r.output).split("\n").pop() ?? ""));
+  } catch { /* db unreachable — leave unknown */ }
+  if (opts.backups !== false && p && existsSync(KEYS_FILE)) {
+    try {
+      const list = await execIn(db, DB_CONTAINER, ["/usr/local/bin/wal-g", "--config", WALG_CONFIG, "backup-list"], "postgres", 60_000, "/");
+      const rows = clean(list.output).split("\n").filter((l) => /^base_/.test(l));
+      s.baseBackups = rows.length;
+      s.newestBase = rows.at(-1)?.split(/\s+/)[0] ?? null;
+    } catch { /* leave unknown */ }
   }
+  return s;
+}
+
+export async function dataStatus(onLine: Line): Promise<number> {
+  const s = await getArchiveSummary();
+  const h = archiveHealth(s);
+  onLine(`${h.tone === "ok" ? "✓" : h.tone === "warn" ? "⚠" : "○"} ${h.text}`);
+  onLine(`object store   ${s.store ? `${s.store.key} → ${s.store.url}  (${D.container} ${s.store.state})` : "not placed — data place <env>"}`);
+  onLine(`postgres       archive_mode=${s.mode ?? "?"}  archived ${s.archived}  last ${s.lastWal ?? "-"} at ${s.lastAt ?? "-"}  pending ${s.pending}  failures ${s.failed}${s.failed ? ` (last ${s.lastFailAt ?? "?"})` : ""}`);
+  if (s.baseBackups != null) onLine(`base backups   ${s.baseBackups}${s.newestBase ? ` (newest ${s.newestBase})` : ""}`);
+  return h.tone === "warn" ? 4 : 0;
+}
+
+/** A fresh base backup into the object store, so a restore replays less WAL. Nightly + on demand. */
+export async function baseBackup(onLine: Line): Promise<number> {
+  const db = dbEnv();
+  if (!db || !getObjectStore() || !existsSync(KEYS_FILE)) { onLine("○ no live copy configured — data place <env> && data deploy && data archive setup"); return 1; }
+  onLine("• base backup (wal-g backup-push)…");
+  const b = await execIn(db, DB_CONTAINER, ["/usr/local/bin/wal-g", "--config", WALG_CONFIG, "backup-push", PGDATA], "postgres", 1_800_000, "/");
+  const out = clean(b.output);
+  if (b.code !== 0) { onLine(`✗ base backup failed: ${out.split("\n").slice(-3).join(" | ")}`); return 1; }
+  onLine(`✓ base backup → object store: ${/Wrote backup with name (\S+)/.exec(out)?.[1] ?? "ok"}`);
   return 0;
 }
 
-/** Nightly: a fresh base backup so restores replay at most a day of WAL. */
+/** Nightly pre-backup hook: silent when nothing is configured. */
 export async function nightlyBaseBackup(onLine: Line): Promise<void> {
-  const db = dbEnv();
-  if (!db || !getObjectStore() || !existsSync(KEYS_FILE)) return;
-  const b = await execIn(db, DB_CONTAINER, ["/usr/local/bin/wal-g", "--config", WALG_CONFIG, "backup-push", PGDATA], "postgres", 1_800_000, "/");
-  onLine(b.code === 0 ? "✓ postgres base backup → object store" : `⚠ postgres base backup failed: ${clean(b.output).split("\n").pop()}`);
+  if (!getObjectStore() || !existsSync(KEYS_FILE)) return;
+  await baseBackup(onLine);
 }

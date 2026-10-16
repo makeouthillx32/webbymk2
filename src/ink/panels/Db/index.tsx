@@ -97,6 +97,8 @@ const CORE_INSTANCE: RuntimeInstance = {
 export interface DbPanelProps {
   onLogs:              (container: string) => void;
   onBackup:            () => void;
+  /** Base backup of production Postgres into the object store (its live copy). */
+  onBaseBackup:        () => void;
   onCopy:              (text: string) => void;
   onStart:             () => void;
   onStop:              () => void;
@@ -562,7 +564,7 @@ function InstanceDetailScreen({
 // ── Section 1 — Core Supabase ──────────────────────────────────────────────────
 
 function CoreSection({
-  onLogs, onStart, onStop, onRestart, onHeal, onBackup, onVerify,
+  onLogs, onStart, onStop, onRestart, onHeal, onBackup, onBaseBackup, onVerify,
   onCopy, onOpenGallery, onNewInstance, hostSnapshot,
 }: {
   onLogs:         (container: string) => void;
@@ -571,6 +573,7 @@ function CoreSection({
   onRestart:      () => void;
   onHeal:         () => void;
   onBackup:       () => void;
+  onBaseBackup:   () => void;
   onVerify:       () => void;
   onCopy:         (text: string) => void;
   onOpenGallery:  () => void;
@@ -582,6 +585,27 @@ function CoreSection({
   const [studioPublic,   setStudioPublic]   = useState<boolean | null>(null);
   const [studioToggling, setStudioToggling] = useState(false);
   const [studioError,    setStudioError]    = useState<string | null>(null);
+  // Production data's live copy (WAL archive on another host) — see object-store.ts.
+  const [liveCopy,       setLiveCopy]       = useState<{ tone: "ok" | "warn" | "off"; text: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let backups: number | null = null;
+    const poll = async (withBackups: boolean) => {
+      try {
+        const { getArchiveSummary } = await import("../../object-store-store.ts");
+        const { archiveHealth } = await import("../../object-store.ts");
+        const s = await getArchiveSummary({ backups: withBackups });
+        if (withBackups) backups = s.baseBackups; else s.baseBackups = backups;
+        if (!cancelled) setLiveCopy(archiveHealth(s));
+      } catch {
+        if (!cancelled) setLiveCopy({ tone: "warn", text: "couldn't read the archive status" });
+      }
+    };
+    void poll(true);
+    const t = setInterval(() => void poll(false), 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   // Fetch current NPM state on mount
   useEffect(() => {
@@ -634,6 +658,7 @@ function CoreSection({
     if (input === "r") { onRestart(); return; }
     if (input === "h") { onHeal();    return; }
     if (input === "b") { onBackup();  return; }
+    if (input === "w") { onBaseBackup(); return; }
     if (input === "v") { onVerify();  return; }
     if (input === "g") { onOpenGallery(); return; }
     if (input === "c") { doCopy(buildConnectionSheet()); return; }
@@ -676,6 +701,15 @@ function CoreSection({
           <Text dimColor>{"Postgres"}</Text>
           <Text dimColor>{postgresConnStr()}</Text>
         </Box>
+        <Box gap={1}>
+          <Text dimColor>{"Copy    "}</Text>
+          {liveCopy === null
+            ? <Text dimColor>···</Text>
+            : <Text color={liveCopy.tone === "ok" ? "green" : liveCopy.tone === "warn" ? "yellow" : undefined} dimColor={liveCopy.tone === "off"}>
+                {liveCopy.tone === "ok" ? "● " : liveCopy.tone === "warn" ? "⚠ " : "○ "}{liveCopy.text}
+              </Text>}
+          <Text dimColor>  [w]</Text>
+        </Box>
       </Box>
 
       {/* Live metrics */}
@@ -709,6 +743,7 @@ function CoreSection({
         ]} />
         <ActionGroup label="Protect" hints={[
           { k: "b", label: "snapshot" },
+          { k: "w", label: "base backup → live copy" },
           { k: "g", label: "gallery"  },
         ]} />
         <ActionGroup label="Connect" hints={[
@@ -1125,7 +1160,7 @@ function SnapshotsSection({
 type DbSection = "core" | "instances" | "snapshots";
 
 export function DbPanel({
-  onLogs, onBackup, onCopy, onStart, onStop, onRestart, onHeal, onVerify,
+  onLogs, onBackup, onBaseBackup, onCopy, onStart, onStop, onRestart, onHeal, onVerify,
   onGoBack, onSubCrumbs, onNewInstance, onRestore, onCloneFromSnapshot, onInstanceAction,
 }: DbPanelProps) {
 
@@ -1207,6 +1242,7 @@ export function DbPanel({
           onRestart={onRestart}
           onHeal={onHeal}
           onBackup={onBackup}
+          onBaseBackup={onBaseBackup}
           onVerify={onVerify}
           onCopy={onCopy}
           onOpenGallery={() => setGalleryInstance(CORE_INSTANCE)}

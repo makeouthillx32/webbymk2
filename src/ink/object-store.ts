@@ -85,6 +85,53 @@ export function parseKeyCreate(out: string): { keyId: string; secret: string } |
   return id && secret ? { keyId: id, secret } : null;
 }
 
+/** What the TUI shows about the live copy (CLI, DB panel, Services panel). */
+export type ArchiveSummary = {
+  store: { key: string; envName: string; url: string; state: string } | null;
+  mode: string | null;          // archive_mode
+  archived: number;             // segments archived since the last stats reset
+  lastWal: string | null;
+  lastAt: string | null;        // ISO-ish timestamp from pg_stat_archiver
+  failed: number;
+  lastFailAt: string | null;
+  pending: number;              // segments written but not shipped yet (archive_status/*.ready)
+  baseBackups: number | null;   // null = not read
+  newestBase: string | null;
+};
+
+/** One pg_stat_archiver row as `mode|count|wal|at|failed|failAt|pending` ("-" = null). */
+export function parseArchiverRow(row: string): Pick<ArchiveSummary, "mode" | "archived" | "lastWal" | "lastAt" | "failed" | "lastFailAt" | "pending"> {
+  const [mode, count, wal, at, failed, failAt, pending] = row.trim().split("|");
+  const v = (s?: string) => (!s || s === "-" ? null : s);
+  return { mode: v(mode), archived: Number(count) || 0, lastWal: v(wal), lastAt: v(at), failed: Number(failed) || 0, lastFailAt: v(failAt), pending: Number(pending) || 0 };
+}
+
+/** Postgres timestamptz text ("2026-10-16 16:52:38.9+00") → ms; NaN if absent. */
+const pgTime = (t: string | null) => t ? Date.parse(t.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00")) : NaN;
+
+const ago = (ms: number) => ms < 90_000 ? `${Math.max(1, Math.round(ms / 1000))}s ago` : ms < 5_400_000 ? `${Math.round(ms / 60_000)}m ago` : `${Math.round(ms / 3_600_000)}h ago`;
+
+/**
+ * One line + a tone. A quiet database ships nothing (archive_timeout only
+ * switches segments that have writes), so silence is fine; what matters is
+ * the latest attempt failing, or segments piling up unshipped.
+ */
+export function archiveHealth(s: ArchiveSummary, now = Date.now()): { tone: "ok" | "warn" | "off"; text: string } {
+  if (!s.store) return { tone: "off", text: "no live copy — data place <env> && data deploy" };
+  if (s.store.state !== "running") return { tone: "warn", text: `object store on ${s.store.envName} is ${s.store.state}` };
+  const base = s.baseBackups == null ? "" : ` · ${s.baseBackups} base backup${s.baseBackups === 1 ? "" : "s"}`;
+  if (s.mode !== "on") return { tone: "off", text: `object store on ${s.store.envName}; WAL archiving off (archive_mode=${s.mode ?? "?"})${base}` };
+  const last = pgTime(s.lastAt);
+  const failAt = pgTime(s.lastFailAt);
+  const lastText = Number.isFinite(last) ? `last ${ago(now - last)}` : "nothing archived yet";
+  const failing = s.failed > 0 && Number.isFinite(failAt) && (!Number.isFinite(last) || failAt > last);
+  const backlog = s.pending > 3;
+  return {
+    tone: failing || backlog ? "warn" : "ok",
+    text: `WAL → ${s.store.envName} · ${lastText}${s.pending ? ` · ${s.pending} waiting` : ""} · ${s.failed} failure${s.failed === 1 ? "" : "s"}${failing ? " (failing now)" : ""}${base}`,
+  };
+}
+
 /** The archive settings Postgres needs (ALTER SYSTEM), WAL every ≤ 60 s. */
 export function archiveSettings(walgConfigPath: string): Array<[string, string]> {
   return [

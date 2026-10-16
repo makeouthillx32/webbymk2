@@ -236,6 +236,10 @@ export function AppRoutes({
             await snapshotInstance(coreDockerInstance, o);
             return 0;
           }, 'next')}
+          onBaseBackup={() => runOpQueued("Postgres base backup", async (o) => {
+            const { baseBackup } = await import("./object-store-store.ts");
+            return baseBackup(o);
+          }, 'next')}
           onCopy={copy}
           onGoBack={goBack}
           onStart={() => runOpQueued("Start core stack", async (o) => {

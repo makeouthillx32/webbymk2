@@ -81,6 +81,8 @@ export function ServicesPanel({ onGoBack, activeEnv, addNotification }: Services
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [candidateIdx, setCandidateIdx] = useState(0);
   const [restartingKey, setRestartingKey] = useState<string | null>(null);
+  // The object store's job: is Postgres's live copy actually arriving?
+  const [objectsHealth, setObjectsHealth] = useState<{ tone: "ok" | "warn" | "off"; text: string } | null>(null);
 
   const envMap = useMemo(() => {
     const map = new Map<string, UnaxisEnvironment>();
@@ -98,6 +100,13 @@ export function ServicesPanel({ onGoBack, activeEnv, addNotification }: Services
       ]);
       setServices(allServices);
       setEnvs(allEnvs);
+      if (allServices.some((s) => s.serviceType === "objects")) {
+        void (async () => {
+          const { getArchiveSummary } = await import("../../object-store-store.ts");
+          const { archiveHealth } = await import("../../object-store.ts");
+          setObjectsHealth(archiveHealth(await getArchiveSummary()));
+        })().catch(() => setObjectsHealth({ tone: "warn", text: "couldn't read the archive status" }));
+      }
 
       // Collect candidate containers across environments
       const zoneContainers = new Set(allZones.map((z) => z.container));
@@ -303,6 +312,13 @@ export function ServicesPanel({ onGoBack, activeEnv, addNotification }: Services
                       {isRestarting ? "⟳ restarting…" : "● running"}
                     </Text>
                   </Box>
+                  {svc.serviceType === "objects" && objectsHealth && (
+                    <Box marginLeft={4}>
+                      <Text color={objectsHealth.tone === "ok" ? "green" : objectsHealth.tone === "warn" ? "yellow" : undefined} dimColor={objectsHealth.tone === "off"}>
+                        {objectsHealth.tone === "ok" ? "● " : objectsHealth.tone === "warn" ? "⚠ " : "○ "}{objectsHealth.text}
+                      </Text>
+                    </Box>
+                  )}
                   {focused && svc.description && (
                     <Box marginLeft={4} marginTop={0}>
                       <Text dimColor>↳ {svc.description}</Text>
