@@ -9,7 +9,7 @@
 //               "gnogit", and for those it falls back to commit history.
 //   core / unaxis / services — recent commits, newest first.
 
-import { PROJECT_DIR } from "../config/zones.ts";
+import { workDir } from "./work-dir.ts";
 import { runGit } from "./git-bin.ts";
 import { commitMatches, scopesOfCommit, type ChangelogTarget, type PathScope } from "./changelog-scopes.ts";
 
@@ -54,7 +54,7 @@ const FIELD = "\x02";
 
 /** `git log <args>` with each commit's files, or null when git fails. */
 async function readCommits(args: string[]): Promise<RawCommit[] | null> {
-  const r = await runGit(PROJECT_DIR, ["log", ...args, `--format=${REC}%H${FIELD}%as${FIELD}%s`, "--name-only"], { timeoutMs: 15_000 });
+  const r = await runGit(workDir(), ["log", ...args, `--format=${REC}%H${FIELD}%as${FIELD}%s`, "--name-only"], { timeoutMs: 15_000 });
   if (r.status !== 0) return null;
   return parseLog(r.stdout);
 }

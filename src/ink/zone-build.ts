@@ -29,6 +29,7 @@ import { tmpdir, homedir }   from "os";
 import { join }              from "path";
 import { spawn, spawnSync }  from "child_process";
 import { PROJECT_DIR, GHCR_USER, type Zone } from "../config/zones.ts";
+import { workDir } from "./work-dir.ts";
 import {
   dbRecordLedger,
   dbGetEnvironmentById,
@@ -450,7 +451,8 @@ export function resolveGitBin(cwd: string = PROJECT_DIR): string {
   return resolveGitBinFor(cwd);
 }
 
-let _provCache: { data: GitProvenance; expiresAt: number } | null = null;
+// Keyed by the work root: switching workspaces must not serve the old checkout's commit.
+let _provCache: { data: GitProvenance; expiresAt: number; root: string } | null = null;
 
 /**
  * Async provenance for the build path. Inside the long-running TUI on Windows,
@@ -461,15 +463,15 @@ let _provCache: { data: GitProvenance; expiresAt: number } | null = null;
  */
 async function gitProvenanceAsync(): Promise<GitProvenance> {
   const now = Date.now();
-  if (_provCache && _provCache.expiresAt > now) return _provCache.data;
+  if (_provCache && _provCache.expiresAt > now && _provCache.root === workDir()) return _provCache.data;
   let branch = "main";
   try {
-    const head = readFileSync(join(PROJECT_DIR, ".git", "HEAD"), "utf-8").trim();
+    const head = readFileSync(join(workDir(), ".git", "HEAD"), "utf-8").trim();
     if (head.startsWith("ref: refs/heads/")) branch = head.replace("ref: refs/heads/", "");
   } catch {}
   const [logRes, statusRes] = await Promise.all([
-    runGit(PROJECT_DIR, ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], { timeoutMs: 15_000 }),
-    runGit(PROJECT_DIR, ["status", "--porcelain", "-uno", "--", ".", ":(exclude)proxy-config", ":(exclude)__pycache__"], { timeoutMs: 15_000 }),
+    runGit(workDir(), ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], { timeoutMs: 15_000 }),
+    runGit(workDir(), ["status", "--porcelain", "-uno", "--", ".", ":(exclude)proxy-config", ":(exclude)__pycache__"], { timeoutMs: 15_000 }),
   ]);
   const parts = logRes.status === 0 ? logRes.stdout.split("\0") : [];
   const fullSha = (parts[0] ?? "").trim();
@@ -482,21 +484,21 @@ async function gitProvenanceAsync(): Promise<GitProvenance> {
     author: (parts[3] ?? "").trim() || "makeouthillx32",
     gitError: parts.length >= 4 ? undefined : `git log → status ${logRes.status}: ${logRes.stderr.trim().slice(0, 200)}`,
   };
-  _provCache = { data, expiresAt: Date.now() + 15_000 };
+  _provCache = { data, expiresAt: Date.now() + 15_000, root: workDir() };
   return data;
 }
 
 /** Source provenance of the build context — best-effort; degrades to "nogit". */
 function gitProvenance(): GitProvenance {
   const now = Date.now();
-  if (_provCache && _provCache.expiresAt > now) {
+  if (_provCache && _provCache.expiresAt > now && _provCache.root === workDir()) {
     return _provCache.data;
   }
-  const gitBin = resolveGitBin(PROJECT_DIR);
+  const gitBin = resolveGitBin(workDir());
 
   let branch = "main";
   try {
-    const head = readFileSync(join(PROJECT_DIR, ".git", "HEAD"), "utf-8").trim();
+    const head = readFileSync(join(workDir(), ".git", "HEAD"), "utf-8").trim();
     if (head.startsWith("ref: refs/heads/")) {
       branch = head.replace("ref: refs/heads/", "");
     }
@@ -513,7 +515,7 @@ function gitProvenance(): GitProvenance {
     // ~100 ms git call regularly blew the old budget and every image since
     // 2026-09-27 was tagged gnogit-dirty.
     const logRes = spawnSync(gitBin, ["log", "-1", "--pretty=%H%x00%h%x00%s%x00%an"], {
-      cwd: PROJECT_DIR,
+      cwd: workDir(),
       encoding: "utf-8",
       timeout: 10_000,
     });
@@ -542,7 +544,7 @@ function gitProvenance(): GitProvenance {
     const statusRes = spawnSync(gitBin, [
       "status", "--porcelain", "-uno", "--", ".", ":(exclude)proxy-config", ":(exclude)__pycache__",
     ], {
-      cwd: PROJECT_DIR,
+      cwd: workDir(),
       encoding: "utf-8",
       timeout: 10_000,
     });
@@ -558,7 +560,7 @@ function gitProvenance(): GitProvenance {
     author,
     gitError,
   };
-  _provCache = { data, expiresAt: now + 15_000 };
+  _provCache = { data, expiresAt: now + 15_000, root: workDir() };
   return data;
 }
 
@@ -651,7 +653,7 @@ export async function buildZone(
   const contextDir = refSource?.dir ?? null;
 
   const dockerCfg  = await createBuildDockerConfig();
-  const restoreDockerignore = scopeDockerignoreToZone(zone.key, contextDir ?? PROJECT_DIR);
+  const restoreDockerignore = scopeDockerignoreToZone(zone.key, contextDir ?? workDir());
   const t0         = Date.now();
 
   log.info("build", "started", {
@@ -700,7 +702,7 @@ export async function buildZone(
     if (!refSource) {
       try {
         const { publishBuildSource } = await import("./build-source.ts");
-        await publishBuildSource(PROJECT_DIR, zone.key, gitContentTag(prov), prov, logBuild);
+        await publishBuildSource(workDir(), zone.key, gitContentTag(prov), prov, logBuild);
       } catch (e) {
         logBuild(`⚠ source not published to the forge: ${e instanceof Error ? e.message : e}`);
       }
@@ -815,7 +817,7 @@ export async function buildZone(
       "-t", zone.image,
       ".",
     ];
-    const buildCwd = contextDir ?? PROJECT_DIR;
+    const buildCwd = contextDir ?? workDir();
 
     logBuild(`--- build: ${zone.label}${opts.noCache ? "  (--no-cache)" : ""} ---`);
     logBuild(`docker buildx build (builder=${BUILDX_BUILDER}, network=unenter) -t ${zone.image} .`);
@@ -1254,12 +1256,12 @@ export async function deployAll(
 export async function gitPush(onLine: (l: string) => void): Promise<number> {
   const { spawn } = await import("child_process");
   const { drainStream } = await import("./utils.ts");
-  const gitBin = resolveGitBin(PROJECT_DIR);
+  const gitBin = resolveGitBin(workDir());
 
   onLine("--- git push ---");
 
   const proc = spawn(gitBin, ["push"], {
-    cwd:   PROJECT_DIR,
+    cwd:   workDir(),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -1293,9 +1295,9 @@ export async function gitCommitAndPushZone(
   zone:   Zone,
   onLine: (l: string) => void,
 ): Promise<number> {
-  const gitBin = resolveGitBin(PROJECT_DIR);
+  const gitBin = resolveGitBin(workDir());
   const paths = [`zones/${zone.key}`, `src/zones/${zone.key}`];
-  const branchResult = spawnSync(gitBin, ["branch", "--show-current"], { cwd: PROJECT_DIR, timeout: 2000 });
+  const branchResult = spawnSync(gitBin, ["branch", "--show-current"], { cwd: workDir(), timeout: 2000 });
   const branch = branchResult.status === 0
     ? branchResult.stdout?.toString().trim() || "unknown"
     : "unknown";
@@ -1306,13 +1308,13 @@ export async function gitCommitAndPushZone(
   }
 
   onLine(`--- git add (${paths.join(", ")}) ---`);
-  const add = spawnSync(gitBin, ["add", ...paths], { cwd: PROJECT_DIR, timeout: 5000 });
+  const add = spawnSync(gitBin, ["add", ...paths], { cwd: workDir(), timeout: 5000 });
   if (add.status !== 0) {
     onLine(`✗ git add failed: ${add.stderr?.toString().trim()}`);
     return add.status ?? 1;
   }
 
-  const staged = spawnSync(gitBin, ["diff", "--cached", "--quiet"], { cwd: PROJECT_DIR, timeout: 2000 });
+  const staged = spawnSync(gitBin, ["diff", "--cached", "--quiet"], { cwd: workDir(), timeout: 2000 });
   if (staged.status === 0) {
     onLine("(nothing staged under this zone's paths — skipping commit)");
   } else {
@@ -1320,7 +1322,7 @@ export async function gitCommitAndPushZone(
     const commit = spawnSync(
       gitBin,
       ["commit", "-m", `chore(${zone.key}): sync zone source for Vercel build`],
-      { cwd: PROJECT_DIR, timeout: 5000 },
+      { cwd: workDir(), timeout: 5000 },
     );
     for (const line of commit.stdout?.toString().split("\n") ?? []) if (line) onLine(line);
     if (commit.status !== 0) {
@@ -1363,7 +1365,7 @@ export async function promoteVercelZone(
   onLine(`--- vercel promote (${zone.key}) ---`);
   const executable = process.platform === "win32" ? "vercel.cmd" : "vercel";
   const proc = spawn(executable, ["promote", parsed.toString(), "--yes", "--no-color"], {
-    cwd: PROJECT_DIR,
+    cwd: workDir(),
     stdio: ["ignore", "pipe", "pipe"],
   });
 

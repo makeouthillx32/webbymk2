@@ -14,11 +14,11 @@
 //   zoneToDerived           — lightweight Zone → DerivedZone conversion
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { workDir } from "./work-dir.ts";
 import { join }                      from "path";
 import { existsSync, readFileSync }  from "fs";
 import { mkdir, rm, readFile, writeFile } from "fs/promises";
 
-import { PROJECT_DIR }               from "../config/stack.ts";
 import { writeFileAtomic }           from "../utils/zoneScaffolding.ts";
 import type { Zone }                 from "../config/zones.ts";
 import {
@@ -63,7 +63,7 @@ export function zoneToDerived(zone: Zone, layout: LayoutType): DerivedZone {
  */
 export function getZoneLayout(zoneKey: string): LayoutType | null {
   const classifierPath = join(
-    PROJECT_DIR, "src", "components", "Layouts", "routeClassifier.ts"
+    workDir(), "src", "components", "Layouts", "routeClassifier.ts"
   );
   if (!existsSync(classifierPath)) return null;
 
@@ -91,8 +91,8 @@ export function getInstalledSections(
   zoneKey:    string,
   layoutType?: LayoutType | null,
 ): Set<string> {
-  const zoneAppDir = join(PROJECT_DIR, "zones", zoneKey, "src", "app");
-  const coreAppDir = join(PROJECT_DIR, "src", "app");
+  const zoneAppDir = join(workDir(), "zones", zoneKey, "src", "app");
+  const coreAppDir = join(workDir(), "src", "app");
   const catalog    = layoutType
     ? (DS_CATALOG[layoutType] ?? [])
     : (Object.values(DS_CATALOG).flat() as DynamicSection[]);
@@ -136,8 +136,8 @@ export async function scaffoldDynamicSection(
     return;
   }
 
-  const appDir     = join(PROJECT_DIR, "zones",        zone.key, "src", "app");
-  const coreDir    = join(PROJECT_DIR, "src", "zones", zone.key);
+  const appDir     = join(workDir(), "zones",        zone.key, "src", "app");
+  const coreDir    = join(workDir(), "src", "zones", zone.key);
   const wrapperDir = join(appDir,  ...ds.routePath.split("/"));
   const coreSubDir = join(coreDir, ...ds.routePath.split("/"));
 
@@ -176,8 +176,8 @@ export async function removeDynamicSection(
     return;
   }
 
-  const appDir     = join(PROJECT_DIR, "zones",        zoneKey, "src", "app");
-  const coreDir    = join(PROJECT_DIR, "src", "zones", zoneKey);
+  const appDir     = join(workDir(), "zones",        zoneKey, "src", "app");
+  const coreDir    = join(workDir(), "src", "zones", zoneKey);
   const wrapperDir = join(appDir,  ...ds.routePath.split("/"));
   const coreSubDir = join(coreDir, ...ds.routePath.split("/"));
 
@@ -216,7 +216,7 @@ export async function fixDsErrorWrappers(
   let fixed = 0;
   for (const ds of catalog) {
     const errorPath = join(
-      PROJECT_DIR, "zones", zone.key, "src", "app",
+      workDir(), "zones", zone.key, "src", "app",
       ...ds.routePath.split("/"), "error.tsx"
     );
     if (!existsSync(errorPath)) continue;

@@ -13,6 +13,7 @@
 //   9. Register route in proxy-config/routes.json
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { workDir } from "../work-dir.ts";
 import { join }                from "path";
 import { existsSync }          from "fs";
 import { mkdir }               from "fs/promises";
@@ -49,9 +50,9 @@ export async function scaffoldZone(
     ? params
     : deriveZone(params, await findNextDevPort());
 
-  const zoneDir      = join(PROJECT_DIR, "zones", z.key);
+  const zoneDir      = join(workDir(), "zones", z.key);
   const appDir       = join(zoneDir, "src", "app");
-  const coreZonesDir = join(PROJECT_DIR, "src", "zones", z.key);
+  const coreZonesDir = join(workDir(), "src", "zones", z.key);
 
   onLine(`Zone     →  ${z.key}  (${z.label})`);
   onLine(`Domain   →  ${z.domain}`);
