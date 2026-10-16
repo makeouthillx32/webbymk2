@@ -203,6 +203,14 @@ async function runBackupLocked(onLine: Line, only?: string): Promise<number> {
   } catch (e) {
     onLine(`⚠ pre-backup dump skipped: ${e instanceof Error ? e.message : e}`);
   }
+  // Production Postgres: a fresh base backup into the object store, so a
+  // restore replays at most a day of archived WAL.
+  try {
+    const { nightlyBaseBackup } = await import("./object-store-store.ts");
+    await nightlyBaseBackup((l) => onLine(`[postgres] ${l}`));
+  } catch (e) {
+    onLine(`⚠ postgres base backup skipped: ${e instanceof Error ? e.message : e}`);
+  }
   // The forge's repos and database live in a Docker volume restic can't read
   // consistently; its own dump goes to the forge's backup targets.
   try {

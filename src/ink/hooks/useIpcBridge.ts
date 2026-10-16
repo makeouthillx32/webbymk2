@@ -1983,6 +1983,33 @@ ${up}/${svcs.length} up${down > 0 ? `  ·  ${down} DOWN` : ""}`);
         return 2;
       },
 
+      // ── unaxis data status|place|deploy|archive setup|enable ─────────────
+      // Production data's live copy: object store + Postgres WAL archive.
+      data: async (args, onLine) => {
+        const os = await import("../object-store-store.ts");
+        const sub = args[0] ?? "status";
+        if (sub === "status") return os.dataStatus(onLine);
+        if (sub === "place") {
+          const env = args[1] && !args[1].startsWith("--") ? findEnv(args[1]) : null;
+          if (!env) { onLine("✗ usage: data place <env>"); return 2; }
+          onLine(`✓ placed ${os.placeObjectStore(env)} — next: data deploy`);
+          return 0;
+        }
+        const queued = (title: string, run: (line: (v: string) => void) => Promise<number>) => {
+          if (args.includes("--bg")) {
+            runOpQueued(title, run);
+            onLine(`⚡ ${title} queued — watch: unaxis stacks`);
+            return 3;
+          }
+          return runOpVisible(title, run, onLine);
+        };
+        if (sub === "deploy") return queued("Deploy object store", os.deployObjectStore);
+        if (sub === "archive" && args[1] === "setup") return queued("Postgres archive setup", os.setupPgArchive);
+        if (sub === "archive" && args[1] === "enable") return os.enablePgArchive(onLine);
+        onLine("✗ usage: data status | place <env> | deploy [--bg] | archive setup [--bg] | archive enable");
+        return 2;
+      },
+
       // ── unaxis changelog [<zone>|core|unaxis|services [<name>]] ──────────
       // One changelog per part of the platform, from commit messages and the
       // deploy ledger (see changelog.ts / changelog-scopes.ts).

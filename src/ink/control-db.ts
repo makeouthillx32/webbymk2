@@ -1289,7 +1289,9 @@ export interface UnaxisService {
     // Git forge (Forgejo) — see forge.ts.
     | "forge"
     // Secrets manager (Infisical) — see secrets-manager.ts.
-    | "secrets";
+    | "secrets"
+    // Object store (Garage) — see object-store.ts.
+    | "objects";
   container:      string;
   host:           string;
   port:           number;

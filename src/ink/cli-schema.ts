@@ -75,6 +75,14 @@ export const UNAXIS_CLI_SCHEMA = {
         "--bg":        { type: "boolean", description: "deploy: run as a background stack op." }
       }
     },
+    data: {
+      description: "Production data's live copy on another machine. An object store (Garage, S3-compatible) placed on any UNAXIS host; Postgres archives its write-ahead log there continuously (WAL-G) plus a nightly base backup, so the database can be restored to any minute. `archive setup` writes WAL-G's config and takes a base backup (no restart); `archive enable` sets archive_mode, which takes effect at the next Postgres restart.",
+      subcommands: ["status", "place", "deploy", "archive"],
+      arguments: [{ name: "target", type: "string", required: false }],
+      options: {
+        "--bg": { type: "boolean", description: "deploy / archive setup: run as a background stack op." }
+      }
+    },
     backup: {
       description: "Workspace backups with restic: encrypted, versioned snapshots of the dev drive to several targets (folders, or rest-server on any UNAXIS host). Nightly by default.",
       subcommands: ["status", "run", "snapshots", "source", "target", "schedule"],
