@@ -30,7 +30,7 @@ import { join }      from "path";
 import { existsSync } from "fs";
 
 import type { Zone }           from "../config/zones.ts";
-import { PROJECT_DIR }         from "../config/zones.ts";
+import { workDir }             from "./work-dir.ts";
 import { DOMAIN }              from "../config/stack.ts";
 import { STACK_HOST }           from "../config/stack.ts";
 import { getStatus }           from "./docker.ts";
@@ -88,12 +88,6 @@ export function devDomain(zone: Zone): string {
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
-/** True when a dev container for this zone is currently running (or starting). */
-export async function isDevRunning(zone: Zone): Promise<boolean> {
-  const s = await getStatus(devContainerName(zone));
-  return s === "running" || s === "starting";
-}
-
 // ── Internal Docker helpers ───────────────────────────────────────────────────
 
 /** Fire-and-forget `docker rm -f <container>` — resolves when done. */
@@ -120,10 +114,11 @@ function dockerRmForce(container: string, onLine: (l: string) => void): Promise<
  *
  *  On Windows with Docker Desktop, Docker accepts both Windows paths
  *  (C:\foo\bar) and forward-slash paths (/c/foo/bar).  We pass the raw
- *  PROJECT_DIR — Docker Desktop's CLI handles translation automatically.
+ *  work root — Docker Desktop's CLI handles translation automatically.
+ *  Dev mode mounts the checkout you edit (work-dir.ts), not the deploy root.
  */
 function mountSource(): string {
-  return dockerCliHostPath(PROJECT_DIR);
+  return dockerCliHostPath(workDir());
 }
 
 /**
@@ -216,7 +211,7 @@ export async function startDevContainer(
   const nextVolume = devNextVolume(zone);
   const routeKey  = devRouteKey(zone);
   const upstream  = `http://${container}:3000`;
-  const envFile   = join(PROJECT_DIR, ".env");
+  const envFile   = join(workDir(), ".env");
 
   onLine(`Starting dev container for ${zone.label}…`);
   onLine(`  container : ${container}`);

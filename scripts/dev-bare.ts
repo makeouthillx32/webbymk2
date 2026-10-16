@@ -207,6 +207,23 @@ function parseDotenvText(text: string, into: Record<string, string>): void {
  * environment. null when the CLI is missing, not signed in, or the vault can't
  * be reached — dev mode then runs on .env as before.
  */
+/**
+ * The real Infisical CLI binary. On Windows the npm package's launchers
+ * (`infisical`, `infisical.cmd`) point at an empty placeholder and fail with
+ * "Access is denied"; the program is bin\infisical.exe inside the package.
+ */
+function infisicalBin(): string | null {
+  if (process.env.INFISICAL_BIN && existsSync(process.env.INFISICAL_BIN)) return process.env.INFISICAL_BIN;
+  if (process.platform !== "win32") return "infisical";
+  for (const dir of (process.env.PATH ?? "").split(";")) {
+    const exe = join(dir, "infisical.exe");
+    if (dir && existsSync(exe)) return exe;
+  }
+  const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf8", timeout: 15_000, shell: true }).stdout?.trim();
+  const exe = npmRoot ? join(npmRoot, "@infisical", "cli", "bin", "infisical.exe") : "";
+  return exe && existsSync(exe) ? exe : null;
+}
+
 function vaultEnv(): string | null {
   const cfg = join(REPO, ".infisical.json");
   if (!existsSync(cfg)) return null;
@@ -214,11 +231,13 @@ function vaultEnv(): string | null {
   try { project = JSON.parse(readFileSync(cfg, "utf8")); } catch { return null; }
   if (!project.workspaceId) return null;
   const envSlug = process.env.UNAXIS_VAULT_ENV || project.defaultEnvironment || "dev";
-  const r = spawnSync("infisical", ["export", "--format=dotenv", `--env=${envSlug}`, `--projectId=${project.workspaceId}`, "--silent"], {
-    cwd: REPO, encoding: "utf8", timeout: 20_000, shell: process.platform === "win32",
+  const bin = infisicalBin();
+  if (!bin) { log("vault: not used (infisical CLI not installed) — using .env"); return null; }
+  const r = spawnSync(bin, ["export", "--format=dotenv", `--env=${envSlug}`, `--projectId=${project.workspaceId}`, "--silent"], {
+    cwd: REPO, encoding: "utf8", timeout: 20_000,
   });
   if (r.status !== 0 || !r.stdout?.trim()) {
-    const why = r.error ? "infisical CLI not installed" : ((r.stderr || "not signed in").trim().split("\n").pop() ?? "");
+    const why = r.error ? r.error.message : ((r.stderr || "not signed in").trim().split("\n").pop() ?? "");
     log(`vault: not used (${why}) — using .env`);
     return null;
   }

@@ -40,12 +40,12 @@
 
 import { spawn, execFile } from "child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, openSync, statSync, readSync, closeSync, writeFileSync } from "fs";
-import { join } from "path";
-import os from "os";
+import { dirname, join } from "path";
 
 import type { Zone } from "../config/zones.ts";
-import { PROJECT_DIR } from "../config/zones.ts";
-import { STACK_HOST } from "../config/stack.ts";
+import { ARTIFACT_STORE_DIR, STACK_HOST } from "../config/stack.ts";
+import { workDir } from "./work-dir.ts";
+import { toWindowsPath } from "./project-workspaces.ts";
 import { dbCoreLanIp } from "./control-db.ts";
 import { addZoneRoute, removeZoneRoute } from "./proxy-config.ts";
 import { npmAddDevHost } from "./npm-api.ts";
@@ -55,7 +55,7 @@ import { devDomain, devRouteKey } from "./dev-container.ts";
 export type BareDevConfig = {
   /** Port the bare-metal `next dev` process listens on. */
   port: number;
-  /** PowerShell launch script, relative to PROJECT_DIR. */
+  /** Launch script, relative to the work root (the checkout you edit — see work-dir.ts). */
   script: string;
   /** Host reachable from the proxy container — POWER's LAN IP today. */
   host: string;
@@ -95,7 +95,7 @@ export function bareDevConfig(zone: Zone): BareDevConfig | null {
   const host = process.env.BARE_DEV_HOST || dbCoreLanIp() || "127.0.0.1";
   const own = BARE_METAL_DEV_ZONES[zone.key];
   if (own) return { ...own, host };
-  if (!existsSync(join(PROJECT_DIR, GENERIC_SCRIPT))) return null;
+  if (!existsSync(join(workDir(), GENERIC_SCRIPT))) return null;
   return { port: assignedPort(zone.key), script: GENERIC_SCRIPT, host };
 }
 
@@ -107,7 +107,9 @@ export function bareDevLogTail(zone: Zone, lines: number): string[] {
 }
 
 function stateDir(): string {
-  const dir = join(os.homedir(), "AppData", "Roaming", "unaxis", "bare-dev");
+  // The Windows AppData from either side: under WSL, os.homedir() is the Linux
+  // home, which split ports and logs away from the Windows TUI's.
+  const dir = join(dirname(dirname(ARTIFACT_STORE_DIR)), "bare-dev");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -116,10 +118,15 @@ function logFile(zone: Zone): string {
   return join(stateDir(), `${zone.key}.log`);
 }
 
-/** PID currently LISTENING on `port` (Windows `netstat -ano`), or null. */
+/**
+ * PID currently LISTENING on `port` (Windows `netstat -ano`), or null.
+ * The dev servers run on Windows, so these are the .exe tools by name: under
+ * WSL plain "netstat"/"taskkill" are Linux's (or absent), which saw nothing,
+ * let stop orphan the server and broke the already-running guard.
+ */
 function findPidOnPort(port: number): Promise<number | null> {
   return new Promise((resolve) => {
-    execFile("netstat", ["-ano"], (err, stdout) => {
+    execFile("netstat.exe", ["-ano"], (err, stdout) => {
       if (err || !stdout) { resolve(null); return; }
       for (const line of stdout.split("\n")) {
         // "  TCP    0.0.0.0:3012      0.0.0.0:0      LISTENING       12345"
@@ -151,7 +158,9 @@ export async function startBareDev(
     return 1;
   }
 
-  const scriptPath = join(PROJECT_DIR, cfg.script);
+  // Dev mode runs from the work root: the checkout you edit (project use).
+  const root = workDir();
+  const scriptPath = join(root, cfg.script);
   if (!existsSync(scriptPath)) {
     onLine(`✗ launch script not found: ${scriptPath}`);
     return 1;
@@ -164,6 +173,7 @@ export async function startBareDev(
 
   onLine(`Starting bare-metal dev server for ${zone.label}…`);
   onLine(`  script : ${cfg.script}`);
+  onLine(`  source : ${toWindowsPath(root)}`);
   onLine(`  port   : ${cfg.port}  (also reachable directly at http://localhost:${cfg.port})`);
 
   // Own log file, not a pipe — the child must survive the TUI process
@@ -173,13 +183,17 @@ export async function startBareDev(
   // process's job object on Windows — see the file header for why.
   const out = openSync(logFile(zone), "a");
   // A .ps1 launcher (Tank's own) or the generic bun launcher with zone + port.
+  // These run on Windows (cmd.exe start), so they get a drive-letter path even
+  // when the TUI runs in WSL — a /mnt/z/... path is "Module not found" to
+  // Windows bun (dev mode was broken this way from 2026-10-01).
+  const winScript = toWindowsPath(scriptPath);
   const launcher = cfg.script.endsWith(".ps1")
-    ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath]
-    : ["bun", scriptPath, zone.key, String(cfg.port)];
+    ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winScript]
+    : ["bun", winScript, zone.key, String(cfg.port)];
   const proc = spawn(
     "cmd.exe",
     ["/d", "/c", "start", "", "/B", ...launcher],
-    { cwd: PROJECT_DIR, windowsHide: true, stdio: ["ignore", out, out] },
+    { cwd: root, windowsHide: true, stdio: ["ignore", out, out] },
   );
   proc.unref();
 
@@ -218,7 +232,7 @@ export async function stopBareDev(
     // plain taskkill on just the listener's own pid can leave that worker
     // running (or vice versa, depending which pid netstat reports).
     await new Promise<void>((resolve) => {
-      const killer = spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+      const killer = spawn("taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
       killer.on("close", () => resolve());
       killer.on("error", () => resolve());
     });
