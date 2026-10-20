@@ -1,11 +1,13 @@
 # CLAUDE.md — webbymk2 / unenter.live
 
-Monorepo for **unenter.live**: a Next.js 15 app, the **UNAXIS** TUI control plane, a multi-zone reverse proxy, and Docker infrastructure agents. Also doubles as an Obsidian vault (`vault/` — see `_CLAUDE.md`).
+Repo for **unenter.live**: a Next.js 15 app, its zones, a multi-zone reverse proxy, the Supabase stack and Docker infrastructure agents. Also doubles as an Obsidian vault (`vault/` — see `_CLAUDE.md`).
+
+**UNAXIS (the TUI/CLI control plane) is its own repo since 2026-10-19:** `Z:\UNAXIS\unaxis` (forge `unenter/unaxis`; read its `CLAUDE.md`). This repo is a *project* UNAXIS manages and describes itself to UNAXIS in `unaxis.json`. The IPC helper is `Z:\UNAXIS\unaxis\unaxis_ipc.py`. TUI / Ink engine / CLI command work happens in that repo, not here.
 
 ## Repo map
 
 - `src/` — Next.js app source (`@/*` maps to `src/*` in tsconfig, `./*` in jsconfig)
-- `src/ink/` — UNAXIS TUI + local Ink engine (own package `@untsystems/unaxis`, see `src/ink/CLAUDE.md`)
+- `unaxis.json` — this project's side of the UNAXIS contract (slug)
 - `src/zones/` — per-zone site sources (blog, shop, docs, etc.)
 - `packages/agent/` — UNAXIS infrastructure agent, HTTP proxy to Docker socket (see `packages/agent/CLAUDE.md`)
 - `packages/agent-node/`, `packages/agent-updater/` — Dockerfile + shell script deployables (no package.json)
@@ -16,14 +18,13 @@ Monorepo for **unenter.live**: a Next.js 15 app, the **UNAXIS** TUI control plan
 
 ## Commands
 
-Runtime is **Bun** for tooling/TUI, Next.js for the web app. Dev machine is Windows — use PowerShell syntax for host commands.
+Runtime is **Bun** for tooling, Next.js for the web app. Dev machine is Windows — use PowerShell syntax for host commands.
 
 - `bun run dev` — Next.js dev server (clears `.next` first)
 - `bun run build` / `bun run start` — production build/serve
 - `bun run lint` / `bun run typecheck` — lint and `tsc --noEmit`
 - `bun run db:types` — regenerate `types/supabase.ts` from local Supabase
-- `bun run tui:dev` — TUI dev mode (`src/ink/run.ps1 -Dev`)
-- `bun run tui:run` — build then start the TUI (`tui:build` + `tui:start`)
+- Dev TUI (WSL, from the UNAXIS repo): `cd /mnt/z/UNAXIS/unaxis && UNAXIS_PROJECT_ROOT=/mnt/z/WEBSITES/webbymk2 bun run dev` → tmux `unaxis-dev`, IPC 50507
 - UNAXIS CLI: `unaxis <env-slug> <cmd>` (e.g. `unaxis unenter <cmd>` to inspect the live node)
 
 ## Environment model
@@ -43,7 +44,7 @@ Runtime is **Bun** for tooling/TUI, Next.js for the web app. Dev machine is Wind
 
 - `unaxis <env> zone <key> build` is the **complete ship pipeline** — build, push, pull, force-recreate, proxy reload. Do NOT run `deploy` after a successful `build`.
 - Production ships from Forgejo: `zone <key> build --ref main` (TUI **B**) builds that exact commit from a clean checkout (tag `g<sha>`). Plain `build` (TUI **b**) builds the dev drive as-is and records the tree on Forgejo under `refs/unaxis/builds/`.
-- Dev mode (`zone <key> dev start`) is bare metal for every zone (`scripts/dev-bare.ts`, ~5 s hot reload); `--container` is the old Docker path. Saving anything under `src/ink` restarts the dev TUI and cancels its running builds.
+- Dev mode (`zone <key> dev start`) is bare metal for every zone (UNAXIS's `scripts/dev-bare.ts`, ~5 s hot reload); `--container` is the old Docker path. Saving anything under `src/` of the UNAXIS repo restarts the dev TUI and cancels its running builds.
 - **Build ONE zone at a time.** Parallel builds OOM the Docker daemon (queue busy-check reads stale IPC state). Fire one, poll `unaxis stacks`, then the next.
 - Build hangs at "Generating static pages (0/N)" = SSG fork-ENOMEM, not network. Fix is `experimental: { cpus: 2 }` in `next.config.js`; diagnose with `unaxis build-doctor` / `build-mem`; unstick zombie builders with `unaxis builder-reset`.
 - Changes under shared `src/` compile into **every** zone image — rebuild each public zone that must receive them. Changes under `zones/<key>/` affect only that zone.
