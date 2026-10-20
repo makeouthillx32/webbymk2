@@ -18,7 +18,7 @@ import { join }                from "path";
 import { existsSync }          from "fs";
 import { mkdir }               from "fs/promises";
 
-import { PROJECT_DIR, ARTIFACT_STORE_DIR } from "../../config/stack.ts";
+import { PROJECT_DIR, ARTIFACT_STORE_DIR, UNAXIS_INK_DIR } from "../../config/stack.ts";
 import { pathExists, writeFileAtomic } from "../../utils/zoneScaffolding.ts";
 import { syncSharedZonesCompose } from "../docker.ts";
 import {
@@ -76,7 +76,7 @@ export async function scaffoldZone(
   // ── Write core page module (src/zones/{key}/Page.tsx) ───────────────────
   await writeFileAtomic(join(coreZonesDir, "Page.tsx"), genCorePageModule(z));
   const usingTemplate = existsSync(
-    join(PROJECT_DIR, "src", "ink", "templates", "zone", "pages", "zone-starter.tsx")
+    join(UNAXIS_INK_DIR, "templates", "zone", "pages", "zone-starter.tsx")
   );
   onLine(`✓ src/zones/${z.key}/Page.tsx  ${usingTemplate ? "(from template)" : "(minimal fallback)"}`);
 

@@ -17,7 +17,12 @@ import { resolve } from "node:path";
 // @ts-expect-error package does not publish TypeScript declarations
 import treeKill from "tree-kill";
 
+// PROJECT_ROOT is UNAXIS's own source checkout (what gets built and watched).
 const PROJECT_ROOT = resolve(import.meta.dir, "..");
+// The project the TUI manages — a separate repo since UNAXIS moved out:
+// UNAXIS_PROJECT_ROOT, else this checkout if it is itself a project.
+const MANAGED_PROJECT = process.env.UNAXIS_PROJECT_ROOT
+  ?? (existsSync(resolve(PROJECT_ROOT, "docker-compose.yml")) ? PROJECT_ROOT : undefined);
 const DIST_ENTRY = resolve(PROJECT_ROOT, "src", "ink", "dist", "cli.js");
 const LEASE_DIR = resolve(homedir(), ".unaxis");
 const LEASE_PATH = resolve(LEASE_DIR, "tui-dev-runner.json");
@@ -129,6 +134,7 @@ async function ensureTmuxOrAttach(): Promise<void> {
     "new-session", "-d", "-s", TMUX_SESSION,
     "-e", "UNAXIS_IN_TMUX=1",
     "-e", "UNAXIS_DEV=true",
+    ...(MANAGED_PROJECT ? ["-e", `UNAXIS_PROJECT_ROOT=${MANAGED_PROJECT}`] : []),
     `${process.execPath} ${scriptPath}`
   ], {
     cwd: PROJECT_ROOT,
@@ -243,7 +249,7 @@ async function buildBundle(): Promise<boolean> {
 function startTuiChild(): void {
   child = spawn({
     cmd: [process.execPath, DIST_ENTRY],
-    cwd: PROJECT_ROOT,
+    cwd: MANAGED_PROJECT ?? PROJECT_ROOT,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -251,6 +257,8 @@ function startTuiChild(): void {
       ...process.env,
       UNAXIS_DEV: "true",
       TUI_DEV_WATCH: "1",
+      UNAXIS_HOME: PROJECT_ROOT,
+      ...(MANAGED_PROJECT ? { UNAXIS_PROJECT_ROOT: MANAGED_PROJECT } : {}),
     },
   });
 

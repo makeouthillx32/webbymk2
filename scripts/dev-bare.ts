@@ -3,7 +3,7 @@
 // Bare-metal dev server for ANY zone — `next dev` as a plain Windows process
 // on the host, no Docker. Launched (detached) by src/ink/bare-dev.ts:
 //
-//   bun scripts/dev-bare.ts <zone-key> <port>
+//   bun scripts/dev-bare.ts <zone-key> <port> [<project-root>]
 //
 // Why: the containerized dev loop reads the repo through Docker Desktop's
 // Windows-drive mount, which doesn't deliver file-change events, so Next only
@@ -38,13 +38,15 @@ import { dirname, join, resolve } from "path";
 import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
-const [zone, portArg] = process.argv.slice(2);
+const [zone, portArg, rootArg] = process.argv.slice(2);
 if (!zone || !portArg) {
-  console.error("usage: bun scripts/dev-bare.ts <zone-key> <port>");
+  console.error("usage: bun scripts/dev-bare.ts <zone-key> <port> [<project-root>]");
   process.exit(2);
 }
 const port = Number(portArg);
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// The project checkout to run — passed by UNAXIS (this script lives with
+// UNAXIS, not in the project). Without it: the repo this file sits in.
+const REPO = rootArg ? resolve(rootArg) : resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const APPDATA = process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming");
 // Same drive as the repo, outside it: Next makes its own client entries
 // relative to the project dir, and a cross-drive relative path (C: → Z:)

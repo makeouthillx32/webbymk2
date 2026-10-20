@@ -40,10 +40,10 @@
 
 import { spawn, execFile } from "child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, openSync, statSync, readSync, closeSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname, isAbsolute, join } from "path";
 
 import type { Zone } from "../config/zones.ts";
-import { ARTIFACT_STORE_DIR, STACK_HOST } from "../config/stack.ts";
+import { ARTIFACT_STORE_DIR, STACK_HOST, UNAXIS_HOME } from "../config/stack.ts";
 import { workDir } from "./work-dir.ts";
 import { toWindowsPath } from "./project-workspaces.ts";
 import { dbCoreLanIp } from "./control-db.ts";
@@ -70,7 +70,8 @@ const BARE_METAL_DEV_ZONES: Record<string, Omit<BareDevConfig, "host">> = {
   tank: { port: 3012, script: "zones/tank/dev-bare.ps1" },
 };
 
-const GENERIC_SCRIPT = "scripts/dev-bare.ts";
+// The generic launcher is UNAXIS's own (its source checkout), not the project's.
+const GENERIC_SCRIPT = join(UNAXIS_HOME, "scripts", "dev-bare.ts");
 const FIRST_GENERIC_PORT = 3101;
 
 /**
@@ -95,7 +96,7 @@ export function bareDevConfig(zone: Zone): BareDevConfig | null {
   const host = process.env.BARE_DEV_HOST || dbCoreLanIp() || "127.0.0.1";
   const own = BARE_METAL_DEV_ZONES[zone.key];
   if (own) return { ...own, host };
-  if (!existsSync(join(workDir(), GENERIC_SCRIPT))) return null;
+  if (!existsSync(GENERIC_SCRIPT)) return null;
   return { port: assignedPort(zone.key), script: GENERIC_SCRIPT, host };
 }
 
@@ -160,7 +161,7 @@ export async function startBareDev(
 
   // Dev mode runs from the work root: the checkout you edit (project use).
   const root = workDir();
-  const scriptPath = join(root, cfg.script);
+  const scriptPath = isAbsolute(cfg.script) ? cfg.script : join(root, cfg.script);
   if (!existsSync(scriptPath)) {
     onLine(`✗ launch script not found: ${scriptPath}`);
     return 1;
@@ -189,7 +190,7 @@ export async function startBareDev(
   const winScript = toWindowsPath(scriptPath);
   const launcher = cfg.script.endsWith(".ps1")
     ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winScript]
-    : ["bun", winScript, zone.key, String(cfg.port)];
+    : ["bun", winScript, zone.key, String(cfg.port), toWindowsPath(root)];
   const proc = spawn(
     "cmd.exe",
     ["/d", "/c", "start", "", "/B", ...launcher],

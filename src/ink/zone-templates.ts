@@ -34,7 +34,7 @@
 
 import { join } from "path";
 import { existsSync, readFileSync } from "fs";
-import { PROJECT_DIR } from "../config/stack.js";
+import { PROJECT_DIR, UNAXIS_INK_DIR } from "../config/stack.js";
 import type { DerivedZone, DynamicSection } from "./zone/types.ts";
 import type { Zone } from "../config/zones.ts";
 
@@ -266,7 +266,7 @@ function applyTokens(src: string, z: DerivedZone): string {
  */
 export function genCorePageModule(z: DerivedZone): string {
   const starterTmpl = join(
-    PROJECT_DIR, "src", "ink", "templates", "zone", "pages", "zone-starter.tsx"
+    UNAXIS_INK_DIR, "templates", "zone", "pages", "zone-starter.tsx"
   );
 
   if (existsSync(starterTmpl)) {

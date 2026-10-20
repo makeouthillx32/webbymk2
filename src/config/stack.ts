@@ -19,25 +19,45 @@
 //   ~/.unaxis/unenter/config.json         (macOS / Linux)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { resolve, join } from "path";
-import { readFileSync, existsSync, readdirSync } from "fs";
+import { resolve, join, dirname, basename } from "path";
+import { readFileSync, existsSync, readdirSync, realpathSync } from "fs";
 import { homedir } from "os";
 
-// ── Project root ──────────────────────────────────────────────────────────────
+// ── Two roots: UNAXIS's own files vs the project it manages ─────────────────
+// UNAXIS used to live inside the project it manages, so "the project" was
+// simply two folders above this file. They are separate repos now: the
+// PROJECT is wherever the launcher / picker says (PROJECT_DIR), and UNAXIS's
+// own templates and scripts are found next to UNAXIS (UNAXIS_INK_DIR / HOME).
+
+/** The `src/ink` package dir: templates/, zone/templates/ (shipped in the npm package too). */
+function deriveInkDir(): string {
+  if (process.env["UNAXIS_HOME"]) return join(process.env["UNAXIS_HOME"], "src", "ink");
+  // Installed or dev-built bundle: <pkg>/dist/cli.js → <pkg>.
+  try {
+    const entry = process.argv[1] ? realpathSync(process.argv[1]) : "";
+    if (/[\\/]dist[\\/]cli\.js$/.test(entry)) return resolve(dirname(entry), "..");
+  } catch { /* fall through */ }
+  const dir = (import.meta as any).dir as string | undefined;
+  return dir ? resolve(dir, "../ink") : process.cwd();
+}
+
+/** UNAXIS's own package dir (src/ink of its source checkout, or the installed package). */
+export const UNAXIS_INK_DIR = deriveInkDir();
+/** UNAXIS's source checkout root (scripts/, packages/). Meaningless for an npm install. */
+export const UNAXIS_HOME = process.env["UNAXIS_HOME"] ?? resolve(UNAXIS_INK_DIR, "../..");
 
 function deriveProjectDir(): string {
-  // Explicit override always wins (CI, run.ps1, UNAXIS_PROJECT_ROOT, etc.)
+  // Explicit override always wins (the dev launcher, CI, run.ps1, etc.)
   if (process.env["PROJECT_ROOT"])        return process.env["PROJECT_ROOT"];
   if (process.env["UNAXIS_PROJECT_ROOT"]) return process.env["UNAXIS_PROJECT_ROOT"];
 
-  // In dev mode (bun --watch) import.meta.dir correctly reflects the source
-  // file location. In the prod bundle, Bun inlines it as the *build-machine*
-  // path, which doesn't exist on installed machines. So in prod we skip it
-  // and rely on process.cwd() — main.tsx has already chdir'd to the project
-  // root before this module is dynamically imported.
+  // Source mode (bun --watch) inside a project that still carries UNAXIS:
+  // the folder above src/ is that project. In the prod bundle Bun inlines
+  // import.meta.dir as the build-machine path, so it's skipped there and
+  // process.cwd() is used — main.tsx has already chdir'd to the project root.
   if (process.env.NODE_ENV !== "production") {
     const dir = (import.meta as any).dir as string | undefined;
-    if (dir) return resolve(dir, "../..");
+    if (dir && existsSync(resolve(dir, "../..", "docker-compose.yml"))) return resolve(dir, "../..");
   }
 
   return process.cwd();
@@ -45,12 +65,17 @@ function deriveProjectDir(): string {
 
 export const PROJECT_DIR  = deriveProjectDir();
 
+/** The project's own description of itself for UNAXIS: `unaxis.json` at its root. */
+function readProjectManifest(): { slug?: string } {
+  try { return JSON.parse(readFileSync(join(PROJECT_DIR, "unaxis.json"), "utf-8")); }
+  catch { return {}; }
+}
+
 /**
  * Canonical slug for this project — used in the project picker, pairing keys,
- * and CLI routing.  Overrides the directory-name auto-slug so the TUI always
- * shows "unenter" regardless of where the repo is cloned.
+ * and CLI routing. From the project's `unaxis.json`, else its folder name.
  */
-export const PROJECT_SLUG = "unenter.live";
+export const PROJECT_SLUG = readProjectManifest().slug ?? basename(PROJECT_DIR);
 
 // ── Local config loader ───────────────────────────────────────────────────────
 

@@ -28,7 +28,7 @@ import { homedir }         from "os";
 import { randomBytes }     from "crypto";
 import { createServer }    from "net";
 import { spawn }           from "child_process";
-import { PROJECT_DIR, DOMAIN } from "../../config/stack.ts";
+import { PROJECT_DIR, DOMAIN, UNAXIS_INK_DIR } from "../../config/stack.ts";
 import type { OnLine }     from "./types.ts";
 
 // ── Runtime state model ───────────────────────────────────────────────────────
@@ -257,7 +257,7 @@ function uuidV4(): string {
 
 export const CORE_DIR          = join(PROJECT_DIR, "supabase-core");
 export const INSTANCES_DIR     = join(PROJECT_DIR, "supabase-instances");
-export const INSTANCE_TEMPLATE = join(PROJECT_DIR, "src", "ink", "zone", "templates", "instance");
+export const INSTANCE_TEMPLATE = join(UNAXIS_INK_DIR, "zone", "templates", "instance");
 
 // ── initializeSupabaseCore ────────────────────────────────────────────────────
 

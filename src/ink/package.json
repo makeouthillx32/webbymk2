@@ -1,13 +1,15 @@
 {
   "name": "@untsystems/unaxis",
   "version": "0.0.88",
-  "description": "UNAXIS — unenter infrastructure manager. Terminal UI for zone orchestration.",
+  "description": "UNAXIS \u2014 unenter infrastructure manager. Terminal UI for zone orchestration.",
   "type": "module",
   "bin": {
     "unaxis": "dist/cli.js"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "templates/",
+    "zone/templates/"
   ],
   "scripts": {
     "dev": "bun --tsconfig-override tsconfig.json --watch ../main.tsx",
