@@ -436,24 +436,21 @@ services:
     container_name: unt_proxy
     restart: unless-stopped
     # Local-dev override: the GHCR/prod image CMD is plain `node server.js`
-    # (no watcher). Here server.js + agent.js are bind-mounted, so run with
-    # --watch to keep the zero-rebuild hot-reload workflow alive.
+    # (no watcher). Here server.js is bind-mounted, so run with --watch to
+    # keep the zero-rebuild hot-reload workflow alive.
+    # The UNAXIS agent is NOT in this container (since 2026-10-20): it runs as
+    # its own `unaxis_agent` container managed by UNAXIS, so agent updates
+    # never restart the edge. /__status-api/public is relayed to it.
     command: ["node", "--watch", "server.js"]
     ports:
       - "3080:3080"
       - "127.0.0.1:3081:3081"
-      - "127.0.0.1:8888:8888"   # UNAXIS agent API — localhost only
     volumes:
       - ./proxy-config:/proxy-config
       - ./proxy/server.js:/proxy/server.js:ro
-      - ./proxy/agent.js:/proxy/agent.js:ro           # unified agent — node --watch hot-reloads on save
-      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for agent proxy
     environment:
       PROXY_PORT:         "3080"
       CORE_DOMAIN:        "${CORE_DOMAIN:-unenter.live}"
-      AGENT_PORT:         "8888"                       # TOFU — no secret needed, first TUI to connect pairs automatically
-      AGENT_STATE_FILE:   "/proxy-config/agent-state.json"  # embedded context — state in proxy-config volume
-      STATUS_PUBLIC_KEY:  "${STATUS_PUBLIC_KEY}"             # gates GET /__status-api/public — set in .env, kept out of git
       # Fallback env vars — used only if proxy-config/routes.json is missing.
       UPSTREAM_UNENTER:   "http://unt_app:3000"
       UPSTREAM_BLOG:      "http://blog:3000"

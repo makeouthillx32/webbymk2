@@ -1,6 +1,6 @@
 # CLAUDE.md — proxy (unenter.live multi-zone reverse proxy)
 
-`unenter-proxy` — plain Node (>=20) reverse proxy using `http-proxy`. Routes unenter.live traffic to per-zone containers. Files: `server.js` (proxy), `agent.js`, `Dockerfile`.
+`unenter-proxy` — plain Node (>=20) reverse proxy using `http-proxy`. Routes unenter.live traffic to per-zone containers. Files: `server.js` (proxy), `Dockerfile`. The UNAXIS agent is NOT part of the proxy (since 2026-10-20): it runs as its own `unaxis_agent` container from the UNAXIS repo; `/__status-api/public` is relayed to it over HTTP.
 
 ## Commands
 

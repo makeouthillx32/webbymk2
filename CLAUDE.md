@@ -10,7 +10,7 @@ Repo for **unenter.live**: a Next.js 15 app, its zones, a multi-zone reverse pro
 - `unaxis.json` — this project's side of the UNAXIS contract (slug)
 - `src/zones/` — per-zone site sources (blog, shop, docs, etc.)
 - `packages/agent/` — UNAXIS infrastructure agent, HTTP proxy to Docker socket (see `packages/agent/CLAUDE.md`)
-- `packages/agent-node/`, `packages/agent-updater/` — Dockerfile + shell script deployables (no package.json)
+- The UNAXIS agent + updater live in the UNAXIS repo (`packages/agent-node`, `packages/agent-updater`); on POWER the agent is the standalone `unaxis_agent` container like every other node, updated with `unaxis env update POWER`
 - `proxy/` — multi-zone reverse proxy for unenter.live (see `proxy/CLAUDE.md`)
 - `docker-compose.yml` — full stack: app, Supabase services (db, kong, auth, rest, realtime, storage, studio…), proxy
 - `docs/` — core-db, db-instances, dev-log

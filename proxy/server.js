@@ -32,7 +32,9 @@ const fs        = require("fs");
 const path      = require("path");
 const http      = require("http");
 const httpProxy = require("http-proxy");
-const agent     = require("./agent"); // also starts the embedded UNAXIS agent + status collector
+// The UNAXIS agent is its own container (unaxis_agent) — never loaded into
+// this process, so an agent update or crash can't take the edge down.
+const STATUS_AGENT_URL = process.env.STATUS_AGENT_URL ?? "http://unaxis_agent:8888/status/public";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -330,18 +332,25 @@ function resolveTarget(req) {
 // ── Public status API ─────────────────────────────────────────────────────────
 // Read-only, key-gated snapshot for the Vercel-hosted status page. Served
 // straight off this already-public/SSL-terminated port so no new DNS/port
-// needs opening. Data comes from agent.js's local history file — never from
-// db.unenter.live (that database is unenter.live application data only).
+// needs opening. Data comes from the UNAXIS agent's local history (relayed
+// over HTTP; the agent checks the key) — never from db.unenter.live (that
+// database is unenter.live application data only). If the agent is down,
+// only this route fails; zones keep serving.
 function handlePublicStatusRequest(req, res) {
-  const key = req.headers["x-status-key"] ?? new URL(req.url, "http://x").searchParams.get("key");
-  if (!agent.STATUS_PUBLIC_KEY || key !== agent.STATUS_PUBLIC_KEY) {
-    res.writeHead(401, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "unauthorized" }));
-    return;
-  }
-  const snapshot = agent.getPublicStatusSnapshot();
-  res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=15" });
-  res.end(JSON.stringify(snapshot));
+  const key = req.headers["x-status-key"] ?? new URL(req.url, "http://x").searchParams.get("key") ?? "";
+  const upstream = http.get(STATUS_AGENT_URL, { headers: { "x-status-key": String(key) }, timeout: 5000 }, (up) => {
+    res.writeHead(up.statusCode ?? 502, {
+      "content-type": "application/json",
+      ...(up.statusCode === 200 ? { "cache-control": "public, max-age=15" } : {}),
+    });
+    up.pipe(res);
+  });
+  upstream.on("timeout", () => upstream.destroy(new Error("timeout")));
+  upstream.on("error", () => {
+    if (res.headersSent) { res.end(); return; }
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "status unavailable" }));
+  });
 }
 
 // Node's default maxHeaderSize is 16KB. .unenter.live cookies are shared
@@ -449,13 +458,7 @@ adminServer.listen(ADMIN_PORT, "0.0.0.0", () => {
   console.log(`[proxy] admin API listening on 0.0.0.0:${ADMIN_PORT}`);
 });
 
-// ── Agent API ─────────────────────────────────────────────────────────────────
-// Loaded as a child module — see proxy/agent.js for the full implementation.
-// agent.js starts its own HTTP server on AGENT_PORT (default 8888) and handles
-// its own SIGTERM/SIGINT.  No changes needed here when the agent is updated.
-require("./agent");
-
-// Graceful shutdown (proxy + admin servers only — agent.js handles its own)
+// Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("[proxy] SIGTERM — shutting down");
   server.close();
