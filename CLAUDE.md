@@ -13,7 +13,7 @@ Repo for **unenter.live**: a Next.js 15 app, its zones, a multi-zone reverse pro
 - `proxy/` — multi-zone reverse proxy for unenter.live (see `proxy/CLAUDE.md`)
 - `docker-compose.yml` — full stack: app, Supabase services (db, kong, auth, rest, realtime, storage, studio…), proxy
 - `docs/` — core-db, db-instances, dev-log
-- `vault/` — Obsidian notes; gitignored, never commit; rules live in `_CLAUDE.md`
+- `vault/` — the knowledge base (OpenKnowledge project content, `.ok/`); gitignored, never commit; rules live in `_CLAUDE.md`
 
 ## Commands
 
@@ -57,7 +57,7 @@ CRLF line endings on Docker/config files silently break pattern matching on this
 
 - **unaxis-operator** — required for any zone/build/deploy/log/diagnostic work.
 - **cli-framework-oclif-ink** — required for any TUI / Ink engine / CLI command work.
-- **obsidian-second-brain** — for vault reads/writes; follow `_CLAUDE.md` writing rules.
+- **ok-second-brain** (+ the project's **open-knowledge** skill) — for all vault reads/writes, through the OpenKnowledge MCP tools only (never native file tools on `vault/` markdown); follow `_CLAUDE.md`. The old obsidian-second-brain skill is retired for this vault (2026-10-21).
 
 ## Conventions
 
@@ -68,5 +68,5 @@ CRLF line endings on Docker/config files silently break pattern matching on this
 
 ## Related agent files
 
-- `_CLAUDE.md` — Obsidian vault operating manual (MCP connection, folders, frontmatter, writing rules). Read it before any vault work.
+- `_CLAUDE.md` — vault operating manual (OpenKnowledge tools, folders, frontmatter, writing rules). Read it before any vault work.
 - `_ANTIGRAVITY.md` / `vault/_CODEX.md` — overlays for other agents; not for Claude.
