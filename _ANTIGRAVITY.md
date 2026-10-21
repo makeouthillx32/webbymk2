@@ -46,7 +46,7 @@ The vault root is the whole repo: `Z:\WEBSITES\webbymk2`.
 - Write documentation notes under `vault/`.
 - Write daily operation logs under `vault/Logs/YYYY-MM-DD.md`.
 - Never create notes in `src/`.
-- Source references should stay path-based and linkable, e.g. `src/ink/hooks/useIpcBridge.ts`.
+- Source references should stay path-based and linkable, e.g. `src/app/page.tsx`. UNAXIS (TUI/CLI) source is a separate private repo since 2026-10-19 (`Z:\UNAXIS\unaxis`) — name it when referencing it. For coding rules in this repo see `GEMINI.md` section 5.
 - `vault/` is local memory and is ignored by git.
 
 ---

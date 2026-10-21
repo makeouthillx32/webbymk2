@@ -2,6 +2,8 @@
 
 This document defines the canonical architectural language and naming conventions for the `webbymk2` platform. It serves as an evolving architectural field journal, grounded in observable runtime behavior.
 
+> **Repo layout (since 2026-10-19):** this repo is **unenter.live** — the Next.js site, its zones, the proxy and the Supabase/infra config. **UNAXIS** (the TUI/CLI control plane and its `src/ink` engine) is its own private repo at `Z:\UNAXIS\unaxis`; section 3.1 describes code that lives there. If you are here to work on the site, read section 5 first.
+
 ## 1. The Core Model
 
 The platform is divided into three logical planes:
@@ -36,7 +38,7 @@ The platform is divided into three logical planes:
 
 ## 3. Naming Conventions
 
-### 3.1 UI Components (`src/ink/`)
+### 3.1 UI Components (UNAXIS repo, `src/ink/`)
 - **`*Screen.tsx`**: Immersive, full-terminal takeovers (e.g., `WelcomeScreen`, `WizardScreen`).
 - **`*View.tsx`**: Top-level content areas rendered inside the main layout, usually tied to a Tab.
 - **`*Panel.tsx`**: Reusable contextual windows or sub-sections rendered inside a View.
@@ -52,3 +54,26 @@ The platform is divided into three logical planes:
 - **Transactional Scaffolding**: Never leave "ghost" files or DB rows. If an **Atomic Phase** pipeline step fails, the orchestrator must attempt to roll back or clean up artifacts. **Maintenance Phase** failures (e.g., cert issuance) are non-fatal.
 - **Async Streaming**: All long-running operations must provide a `(onLine: OnLine) => void` callback to stream live logs to the Control Plane.
 - **One Core Truth**: The platform prioritizes the health and integrity of the **Core Runtime** and the **Shared Source Code**. Zones are child workloads that must adhere to core layout contracts.
+
+## 5. Working in this repo (coding agents)
+
+**Where things are**
+- `src/app/` — the core site (unenter.live) and its API routes; `src/app/dashboard/` — the admin dashboard.
+- `src/zones/<key>/` — each zone's real code (Core Module); `zones/<key>/` — its thin Shadow Wrapper (re-exports only).
+- `src/components/`, `src/lib/`, `src/hooks/` — shared code. **Anything shared ships in every zone's image**, so keep changes small and deliberate.
+- Supabase types: `types/supabase.ts`.
+
+**Check your work**
+- `bun run typecheck` (`tsc --noEmit`). The repo already has ~280 type errors (as of 2026-10-21); never add new ones — compare the errors in the files you touched before and after.
+- `bun run lint` where relevant.
+- Don't start dev servers or builds yourself; say what you changed and how to see it.
+
+**Never touch** (hand these to the human instead)
+- `docker-compose.yml`, `proxy/`, `supabase/` (e.g. `kong.yml`), `coturn/`, `mediamtx/`, `syslog/`, `proxy-config/` — live production config.
+- `.env*`, keys, tokens — never read them into output or commit them.
+- `vault/` (notes, not code) and `unaxis.json`.
+- Database migrations against production, and `unaxis`/`docker` commands that build, deploy or restart anything.
+
+**Git**
+- Work on a branch; `main` is protected on the forge (`origin`). Small commits, conventional messages: `feat(zone): …`, `fix(dashboard): …`.
+- Keep line endings as they are (this repo mixes CRLF/LF; config files must stay LF).
