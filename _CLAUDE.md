@@ -17,13 +17,13 @@ ai-first: true
 The Obsidian vault root is `Z:\WEBSITES\webbymk2\` — the entire project repo. The MCP serves everything from here:
 
 - **`vault/`** — documentation notes, dev logs, architecture decisions, session logs
-- **`src/ink/`** — TUI source code (readable via MCP — use for cross-referencing fixes)
 - **`src/`** — all Next.js app source
+- UNAXIS (TUI/CLI) source is **not** here since 2026-10-19: it lives in its own repo at `Z:\UNAXIS\unaxis` (outside the MCP root — read it with file tools)
 
 ### MCP connection
 - Plugin: **vault-as-mcp** (ebullient), port `8765`, `127.0.0.1`
 - MCP root = `Z:\WEBSITES\webbymk2\` — paths are relative to this
-- `vault/TUI/note.md` for docs, `src/ink/components/Box.tsx` for source
+- `vault/TUI/note.md` for docs, `src/app/layout.tsx` for site source
 
 ---
 
@@ -55,11 +55,12 @@ vault/
 read_multiple_notes(["vault/_CODEX.md", "vault/CRITICAL_FACTS.md", "vault/Home.md"])
 ```
 
-To read source alongside docs:
+To read site source alongside docs:
 ```
-read_note("src/ink/components/AlternateScreen.tsx")
+read_note("src/app/layout.tsx")
 search_notes(text="flex-shrink", folder="vault/TUI")
 ```
+TUI source (`Z:\UNAXIS\unaxis\src\ink\…`) is outside the MCP root — use file tools.
 
 ---
 
@@ -67,7 +68,7 @@ search_notes(text="flex-shrink", folder="vault/TUI")
 
 1. Documentation notes go in `vault/` — never create notes in `src/`
 2. Daily logs go in `vault/Logs/YYYY-MM-DD.md` — append-only
-3. Source file references use plain paths: `src/ink/components/AlternateScreen.tsx`
+3. Source file references use plain paths: `src/app/layout.tsx`; for UNAXIS name the repo: `UNAXIS src/ink/components/AlternateScreen.tsx`
 4. Propagate every note write to `vault/Logs/YYYY-MM-DD.md` and `vault/Home.md`
 5. Surgical edits: `append_to_note` with `heading=` before full `update_note`
 
