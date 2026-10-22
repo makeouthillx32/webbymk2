@@ -77,6 +77,11 @@ RUN cp /tmp/core-app/globals.css src/app/globals.css 2>/dev/null || true
 
 ENV NEXT_PUBLIC_ZONE=labs
 ENV NEXT_TELEMETRY_DISABLED=1
+# SSG worker count (next.config.js experimental.cpus). Labs pre-renders ~270
+# pages since it ships /legal/[slug] and /research-access (2026-10-21); at the
+# default 4 the builder died with EOF at "Generating static pages (0/271)".
+ARG NEXT_BUILD_CPUS=2
+ENV NEXT_BUILD_CPUS=$NEXT_BUILD_CPUS
 
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
