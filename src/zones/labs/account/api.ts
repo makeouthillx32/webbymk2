@@ -272,11 +272,17 @@ export async function PATCH(request: NextRequest) {
     // If user explicitly requests accepting terms
     if (body.accept_terms === true) {
       const now = new Date().toISOString();
-      await createAdminClient()
+      // Same elevation as the /research-access action: profiles' role guard
+      // only lets service_role change role, and only member → researcher.
+      const { error: upgradeErr } = await createAdminClient()
         .from("profiles")
         .update({ role: "researcher", research_terms_accepted_at: now, updated_at: now })
         .eq("id", user.id)
         .eq("role", "member");
+      if (upgradeErr) {
+        console.error("[labs/account] researcher upgrade failed:", upgradeErr.message);
+        return NextResponse.json({ error: "upgrade_failed" }, { status: 500 });
+      }
       await supabase
         .from("profiles")
         .update({ research_terms_accepted_at: now, updated_at: now })

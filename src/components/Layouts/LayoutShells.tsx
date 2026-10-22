@@ -66,12 +66,25 @@ const COOKIE_MESSAGES: Record<ScreenSize, string> = {
     "We use cookies to enhance your experience, analyze site usage, and improve our services. Essential cookies are required for basic functionality.",
 };
 
+/**
+ * Where the banner's "learn more" goes: the privacy policy of the zone the
+ * visitor is on. Labs and shop serve their policies at /pages/<slug>; the
+ * core site has /privacy; other zones (blog, docs, …) don't ship that route,
+ * so they link to the core site's.
+ */
+function privacyPolicyHref(): string {
+  const zone = process.env.NEXT_PUBLIC_ZONE;
+  if (zone === "labs" || zone === "shop") return "/pages/privacy-policy";
+  if (!zone || zone === "unenter") return "/privacy";
+  return `${(process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live").replace(/\/$/, "")}/privacy`;
+}
+
 export function AppCookieConsent({ screenSize = "desktop" }: { screenSize?: ScreenSize }) {
   if (process.env.NEXT_PUBLIC_ZONE === "tank") return null;
   const msg = COOKIE_MESSAGES[screenSize] || COOKIE_MESSAGES.desktop;
   return (
     <Suspense fallback={null}>
-      <CookieConsent message={msg} />
+      <CookieConsent message={msg} learnMoreHref={privacyPolicyHref()} />
     </Suspense>
   );
 }
