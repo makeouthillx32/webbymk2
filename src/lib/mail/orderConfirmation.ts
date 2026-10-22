@@ -80,7 +80,7 @@ const RESEARCH_DISCLAIMER = `
   appropriate professional training. These items are not drugs, foods, cosmetics, or medical
   devices, and must not be represented or used as such. By completing this purchase you
   confirm you understand and accept our full
-  <a href="https://www.unenter.live/research-disclaimer" style="color:#6b7280;">research use disclaimer</a>.
+  <a href="https://labs.unenter.live/pages/research-disclaimer" style="color:#6b7280;">research use disclaimer</a>.
 `;
 
 export function renderOrderConfirmationEmail(
@@ -204,7 +204,7 @@ export function renderOrderConfirmationEmail(
     `Total: ${money(order.total_cents)}`,
     ``,
     `Questions? Contact ${isResearch ? "labs@unenter.live" : "support@unenter.live"}`,
-    isResearch ? `\nFor research/laboratory use only. See https://www.unenter.live/research-disclaimer` : "",
+    isResearch ? `\nFor research/laboratory use only. See https://labs.unenter.live/pages/research-disclaimer` : "",
   ]
     .filter(Boolean)
     .join("\n");

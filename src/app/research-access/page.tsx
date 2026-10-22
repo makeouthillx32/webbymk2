@@ -79,7 +79,7 @@ export default async function ResearchAccessPage({
               >
                 I confirm I am purchasing for research purposes only and agree to the{" "}
                 <Link
-                  href="/terms"
+                  href="/pages/terms-and-conditions"
                   target="_blank"
                   className="underline hover:text-[hsl(var(--sidebar-primary))] transition-colors duration-200"
                 >

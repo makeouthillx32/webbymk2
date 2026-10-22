@@ -8,6 +8,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -50,6 +51,14 @@ export default function ResearchDisclaimerOverlay() {
   // Default OPEN on both server and first client render so there is no flash
   // of unblocked content for a first-time visitor. An already-consented
   // returning visitor may see it for one frame before the effect closes it.
+  const pathname = usePathname();
+  const isLegalRoute = Boolean(
+    pathname &&
+      (pathname.startsWith("/pages/research-disclaimer") ||
+        pathname.startsWith("/pages/terms-and-conditions") ||
+        pathname.startsWith("/pages/privacy-policy") ||
+        pathname.startsWith("/legal/"))
+  );
   const [open, setOpen] = React.useState(true);
   const [ack, setAck] = React.useState<AckState>(EMPTY_ACK);
 
@@ -68,13 +77,13 @@ export default function ResearchDisclaimerOverlay() {
   React.useEffect(() => {
     if (typeof document === "undefined") return;
     const previousOverflow = document.body.style.overflow;
-    if (open) {
+    if (open && !isLegalRoute) {
       document.body.style.overflow = "hidden";
     }
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [open]);
+  }, [open, isLegalRoute]);
 
   const grantAccess = React.useCallback(() => {
     try {
@@ -105,7 +114,7 @@ export default function ResearchDisclaimerOverlay() {
     }
   }, []);
 
-  if (!open) return null;
+  if (!open || isLegalRoute) return null;
 
   return (
     <div
@@ -202,7 +211,7 @@ export default function ResearchDisclaimerOverlay() {
           </p>
 
           <a
-            href="/disclaimer"
+            href="/pages/research-disclaimer"
             className="mt-3 inline-block text-xs font-medium text-primary underline underline-offset-4 hover:no-underline"
           >
             View full disclaimers

@@ -1,4 +1,4 @@
-﻿// app/research-checkout/payment/page.tsx
+// app/research-checkout/payment/page.tsx
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -115,7 +115,8 @@ export default function ResearchCheckoutPaymentPage() {
   });
 
   // Package protection state (default checked as per reference screenshot)
-  const [packageProtection, setPackageProtection] = useState(true);
+  // Package protection state (opt-in — unchecked by default)
+  const [packageProtection, setPackageProtection] = useState(false);
 
   // Payment method selection
   const [paymentMethod, setPaymentMethod] = useState<"card" | "zelle">("zelle");
@@ -441,7 +442,15 @@ export default function ResearchCheckoutPaymentPage() {
                     </Label>
                   </div>
                   <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-2 italic">
-                    Please note: If shipping protection is left unchecked, we cannot be held responsible for lost, stolen, or damaged packages.
+                    See our{" "}
+                    <Link href="/pages/shipping" className="underline hover:text-[hsl(var(--foreground))]">
+                      Shipping Policy
+                    </Link>{" "}
+                    and{" "}
+                    <Link href="/pages/returns" className="underline hover:text-[hsl(var(--foreground))]">
+                      Returns Policy
+                    </Link>{" "}
+                    for standard transit damage coverage and claim timeframes.
                   </p>
                 </div>
               </div>
@@ -609,7 +618,23 @@ export default function ResearchCheckoutPaymentPage() {
 
               {/* Bottom Support Notice (matching reference) */}
               <div className="pt-2 text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
-                We provide a variety of payment options so you can choose what works best for you. If you select a method and it does not go through or is not convenient, please email us at{" "}
+                By submitting your order, you confirm that all items are purchased strictly for in-vitro laboratory research use (21+) and agree to our{" "}
+                <Link href="/pages/terms-and-conditions" className="text-[hsl(var(--primary))] font-semibold hover:underline">
+                  Terms &amp; Conditions
+                </Link>
+                ,{" "}
+                <Link href="/pages/privacy-policy" className="text-[hsl(var(--primary))] font-semibold hover:underline">
+                  Privacy Policy
+                </Link>
+                ,{" "}
+                <Link href="/pages/returns" className="text-[hsl(var(--primary))] font-semibold hover:underline">
+                  Returns Policy
+                </Link>
+                , and{" "}
+                <Link href="/pages/research-disclaimer" className="text-[hsl(var(--primary))] font-semibold hover:underline">
+                  Research Use Disclaimer
+                </Link>
+                . We provide a variety of payment options so you can choose what works best for you. If you select a method and it does not go through or is not convenient, please email us at{" "}
                 <a href="mailto:labs@unenter.live" className="text-[hsl(var(--primary))] font-semibold hover:underline">
                   labs@unenter.live
                 </a>{" "}

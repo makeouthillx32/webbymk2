@@ -147,8 +147,8 @@ const CookieConsent = React.forwardRef<HTMLDivElement, CookieConsentProps>(
       onCustomizeCallback = () => {},
       className,
       description = "We use cookies to enhance your experience and analyze site usage. Essential cookies are required for basic functionality.",
-      learnMoreHref = "/privacy-policy",
-      showCustomize = false,
+      learnMoreHref = "/pages/privacy-policy",
+      showCustomize = true,
       ...props
     },
     ref,
