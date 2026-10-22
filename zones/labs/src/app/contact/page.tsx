@@ -13,7 +13,7 @@ import ContactPage from "@/zones/labs/contact/ContactPage";
 export const metadata: Metadata = {
   title: "Contact Support & Inquiries | Unenter Labs",
   description:
-    "Contact Unenter Labs customer care, order support, analytical batch verification, and Blurton Livestock & Rescue inquiries.",
+    "Contact Unenter Labs customer care, in-vitro laboratory order support, analytical batch verification, and institutional inquiries.",
 };
 
 export default function Page() {

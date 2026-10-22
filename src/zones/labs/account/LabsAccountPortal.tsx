@@ -326,7 +326,11 @@ export default function LabsAccountPortal({
         body: JSON.stringify({ accept_terms: true }),
       });
       if (res.ok) {
-        setProfile((prev) => ({ ...prev, research_terms_accepted_at: new Date().toISOString() }));
+        setProfile((prev) => ({
+          ...prev,
+          role: prev.role === "member" ? "researcher" : prev.role,
+          research_terms_accepted_at: new Date().toISOString(),
+        }));
       }
     } catch (e) {
       console.error("Failed to accept terms:", e);
@@ -738,14 +742,22 @@ export default function LabsAccountPortal({
               </div>
 
               {/* Research Terms Banner */}
-              {!profile.research_terms_accepted_at && (
+              {(!profile.research_terms_accepted_at || (profile.role !== "researcher" && profile.role !== "admin")) && (
                 <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-[hsl(var(--accent)/0.4)] bg-[hsl(var(--accent)/0.12)] p-5 sm:flex-row sm:items-center">
                   <div>
                     <h4 className="font-semibold text-[hsl(var(--foreground))]">
                       Research Agreement Confirmation Required
                     </h4>
                     <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                      Confirm adherence to Unenter Labs laboratory research protocols to proceed with specimen checkout.
+                      Confirm adherence to Unenter Labs{" "}
+                      <Link href="/pages/terms-and-conditions" className="underline hover:text-[hsl(var(--foreground))]">
+                        Terms &amp; Conditions
+                      </Link>{" "}
+                      and{" "}
+                      <Link href="/pages/research-disclaimer" className="underline hover:text-[hsl(var(--foreground))]">
+                        Research Use Disclaimer
+                      </Link>{" "}
+                      to proceed with specimen checkout.
                     </p>
                   </div>
                   <button
@@ -775,7 +787,7 @@ export default function LabsAccountPortal({
                   </button>
                   <p className="mt-4 text-xs text-[hsl(var(--muted-foreground))]">
                     By joining you agree to our{" "}
-                    <Link href="/pages/terms" className="underline hover:text-[hsl(var(--foreground))]">
+                    <Link href="/pages/terms-and-conditions" className="underline hover:text-[hsl(var(--foreground))]">
                       Affiliate Terms of Use
                     </Link>
                     .

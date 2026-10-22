@@ -78,7 +78,7 @@ export default function ContactPage() {
               Customer Care &amp; Inquiries
             </h1>
             <p className="mt-3 text-sm sm:text-base leading-relaxed text-[hsl(var(--muted-foreground))]">
-              Direct assistance for laboratory orders, third-party analytical batch verifications, veterinary research partnerships with <strong>Blurton Livestock &amp; Rescue</strong>, and institutional allocations.
+              Direct assistance for in-vitro laboratory orders, third-party analytical batch verifications, institutional allocations, and philanthropic community outreach with <strong>Blurton Livestock &amp; Rescue</strong>.
             </p>
           </div>
           {/* Subtle background glow */}
@@ -126,7 +126,7 @@ export default function ContactPage() {
               </div>
               <div className="mt-4 border-t border-[hsl(var(--border))] pt-4 space-y-2 text-xs text-[hsl(var(--muted-foreground))] leading-relaxed">
                 <p>
-                  Equine and large-animal rescue, observational rehabilitation, and veterinary regenerative recovery datasets.
+                  Community livestock rescue and philanthropic support. All Unenter Labs compounds are strictly for in-vitro laboratory research only (21+) and are never for human or animal use.
                 </p>
                 <p className="font-semibold text-[hsl(var(--card-foreground))]">
                   Operations &amp; Research Directorate: Tyler Burns
@@ -270,7 +270,7 @@ export default function ContactPage() {
                       >
                         <option value="Order Status & Tracking">Order Status &amp; Tracking</option>
                         <option value="COA / Batch Verification">COA / Batch Verification</option>
-                        <option value="Veterinary / Livestock Research Collaboration">Veterinary / Livestock Research Collaboration</option>
+                        <option value="Laboratory Research Collaboration">Laboratory Research Collaboration</option>
                         <option value="Wholesale & Institutional Supply">Wholesale &amp; Institutional Supply</option>
                         <option value="Damaged Package / Replacement Claim">Damaged Package / Replacement Claim</option>
                         <option value="General Scientific Question">General Scientific Question</option>

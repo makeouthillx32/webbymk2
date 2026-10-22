@@ -53,7 +53,7 @@ COPY public/ ./public/
 #   app     → api actions _components providers                 (pure web app, no e-commerce routes)
 #   minimal → api actions _components providers                 (bare canvas)
 RUN mkdir -p /tmp/core-app && \
-    for dir in api actions _components providers [categorySlug] products collections checkout research-checkout pages verify contact; do \
+    for dir in api actions _components providers [categorySlug] products collections checkout research-checkout research-access pages legal verify contact; do \
       if [ -d "src/app/$dir" ]; then cp -r "src/app/$dir" /tmp/core-app/; fi; \
     done && \
     if [ -f src/app/provider.tsx ]; then cp src/app/provider.tsx /tmp/core-app/; fi && \

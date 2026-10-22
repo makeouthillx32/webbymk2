@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 const EDITABLE_FIELDS = ["display_name", "first_name", "last_name", "region"] as const;
 type EditableField = (typeof EDITABLE_FIELDS)[number];
@@ -271,6 +272,11 @@ export async function PATCH(request: NextRequest) {
     // If user explicitly requests accepting terms
     if (body.accept_terms === true) {
       const now = new Date().toISOString();
+      await createAdminClient()
+        .from("profiles")
+        .update({ role: "researcher", research_terms_accepted_at: now, updated_at: now })
+        .eq("id", user.id)
+        .eq("role", "member");
       await supabase
         .from("profiles")
         .update({ research_terms_accepted_at: now, updated_at: now })

@@ -45,7 +45,7 @@ export default function Footer() {
           { name: "Search Catalog", href: "/search" },
           { name: "Peptides & Blends", href: "/search?category=peptides" },
           { name: "Lab Supplies", href: "/search?category=lab-supplies" },
-          { name: "Wholesale Application", href: "/wholesale-application" },
+          { name: "Wholesale Application", href: "/pages/wholesale-application" },
         ],
       },
       {
