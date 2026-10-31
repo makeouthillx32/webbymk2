@@ -705,6 +705,9 @@ export function HouseConsole({
       setHouseRooms((prev) =>
         prev.map((r) => ({ ...r, is_offline: nextOffline })),
       );
+      // The action may have created rows for camera rooms the list didn't
+      // have yet — reload so they show up.
+      void refreshHouseRooms();
       addLog(
         `${nextOffline ? "ALL ROOMS TAKEN OFFLINE" : "ALL ROOMS RESTORED"} (${result.count ?? 0} rooms)`,
         "ROOM CONTROL",

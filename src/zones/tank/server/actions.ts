@@ -1666,9 +1666,50 @@ export type HouseRoomData = {
   is_offline: boolean;
 };
 
+/**
+ * Public rooms are derived from camera room_scope (roomProjection.ts), but the
+ * kill-switch lives on the tank_rooms row. A public camera whose room has no
+ * row is therefore live on the site and absent from Room Control — nothing
+ * can turn it off. That happened to the kitchen twice (row vanished, camera
+ * kept streaming). Creating the missing rows here, from the cameras, makes
+ * Room Control self-healing instead of relying on the row surviving.
+ * Existing rows are never touched (ignoreDuplicates).
+ */
+async function ensureCameraRoomRows(
+  admin: ReturnType<typeof createAdminClient>,
+  isOffline = false,
+): Promise<void> {
+  const [{ data: cameras }, { data: rows }] = await Promise.all([
+    admin.from("tank_camera_registry").select("room_scope, name").eq("public_visible", true),
+    admin.from("tank_rooms").select("room_key"),
+  ]);
+  if (!cameras || !rows) return;
+
+  const known = new Set(rows.map((row) => row.room_key));
+  const missing = new Map<string, string>();
+  for (const camera of cameras) {
+    const key = camera.room_scope;
+    if (!key || known.has(key) || missing.has(key)) continue;
+    missing.set(key, camera.name || key);
+  }
+  if (missing.size === 0) return;
+
+  await admin.from("tank_rooms").upsert(
+    Array.from(missing, ([key, title]) => ({
+      id: key,
+      slug: key,
+      room_key: key,
+      title,
+      is_offline: isOffline,
+    })),
+    { onConflict: "room_key", ignoreDuplicates: true },
+  );
+}
+
 export async function listHouseRoomsAction(): Promise<{ success: boolean; rooms: HouseRoomData[]; error?: string }> {
   try {
     const admin = createAdminClient();
+    await ensureCameraRoomRows(admin);
     const { data, error } = await admin
       .from("tank_rooms")
       .select("*")
@@ -1743,10 +1784,9 @@ export async function updateHouseRoomAction(
 
 /**
  * Bulk kill-switch for the "ALL ROOMS OFF"/"ALL ROOMS ON" panic button.
- * Deliberately updates every row already listed in tank_rooms (what
- * listHouseRoomsAction/houseRooms already shows the operator) rather than
- * re-deriving from cameras — the operator is looking at exactly the rooms
- * this should apply to.
+ * Updates every tank_rooms row (what listHouseRoomsAction/houseRooms shows
+ * the operator), after ensureCameraRoomRows has filled in any public camera
+ * room that was missing its row.
  */
 export async function setAllHouseRoomsOfflineAction(
   isOffline: boolean
@@ -1754,6 +1794,9 @@ export async function setAllHouseRoomsOfflineAction(
   try {
     if (!(await requireStaff())) return { success: false, error: "Staff access required." };
     const admin = createAdminClient();
+    // A camera room with no row would survive the panic button — create it
+    // first so "ALL ROOMS OFF" really means all.
+    await ensureCameraRoomRows(admin, isOffline);
 
     const { data, error } = await admin
       .from("tank_rooms")
