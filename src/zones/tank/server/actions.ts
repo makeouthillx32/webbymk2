@@ -1708,6 +1708,8 @@ async function ensureCameraRoomRows(
 
 export async function listHouseRoomsAction(): Promise<{ success: boolean; rooms: HouseRoomData[]; error?: string }> {
   try {
+    // Lists offline rooms too, and ensureCameraRoomRows writes — staff only.
+    if (!(await requireStaff())) return { success: false, rooms: [], error: "Staff access required." };
     const admin = createAdminClient();
     await ensureCameraRoomRows(admin);
     const { data, error } = await admin
@@ -1818,6 +1820,7 @@ export async function setMasterVolumeAction(
   muted?: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (!(await requireStaff())) return { success: false, error: "Staff access required." };
     const admin = createAdminClient();
     const { data: allRooms } = await admin.from("tank_rooms").select("id, audio_output_config");
 
