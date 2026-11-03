@@ -162,6 +162,7 @@ import { ArchiveOverlayPanel } from "./components/ArchiveOverlayPanel";
 import { TankExperienceSkeleton } from "./components/TankExperienceSkeleton";
 import { MobileRoomGrid } from "./components/MobileRoomGrid";
 import { MobileRoomSourceStrip } from "./components/MobileRoomSourceStrip";
+import { buildBrowseRooms } from "./browseRooms";
 import { TankMarkIcon } from "./components/TankMarkIcon";
 import { useServerDirector } from "../director/useServerDirector";
 import type { ServerDirectorState } from "../server/serverDirectorEngine";
@@ -786,68 +787,12 @@ export function TankExperience({
     return live?.presence === "online" || live?.presence === "degraded";
   };
 
-  // Merge live rooms with canonical house rooms so all room feeds and switchers
-  // are always visible on desktop and mobile.
-  const browseRooms = useMemo(() => {
-    const liveRooms = snapshot?.rooms ?? [];
-    const map = new Map<
-      string,
-      {
-        id: string;
-        roomKey: string;
-        title: string;
-        eyebrow: string;
-        description: string;
-        cameraIds: string[];
-        live: boolean;
-        tags: string[];
-      }
-    >();
-
-    // Add all fixture rooms first (excluding director from browse rooms)
-    for (const r of fixtureRooms) {
-      if (r.slug !== "director") {
-        map.set(r.slug, {
-          id: r.id,
-          roomKey: r.slug,
-          title: r.title,
-          eyebrow: r.eyebrow,
-          description: r.description,
-          cameraIds: r.cameraIds,
-          live: r.live,
-          tags: r.tags,
-        });
-      }
-    }
-
-    // Merge live rooms from snapshot
-    for (const lr of liveRooms) {
-      if (lr.roomKey !== "director") {
-        const curated = map.get(lr.roomKey);
-        const liveTags = lr.tags?.filter(Boolean) ?? [];
-        const fallbackDescription = liveTags.includes("obs")
-          ? "A live room streamed by a Tank member."
-          : liveTags.includes("mobile") || liveTags.includes("srtla")
-            ? "A roaming IRL camera feed."
-            : "Connected camera room view.";
-        map.set(lr.roomKey, {
-          id: lr.id,
-          roomKey: lr.roomKey,
-          title: lr.title?.trim() || curated?.title || lr.roomKey,
-          eyebrow: lr.eyebrow?.trim() || curated?.eyebrow || "Live room",
-          description:
-            lr.description?.trim() ||
-            curated?.description ||
-            fallbackDescription,
-          cameraIds: lr.cameraIds,
-          live: lr.live,
-          tags: liveTags.length > 0 ? liveTags : (curated?.tags ?? []),
-        });
-      }
-    }
-
-    return Array.from(map.values());
-  }, [snapshot?.rooms]);
+  // Live rooms, curated with the fixture house rooms. A switched-off room is
+  // absent from the snapshot and stays absent here — see buildBrowseRooms.
+  const browseRooms = useMemo(
+    () => buildBrowseRooms(fixtureRooms, snapshot),
+    [snapshot?.source, snapshot?.rooms],
+  );
 
   // Tank behaves like a single-page app: the selected view is tab-local state,
   // not navigation state. Refresh restores it without changing the address bar.
@@ -1599,8 +1544,9 @@ export function TankExperience({
           id: activeRoomSlug,
           roomKey: activeRoomSlug,
           title: restoredRoomTitle || "Saved Room",
-          description:
-            "Restoring this room from your last visit. Its live feed will reconnect automatically when discovery reports it.",
+          // Also what a room looks like once it is switched off while
+          // someone is watching it: gone from the snapshot, still selected.
+          description: "This room isn't on air right now.",
           featuredCameraId: undefined,
         }
       : {
@@ -2888,24 +2834,39 @@ export function TankExperience({
                     ) : (
                       <CameraOff className="mx-auto h-8 w-8 opacity-60" />
                     )}
+                    {/* Viewer copy only. Why a room is dark (switched off,
+                        camera down, never set up) is operator business and
+                        the public payload deliberately cannot tell them
+                        apart, so every dark room reads the same: off air. */}
                     <p className="mt-2 text-sm font-bold">
                       {mode === "director"
                         ? directorHasNoRooms
-                          ? "I have no rooms to play with. I have no rooms to negotiate between."
-                          : (heroLive?.name ?? "Director Program Feed")
+                          ? "The house is off air"
+                          : (heroLive?.name ?? "Director")
                         : heroOnline
-                          ? `${heroLive?.name ?? "Camera"} — live`
-                          : `${heroLive?.name ?? "This camera"} — not connected`}
+                          ? `${activeRoom.title} — live`
+                          : `${activeRoom.title} is off air`}
                     </p>
                     <p className="mt-1 text-xs text-white/65">
                       {mode === "director"
                         ? directorHasNoRooms
-                          ? "Director Room Negotiator is standing by for active room camera feeds."
-                          : "Automated director room switching active."
+                          ? "Every room is resting right now. The Director picks back up the moment one comes on."
+                          : "The Director is picking the shot."
                         : heroOnline
-                          ? "WebRTC low-latency stream player"
-                          : "Provision this camera in the SRT app to bring it online"}
+                          ? "Live now"
+                          : anyHouseCameraOnline
+                            ? "This room isn't streaming right now. Other rooms are live."
+                            : "This room isn't streaming right now. It'll come back on its own."}
                     </p>
+                    {mode === "room" && !heroOnline && anyHouseCameraOnline && (
+                      <ConsoleButton
+                        variant="orange"
+                        className="mx-auto mt-3"
+                        onClick={() => navigateTo("grid")}
+                      >
+                        See what's live
+                      </ConsoleButton>
+                    )}
                   </div>
                 </div>
                 {/* ── Stats for Nerds HUD Card ── */}

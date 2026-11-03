@@ -256,6 +256,14 @@ export function CameraRosterPanel({
           );
         })}
       </div>
+
+      {/* Same calm state as MobileRoomGrid: switched-off rooms are absent,
+          so an all-rooms-off moment should read as deliberate, not broken. */}
+      {rooms.length === 0 && (
+        <p className="mt-3 text-center text-xs font-medium text-white/50">
+          Nothing live in the rooms right now — check back soon.
+        </p>
+      )}
     </ChromePanel>
   );
 }

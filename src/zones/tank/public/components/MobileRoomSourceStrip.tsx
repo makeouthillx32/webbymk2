@@ -72,7 +72,7 @@ export function MobileRoomSourceStrip({
           className="font-mono text-[8px] font-black uppercase tracking-wider text-[#4f4a3d]"
           style={{ fontFamily: ACTIVE_THEME.fonts.dotMatrix }}
         >
-          Current hidden
+          Switch room
         </span>
       </div>
 
