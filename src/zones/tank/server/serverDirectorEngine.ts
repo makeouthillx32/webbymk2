@@ -256,6 +256,18 @@ export async function getServerDirectorState(): Promise<ServerDirectorState> {
     : null;
   g_serverDirectorState.activeChaosItem = activeChaosPayload;
 
+  // GAME keeps its own clock: the game-cam tour (12 s) or a staff take (2 min)
+  // set the countdown on the tick, so only age it here. Overwriting it with
+  // the real-camera dwell showed "4 s" on a two-minute take.
+  if (g_serverDirectorState.mode === "GAME") {
+    if (now - g_serverDirectorState.updatedAt > 5000) await tickServerDirector();
+    const aged = Math.floor((Date.now() - g_serverDirectorState.updatedAt) / 1000);
+    return {
+      ...withLiveProgramFraming(g_serverDirectorState, now),
+      dwellSecondsRemaining: Math.max(0, g_serverDirectorState.dwellSecondsRemaining - aged),
+    };
+  }
+
   // If state is older than 2 seconds or dwell timer elapsed, tick the server engine
   const elapsedSeconds = Math.floor((now - g_serverDirectorState.switchedAt) / 1000);
   const remaining = Math.max(0, DWELL_TIME_SECONDS - elapsedSeconds);

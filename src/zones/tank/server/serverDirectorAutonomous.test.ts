@@ -51,6 +51,31 @@ describe("Autonomous Server Director Warmup & 24/7 Background Lifecycle", () => 
     expect(duration).toBeLessThan(100);
   });
 
+  test("GAME directs game cams: a staff take holds, with its own countdown", async () => {
+    const { setGameCamHold, clearGameCamHold } = await import("./gameCams");
+    // Seed the published game cams (normally rooms3d/rooms.json).
+    globalThis.__tankGameCamKeys = { keys: ["foyer", "kitchen"], at: Date.now() };
+    try {
+      const touring = await tickServerDirector();
+      expect(touring.mode).toBe("GAME");
+      expect(touring.activeCameraId).toBe("");
+      expect(["foyer", "kitchen"]).toContain(touring.gameCamKey as string);
+
+      setGameCamHold("kitchen", "Admin");
+      const taken = await tickServerDirector();
+      expect(taken.gameCamKey).toBe("kitchen");
+      expect(taken.reason).toContain("took the Kitchen game cam");
+      // Served state keeps the take's 2-minute clock, not the real-camera dwell.
+      const served = await getServerDirectorState();
+      expect(served.gameCamKey).toBe("kitchen");
+      expect(served.dwellSecondsRemaining).toBeGreaterThan(100);
+    } finally {
+      clearGameCamHold();
+      globalThis.__tankGameCamKeys = undefined;
+      await tickServerDirector();
+    }
+  });
+
   test("ticks director autonomously and computes cuts based on server state", async () => {
     const tickedState = await tickServerDirector();
 
