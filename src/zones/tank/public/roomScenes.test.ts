@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseRoomSceneManifest, roomSceneUrl, shouldShowRoomScene } from "./roomScenes";
+import {
+  houseSceneUrl,
+  parseRoomSceneManifest,
+  roomSceneUrl,
+  shouldShowAltDirector,
+  shouldShowRoomScene,
+} from "./roomScenes";
 
 // Source files on this Windows host are CRLF; normalise before matching.
 const readSource = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -42,6 +48,42 @@ describe("Tank off-air 3D room scenes", () => {
     expect(shouldShowRoomScene({ ...base, mode: "grid" })).toBe(false);
     expect(shouldShowRoomScene({ ...base, sceneUrl: null })).toBe(false);
     expect(shouldShowRoomScene({ ...base, webglAvailable: false })).toBe(false);
+  });
+
+  test("the walkable house is read only from its own fixed file", () => {
+    const ok = parseRoomSceneManifest({ rooms: {}, house: { file: "house.glb", version: "efd723b038d2", bytes: 2508912 } });
+    expect(ok.house).toEqual({ file: "house.glb", version: "efd723b038d2" });
+    expect(houseSceneUrl(ok)).toEndWith("/storage/v1/object/public/tank-assets/rooms3d/house.glb?v=efd723b038d2");
+    expect(parseRoomSceneManifest({ rooms: {}, house: { file: "../x.glb", version: "efd723b038d2" } }).house).toBeNull();
+    expect(parseRoomSceneManifest({ rooms: {}, house: { file: "house.glb", version: "nope" } }).house).toBeNull();
+    expect(parseRoomSceneManifest({ rooms: {} }).house).toBeNull();
+    expect(houseSceneUrl(null)).toBeNull();
+  });
+
+  test("the alt director takes the Director only while the whole house is dark", () => {
+    const base = { mode: "director", directorHasNoRooms: true, houseUrl: "house.glb?v=1", webglAvailable: true };
+    expect(shouldShowAltDirector(base)).toBe(true);
+    expect(shouldShowAltDirector({ ...base, directorHasNoRooms: false })).toBe(false);
+    expect(shouldShowAltDirector({ ...base, mode: "room" })).toBe(false);
+    expect(shouldShowAltDirector({ ...base, mode: "grid" })).toBe(false);
+    expect(shouldShowAltDirector({ ...base, houseUrl: null })).toBe(false);
+    expect(shouldShowAltDirector({ ...base, webglAvailable: false })).toBe(false);
+  });
+
+  test("the alt director is lazy-loaded, replaces the off-air card, and falls back to it", () => {
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    expect(experience).toContain('const AltDirector3D = dynamic(() => import("./components/AltDirector3D"), {\n  ssr: false,');
+    expect(experience).not.toMatch(/^import .* from "\.\/components\/AltDirector3D";$/m);
+    expect(experience).toContain("onFailed={() => setAltDirectorFailedUrl(houseSceneSrc)}");
+    expect(experience).toContain("altDirectorFailedUrl !== houseSceneSrc");
+    expect(experience).toContain("{!showAltDirector && (");
+
+    const walker = readSource(join(import.meta.dir, "components", "AltDirector3D.tsx"));
+    expect(walker).toContain('frameloop={visible ? "always" : "never"}');
+    expect(walker).toContain("roomSceneDecoderPath()");
+    // Movement keys must not reach the page's D (dock) / I (inventory) shortcuts.
+    expect(walker).toContain("e.stopPropagation();\n          input.current.keys.add(e.code);");
+    expect(walker).not.toContain("gstatic");
   });
 
   test("three.js is lazy-loaded and a failed scene falls back to the off-air card", () => {

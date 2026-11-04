@@ -165,9 +165,11 @@ import { MobileRoomSourceStrip } from "./components/MobileRoomSourceStrip";
 import { buildBrowseRooms } from "./browseRooms";
 import {
   detectWebgl,
+  houseSceneUrl,
   parseRoomSceneManifest,
   roomSceneManifestUrl,
   roomSceneUrl,
+  shouldShowAltDirector,
   shouldShowRoomScene,
   type RoomSceneManifest,
 } from "./roomScenes";
@@ -203,6 +205,11 @@ import { calculateHouseDay } from "../houseDay";
 // only after the user explicitly opens the store.
 // three.js only loads for a viewer looking at a dark room that has a 3D scene.
 const RoomScene3D = dynamic(() => import("./components/RoomScene3D"), {
+  ssr: false,
+  loading: () => null,
+});
+// The walkable house, only while every room is off air (see AltDirector3D).
+const AltDirector3D = dynamic(() => import("./components/AltDirector3D"), {
   ssr: false,
   loading: () => null,
 });
@@ -817,7 +824,7 @@ export function TankExperience({
         if (!cancelled) setRoomSceneManifest(parseRoomSceneManifest(json));
       })
       .catch(() => {
-        if (!cancelled) setRoomSceneManifest({ rooms: {} });
+        if (!cancelled) setRoomSceneManifest({ rooms: {}, house: null });
       });
     return () => {
       cancelled = true;
@@ -1769,6 +1776,15 @@ export function TankExperience({
   // hook exposes no `state` — that read was always undefined, so the
   // "no rooms to play with" copy below could never appear.
   const directorHasNoRooms = !anyHouseCameraOnline;
+
+  // Alt director: with the whole house dark, the Director's frame becomes the
+  // walkable house instead of an off-air card. Any room coming back on ends
+  // it — directorHasNoRooms flips and the real Director takes the frame.
+  const [altDirectorFailedUrl, setAltDirectorFailedUrl] = useState<string | null>(null);
+  const houseSceneSrc = houseSceneUrl(roomSceneManifest);
+  const showAltDirector =
+    shouldShowAltDirector({ mode, directorHasNoRooms, houseUrl: houseSceneSrc, webglAvailable }) &&
+    altDirectorFailedUrl !== houseSceneSrc;
 
   // Room the hero player is actually showing. In director mode that's whichever
   // room the server director cut to (not the room being browsed), otherwise it
@@ -2847,6 +2863,16 @@ export function TankExperience({
                   />
                 )}
 
+                {showAltDirector && houseSceneSrc && (
+                  <AltDirector3D
+                    url={houseSceneSrc}
+                    canWalk={signedIn}
+                    onSignIn={() => setAccountOpen(true)}
+                    reducedMotion={prefersReducedMotion}
+                    onFailed={() => setAltDirectorFailedUrl(houseSceneSrc)}
+                  />
+                )}
+
                 {showRoomScene && roomSceneSrc && (
                   <RoomScene3D
                     url={roomSceneSrc}
@@ -2861,6 +2887,7 @@ export function TankExperience({
                     because its saved doorway coordinates are no longer safe. */}
                 {(mode === "room" || mode === "director") &&
                   !heroZoomed &&
+                  !showAltDirector &&
                   activeRoomPortals.length > 0 && (
                   <RoomPortalOverlay
                     roomSlug={portalSourceRoomSlug ?? activeRoomSlug}
@@ -2884,6 +2911,7 @@ export function TankExperience({
                   </div>
                 ))}
 
+                {!showAltDirector && (
                 <div
                   className={
                     showRoomScene
@@ -2940,6 +2968,7 @@ export function TankExperience({
                     )}
                   </div>
                 </div>
+                )}
                 {/* ── Stats for Nerds HUD Card ── */}
                 {nerdStatsOpen && (
                   <div className="absolute left-3 top-3 z-30 w-72 select-none rounded-lg border border-white/15 bg-black/85 p-3 font-mono text-[11px] text-slate-200 shadow-2xl backdrop-blur-md duration-150 animate-in fade-in zoom-in-95">

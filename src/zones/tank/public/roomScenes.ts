@@ -11,7 +11,9 @@ export const ROOM_SCENE_BUCKET = "tank-assets";
 export const ROOM_SCENE_FOLDER = "rooms3d";
 
 export type RoomSceneEntry = { file: string; version: string };
-export type RoomSceneManifest = { rooms: Record<string, RoomSceneEntry> };
+// `house` is the whole walkable house (the alt director, see
+// components/AltDirector3D.tsx); null until one has been published.
+export type RoomSceneManifest = { rooms: Record<string, RoomSceneEntry>; house: RoomSceneEntry | null };
 
 const ROOM_KEY = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VERSION = /^[a-f0-9]{6,40}$/;
@@ -40,15 +42,21 @@ export function roomSceneDecoderPath(): string {
  */
 export function parseRoomSceneManifest(raw: unknown): RoomSceneManifest {
   const rooms: Record<string, RoomSceneEntry> = {};
+  const houseRaw = raw && typeof raw === "object" ? (raw as { house?: unknown }).house : null;
+  let house: RoomSceneEntry | null = null;
+  if (houseRaw && typeof houseRaw === "object") {
+    const { file, version } = houseRaw as { file?: unknown; version?: unknown };
+    if (file === "house.glb" && typeof version === "string" && VERSION.test(version)) house = { file, version };
+  }
   const source = raw && typeof raw === "object" ? (raw as { rooms?: unknown }).rooms : null;
-  if (!source || typeof source !== "object") return { rooms };
+  if (!source || typeof source !== "object") return { rooms, house };
   for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
     if (!ROOM_KEY.test(key) || !value || typeof value !== "object") continue;
     const { file, version } = value as { file?: unknown; version?: unknown };
     if (file !== `${key}.glb` || typeof version !== "string" || !VERSION.test(version)) continue;
     rooms[key] = { file, version };
   }
-  return { rooms };
+  return { rooms, house };
 }
 
 /** Versioned URL for a room's scene, or null when that room has none. */
@@ -57,6 +65,25 @@ export function roomSceneUrl(manifest: RoomSceneManifest | null, roomKey: string
   const entry = manifest.rooms[roomKey];
   if (!entry) return null;
   return `${storageBase()}/${entry.file}?v=${entry.version}`;
+}
+
+/** Versioned URL for the walkable house, or null when none is published. */
+export function houseSceneUrl(manifest: RoomSceneManifest | null): string | null {
+  if (!manifest?.house) return null;
+  return `${storageBase()}/${manifest.house.file}?v=${manifest.house.version}`;
+}
+
+/**
+ * The alt director takes over the Director only when the whole house is
+ * dark — the moment any room comes on, the real Director is back.
+ */
+export function shouldShowAltDirector(input: {
+  mode: string;
+  directorHasNoRooms: boolean;
+  houseUrl: string | null;
+  webglAvailable: boolean;
+}): boolean {
+  return input.mode === "director" && input.directorHasNoRooms && Boolean(input.houseUrl) && input.webglAvailable;
 }
 
 /**

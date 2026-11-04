@@ -5,6 +5,8 @@
  *   bun scripts/tank-rooms-sync.ts              # every room in artifacts/tank-rooms/rooms.json
  *   bun scripts/tank-rooms-sync.ts kitchen foyer
  *   bun scripts/tank-rooms-sync.ts --remove kitchen   # stop showing kitchen's 3D scene
+ *   bun scripts/tank-rooms-sync.ts house               # just the walkable house (alt director)
+ *   bun scripts/tank-rooms-sync.ts --remove house      # turn the alt director off
  *   bun scripts/tank-rooms-sync.ts --dry-run
  *
  * The Blender "Tank Rooms" panel exports artifacts/tank-rooms/<room>.glb (same
@@ -13,6 +15,10 @@
  * bucket (rooms3d/), plus the Draco decoder, and rewrites the public
  * rooms3d/rooms.json last — that manifest is what turns a room's 3D scene on.
  * Unchanged rooms (same hash as published) are skipped.
+ *
+ * "house" is the whole walkable house ("Export walkable house" in the panel,
+ * artifacts/tank-rooms/house.glb): the alt director Tank shows while every
+ * room is off air. It is published with the rooms unless rooms are named.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -70,28 +76,53 @@ async function upload(path: string, body: Uint8Array | string, contentType: stri
 
 type Entry = { file: string; version: string; bytes?: number; exportedAt?: string };
 
-async function publishedManifest(): Promise<Record<string, Entry>> {
+type Manifest = { rooms: Record<string, Entry>; house?: Entry | null };
+
+async function publishedManifest(): Promise<Manifest> {
   const res = await fetch(`${publicUrl("rooms.json")}?t=${Date.now()}`, { cache: "no-store" });
-  if (!res.ok) return {};
+  if (!res.ok) return { rooms: {} };
   try {
-    return ((await res.json()) as { rooms?: Record<string, Entry> }).rooms ?? {};
+    const json = (await res.json()) as Manifest;
+    return { rooms: json.rooms ?? {}, house: json.house ?? null };
   } catch {
-    return {};
+    return { rooms: {} };
   }
 }
 
-const local = JSON.parse(readFileSync(join(LOCAL, "rooms.json"), "utf8")) as { rooms: Record<string, Entry> };
-const published = await publishedManifest();
+const local = JSON.parse(readFileSync(join(LOCAL, "rooms.json"), "utf8")) as Manifest;
+const publishedAll = await publishedManifest();
+const published = publishedAll.rooms;
 const next: Record<string, Entry> = { ...published };
+let nextHouse: Entry | null = publishedAll.house ?? null;
+const wantHouse = names.length ? names.includes("house") : true;
+const roomNames = names.filter((n) => n !== "house");
 
 if (removing) {
-  if (!names.length) throw new Error("--remove needs at least one room key");
-  for (const room of names) {
+  if (!names.length) throw new Error("--remove needs at least one room key (or house)");
+  if (names.includes("house")) {
+    nextHouse = null;
+    console.log("- house: removed from the manifest (the alt director is off)");
+  }
+  for (const room of roomNames) {
     delete next[room];
     console.log(`- ${room}: removed from the manifest (its file stays, unused)`);
   }
 } else {
-  const rooms = names.length ? names : Object.keys(local.rooms);
+  const rooms = names.length ? roomNames : Object.keys(local.rooms);
+  if (wantHouse && local.house) {
+    const entry = local.house;
+    const file = join(LOCAL, entry.file);
+    if (!existsSync(file)) throw new Error(`missing ${file}`);
+    if (publishedAll.house?.version === entry.version) {
+      console.log(`= house: unchanged (${entry.version})`);
+    } else {
+      console.log(`+ house: ${publishedAll.house?.version ?? "new"} -> ${entry.version}`);
+      await upload(entry.file, readFileSync(file), "model/gltf-binary", 31536000);
+      nextHouse = { file: entry.file, version: entry.version, bytes: entry.bytes, exportedAt: entry.exportedAt };
+    }
+  } else if (wantHouse && names.includes("house")) {
+    throw new Error('house is not in rooms.json — run "Export walkable house" in Blender first');
+  }
   for (const room of rooms) {
     const entry = local.rooms[room];
     if (!entry) throw new Error(`${room} is not in ${join(LOCAL, "rooms.json")} — export it from Blender first`);
@@ -110,7 +141,8 @@ if (removing) {
   }
 }
 
-const manifest = JSON.stringify({ updatedAt: new Date().toISOString(), rooms: next }, null, 2);
+const manifest = JSON.stringify({ updatedAt: new Date().toISOString(), rooms: next, house: nextHouse }, null, 2);
 await upload("rooms.json", manifest, "application/json", 60);
+console.log(`House:      ${nextHouse ? `${nextHouse.file} (${nextHouse.version})` : "(none — alt director off)"}`);
 console.log(`\nLive rooms: ${Object.keys(next).sort().join(", ") || "(none)"}`);
 console.log(`Manifest:   ${publicUrl("rooms.json")}`);

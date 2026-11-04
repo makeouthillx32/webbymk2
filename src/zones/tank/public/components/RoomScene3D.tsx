@@ -10,6 +10,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useAnimations, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { roomSceneDecoderPath } from "../roomScenes";
+import { pickClips, prepareScene } from "./sceneMaterials";
 
 type Look = { x: number; y: number };
 const LOOK_LIMIT = THREE.MathUtils.degToRad(10);
@@ -23,34 +24,6 @@ type RoomScene3DProps = {
   className?: string;
 };
 
-// Blender's pixel look is emission-only and unlit. glTF carries it as an
-// emissive texture on a lit material; rebuild it as unlit. Only the cast's
-// sprites are cut-outs — the house textures carry alpha Blender ignores, and
-// cutting them would punch holes in the walls.
-function toUnlit(material: THREE.Material, cutout: boolean): THREE.Material {
-  const m = material as THREE.MeshStandardMaterial;
-  const map = m.emissiveMap ?? m.map ?? null;
-  const emissive = m.emissive && m.emissive.getHex() !== 0 ? m.emissive.clone() : null;
-  const color = emissive ?? (map ? new THREE.Color(1, 1, 1) : (m.color?.clone() ?? new THREE.Color(1, 1, 1)));
-  const basic = new THREE.MeshBasicMaterial({ map, color, side: m.side, alphaTest: cutout ? 0.5 : 0 });
-  basic.name = m.name;
-  return basic;
-}
-
-function prepareScene(root: THREE.Object3D) {
-  if (root.userData.tankPrepared) return;
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const cutout = (mesh as THREE.SkinnedMesh).isSkinnedMesh || /sprite/i.test(mesh.name);
-    mesh.material = Array.isArray(mesh.material)
-      ? mesh.material.map((m) => toUnlit(m, cutout))
-      : toUnlit(mesh.material, cutout);
-    mesh.frustumCulled = !(mesh as THREE.SkinnedMesh).isSkinnedMesh;
-  });
-  root.userData.tankPrepared = true;
-}
-
 function roomCamera(cameras: THREE.Camera[], roomKey: string): THREE.PerspectiveCamera | null {
   const perspective = cameras.filter((c): c is THREE.PerspectiveCamera => (c as THREE.PerspectiveCamera).isPerspectiveCamera);
   return (
@@ -59,14 +32,6 @@ function roomCamera(cameras: THREE.Camera[], roomKey: string): THREE.Perspective
     perspective[0] ??
     null
   );
-}
-
-function pickClips(clips: THREE.AnimationClip[]) {
-  const matching = (re: RegExp) => clips.filter((c) => re.test(c.name));
-  const skit = matching(/Skit_Rehearsal/i);
-  if (skit.length) return skit;
-  const idle = matching(/idle|loop/i);
-  return idle.length ? idle : clips.slice(0, 1);
 }
 
 function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; roomKey: string; look: React.MutableRefObject<Look>; animate: boolean; onReady?: () => void }) {
