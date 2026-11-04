@@ -31,6 +31,22 @@ declare global {
   var __tankCameraFits: { fits: Record<string, RoomCameraFit>; at: number } | undefined;
   // eslint-disable-next-line no-var
   var __tankHouseCastTimer: ReturnType<typeof setInterval> | undefined;
+  // eslint-disable-next-line no-var
+  var __tankHouseCastDebug: HouseCastDebug | undefined;
+}
+
+/** What the last tick had to work with, for staff diagnostics. */
+export type HouseCastDebug = {
+  at: number;
+  readings: number;
+  mappedCameras: number;
+  fitRooms: string[];
+  boxes: Array<{ cameraId: string; room: string | null; label: string; name: string | null; confidence: number | null; fitted: boolean }>;
+  members: number;
+};
+
+export function getHouseCastDebug(): HouseCastDebug | null {
+  return globalThis.__tankHouseCastDebug ?? null;
 }
 
 export function getHouseCast(): HouseCastState {
@@ -71,7 +87,21 @@ export async function tickHouseCast(
   const cameraRooms = snapshot
     ? cameraRoomMap([...snapshot.rooms, ...(snapshot.offAirRooms ?? [])], snapshot.cameras)
     : new Map<string, string>();
-  const members = computeHouseCast({ readings: getFreshTelemetry(now), cameraRooms, fits, previous, now });
+  const readings = getFreshTelemetry(now);
+  const members = computeHouseCast({ readings, cameraRooms, fits, previous, now });
+  globalThis.__tankHouseCastDebug = {
+    at: now,
+    readings: readings.length,
+    mappedCameras: cameraRooms.size,
+    fitRooms: Object.keys(fits).sort(),
+    boxes: readings.flatMap((r) =>
+      (r.boundingBoxes ?? []).slice(0, 8).map((b) => {
+        const room = cameraRooms.get(r.cameraId) ?? null;
+        return { cameraId: r.cameraId, room, label: b.label, name: b.targetName ?? null, confidence: b.confidence ?? null, fitted: Boolean(room && fits[room]) };
+      }),
+    ),
+    members: members.length,
+  };
   const state: HouseCastState = { updatedAt: now, members };
   const due = !prev || houseCastChanged(previous, members) || now - prev.broadcastAt >= HEARTBEAT_MS;
   globalThis.__tankHouseCast = { state, broadcastAt: due ? now : prev!.broadcastAt };

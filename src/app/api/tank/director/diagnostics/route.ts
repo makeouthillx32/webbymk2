@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireStaff } from "@/zones/tank/server/staffAuth";
 import { getCameraDirectorySnapshot } from "@/zones/tank/server/receiverManager";
-import { toPublicCameraDirectory } from "@/zones/tank/server/publicCameraProjection";
+import { getHouseCast, getHouseCastDebug } from "@/zones/tank/server/houseCastWorker";
 import {
   describeTelemetry,
   getEffectiveMode,
@@ -51,7 +51,10 @@ export async function GET(request: Request) {
     getServerDirectorState(),
     getCameraDirectorySnapshot().catch(() => null),
   ]);
-  const snapshot = rawSnapshot ? toPublicCameraDirectory(rawSnapshot) : null;
+  // Staff/secret only, so the RAW directory: with every room off air the
+  // public one is empty and this showed no cameras at all, live boxes included.
+  const snapshot = rawSnapshot;
+  const offAir = new Set(rawSnapshot?.offlineRoomKeys ?? []);
   const cameraName = new Map((snapshot?.cameras ?? []).map((c) => [c.id, c.name]));
   const followMember = getFollowMember();
   const telemetry = describeTelemetry(now);
@@ -96,6 +99,7 @@ export async function GET(request: Request) {
         id: cam.id,
         name: cam.name,
         presence: cam.presence,
+        offAir: offAir.has(cam.roomScope),
         onProgramme: cam.id === state.activeCameraId,
         telemetryAgeMs: reading?.ageMs ?? null,
         telemetryFresh: reading?.fresh ?? false,
@@ -116,6 +120,7 @@ export async function GET(request: Request) {
         })),
       };
     }),
+    houseCast: { state: getHouseCast(), lastTick: getHouseCastDebug() },
     decisions: getDirectorDecisionLog().reverse(),
   });
 }
