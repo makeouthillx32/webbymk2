@@ -42,6 +42,18 @@ describe("zone policy links", () => {
     expect(privacyPolicyHref("shop")).not.toContain("/pages/");
   });
 
+  it("core-site links ignore the container's own NEXT_PUBLIC_SITE_URL", () => {
+    const prev = process.env.NEXT_PUBLIC_SITE_URL;
+    process.env.NEXT_PUBLIC_SITE_URL = "https://dev.unenter.live";
+    try {
+      expect(privacyPolicyHref("shop")).toBe("https://www.unenter.live/privacy");
+      expect(termsHref("blog")).toBe("https://www.unenter.live/terms");
+    } finally {
+      if (prev === undefined) delete process.env.NEXT_PUBLIC_SITE_URL;
+      else process.env.NEXT_PUBLIC_SITE_URL = prev;
+    }
+  });
+
   it("labs keeps its own policies, core its /privacy and /terms", () => {
     expect(privacyPolicyHref("labs")).toBe("/pages/privacy-policy");
     expect(termsHref("labs")).toBe("/pages/terms-and-conditions");

@@ -8,17 +8,19 @@
 // and never to another zone's policy.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { crossZoneUrl } from "@/lib/multiZone";
+import { CORE_DOMAIN, crossZoneUrl } from "@/lib/multiZone";
 
-const DEFAULT_CORE_ORIGIN = "https://www.unenter.live";
+// The core site's public origin. NOT NEXT_PUBLIC_SITE_URL: that is each
+// container's OWN site URL (the shop image's server render resolved it to
+// dev.unenter.live), so it can't name the core site.
+const CORE_ORIGIN = `https://www.${CORE_DOMAIN}`;
 
 function isCore(zone: string | undefined): boolean {
   return !zone || zone === "unenter";
 }
 
 export function coreSiteHref(path: string): string {
-  const origin = (process.env.NEXT_PUBLIC_SITE_URL || DEFAULT_CORE_ORIGIN).replace(/\/+$/, "");
-  return `${origin}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${CORE_ORIGIN}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export function privacyPolicyHref(zone: string | undefined = process.env.NEXT_PUBLIC_ZONE): string {
