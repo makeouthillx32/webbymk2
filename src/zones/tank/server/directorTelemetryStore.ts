@@ -74,7 +74,45 @@ export type IdentityOverlay = {
   target: { name: string; confidence: number } | null;
 };
 
-const g_identity = new Map<string, IdentityOverlay>();
+// ── Shared state ────────────────────────────────────────────────────────────
+// ONE store per process, on globalThis. Next bundles this module separately
+// into each route that imports it, and every copy used to keep its own maps:
+// the vision worker's readings landed in the ingest route's copy while the
+// director engine (and the diagnostics route) each read their own, never
+// seeing a single box. Found 2026-11-04 when the house cast tick showed six
+// readings and zero boxes while the ingest route held named people.
+type TelemetryStoreState = {
+  identity: Map<string, IdentityOverlay>;
+  telemetry: Map<string, StoredTelemetry>;
+  audioBaseline: Map<string, number>;
+  bitrateBaseline: Map<string, number>;
+  suggestedMode: SubjectMode | null;
+  lastServerPostAt: number;
+  serverAppearance: ServerAppearanceStatus | null;
+  operatorMode: SubjectMode | null;
+  followMember: string | null;
+  operatorModeLoadedAt: number;
+  operatorModeLoadPromise: Promise<SubjectMode | null> | null;
+};
+declare global {
+  // eslint-disable-next-line no-var
+  var __tankTelemetryStore: TelemetryStoreState | undefined;
+}
+const S: TelemetryStoreState = (globalThis.__tankTelemetryStore ??= {
+  identity: new Map(),
+  telemetry: new Map(),
+  audioBaseline: new Map(),
+  bitrateBaseline: new Map(),
+  suggestedMode: null,
+  lastServerPostAt: 0,
+  serverAppearance: null,
+  operatorMode: null,
+  followMember: null,
+  operatorModeLoadedAt: 0,
+  operatorModeLoadPromise: null,
+});
+
+const g_identity: Map<string, IdentityOverlay> = S.identity;
 
 type StoredTelemetry = {
   telemetry: CameraTelemetryInput;
@@ -82,10 +120,10 @@ type StoredTelemetry = {
   origin: TelemetryOrigin;
 };
 
-const g_telemetry = new Map<string, StoredTelemetry>();
+const g_telemetry: Map<string, StoredTelemetry> = S.telemetry;
 
 /** Subject mode requested by the detector, if it wants to drive the mode too. */
-let g_suggestedMode: SubjectMode | null = null;
+// (state lives on the shared store: see TelemetryStoreState)
 
 /**
  * When a SERVER-SIDE detector (tank-vision-worker, via the shared-secret ingest
@@ -95,7 +133,7 @@ let g_suggestedMode: SubjectMode | null = null;
  * timestamp rather than a boolean because a silent/crashed worker must become
  * visibly stale without relying on a browser to notice it.
  */
-let g_lastServerPostAt = 0;
+// (state lives on the shared store: see TelemetryStoreState)
 
 export type ServerAppearanceStatus = {
   receivedAt: number;
@@ -113,7 +151,7 @@ export type ServerAppearanceStatus = {
   } | null;
 };
 
-let g_serverAppearance: ServerAppearanceStatus | null = null;
+// (state lives on the shared store: see TelemetryStoreState)
 
 /** Store a bounded, non-biometric status snapshot from the private worker. */
 export function recordServerAppearanceStatus(
@@ -136,7 +174,7 @@ export function recordServerAppearanceStatus(
   );
   const rawSeed =
     input.seed && typeof input.seed === "object" ? input.seed : null;
-  g_serverAppearance = {
+  S.serverAppearance = {
     receivedAt: now,
     signatures: count(input.signatures),
     classes: Array.isArray(input.classes)
@@ -179,11 +217,11 @@ export function getServerAppearanceStatus(
   now = Date.now(),
 ): ServerAppearanceStatus | null {
   if (
-    !g_serverAppearance ||
-    now - g_serverAppearance.receivedAt > SERVER_DETECTION_STALE_MS
+    !S.serverAppearance ||
+    now - S.serverAppearance.receivedAt > SERVER_DETECTION_STALE_MS
   )
     return null;
-  return g_serverAppearance;
+  return S.serverAppearance;
 }
 
 /** Grace window before a silent worker is treated as gone. */
@@ -192,8 +230,8 @@ export const SERVER_DETECTION_STALE_MS = 15_000;
 /** Is a server-side detector currently feeding the director? */
 export function isServerDetectionActive(now = Date.now()): boolean {
   return (
-    g_lastServerPostAt > 0 &&
-    now - g_lastServerPostAt <= SERVER_DETECTION_STALE_MS
+    S.lastServerPostAt > 0 &&
+    now - S.lastServerPostAt <= SERVER_DETECTION_STALE_MS
   );
 }
 
@@ -202,12 +240,10 @@ export function isServerDetectionActive(now = Date.now()): boolean {
  * authority; this value is only a short cache so a three-second Director tick
  * does not need a round trip for every consumer in the same process.
  */
-let g_operatorMode: SubjectMode | null = null;
+// (state lives on the shared store: see TelemetryStoreState)
 // Who Follow Member mode follows. Stored in the same settings row as the mode
 // so the two can never be written, or read back, out of step.
-let g_followMember: string | null = null;
-let g_operatorModeLoadedAt = 0;
-let g_operatorModeLoadPromise: Promise<SubjectMode | null> | null = null;
+// (state lives on the shared store: see TelemetryStoreState)
 const OPERATOR_MODE_CACHE_MS = 2_000;
 
 /**
@@ -221,7 +257,7 @@ const OPERATOR_MODE_CACHE_MS = 2_000;
  * The baseline is what this measures against, so a normally-quiet kitchen
  * suddenly at 60 outranks a game room sitting at its usual 85.
  */
-const g_audioBaseline = new Map<string, number>();
+const g_audioBaseline: Map<string, number> = S.audioBaseline;
 
 /** How fast the baseline follows the room. Slow enough to survive a shout. */
 const BASELINE_ALPHA = 0.02;
@@ -267,7 +303,7 @@ export function audioExcess(cameraId: string, audioPeak: number): number {
  * than usual", which is enough to drive motion/crowd/chaos/auto scoring
  * without waiting on the full detection pipeline.
  */
-const g_bitrateBaseline = new Map<string, number>();
+const g_bitrateBaseline: Map<string, number> = S.bitrateBaseline;
 const BITRATE_BASELINE_ALPHA = 0.05;
 
 export function bitrateDerivedMotionScore(
@@ -292,8 +328,8 @@ export function bitrateDerivedMotionScore(
 }
 
 function setOperatorMode(mode: SubjectMode | null): void {
-  g_operatorMode = mode;
-  g_operatorModeLoadedAt = Date.now();
+  S.operatorMode = mode;
+  S.operatorModeLoadedAt = Date.now();
 }
 
 export async function persistOperatorModeToDb(
@@ -303,8 +339,8 @@ export async function persistOperatorModeToDb(
   followMember?: string | null,
 ): Promise<void> {
   // Do not let an older in-flight read win the race after this write.
-  if (g_operatorModeLoadPromise) {
-    await g_operatorModeLoadPromise.catch(() => null);
+  if (S.operatorModeLoadPromise) {
+    await S.operatorModeLoadPromise.catch(() => null);
   }
   const admin = createAdminClient();
   const updatedAt = new Date().toISOString();
@@ -313,7 +349,7 @@ export async function persistOperatorModeToDb(
       key: "director_operator_mode",
       value: {
         mode,
-        followMember: followMember === undefined ? g_followMember : followMember,
+        followMember: followMember === undefined ? S.followMember : followMember,
         operator,
         updatedAt,
       },
@@ -329,7 +365,7 @@ export async function persistOperatorModeToDb(
   // Never let a failed database write become the process-local truth. Update
   // the cache only after the durable write has succeeded.
   setOperatorMode(mode);
-  if (followMember !== undefined) g_followMember = followMember;
+  if (followMember !== undefined) S.followMember = followMember;
 }
 
 export async function loadPersistedOperatorModeFromDb(
@@ -338,14 +374,14 @@ export async function loadPersistedOperatorModeFromDb(
   const now = Date.now();
   if (
     !force &&
-    g_operatorModeLoadedAt > 0 &&
-    now - g_operatorModeLoadedAt < OPERATOR_MODE_CACHE_MS
+    S.operatorModeLoadedAt > 0 &&
+    now - S.operatorModeLoadedAt < OPERATOR_MODE_CACHE_MS
   ) {
-    return g_operatorMode;
+    return S.operatorMode;
   }
-  if (g_operatorModeLoadPromise) return g_operatorModeLoadPromise;
+  if (S.operatorModeLoadPromise) return S.operatorModeLoadPromise;
 
-  g_operatorModeLoadPromise = (async () => {
+  S.operatorModeLoadPromise = (async () => {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("tank_platform_settings")
@@ -370,31 +406,31 @@ export async function loadPersistedOperatorModeFromDb(
       throw new Error("Stored Director mode is invalid");
     }
 
-    g_operatorMode = isSubjectMode(storedMode) ? storedMode : null;
+    S.operatorMode = isSubjectMode(storedMode) ? storedMode : null;
     const storedFollow =
       data?.value && typeof data.value === "object"
         ? (data.value as { followMember?: unknown }).followMember
         : null;
     // An unknown slug (a member later removed from the catalog) follows nobody
     // rather than failing the whole director.
-    g_followMember = isFollowableSlug(storedFollow) ? storedFollow : null;
-    g_operatorModeLoadedAt = Date.now();
-    return g_operatorMode;
+    S.followMember = isFollowableSlug(storedFollow) ? storedFollow : null;
+    S.operatorModeLoadedAt = Date.now();
+    return S.operatorMode;
   })();
 
   try {
-    return await g_operatorModeLoadPromise;
+    return await S.operatorModeLoadPromise;
   } finally {
-    g_operatorModeLoadPromise = null;
+    S.operatorModeLoadPromise = null;
   }
 }
 
 export function getOperatorMode(): SubjectMode | null {
-  return g_operatorMode;
+  return S.operatorMode;
 }
 
 export function getFollowMember(): string | null {
-  return g_followMember;
+  return S.followMember;
 }
 
 /**
@@ -405,7 +441,7 @@ export function getFollowMember(): string | null {
  * someone is talking.
  */
 export function getEffectiveMode(): SubjectMode {
-  return g_operatorMode ?? g_suggestedMode ?? "auto";
+  return S.operatorMode ?? S.suggestedMode ?? "auto";
 }
 
 /**
@@ -425,7 +461,7 @@ export function recordTelemetry(
 ): number {
   const now = Date.now();
   if (origin === "learner") return recordIdentity(inputs, now);
-  if (origin === "server") g_lastServerPostAt = now;
+  if (origin === "server") S.lastServerPostAt = now;
   let stored = 0;
   for (const t of inputs) {
     if (!t || typeof t.cameraId !== "string" || !t.cameraId) continue;
@@ -442,7 +478,7 @@ export function recordTelemetry(
     if (origin !== "fallback") updateAudioBaseline(t.cameraId, t.audioPeak);
     stored += 1;
   }
-  if (mode) g_suggestedMode = mode;
+  if (mode) S.suggestedMode = mode;
   return stored;
 }
 
@@ -612,7 +648,7 @@ export function getTelemetryFor(
 }
 
 export function getSuggestedMode(): SubjectMode | null {
-  return g_suggestedMode;
+  return S.suggestedMode;
 }
 
 /**
@@ -664,7 +700,7 @@ export function describeTelemetry(now = Date.now()): {
   return {
     cameras,
     usable: hasUsableTelemetry(now),
-    suggestedMode: g_suggestedMode,
+    suggestedMode: S.suggestedMode,
     serverDetectionActive: isServerDetectionActive(now),
     appearance: getServerAppearanceStatus(now),
   };
@@ -749,9 +785,9 @@ export function normaliseTelemetryReading(
 export function __resetTelemetry(): void {
   g_identity.clear();
   g_telemetry.clear();
-  g_suggestedMode = null;
-  g_operatorMode = null;
-  g_followMember = null;
+  S.suggestedMode = null;
+  S.operatorMode = null;
+  S.followMember = null;
   g_audioBaseline.clear();
-  g_serverAppearance = null;
+  S.serverAppearance = null;
 }
