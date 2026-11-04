@@ -11,9 +11,15 @@ export const ROOM_SCENE_BUCKET = "tank-assets";
 export const ROOM_SCENE_FOLDER = "rooms3d";
 
 export type RoomSceneEntry = { file: string; version: string };
-// `house` is the whole walkable house (the alt director, see
-// components/AltDirector3D.tsx); null until one has been published.
-export type RoomSceneManifest = { rooms: Record<string, RoomSceneEntry>; house: RoomSceneEntry | null };
+// `house` is the walkable house shell and `cast` its rigs, sprites and clips
+// (the alt director, see components/AltDirector3D.tsx) — two files so the cast
+// can be re-exported without re-shipping the house. Either is null until
+// published; a house without a cast is an older single-file export.
+export type RoomSceneManifest = {
+  rooms: Record<string, RoomSceneEntry>;
+  house: RoomSceneEntry | null;
+  cast: RoomSceneEntry | null;
+};
 
 const ROOM_KEY = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VERSION = /^[a-f0-9]{6,40}$/;
@@ -40,23 +46,26 @@ export function roomSceneDecoderPath(): string {
  * dropped rather than trusted: the file name must be the room's own fixed name
  * so a manifest can never point the page at another path.
  */
+function fixedEntry(raw: unknown, key: "house" | "cast"): RoomSceneEntry | null {
+  const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>)[key] : null;
+  if (!value || typeof value !== "object") return null;
+  const { file, version } = value as { file?: unknown; version?: unknown };
+  return file === `${key}.glb` && typeof version === "string" && VERSION.test(version) ? { file, version } : null;
+}
+
 export function parseRoomSceneManifest(raw: unknown): RoomSceneManifest {
   const rooms: Record<string, RoomSceneEntry> = {};
-  const houseRaw = raw && typeof raw === "object" ? (raw as { house?: unknown }).house : null;
-  let house: RoomSceneEntry | null = null;
-  if (houseRaw && typeof houseRaw === "object") {
-    const { file, version } = houseRaw as { file?: unknown; version?: unknown };
-    if (file === "house.glb" && typeof version === "string" && VERSION.test(version)) house = { file, version };
-  }
+  const house = fixedEntry(raw, "house");
+  const cast = fixedEntry(raw, "cast");
   const source = raw && typeof raw === "object" ? (raw as { rooms?: unknown }).rooms : null;
-  if (!source || typeof source !== "object") return { rooms, house };
+  if (!source || typeof source !== "object") return { rooms, house, cast };
   for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
     if (!ROOM_KEY.test(key) || !value || typeof value !== "object") continue;
     const { file, version } = value as { file?: unknown; version?: unknown };
     if (file !== `${key}.glb` || typeof version !== "string" || !VERSION.test(version)) continue;
     rooms[key] = { file, version };
   }
-  return { rooms, house };
+  return { rooms, house, cast };
 }
 
 /** Versioned URL for a room's scene, or null when that room has none. */
@@ -71,6 +80,12 @@ export function roomSceneUrl(manifest: RoomSceneManifest | null, roomKey: string
 export function houseSceneUrl(manifest: RoomSceneManifest | null): string | null {
   if (!manifest?.house) return null;
   return `${storageBase()}/${manifest.house.file}?v=${manifest.house.version}`;
+}
+
+/** Versioned URL for the house cast, or null (an older house carries its own). */
+export function castSceneUrl(manifest: RoomSceneManifest | null): string | null {
+  if (!manifest?.house || !manifest.cast) return null;
+  return `${storageBase()}/${manifest.cast.file}?v=${manifest.cast.version}`;
 }
 
 /**

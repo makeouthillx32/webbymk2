@@ -44,6 +44,15 @@ describe("alt director avatars", () => {
     expect(findAvatarRig(new THREE.Group(), "joe")).toBeNull();
   });
 
+  test("a rig tagged in Blender (tank_avatar) wins over the name guess", () => {
+    const { scene } = castScene();
+    const tagged = new THREE.Group();
+    tagged.name = "Pixel_Mystery_Rig001";
+    tagged.userData.tank_avatar = "tyler";
+    scene.add(tagged);
+    expect(findAvatarRig(scene, "tyler")?.rig).toBe(tagged);
+  });
+
   test("the walk clip keeps the poses but drops anything that moves the rig", () => {
     const { scene, clips } = castScene();
     const avatar = prepareAvatar(findAvatarRig(scene, "joe")!, clips);

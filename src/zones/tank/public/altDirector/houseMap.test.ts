@@ -42,6 +42,32 @@ describe("alt director walk map", () => {
     expect(odd?.hotspots).toEqual([]);
   });
 
+  test("FX anchors, FX-on-use and tagged avatars come through; bad ids are dropped", () => {
+    const parsed = parseHouseMap({
+      ...RAW,
+      hotspots: [
+        { ...RAW.hotspots[0], fx: "pickups/coin-sparkle" },
+        { id: "tv", label: "TV", blurb: "b", at: [1, 1, 1], r: 1, fx: "../../evil" },
+      ],
+      fx: [
+        { id: "fx-fire-torch", effect: "fire/torch", at: [1, 0.5, 2], loop: true, size: 0.8, palette: "ice" },
+        { effect: "fire/torch", at: [1, 0.5, 2], size: 99 },
+        { effect: "<script>", at: [0, 0, 0] },
+        { effect: "fire/torch", at: [0, 0] },
+      ],
+      avatars: [{ id: "joe", node: "Joe_Rig" }, { id: "Bad Id", node: "X" }],
+    })!;
+    expect(parsed.hotspots.map((h) => h.fx)).toEqual(["pickups/coin-sparkle", null]);
+    expect(parsed.fx).toEqual([
+      { id: "fx-fire-torch", effect: "fire/torch", at: [1, 0.5, 2], loop: true, size: 0.8, palette: "ice" },
+      { id: "fire/torch", effect: "fire/torch", at: [1, 0.5, 2], loop: true, size: 6, palette: null },
+    ]);
+    expect(parsed.avatars).toEqual([{ id: "joe", node: "Joe_Rig" }]);
+    // Maps exported before these existed still load.
+    expect(map.fx).toEqual([]);
+    expect(map.avatars).toEqual([]);
+  });
+
   test("you can stand on a floor, not in a wall, not off the house", () => {
     expect(canStand(map, 1, 1)).toBe(true);
     expect(canStand(map, 3.9, 1)).toBe(false); // within body radius of the wall

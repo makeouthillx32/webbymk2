@@ -37,10 +37,16 @@ export type AvatarRig = {
 
 const nameOf = (object: THREE.Object3D) => String(object.userData?.name ?? object.name ?? "");
 
-/** Rigs are top-level nodes named like "Joe_Rig" (a ".001" suffix is fine). */
+/**
+ * A rig tagged as an avatar in Blender ("Make avatar" in the Alt Director
+ * panel sets tank_avatar = id) wins; otherwise rigs are found by their
+ * top-level node name, like "Joe_Rig" (a ".001" suffix is fine).
+ */
 export function findAvatarRig(root: THREE.Object3D, id: string | null | undefined): { id: AvatarId; rig: THREE.Object3D } | null {
   const wanted = AVATAR_PRESETS.find((p) => p.id === id) ?? AVATAR_PRESETS[0];
   for (const preset of wanted.id === DEFAULT_AVATAR ? [wanted] : [wanted, AVATAR_PRESETS[0]]) {
+    const tagged = root.children.find((child) => child.userData?.tank_avatar === preset.id);
+    if (tagged) return { id: preset.id, rig: tagged };
     const rig = root.children.find((child) => {
       const name = nameOf(child);
       return name === preset.rig || name.startsWith(`${preset.rig}.`) || name.startsWith(`${preset.rig}_`);

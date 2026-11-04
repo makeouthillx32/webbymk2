@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  castSceneUrl,
   houseSceneUrl,
   parseRoomSceneManifest,
   roomSceneUrl,
@@ -58,6 +59,31 @@ describe("Tank off-air 3D room scenes", () => {
     expect(parseRoomSceneManifest({ rooms: {}, house: { file: "house.glb", version: "nope" } }).house).toBeNull();
     expect(parseRoomSceneManifest({ rooms: {} }).house).toBeNull();
     expect(houseSceneUrl(null)).toBeNull();
+  });
+
+  test("the cast is its own fixed file and only counts next to a house", () => {
+    const both = parseRoomSceneManifest({
+      rooms: {},
+      house: { file: "house.glb", version: "1e4b2d4df7a6" },
+      cast: { file: "cast.glb", version: "220d53127454", rigs: ["Joe"] },
+    });
+    expect(both.cast).toEqual({ file: "cast.glb", version: "220d53127454" });
+    expect(castSceneUrl(both)).toEndWith("/storage/v1/object/public/tank-assets/rooms3d/cast.glb?v=220d53127454");
+    // A cast without a house shows nothing; a house without a cast carries its own rigs.
+    expect(castSceneUrl({ ...both, house: null })).toBeNull();
+    expect(castSceneUrl({ ...both, cast: null })).toBeNull();
+    expect(houseSceneUrl({ ...both, cast: null })).not.toBeNull();
+    expect(parseRoomSceneManifest({ rooms: {}, cast: { file: "house.glb", version: "220d53127454" } }).cast).toBeNull();
+    expect(parseRoomSceneManifest({ rooms: {}, cast: { file: "cast.glb", version: "x" } }).cast).toBeNull();
+    expect(castSceneUrl(null)).toBeNull();
+  });
+
+  test("the alt director loads the cast next to the shell and merges the shell's static meshes", () => {
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    expect(experience).toContain("castUrl={castSceneUrl(roomSceneManifest)}");
+    const walker = readSource(join(import.meta.dir, "components", "AltDirector3D.tsx"));
+    expect(walker).toContain("useGLTF(castUrl ?? url");
+    expect(walker).toMatch(/mergeStaticMeshes\(\s*gltf\.scene,[\s\S]{0,160}gltf\.animations,\s*\)/);
   });
 
   test("the alt director takes the Director only while the whole house is dark", () => {

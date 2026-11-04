@@ -20,7 +20,22 @@ export type HouseHotspot = {
   at: [number, number, number];
   r: number;
   node: string | null;
+  /** A pixelfx effect id ("pickups/sparkle") to play when it's used, if any. */
+  fx: string | null;
 };
+
+/** An FX anchor placed in Blender: where a pixelfx effect plays. */
+export type HouseFx = {
+  id: string;
+  effect: string;
+  at: [number, number, number];
+  loop: boolean;
+  /** Height of the effect's card in metres. */
+  size: number;
+  palette: string | null;
+};
+
+export type HouseAvatar = { id: string; node: string };
 
 export type HouseMap = {
   radius: number;
@@ -30,7 +45,13 @@ export type HouseMap = {
   walls: Rect[];
   blockers: Rect[];
   hotspots: HouseHotspot[];
+  fx: HouseFx[];
+  avatars: HouseAvatar[];
 };
+
+// Effect ids are pixelfx paths: "fire/torch", "pickups/coin-sparkle".
+const FX_ID = /^[a-z0-9-]+\/[a-z0-9-]+$/;
+const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
@@ -91,7 +112,32 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
       at: [at[0], at[1], at[2]],
       r: Math.min(Math.max(spot.r, 0.3), 4),
       node: text(spot.node, 120),
+      fx: typeof spot.fx === "string" && FX_ID.test(spot.fx) ? spot.fx : null,
     });
+  }
+
+  const fx: HouseFx[] = [];
+  for (const f of Array.isArray(m.fx) ? m.fx : []) {
+    const anchor = f as Record<string, unknown>;
+    const at = anchor?.at;
+    if (typeof anchor?.effect !== "string" || !FX_ID.test(anchor.effect)) continue;
+    if (!Array.isArray(at) || at.length !== 3 || !at.every(finite)) continue;
+    const palette = text(anchor.palette, 200);
+    fx.push({
+      id: text(anchor.id, 40) ?? anchor.effect,
+      effect: anchor.effect,
+      at: [at[0], at[1], at[2]],
+      loop: anchor.loop !== false,
+      size: finite(anchor.size) ? Math.min(Math.max(anchor.size, 0.1), 6) : 1,
+      palette,
+    });
+  }
+
+  const avatars: HouseAvatar[] = [];
+  for (const a of Array.isArray(m.avatars) ? m.avatars : []) {
+    const id = (a as { id?: unknown })?.id;
+    const node = text((a as { node?: unknown })?.node, 120);
+    if (typeof id === "string" && SLUG.test(id) && node) avatars.push({ id, node });
   }
 
   const spawn = Array.isArray(m.spawn) && m.spawn.length === 3 && m.spawn.every(finite) ? (m.spawn as number[]) : null;
@@ -106,6 +152,8 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
     walls: rects(m.walls),
     blockers: rects(m.blockers),
     hotspots,
+    fx,
+    avatars,
   };
 }
 

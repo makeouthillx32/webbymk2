@@ -7,6 +7,7 @@
  *   bun scripts/tank-rooms-sync.ts --remove kitchen   # stop showing kitchen's 3D scene
  *   bun scripts/tank-rooms-sync.ts house               # just the walkable house (alt director)
  *   bun scripts/tank-rooms-sync.ts --remove house      # turn the alt director off
+ *   bun scripts/tank-rooms-sync.ts cast                # just the cast (rigs, sprites, clips)
  *   bun scripts/tank-rooms-sync.ts --dry-run
  *
  * The Blender "Tank Rooms" panel exports artifacts/tank-rooms/<room>.glb (same
@@ -16,9 +17,11 @@
  * rooms3d/rooms.json last — that manifest is what turns a room's 3D scene on.
  * Unchanged rooms (same hash as published) are skipped.
  *
- * "house" is the whole walkable house ("Export walkable house" in the panel,
- * artifacts/tank-rooms/house.glb): the alt director Tank shows while every
- * room is off air. It is published with the rooms unless rooms are named.
+ * "house" is the walkable house shell and "cast" its rigs, sprites and clips
+ * ("Export shell + cast" in the panel, artifacts/tank-rooms/house.glb and
+ * cast.glb): the alt director Tank shows while every room is off air. Both
+ * are published with the rooms unless names are given; each can be published
+ * or removed on its own (`cast`, `--remove cast`).
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -76,14 +79,16 @@ async function upload(path: string, body: Uint8Array | string, contentType: stri
 
 type Entry = { file: string; version: string; bytes?: number; exportedAt?: string };
 
-type Manifest = { rooms: Record<string, Entry>; house?: Entry | null };
+type Manifest = { rooms: Record<string, Entry>; house?: Entry | null; cast?: Entry | null };
+type Fixed = "house" | "cast";
+const FIXED: Fixed[] = ["house", "cast"];
 
 async function publishedManifest(): Promise<Manifest> {
   const res = await fetch(`${publicUrl("rooms.json")}?t=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) return { rooms: {} };
   try {
     const json = (await res.json()) as Manifest;
-    return { rooms: json.rooms ?? {}, house: json.house ?? null };
+    return { rooms: json.rooms ?? {}, house: json.house ?? null, cast: json.cast ?? null };
   } catch {
     return { rooms: {} };
   }
@@ -93,15 +98,19 @@ const local = JSON.parse(readFileSync(join(LOCAL, "rooms.json"), "utf8")) as Man
 const publishedAll = await publishedManifest();
 const published = publishedAll.rooms;
 const next: Record<string, Entry> = { ...published };
-let nextHouse: Entry | null = publishedAll.house ?? null;
-const wantHouse = names.length ? names.includes("house") : true;
-const roomNames = names.filter((n) => n !== "house");
+const nextFixed: Record<Fixed, Entry | null> = { house: publishedAll.house ?? null, cast: publishedAll.cast ?? null };
+const roomNames = names.filter((n) => !FIXED.includes(n as Fixed));
 
 if (removing) {
-  if (!names.length) throw new Error("--remove needs at least one room key (or house)");
-  if (names.includes("house")) {
-    nextHouse = null;
-    console.log("- house: removed from the manifest (the alt director is off)");
+  if (!names.length) throw new Error("--remove needs at least one room key (or house / cast)");
+  for (const key of FIXED) {
+    if (!names.includes(key)) continue;
+    nextFixed[key] = null;
+    console.log(
+      key === "house"
+        ? "- house: removed from the manifest (the alt director is off)"
+        : "- cast: removed from the manifest (the house falls back to its own rigs, if any)",
+    );
   }
   for (const room of roomNames) {
     delete next[room];
@@ -109,19 +118,23 @@ if (removing) {
   }
 } else {
   const rooms = names.length ? roomNames : Object.keys(local.rooms);
-  if (wantHouse && local.house) {
-    const entry = local.house;
+  for (const key of FIXED) {
+    const wanted = names.length ? names.includes(key) : true;
+    const entry = local[key];
+    if (!wanted) continue;
+    if (!entry) {
+      if (names.includes(key)) throw new Error(`${key} is not in rooms.json — run "Export shell + cast" in Blender first`);
+      continue;
+    }
     const file = join(LOCAL, entry.file);
     if (!existsSync(file)) throw new Error(`missing ${file}`);
-    if (publishedAll.house?.version === entry.version) {
-      console.log(`= house: unchanged (${entry.version})`);
-    } else {
-      console.log(`+ house: ${publishedAll.house?.version ?? "new"} -> ${entry.version}`);
-      await upload(entry.file, readFileSync(file), "model/gltf-binary", 31536000);
-      nextHouse = { file: entry.file, version: entry.version, bytes: entry.bytes, exportedAt: entry.exportedAt };
+    if (publishedAll[key]?.version === entry.version) {
+      console.log(`= ${key}: unchanged (${entry.version})`);
+      continue;
     }
-  } else if (wantHouse && names.includes("house")) {
-    throw new Error('house is not in rooms.json — run "Export walkable house" in Blender first');
+    console.log(`+ ${key}: ${publishedAll[key]?.version ?? "new"} -> ${entry.version}`);
+    await upload(entry.file, readFileSync(file), "model/gltf-binary", 31536000);
+    nextFixed[key] = { file: entry.file, version: entry.version, bytes: entry.bytes, exportedAt: entry.exportedAt };
   }
   for (const room of rooms) {
     const entry = local.rooms[room];
@@ -141,8 +154,14 @@ if (removing) {
   }
 }
 
-const manifest = JSON.stringify({ updatedAt: new Date().toISOString(), rooms: next, house: nextHouse }, null, 2);
+const manifest = JSON.stringify(
+  { updatedAt: new Date().toISOString(), rooms: next, house: nextFixed.house, cast: nextFixed.cast },
+  null,
+  2,
+);
 await upload("rooms.json", manifest, "application/json", 60);
+const { house: nextHouse, cast: nextCast } = nextFixed;
 console.log(`House:      ${nextHouse ? `${nextHouse.file} (${nextHouse.version})` : "(none — alt director off)"}`);
+console.log(`Cast:       ${nextCast ? `${nextCast.file} (${nextCast.version})` : "(none — the house carries its own rigs)"}`);
 console.log(`\nLive rooms: ${Object.keys(next).sort().join(", ") || "(none)"}`);
 console.log(`Manifest:   ${publicUrl("rooms.json")}`);

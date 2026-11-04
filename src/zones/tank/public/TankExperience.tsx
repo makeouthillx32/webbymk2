@@ -165,6 +165,7 @@ import { MobileRoomSourceStrip } from "./components/MobileRoomSourceStrip";
 import { buildBrowseRooms } from "./browseRooms";
 import {
   detectWebgl,
+  castSceneUrl,
   houseSceneUrl,
   parseRoomSceneManifest,
   roomSceneManifestUrl,
@@ -824,7 +825,7 @@ export function TankExperience({
         if (!cancelled) setRoomSceneManifest(parseRoomSceneManifest(json));
       })
       .catch(() => {
-        if (!cancelled) setRoomSceneManifest({ rooms: {}, house: null });
+        if (!cancelled) setRoomSceneManifest({ rooms: {}, house: null, cast: null });
       });
     return () => {
       cancelled = true;
@@ -2866,6 +2867,7 @@ export function TankExperience({
                 {showAltDirector && houseSceneSrc && (
                   <AltDirector3D
                     url={houseSceneSrc}
+                    castUrl={castSceneUrl(roomSceneManifest)}
                     canWalk={signedIn}
                     onSignIn={() => setAccountOpen(true)}
                     reducedMotion={prefersReducedMotion}

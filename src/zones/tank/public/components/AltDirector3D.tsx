@@ -25,6 +25,7 @@ import {
 } from "../altDirector/houseMap";
 import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
 import { DEFAULT_AVATAR, faceAvatar, findAvatarRig, prepareAvatar, restoreAvatar } from "../altDirector/avatars";
+import { mergeStaticMeshes } from "../altDirector/mergeStatic";
 
 type CameraMode = "director" | "follow";
 type Input = { keys: Set<string>; stick: { x: number; y: number } };
@@ -40,7 +41,10 @@ const INTERACT_KEYS = new Set(["KeyE", "Enter", "Space"]);
 const WATCH_CUT_SECONDS = 8;
 
 type AltDirector3DProps = {
+  /** The house shell (house.glb). */
   url: string;
+  /** The cast (cast.glb); null for an older single-file house. */
+  castUrl?: string | null;
   /**
    * Signed-in viewers walk the house; everyone else watches it — the
    * Director cutting between the room cameras on its own.
@@ -121,6 +125,7 @@ function Visitor({ groupRef, sprite }: { groupRef: React.RefObject<THREE.Group |
 
 function HouseWorld({
   url,
+  castUrl,
   walker,
   avatarId,
   input,
@@ -134,6 +139,7 @@ function HouseWorld({
   onBroken,
 }: {
   url: string;
+  castUrl: string | null;
   walker: boolean;
   avatarId: string;
   input: React.MutableRefObject<Input>;
@@ -147,8 +153,21 @@ function HouseWorld({
   onBroken: () => void;
 }) {
   const gltf = useGLTF(url, roomSceneDecoderPath());
+  // The cast (rigs, sprites, clips) ships as its own file so animating them
+  // never re-ships the house. An older single-file house has the cast inside:
+  // then this is the same cached load and nothing is added twice.
+  const castGltf = useGLTF(castUrl ?? url, roomSceneDecoderPath());
+  const separateCast = castGltf !== gltf;
   const { set, get, size } = useThree();
-  useMemo(() => prepareScene(gltf.scene), [gltf.scene]);
+  useMemo(() => {
+    prepareScene(gltf.scene);
+    mergeStaticMeshes(
+      gltf.scene,
+      (mesh) => /^PX_TV_Screen/.test(String(mesh.userData?.name ?? mesh.name)),
+      gltf.animations,
+    );
+  }, [gltf]);
+  useMemo(() => prepareScene(castGltf.scene), [castGltf.scene]);
   const map = useMemo(() => readMap(gltf.scene), [gltf.scene]);
   const shots = useMemo(() => findShots(gltf), [gltf]);
   const upperWalls = useMemo(() => {
@@ -174,13 +193,13 @@ function HouseWorld({
   }, [gltf.scene]);
   const follow = useMemo(() => new THREE.PerspectiveCamera(55, 1, 0.05, 80), []);
   const visitor = useRef<THREE.Group>(null);
-  const { actions, mixer } = useAnimations(gltf.animations, gltf.scene);
+  const { actions, mixer } = useAnimations(castGltf.animations, castGltf.scene);
   // The visitor's body: a cast member's own rig, lifted out of the cast.
   const avatar = useMemo(() => {
     if (!walker) return null;
-    const found = findAvatarRig(gltf.scene, avatarId);
-    return found ? prepareAvatar(found, gltf.animations) : null;
-  }, [walker, avatarId, gltf.scene, gltf.animations]);
+    const found = findAvatarRig(castGltf.scene, avatarId);
+    return found ? prepareAvatar(found, castGltf.animations) : null;
+  }, [walker, avatarId, castGltf.scene, castGltf.animations]);
   const avatarAction = useRef<THREE.AnimationAction | null>(null);
   const scratch = useMemo(
     () => ({
@@ -224,11 +243,11 @@ function HouseWorld({
 
   useEffect(() => {
     // The rest of the cast keeps rehearsing; the visitor's rig sits it out.
-    const clips = new Set(pickClips(gltf.animations).map((c) => c.name).filter((name) => !avatar?.ownClips.has(name)));
+    const clips = new Set(pickClips(castGltf.animations).map((c) => c.name).filter((name) => !avatar?.ownClips.has(name)));
     const playing = Object.entries(actions).filter(([name]) => clips.has(name));
     if (animate) playing.forEach(([, action]) => action?.reset().play());
     return () => playing.forEach(([, action]) => action?.stop());
-  }, [actions, animate, avatar, gltf.animations]);
+  }, [actions, animate, avatar, castGltf.animations]);
 
   useEffect(() => {
     if (!avatar) return;
@@ -370,6 +389,7 @@ function HouseWorld({
   return (
     <>
       <primitive object={gltf.scene} />
+      {separateCast && <primitive object={castGltf.scene} />}
       <Visitor groupRef={visitor} sprite={Boolean(avatar)} />
     </>
   );
@@ -439,6 +459,7 @@ function Stick({ input }: { input: React.MutableRefObject<Input> }) {
 
 export default function AltDirector3D({
   url,
+  castUrl = null,
   canWalk,
   avatarId = DEFAULT_AVATAR,
   onSignIn,
@@ -555,7 +576,7 @@ export default function AltDirector3D({
         drag.current = null;
       }}
     >
-      <SceneBoundary key={url} onFailed={onFailed}>
+      <SceneBoundary key={`${url}|${castUrl ?? ""}`} onFailed={onFailed}>
         <Canvas
           flat
           dpr={[1, 1.5]}
@@ -568,6 +589,7 @@ export default function AltDirector3D({
           <Suspense fallback={null}>
             <HouseWorld
               url={url}
+              castUrl={castUrl}
               walker={canWalk}
               avatarId={avatarId}
               input={input}
