@@ -37,6 +37,22 @@ describe("buildBrowseRooms", () => {
     expect(buildBrowseRooms(fixtureRooms, { source: "receiver-manager", rooms: [] })).toEqual([]);
   });
 
+  test("a switched-off room with a 3D scene stays browsable, with no cameras", () => {
+    const rooms = buildBrowseRooms(
+      fixtureRooms,
+      { source: "receiver-manager", rooms: [liveRoom("game-room")] },
+      new Set(["kitchen", "game-room", "no-such-room"]),
+    );
+    expect(rooms.map((room) => room.roomKey)).toEqual(["game-room", "kitchen"]);
+    const kitchen = rooms[1];
+    expect(kitchen.live).toBe(false);
+    expect(kitchen.cameraIds).toEqual([]);
+    expect(kitchen.title).toBe("Kitchen");
+    // A live room is never duplicated or downgraded by having a scene.
+    expect(rooms[0].live).toBe(true);
+    expect(rooms[0].cameraIds).toEqual(["cam-game-room"]);
+  });
+
   test("fixtures still curate titles and descriptions of live rooms", () => {
     const [kitchen] = buildBrowseRooms(fixtureRooms, {
       source: "receiver-manager",

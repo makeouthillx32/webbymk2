@@ -26,9 +26,16 @@ export type BrowseRoom = {
  * an outage still shows the house rather than an empty page (fails open,
  * same as toPublicCameraDirectory).
  */
+/**
+ * `sceneRoomKeys` are rooms with a published 3D scene (see roomScenes.ts).
+ * Those stay browsable while switched off — the viewer opens them and sees
+ * the room in 3D instead of a camera feed — so a dark house is still a house.
+ * They carry no cameras: nothing about the dark feed reaches the viewer.
+ */
 export function buildBrowseRooms(
   fixtureRooms: readonly TankRoom[],
   snapshot: Pick<CameraDirectorySnapshot, "source" | "rooms"> | null,
+  sceneRoomKeys: ReadonlySet<string> = new Set(),
 ): BrowseRoom[] {
   const curatedByKey = new Map<string, BrowseRoom>();
   for (const room of fixtureRooms) {
@@ -69,6 +76,11 @@ export function buildBrowseRooms(
       live: live.anyOnline,
       tags: liveTags.length > 0 ? liveTags : (curated?.tags ?? []),
     });
+  }
+  const listed = new Set(rooms.map((room) => room.roomKey));
+  for (const [key, curated] of curatedByKey) {
+    if (listed.has(key) || !sceneRoomKeys.has(key)) continue;
+    rooms.push({ ...curated, eyebrow: "Off air · 3D room", cameraIds: [], live: false });
   }
   return rooms;
 }

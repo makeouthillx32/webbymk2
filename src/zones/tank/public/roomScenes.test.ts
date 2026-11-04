@@ -50,8 +50,9 @@ describe("Tank off-air 3D room scenes", () => {
     expect(experience).not.toMatch(/^import .* from "\.\/components\/RoomScene3D";$/m);
     expect(experience).toContain("onFailed={() => setFailedRoomSceneUrl(roomSceneSrc)}");
     expect(experience).toContain("failedRoomSceneUrl !== roomSceneSrc");
-    // The manifest is only fetched once a viewer actually opens a dark room.
-    expect(experience).toContain('const wantsRoomScene = mode === "room" && !heroHasRealFeed;');
+    // Switched-off rooms with a scene stay in the room list (WebGL permitting).
+    expect(experience).toContain("buildBrowseRooms(fixtureRooms, snapshot, sceneRoomKeys)");
+    expect(experience).toContain("webglAvailable && roomSceneManifest ? Object.keys(roomSceneManifest.rooms) : []");
 
     const scene = readSource(join(import.meta.dir, "components", "RoomScene3D.tsx"));
     expect(scene).toContain('frameloop={visible ? "always" : "never"}');

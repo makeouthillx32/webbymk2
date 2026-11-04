@@ -801,11 +801,39 @@ export function TankExperience({
     return live?.presence === "online" || live?.presence === "degraded";
   };
 
+  // Rooms with a published Blender scene (roomScenes.ts). The manifest is a
+  // ~1 KB JSON; three.js itself only loads when a dark room is opened.
+  const [roomSceneManifest, setRoomSceneManifest] = useState<RoomSceneManifest | null>(null);
+  const [webglAvailable, setWebglAvailable] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [failedRoomSceneUrl, setFailedRoomSceneUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setWebglAvailable(detectWebgl());
+    setPrefersReducedMotion(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true);
+    fetch(roomSceneManifestUrl(), { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!cancelled) setRoomSceneManifest(parseRoomSceneManifest(json));
+      })
+      .catch(() => {
+        if (!cancelled) setRoomSceneManifest({ rooms: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const sceneRoomKeys = useMemo(
+    () => new Set(webglAvailable && roomSceneManifest ? Object.keys(roomSceneManifest.rooms) : []),
+    [webglAvailable, roomSceneManifest],
+  );
+
   // Live rooms, curated with the fixture house rooms. A switched-off room is
-  // absent from the snapshot and stays absent here — see buildBrowseRooms.
+  // absent from the snapshot and stays absent here — unless it has a 3D scene
+  // to show instead (see buildBrowseRooms).
   const browseRooms = useMemo(
-    () => buildBrowseRooms(fixtureRooms, snapshot),
-    [snapshot?.source, snapshot?.rooms],
+    () => buildBrowseRooms(fixtureRooms, snapshot, sceneRoomKeys),
+    [snapshot?.source, snapshot?.rooms, sceneRoomKeys],
   );
 
   // Tank behaves like a single-page app: the selected view is tab-local state,
@@ -1728,34 +1756,9 @@ export function TankExperience({
   const heroZoomed = Boolean(heroPtzTarget && heroPtzTarget.zoomFactor > 1);
   const anyHouseCameraOnline = onlineCameraIds.length > 0;
 
-  // Off-air rooms with a published Blender scene show that room in 3D instead
-  // of a dead frame. The manifest is fetched the first time a dark room is
-  // opened; a scene that fails to load falls back to the plain off-air card.
-  const wantsRoomScene = mode === "room" && !heroHasRealFeed;
-  const [roomSceneManifest, setRoomSceneManifest] = useState<RoomSceneManifest | null>(null);
-  const [webglAvailable, setWebglAvailable] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-  const [failedRoomSceneUrl, setFailedRoomSceneUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!wantsRoomScene || roomSceneManifest) return;
-    let cancelled = false;
-    setWebglAvailable(detectWebgl());
-    setPrefersReducedMotion(
-      typeof window !== "undefined" &&
-        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
-    );
-    fetch(roomSceneManifestUrl(), { cache: "no-cache" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (!cancelled) setRoomSceneManifest(parseRoomSceneManifest(json));
-      })
-      .catch(() => {
-        if (!cancelled) setRoomSceneManifest({ rooms: {} });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [wantsRoomScene, roomSceneManifest]);
+  // A dark single room with a published scene shows it in 3D (manifest and
+  // WebGL check are loaded up top, next to browseRooms). A scene that fails to
+  // load falls back to the plain off-air card.
   const roomSceneSrc = roomSceneUrl(roomSceneManifest, activeRoomSlug);
   const showRoomScene =
     shouldShowRoomScene({ mode, heroHasRealFeed, sceneUrl: roomSceneSrc, webglAvailable }) &&
