@@ -163,6 +163,14 @@ import { TankExperienceSkeleton } from "./components/TankExperienceSkeleton";
 import { MobileRoomGrid } from "./components/MobileRoomGrid";
 import { MobileRoomSourceStrip } from "./components/MobileRoomSourceStrip";
 import { buildBrowseRooms } from "./browseRooms";
+import {
+  detectWebgl,
+  parseRoomSceneManifest,
+  roomSceneManifestUrl,
+  roomSceneUrl,
+  shouldShowRoomScene,
+  type RoomSceneManifest,
+} from "./roomScenes";
 import { TankMarkIcon } from "./components/TankMarkIcon";
 import { useServerDirector } from "../director/useServerDirector";
 import type { ServerDirectorState } from "../server/serverDirectorEngine";
@@ -193,6 +201,12 @@ import { calculateHouseDay } from "../houseDay";
 // wait on js.stripe.com and can leave iOS Safari's initial navigation hanging
 // when that third-party request is blocked or slow. Load the checkout bundle
 // only after the user explicitly opens the store.
+// three.js only loads for a viewer looking at a dark room that has a 3D scene.
+const RoomScene3D = dynamic(() => import("./components/RoomScene3D"), {
+  ssr: false,
+  loading: () => null,
+});
+
 const TankStorePanel = dynamic(
   () =>
     import("./components/TankStorePanel").then((module) =>
@@ -1714,6 +1728,39 @@ export function TankExperience({
   const heroZoomed = Boolean(heroPtzTarget && heroPtzTarget.zoomFactor > 1);
   const anyHouseCameraOnline = onlineCameraIds.length > 0;
 
+  // Off-air rooms with a published Blender scene show that room in 3D instead
+  // of a dead frame. The manifest is fetched the first time a dark room is
+  // opened; a scene that fails to load falls back to the plain off-air card.
+  const wantsRoomScene = mode === "room" && !heroHasRealFeed;
+  const [roomSceneManifest, setRoomSceneManifest] = useState<RoomSceneManifest | null>(null);
+  const [webglAvailable, setWebglAvailable] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [failedRoomSceneUrl, setFailedRoomSceneUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wantsRoomScene || roomSceneManifest) return;
+    let cancelled = false;
+    setWebglAvailable(detectWebgl());
+    setPrefersReducedMotion(
+      typeof window !== "undefined" &&
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
+    );
+    fetch(roomSceneManifestUrl(), { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!cancelled) setRoomSceneManifest(parseRoomSceneManifest(json));
+      })
+      .catch(() => {
+        if (!cancelled) setRoomSceneManifest({ rooms: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wantsRoomScene, roomSceneManifest]);
+  const roomSceneSrc = roomSceneUrl(roomSceneManifest, activeRoomSlug);
+  const showRoomScene =
+    shouldShowRoomScene({ mode, heroHasRealFeed, sceneUrl: roomSceneSrc, webglAvailable }) &&
+    failedRoomSceneUrl !== roomSceneSrc;
+
   // The director has nothing to negotiate between when no house camera is
   // online. Previously spelled `serverDirector.state === "no_rooms"`, but the
   // hook exposes no `state` — that read was always undefined, so the
@@ -2797,6 +2844,15 @@ export function TankExperience({
                   />
                 )}
 
+                {showRoomScene && roomSceneSrc && (
+                  <RoomScene3D
+                    url={roomSceneSrc}
+                    roomKey={activeRoomSlug}
+                    reducedMotion={prefersReducedMotion}
+                    onFailed={() => setFailedRoomSceneUrl(roomSceneSrc)}
+                  />
+                )}
+
                 {/* Doorways follow the camera frame in selected rooms and in
                     Director cuts. A transformed manual-pilot frame is excluded
                     because its saved doorway coordinates are no longer safe. */}
@@ -2826,10 +2882,20 @@ export function TankExperience({
                 ))}
 
                 <div
-                  className={`absolute inset-0 grid place-items-center ${heroHasRealFeed ? "pointer-events-none opacity-0" : ""}`}
+                  className={
+                    showRoomScene
+                      ? "pointer-events-none absolute inset-x-0 bottom-0 flex justify-start p-3"
+                      : `absolute inset-0 grid place-items-center ${heroHasRealFeed ? "pointer-events-none opacity-0" : ""}`
+                  }
                 >
-                  <div className="max-w-sm rounded-lg border border-white/15 bg-black/30 p-5 text-center text-white backdrop-blur-sm">
-                    {heroOnline ? (
+                  <div
+                    className={
+                      showRoomScene
+                        ? "pointer-events-auto max-w-xs rounded-lg border border-white/15 bg-black/55 px-4 py-3 text-left text-white backdrop-blur-sm"
+                        : "max-w-sm rounded-lg border border-white/15 bg-black/30 p-5 text-center text-white backdrop-blur-sm"
+                    }
+                  >
+                    {showRoomScene ? null : heroOnline ? (
                       <Radio className="mx-auto h-8 w-8 opacity-85" />
                     ) : (
                       <CameraOff className="mx-auto h-8 w-8 opacity-60" />
@@ -2838,7 +2904,7 @@ export function TankExperience({
                         camera down, never set up) is operator business and
                         the public payload deliberately cannot tell them
                         apart, so every dark room reads the same: off air. */}
-                    <p className="mt-2 text-sm font-bold">
+                    <p className={`${showRoomScene ? "" : "mt-2 "}text-sm font-bold`}>
                       {mode === "director"
                         ? directorHasNoRooms
                           ? "The house is off air"
@@ -2854,14 +2920,16 @@ export function TankExperience({
                           : "The Director is picking the shot."
                         : heroOnline
                           ? "Live now"
-                          : anyHouseCameraOnline
+                          : showRoomScene
+                            ? "The camera's resting, so here's the room in the meantime. Drag to look around."
+                            : anyHouseCameraOnline
                             ? "This room isn't streaming right now. Other rooms are live."
                             : "This room isn't streaming right now. It'll come back on its own."}
                     </p>
                     {mode === "room" && !heroOnline && anyHouseCameraOnline && (
                       <ConsoleButton
                         variant="orange"
-                        className="mx-auto mt-3"
+                        className={showRoomScene ? "mt-2" : "mx-auto mt-3"}
                         onClick={() => navigateTo("grid")}
                       >
                         See what's live
