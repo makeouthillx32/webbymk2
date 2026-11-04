@@ -44,3 +44,14 @@ describe("house cast wiring", () => {
     expect(house).toContain("if (!rig || rig === avatar?.rig) continue;");
   });
 });
+
+describe("house cast opt-out wiring", () => {
+  test("the worker filters untracked members and staff can toggle them", () => {
+    const worker = read("..", "server", "houseCastWorker.ts");
+    expect(worker).toContain("computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked })");
+    const route = read("..", "..", "..", "app", "api", "tank", "staff", "house-cast", "route.ts");
+    expect(route).toContain("checkStaff()");
+    const console = read("..", "director-configuration", "components", "DirectorWorkspace", "DirectorWorkspace.tsx");
+    expect(console).toContain("<HouseCastPanel />");
+  });
+});

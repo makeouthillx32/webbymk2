@@ -141,3 +141,37 @@ describe("alt director camera cuts", () => {
     expect(pickShot([foyer, foyer2], "foyer-2", head, feet, map, "foyer")).toBe("foyer-2");
   });
 });
+
+describe("floor seams (walls decide the doors, not mesh cuts)", () => {
+  // Two rooms whose floor meshes stop 7 cm apart, like the makeup room and
+  // entry hall on 2026-11-04, with a wall along the seam except a 1 m door.
+  const raw = {
+    radius: 0.2,
+    spawn: [3, 1, 0],
+    floors: [
+      { label: "Makeup room", room: "makeup-room", rect: [0, 0, 2, 3] },
+      { label: "Entry hall", rect: [2.07, 0, 5, 3] },
+    ],
+    walls: [
+      [1.98, 0, 2.09, 1],
+      [1.98, 2, 2.09, 3],
+    ],
+  };
+
+  test("a thin seam under a doorway is walkable", () => {
+    const map = parseHouseMap(raw)!;
+    expect(canStand(map, 2.035, 1.5)).toBe(true);
+    let [x, z] = [3, 1.5];
+    for (let i = 0; i < 60; i += 1) [x, z] = moveWithCollision(map, x, z, -0.05, 0);
+    expect(x).toBeLessThan(1.5); // walked into the makeup room
+  });
+
+  test("a seam with a wall on it stays shut, and wide gaps are not bridged", () => {
+    const sealed = parseHouseMap({ ...raw, walls: [[1.98, 0, 2.09, 3]] })!;
+    let [x, z] = [3, 1.5];
+    for (let i = 0; i < 60; i += 1) [x, z] = moveWithCollision(sealed, x, z, -0.05, 0);
+    expect(x).toBeGreaterThan(2);
+    const apart = parseHouseMap({ ...raw, floors: [raw.floors[0], { label: "Far", rect: [2.5, 0, 5, 3] }], walls: [] })!;
+    expect(canStand(apart, 2.25, 1.5)).toBe(false);
+  });
+});

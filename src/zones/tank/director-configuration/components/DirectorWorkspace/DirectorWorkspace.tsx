@@ -67,6 +67,7 @@ import {
 import { TouchDesignerBridge } from "../TouchDesignerBridge";
 import { LiveProgramMonitor } from "../LiveProgramMonitor";
 import { GameCamMatrix } from "../GameCamMatrix/GameCamMatrix";
+import { HouseCastPanel } from "../HouseCastPanel/HouseCastPanel";
 import {
   stepFocusEngine,
   DEFAULT_FOCUS_ENGINE_STATE,
@@ -1461,6 +1462,9 @@ export function DirectorWorkspace({
             reason={serverDirector.reason}
             dwellSecondsRemaining={serverDirector.dwellSecondsRemaining}
           />
+
+          {/* ═══════════ HOUSE CAST (which sprites mirror their real person) ═══════════ */}
+          <HouseCastPanel />
 
           {/* ═══════════ MAIN VIRTUAL CANVAS MATRIX (ALL REAL FOOTAGE SIDE-BY-SIDE) ═══════════ */}
           <div className="rounded-xl border border-black/15 bg-black/[0.03] p-4 space-y-3">

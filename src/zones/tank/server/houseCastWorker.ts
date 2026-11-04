@@ -18,6 +18,7 @@ import { cameraRoomMap, computeHouseCast, houseCastChanged, type HouseCastState 
 import { ROOM_SCENE_BUCKET, ROOM_SCENE_FOLDER } from "../public/roomScenes";
 import { getFreshTelemetry } from "./directorTelemetryStore";
 import { getCameraDirectorySnapshot } from "./receiverManager";
+import { loadUntrackedCast } from "./houseCastPrefs";
 
 export const HOUSE_CAST_INTERVAL_MS = 1000;
 /** Re-send an unchanged cast this often, so a late subscriber catches up without polling. */
@@ -81,14 +82,18 @@ export async function tickHouseCast(
   send: (state: HouseCastState) => Promise<void>,
   now = Date.now(),
 ): Promise<HouseCastState> {
-  const [snapshot, fits] = await Promise.all([getCameraDirectorySnapshot().catch(() => null), loadCameraFits(now)]);
+  const [snapshot, fits, untracked] = await Promise.all([
+    getCameraDirectorySnapshot().catch(() => null),
+    loadCameraFits(now),
+    loadUntrackedCast(now),
+  ]);
   const prev = globalThis.__tankHouseCast;
   const previous = prev?.state.members ?? [];
   const cameraRooms = snapshot
     ? cameraRoomMap([...snapshot.rooms, ...(snapshot.offAirRooms ?? [])], snapshot.cameras)
     : new Map<string, string>();
   const readings = getFreshTelemetry(now);
-  const members = computeHouseCast({ readings, cameraRooms, fits, previous, now });
+  const members = computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked });
   globalThis.__tankHouseCastDebug = {
     at: now,
     readings: readings.length,

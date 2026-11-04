@@ -148,13 +148,53 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
     spawn: spawn
       ? [spawn[0], spawn[1], spawn[2]]
       : [(centre[0] + centre[2]) / 2, (centre[1] + centre[3]) / 2, 0],
-    floors,
+    floors: [...floors, ...floorSeams(floors)],
     walls: rects(m.walls),
     blockers: rects(m.blockers),
     hotspots,
     fx,
     avatars,
   };
+}
+
+/** Floor meshes this far apart are one floor split by a wall line, not two rooms with a void between. */
+export const FLOOR_SEAM_MAX = 0.3;
+/** ...as long as they face each other along at least this much edge. */
+const FLOOR_SEAM_MIN_OVERLAP = 0.4;
+
+/**
+ * Strips of floor bridging the seams between neighbouring floor meshes.
+ *
+ * The house's floors are cut at the wall lines, and the cuts drift as the
+ * house is edited: on 2026-11-04 the makeup room's floor stopped 7 cm short
+ * of the entry hall's, so the doorway had a wall gap but no floor under it and
+ * the room could not be entered (the export's 10 cm reachability check
+ * stepped right over the strip; the browser walks in 2 cm steps). Bridging
+ * every thin seam makes the WALLS the only thing that decides where you can
+ * cross, which is what they are for: a seam with a wall on it stays shut.
+ */
+export function floorSeams(floors: readonly HouseFloor[]): HouseFloor[] {
+  const seams: HouseFloor[] = [];
+  for (let i = 0; i < floors.length; i += 1) {
+    for (let j = 0; j < floors.length; j += 1) {
+      if (i === j) continue;
+      const a = floors[i].rect;
+      const b = floors[j].rect;
+      // b lies to the +x of a, or to the +z of a (each pair is seen both ways,
+      // so checking only the positive side never doubles a seam).
+      const gapX = b[0] - a[2];
+      const overlapZ = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+      if (gapX > 0 && gapX <= FLOOR_SEAM_MAX && overlapZ >= FLOOR_SEAM_MIN_OVERLAP) {
+        seams.push({ label: floors[i].label, room: floors[i].room, rect: [a[2] - 0.01, Math.max(a[1], b[1]), b[0] + 0.01, Math.min(a[3], b[3])] });
+      }
+      const gapZ = b[1] - a[3];
+      const overlapX = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+      if (gapZ > 0 && gapZ <= FLOOR_SEAM_MAX && overlapX >= FLOOR_SEAM_MIN_OVERLAP) {
+        seams.push({ label: floors[i].label, room: floors[i].room, rect: [Math.max(a[0], b[0]), a[3] - 0.01, Math.min(a[2], b[2]), b[1] + 0.01] });
+      }
+    }
+  }
+  return seams;
 }
 
 const inside = (r: Rect, x: number, z: number, pad = 0) =>

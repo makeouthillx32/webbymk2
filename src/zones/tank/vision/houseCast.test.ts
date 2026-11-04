@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseCameraFits, imageToFloor } from "./fisheyeFloor";
-import { cameraRoomMap, castIdForName, computeHouseCast, houseCastChanged, parseHouseCast, type CastMember } from "./houseCast";
+import { cameraRoomMap, castIdForName, castLabel, computeHouseCast, houseCastChanged, parseHouseCast, type CastMember } from "./houseCast";
 
 const fixture = (room: string) => JSON.parse(readFileSync(join(import.meta.dir, "__fixtures__", `${room}.result.json`), "utf8"));
 const fits = parseCameraFits({ rooms: { kitchen: fixture("kitchen"), "living-room": fixture("living-room") } });
@@ -117,5 +117,18 @@ describe("house cast: real boxes -> where the cast stands", () => {
     expect(houseCastChanged([m], [])).toBe(true);
     expect(parseHouseCast({ updatedAt: 5, members: [m, { id: "nobody", x: 0, y: 0 }, { id: "malia", x: "1", y: 0 }] })).toEqual({ updatedAt: 5, members: [m] });
     expect(parseHouseCast("nope")).toBeNull();
+  });
+});
+
+describe("house cast opt-out", () => {
+  test("an untracked member is never placed or held; its pet slot is skipped", () => {
+    const readings = [{ cameraId: "cam-k", boundingBoxes: [box({ targetName: "tyler" }), box({ targetName: "malia", nx: 0.2 }), box({ label: "dog", nx: 0.7, ny: 0.6, nh: 0.2 })] }];
+    const all = computeHouseCast({ readings, cameraRooms, fits, previous: [], now: 0 });
+    expect(all.map((m) => m.id)).toEqual(["golden-dog", "malia", "tyler"]);
+    const untracked = new Set(["tyler", "golden-dog"]);
+    const some = computeHouseCast({ readings, cameraRooms, fits, previous: all, now: 1000, untracked });
+    // Tyler is gone at once (not held for the TTL); the dog takes the next slot.
+    expect(some.map((m) => m.id)).toEqual(["brindle-dog", "malia"]);
+    expect(castLabel("golden-dog")).toBe("Golden dog");
   });
 });

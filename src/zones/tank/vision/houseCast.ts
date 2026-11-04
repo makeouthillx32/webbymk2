@@ -48,6 +48,12 @@ const ANIMAL_SLOTS: Record<"dog" | "cat", string[]> = {
 /** Enrolled names that differ from the cast id. */
 const NAME_ALIASES: Record<string, string> = { olly: "oly", ollie: "oly" };
 
+/** "golden-dog" -> "Golden dog". */
+export function castLabel(id: string): string {
+  const words = id.split("-");
+  return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(" ");
+}
+
 export function castIdForName(name: string | null | undefined): string | null {
   const key = name?.trim().toLowerCase().replace(/^@/, "");
   if (!key) return null;
@@ -123,6 +129,8 @@ function merge(list: Sighting[]): Sighting {
  *                    mirrors every room, on air for Tank or not).
  * @param fits        room key -> that room camera's fit.
  * @param previous    last tick's members (continuity, smoothing, TTL).
+ * @param untracked   cast ids staff switched off: never placed, never held,
+ *                    never broadcast (an unticked sprite = not tracked).
  */
 export function computeHouseCast(input: {
   readings: readonly CastReading[];
@@ -130,8 +138,11 @@ export function computeHouseCast(input: {
   fits: Readonly<Record<string, RoomCameraFit>>;
   previous: readonly CastMember[];
   now: number;
+  untracked?: ReadonlySet<string>;
 }): CastMember[] {
-  const { readings, cameraRooms, fits, previous, now } = input;
+  const { readings, cameraRooms, fits, now } = input;
+  const untracked = input.untracked ?? new Set<string>();
+  const previous = input.previous.filter((m) => !untracked.has(m.id));
   const named = new Map<string, Sighting[]>();
   const animals: Record<"dog" | "cat", Sighting[]> = { dog: [], cat: [] };
 
@@ -146,6 +157,7 @@ export function computeHouseCast(input: {
       const isAnimal = label === "dog" || label === "cat";
       const id = label === "person" ? castIdForName(box.targetName) : null;
       if (!id && !isAnimal) continue;
+      if (id && untracked.has(id)) continue;
       const foot = footOf(box);
       const floor = foot ? imageToFloor(fit, foot) : null;
       if (!floor) continue;
@@ -169,7 +181,7 @@ export function computeHouseCast(input: {
       else groups.push([s]);
     }
     const found = groups.map(merge);
-    const slots = ANIMAL_SLOTS[kind];
+    const slots = ANIMAL_SLOTS[kind].filter((id) => !untracked.has(id));
     const pairs: Array<{ slot: string; index: number; d: number }> = [];
     for (const slot of slots) {
       const prev = prevById.get(slot);
