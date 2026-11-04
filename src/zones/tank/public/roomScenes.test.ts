@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   castSceneUrl,
+  directorViewToggle,
   houseSceneUrl,
   parseRoomSceneManifest,
   roomSceneUrl,
@@ -94,6 +95,27 @@ describe("Tank off-air 3D room scenes", () => {
     expect(shouldShowAltDirector({ ...base, mode: "grid" })).toBe(false);
     expect(shouldShowAltDirector({ ...base, houseUrl: null })).toBe(false);
     expect(shouldShowAltDirector({ ...base, webglAvailable: false })).toBe(false);
+  });
+
+  test("a viewer can pick game mode while rooms are on air, and only then can pick IRL", () => {
+    const live = { mode: "director", directorHasNoRooms: false, houseUrl: "house.glb?v=1", webglAvailable: true };
+    expect(shouldShowAltDirector({ ...live, viewerPrefersGame: true })).toBe(true);
+    expect(shouldShowAltDirector({ ...live, viewerPrefersGame: false })).toBe(false);
+    // A stale "irl" choice can't keep a dark house on an empty programme.
+    expect(shouldShowAltDirector({ ...live, directorHasNoRooms: true, viewerPrefersGame: false })).toBe(true);
+    // Game mode is a Director view only.
+    expect(shouldShowAltDirector({ ...live, mode: "room", viewerPrefersGame: true })).toBe(false);
+
+    expect(directorViewToggle(live)).toEqual({ visible: true, irlAvailable: true });
+    expect(directorViewToggle({ ...live, directorHasNoRooms: true })).toEqual({ visible: true, irlAvailable: false });
+    expect(directorViewToggle({ ...live, houseUrl: null })).toEqual({ visible: false, irlAvailable: false });
+    expect(directorViewToggle({ ...live, mode: "grid" }).visible).toBe(false);
+  });
+
+  test("picking game mode stops the live programme instead of streaming it under the house", () => {
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    expect(experience).toContain("viewerPrefersGame: directorView === \"game\"");
+    expect(experience).toMatch(/heroHasRealFeed && !showAltDirector && \(\s*<CameraPlayer/);
   });
 
   test("the alt director is lazy-loaded, replaces the off-air card, and falls back to it", () => {

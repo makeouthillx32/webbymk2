@@ -92,13 +92,57 @@ export function castSceneUrl(manifest: RoomSceneManifest | null): string | null 
  * The alt director takes over the Director only when the whole house is
  * dark — the moment any room comes on, the real Director is back.
  */
+/**
+ * Director view rules (2026-11-04):
+ *   - No room on air  -> game mode (the walkable house). IRL isn't offered.
+ *   - Any room on air -> IRL by default; a viewer may switch to game mode and
+ *     back. Their choice sticks while both are possible.
+ * Game mode is the house and its own cast only — nothing in it is driven by
+ * camera tracking, so it can't reveal anything about rooms that are off air.
+ */
 export function shouldShowAltDirector(input: {
   mode: string;
   directorHasNoRooms: boolean;
   houseUrl: string | null;
   webglAvailable: boolean;
+  /** The viewer picked game mode while IRL is available. */
+  viewerPrefersGame?: boolean;
 }): boolean {
-  return input.mode === "director" && input.directorHasNoRooms && Boolean(input.houseUrl) && input.webglAvailable;
+  return (
+    input.mode === "director" &&
+    (input.directorHasNoRooms || Boolean(input.viewerPrefersGame)) &&
+    Boolean(input.houseUrl) &&
+    input.webglAvailable
+  );
+}
+
+/** The Game / IRL switch only exists where both views could be shown. */
+export function directorViewToggle(input: {
+  mode: string;
+  directorHasNoRooms: boolean;
+  houseUrl: string | null;
+  webglAvailable: boolean;
+}): { visible: boolean; irlAvailable: boolean } {
+  const visible = input.mode === "director" && Boolean(input.houseUrl) && input.webglAvailable;
+  return { visible, irlAvailable: visible && !input.directorHasNoRooms };
+}
+
+export const DIRECTOR_VIEW_STORAGE_KEY = "tank.director.view";
+
+export function readDirectorViewPreference(): "game" | "irl" {
+  try {
+    return window.localStorage.getItem(DIRECTOR_VIEW_STORAGE_KEY) === "game" ? "game" : "irl";
+  } catch {
+    return "irl";
+  }
+}
+
+export function writeDirectorViewPreference(view: "game" | "irl"): void {
+  try {
+    window.localStorage.setItem(DIRECTOR_VIEW_STORAGE_KEY, view);
+  } catch {
+    // private window / blocked storage: the choice lasts this visit only
+  }
 }
 
 /**

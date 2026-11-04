@@ -3,8 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CameraDirectorySnapshot, DiscoveredCamera } from "../contracts";
 
-export function useTankCameras() {
+/**
+ * "public" is what viewers get. "staff" (house console only) also carries the
+ * rooms switched off for Tank, tagged `offAir` — their cameras are still
+ * ingested and tracked, so the staff room keeps seeing them.
+ */
+export function useTankCameras(scope: "public" | "staff" = "public") {
   const [snapshot, setSnapshot] = useState<CameraDirectorySnapshot | null>(null);
+  const endpoint = scope === "staff" ? "/api/tank/staff/cameras" : "/api/tank/cameras";
 
   useEffect(() => {
     let active = true;
@@ -21,7 +27,7 @@ export function useTankCameras() {
       if (loading) return;
       loading = true;
       try {
-        const response = await fetch("/api/tank/cameras", { cache: "no-store" });
+        const response = await fetch(endpoint, { cache: "no-store" });
         if (!response.ok) return;
         const next = (await response.json()) as CameraDirectorySnapshot;
         if (active) setSnapshot(next);
@@ -44,7 +50,7 @@ export function useTankCameras() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, []);
+  }, [endpoint]);
 
   const liveById = useMemo(() => {
     const map = new Map<string, DiscoveredCamera>();

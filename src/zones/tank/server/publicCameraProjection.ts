@@ -31,6 +31,7 @@ export function toPublicCameraDirectory(snapshot: CameraDirectorySnapshot): Came
   const {
     audioSources: _adminAudioSources,
     offlineRoomKeys: _adminOfflineRoomKeys,
+    offAirRooms: _staffOffAirRooms,
     ...publicSnapshot
   } = snapshot;
 
@@ -43,6 +44,33 @@ export function toPublicCameraDirectory(snapshot: CameraDirectorySnapshot): Came
     cameras: snapshot.cameras
       .filter((camera) => camera.publicVisible)
       .filter((camera) => !offline.has(camera.roomScope))
+      .map(({ keyFingerprint: _credentialFingerprint, ...camera }) => camera),
+  };
+}
+
+/**
+ * The staff view of the same directory: switched-off rooms stay in, tagged
+ * `offAir`, with their cameras. Turning a room off is a decision about what
+ * viewers see — ingest, vision and Axis tracking keep running, and the house
+ * console has to keep seeing them (2026-11-04: with every room off, the
+ * staff room read the public list and went blank).
+ *
+ * Only staff routes may serve this. Putting a camera on the programme still
+ * goes through the public projection (serverDirectorEngine), so nothing here
+ * can bring an off-air room to viewers.
+ */
+export function toStaffCameraDirectory(snapshot: CameraDirectorySnapshot): CameraDirectorySnapshot {
+  const {
+    audioSources: _adminAudioSources,
+    offlineRoomKeys: _offlineRoomKeys,
+    offAirRooms = [],
+    ...staffSnapshot
+  } = snapshot;
+  return {
+    ...staffSnapshot,
+    rooms: [...(snapshot.rooms ?? []), ...offAirRooms].sort((a, b) => a.title.localeCompare(b.title)),
+    cameras: snapshot.cameras
+      .filter((camera) => camera.publicVisible)
       .map(({ keyFingerprint: _credentialFingerprint, ...camera }) => camera),
   };
 }

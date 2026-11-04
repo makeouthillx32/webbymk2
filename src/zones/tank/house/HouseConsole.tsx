@@ -307,9 +307,22 @@ export function HouseConsole({
     params.set("deck", deck);
     router.replace(`?${params.toString()}`, { scroll: false });
   };
-  const { snapshot, liveById, isOnline } = useTankCameras();
+  // Staff directory: switched-off rooms stay visible here (tagged offAir) —
+  // off for Tank means hidden from viewers, not a ghost for the house.
+  const { snapshot, liveById, isOnline } = useTankCameras("staff");
   const cameras = snapshot?.cameras ?? [];
   const rooms = snapshot?.rooms ?? [];
+  const tankMode = useMemo(() => {
+    const liveOnAir = rooms.filter((room) => !room.offAir && room.anyOnline).length;
+    return {
+      game: liveOnAir === 0,
+      liveOnAir,
+      offAirTracked: rooms.filter((room) => room.offAir).length,
+      // Their cameras can be watched and tracked here but never put on the
+      // programme (the server director ignores locks/leases on them).
+      offAirRoomKeys: new Set(rooms.filter((room) => room.offAir).map((room) => room.roomKey)),
+    };
+  }, [rooms]);
   const roomKeys = rooms.map((r) => r.roomKey);
   const {
     counts: presenceCounts,
@@ -391,13 +404,14 @@ export function HouseConsole({
 
   const handleTakeFeedLive = async (kind: "irl" | "obs") => {
     const targetCam = cameras.find((c) =>
-      kind === "irl"
+      !tankMode.offAirRoomKeys.has(c.roomScope) &&
+      (kind === "irl"
         ? c.slug.includes("irl") ||
           c.id.includes("irl") ||
           (c as any).kind === "irlcam"
         : c.slug.includes("obs") ||
           c.id.includes("obs") ||
-          (c as any).kind === "obs",
+          (c as any).kind === "obs"),
     );
     if (!targetCam) {
       addLog(`NO ${kind.toUpperCase()} FEED FOUND ONLINE`, "DIRECTOR ENGINE");
@@ -1432,6 +1446,11 @@ export function HouseConsole({
                         <p className="truncate text-[9px] font-black uppercase tracking-wide text-slate-500">
                           {room.title}
                         </p>
+                        {room.offAir && (
+                          <p className="text-[8px] font-black uppercase tracking-wide text-fuchsia-600">
+                            Off air · tracking
+                          </p>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -2410,8 +2429,13 @@ export function HouseConsole({
                             </>
                           ) : (
                             cameras.map((cam) => (
-                              <option key={cam.id} value={cam.id}>
+                              <option
+                                key={cam.id}
+                                value={cam.id}
+                                disabled={tankMode.offAirRoomKeys.has(cam.roomScope)}
+                              >
                                 {cam.name} ({cam.location ?? "House"})
+                                {tankMode.offAirRoomKeys.has(cam.roomScope) ? " · off air" : ""}
                               </option>
                             ))
                           )}
@@ -2509,15 +2533,41 @@ export function HouseConsole({
                       once. Confirm-gated in handleToggleAllRoomsOffline;
                       restoring is a single click, no confirm, since that
                       direction is never the destructive one. */}
+                  {/* What viewers are getting right now. IRL while any room is
+                      on air with a live camera; GAME (the walkable house)
+                      when none is. Off-air rooms keep ingesting and tracking
+                      for staff either way. */}
+                  <div
+                    className={`flex items-center gap-3 rounded border-2 p-3 ${tankMode.game ? "border-fuchsia-600/50 bg-fuchsia-950/20" : "border-emerald-600/50 bg-emerald-950/20"}`}
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${tankMode.game ? "bg-fuchsia-400" : "animate-pulse bg-emerald-500"}`}
+                    />
+                    <div>
+                      <p className={`text-xs font-black uppercase tracking-wider ${tankMode.game ? "text-fuchsia-400" : "text-emerald-500"}`}>
+                        Tank mode · {tankMode.game ? "Game" : "IRL"}
+                      </p>
+                      <p className="text-[10px] font-bold text-[#241f14]/70">
+                        {tankMode.game
+                          ? "No room is on air: viewers get the walkable house."
+                          : `${tankMode.liveOnAir} room${tankMode.liveOnAir === 1 ? "" : "s"} on air: the Director is cutting live cameras.`}
+                        {tankMode.offAirTracked > 0
+                          ? ` ${tankMode.offAirTracked} off-air room${tankMode.offAirTracked === 1 ? " is" : "s are"} still ingesting and tracking for staff.`
+                          : ""}
+                      </p>
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between gap-3 rounded border-2 border-red-600/50 bg-red-950/20 p-3">
                     <div>
                       <p className="text-xs font-black uppercase tracking-wider text-red-400">
                         Emergency Room Control
                       </p>
                       <p className="text-[10px] font-bold text-red-300/80">
-                        Pulls every room off the public site instantly —
-                        cameras, chat context, everything. Toggle back on any
-                        time.
+                        Pulls every room off the public site instantly and
+                        puts Tank in game mode. Cameras keep recording into
+                        the house and Axis keeps tracking for staff. Toggle
+                        back on any time.
                       </p>
                     </div>
                     <ConsoleButton

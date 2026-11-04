@@ -34,6 +34,7 @@ import {
   Pause,
   Play,
   Radio,
+  Gamepad2,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -166,12 +167,15 @@ import { buildBrowseRooms } from "./browseRooms";
 import {
   detectWebgl,
   castSceneUrl,
+  directorViewToggle,
   houseSceneUrl,
   parseRoomSceneManifest,
+  readDirectorViewPreference,
   roomSceneManifestUrl,
   roomSceneUrl,
   shouldShowAltDirector,
   shouldShowRoomScene,
+  writeDirectorViewPreference,
   type RoomSceneManifest,
 } from "./roomScenes";
 import { TankMarkIcon } from "./components/TankMarkIcon";
@@ -1783,8 +1787,25 @@ export function TankExperience({
   // it — directorHasNoRooms flips and the real Director takes the frame.
   const [altDirectorFailedUrl, setAltDirectorFailedUrl] = useState<string | null>(null);
   const houseSceneSrc = houseSceneUrl(roomSceneManifest);
+  // Game / IRL: with rooms on air a viewer may still choose the house. Read
+  // after mount (localStorage) so server and first client render agree.
+  const [directorView, setDirectorView] = useState<"game" | "irl">("irl");
+  useEffect(() => {
+    setDirectorView(readDirectorViewPreference());
+  }, []);
+  const chooseDirectorView = (view: "game" | "irl") => {
+    setDirectorView(view);
+    writeDirectorViewPreference(view);
+  };
+  const directorToggle = directorViewToggle({ mode, directorHasNoRooms, houseUrl: houseSceneSrc, webglAvailable });
   const showAltDirector =
-    shouldShowAltDirector({ mode, directorHasNoRooms, houseUrl: houseSceneSrc, webglAvailable }) &&
+    shouldShowAltDirector({
+      mode,
+      directorHasNoRooms,
+      houseUrl: houseSceneSrc,
+      webglAvailable,
+      viewerPrefersGame: directorView === "game",
+    }) &&
     altDirectorFailedUrl !== houseSceneSrc;
 
   // Room the hero player is actually showing. In director mode that's whichever
@@ -2842,7 +2863,7 @@ export function TankExperience({
                 {heroOnline && (
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_30%,rgba(255,255,255,.2),transparent_16%),radial-gradient(circle_at_68%_55%,rgba(45,212,191,.22),transparent_18%),linear-gradient(110deg,transparent_30%,rgba(255,255,255,.05)_50%,transparent_70%)]" />
                 )}
-                {heroHasRealFeed && (
+                {heroHasRealFeed && !showAltDirector && (
                   <CameraPlayer
                     ref={heroPlayerRef}
                     playbackUrl={heroPlaybackUrl}
@@ -2873,6 +2894,36 @@ export function TankExperience({
                     reducedMotion={prefersReducedMotion}
                     onFailed={() => setAltDirectorFailedUrl(houseSceneSrc)}
                   />
+                )}
+
+                {/* Game / IRL. IRL is greyed out while no room is on air;
+                    the house is always there to fall back to. */}
+                {directorToggle.visible && (
+                  <div
+                    className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 overflow-hidden rounded-full border border-white/20 bg-black/60 text-[11px] font-black uppercase tracking-wide text-white backdrop-blur-sm sm:top-3"
+                    role="group"
+                    aria-label="Director view"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={showAltDirector}
+                      onClick={() => chooseDirectorView("game")}
+                      className={`flex items-center gap-1 px-3 py-1.5 transition ${showAltDirector ? "bg-fuchsia-500/80" : "hover:bg-white/10"}`}
+                    >
+                      <Gamepad2 className="h-3.5 w-3.5" /> Game
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={!showAltDirector}
+                      disabled={!directorToggle.irlAvailable}
+                      title={directorToggle.irlAvailable ? "Watch the live cameras" : "No room is on air right now"}
+                      onClick={() => chooseDirectorView("irl")}
+                      className={`flex items-center gap-1 px-3 py-1.5 transition disabled:cursor-not-allowed disabled:opacity-40 ${!showAltDirector ? "bg-emerald-600/80" : "hover:bg-white/10"}`}
+                    >
+                      <Radio className="h-3.5 w-3.5" /> IRL
+                    </button>
+                  </div>
                 )}
 
                 {showRoomScene && roomSceneSrc && (

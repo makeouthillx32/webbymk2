@@ -50,7 +50,23 @@ import {
   type DirectorProgramFramingLease,
 } from "./directorProgramFraming";
 
-export type ServerDirectorMode = "STANDBY" | "ATTENTION" | "AUTO_TRACKING" | "MANUAL_PILOT";
+/**
+ * GAME: no room is on air for Tank, so there is nothing to direct — viewers
+ * get the walkable house (alt director) and activeCameraId is "". Staff
+ * tracking keeps running; only the programme is empty.
+ */
+export type ServerDirectorMode = "STANDBY" | "ATTENTION" | "AUTO_TRACKING" | "MANUAL_PILOT" | "GAME";
+
+export const GAME_MODE_REASON = "[GAME] No room is on air: viewers get the walkable house";
+
+/**
+ * The one rule for what may go on the programme: a camera the public
+ * directory still carries. Switched-off rooms are gone from it, so neither a
+ * pilot lease nor an attention lock can put them in front of viewers.
+ */
+export function isOnAirCamera(cameraId: string | null | undefined, onAirIds: ReadonlySet<string>): boolean {
+  return Boolean(cameraId) && onAirIds.has(cameraId as string);
+}
 export type { ActiveChaosItemPayload };
 
 export type ServerDirectorState = {
@@ -68,15 +84,17 @@ export type ServerDirectorState = {
   activeChaosItem?: ActiveChaosItemPayload | null;
 };
 
+// Boot state until the first tick. Used to claim cam-…090 / AUTO_TRACKING,
+// which it then kept forever whenever no room was on air — the director
+// "holding" a switched-off room for hours (seen 2026-11-04).
 const DEFAULT_SERVER_DIRECTOR_STATE: ServerDirectorState = {
-  activeCameraId: "cam-1786768240090",
-  activeRoomKey: "game-room",
-  mode: "AUTO_TRACKING",
-  // Leaving manual pilot must drop the PTZ transform with it.
+  activeCameraId: "",
+  activeRoomKey: "",
+  mode: "GAME",
   ptzState: null,
-  dwellSecondsRemaining: 15,
+  dwellSecondsRemaining: 0,
   switchedAt: Date.now(),
-  reason: "[AUDIO_TRACKING] Live Audio Peak Auto-Delegation",
+  reason: GAME_MODE_REASON,
   attentionLock: DEFAULT_DIRECTOR_ATTENTION,
   updatedAt: Date.now(),
 };
@@ -401,12 +419,36 @@ async function evaluateServerDirectorTick(): Promise<ServerDirectorState> {
           : `[${primaryChaosItem?.itemName.toUpperCase() || "CHAOS"}] Active item override (${decoupledPolicy.timeRemainingSeconds}s remaining)`;
     }
 
+    // Nothing on air for Tank: GAME. Nothing below may pick a camera — every
+    // branch would otherwise fall through and leave the last (or boot) camera
+    // claimed as ON AIR.
+    if (onlineCameras.length === 0) {
+      const entering = g_serverDirectorState.mode !== "GAME";
+      g_serverDirectorState = {
+        activeCameraId: "",
+        activeRoomKey: "",
+        mode: "GAME",
+        ptzState: null,
+        dwellSecondsRemaining: 0,
+        switchedAt: entering ? now : g_serverDirectorState.switchedAt,
+        reason: GAME_MODE_REASON,
+        attentionLock,
+        activeChaosItem: activeChaosPayload,
+        updatedAt: now,
+      };
+      if (entering) await broadcastDirectorCut(g_serverDirectorState);
+      return g_serverDirectorState;
+    }
+    const onAirIds = new Set(cameras.map((c) => c.id));
+
     // 0. Manual pilot holds precedence UNLESS a chaos item has overrideRoomLock: true
     //    (e.g. Chaos Cyclone or Viewer Mutiny explicitly knocks operator lock off its rocker)
     const pilotLease = await getActivePilotLease();
     const knockOffRocker = decoupledPolicy.hasActiveOverride && decoupledPolicy.overrideRoomLock;
 
-    if (pilotLease && !knockOffRocker) {
+    // A lease on a switched-off room's camera is not honoured: staff can watch
+    // and track it, but it never reaches the programme.
+    if (pilotLease && !knockOffRocker && isOnAirCamera(pilotLease.activeCameraId, onAirIds)) {
       const cameraChanged = g_serverDirectorState.activeCameraId !== pilotLease.activeCameraId;
       g_serverDirectorState = {
         activeCameraId: pilotLease.activeCameraId,
@@ -433,8 +475,11 @@ async function evaluateServerDirectorTick(): Promise<ServerDirectorState> {
       return g_serverDirectorState;
     }
 
-    // 1. Attention Lock Override (Producer / Moderator emergency command)
-    if (attentionLock.active) {
+    // 1. Attention Lock Override (Producer / Moderator emergency command).
+    // A camera lock on a switched-off room is ignored, same rule as the pilot.
+    const attentionAllowed =
+      attentionLock.targetType !== "camera" || isOnAirCamera(attentionLock.targetId, onAirIds);
+    if (attentionLock.active && attentionAllowed) {
       let targetCamId = g_serverDirectorState.activeCameraId;
       let targetRoomKey = attentionLock.targetId;
 

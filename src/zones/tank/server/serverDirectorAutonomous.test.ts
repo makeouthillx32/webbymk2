@@ -30,7 +30,7 @@ describe("Autonomous Server Director Warmup & 24/7 Background Lifecycle", () => 
     expect(warmedState).toBeDefined();
     expect(warmedState.activeCameraId).toBeDefined();
     expect(warmedState.activeRoomKey).toBeDefined();
-    expect(["STANDBY", "AUTO_TRACKING", "ATTENTION", "MANUAL_PILOT"]).toContain(
+    expect(["STANDBY", "AUTO_TRACKING", "ATTENTION", "MANUAL_PILOT", "GAME"]).toContain(
       warmedState.mode,
     );
     expect(warmedState.updatedAt).toBeGreaterThan(0);
@@ -42,7 +42,11 @@ describe("Autonomous Server Director Warmup & 24/7 Background Lifecycle", () => 
     const duration = Date.now() - startTime;
 
     expect(state).toBeDefined();
-    expect(state.activeCameraId.length).toBeGreaterThan(0);
+    // This suite has no cameras (fetch returns nothing), so nothing is on air:
+    // GAME, with no camera claimed. It used to assert a non-empty id, which
+    // only passed because the boot state hard-coded cam-…090 and never let go.
+    expect(state.mode).toBe("GAME");
+    expect(state.activeCameraId).toBe("");
     // Should return fast from pre-warmed memory
     expect(duration).toBeLessThan(100);
   });
@@ -98,7 +102,9 @@ describe("Autonomous Server Director Warmup & 24/7 Background Lifecycle", () => 
     expect(state.activeChaosItem?.itemSlug).toBe("chaos-cyclone");
     expect(state.activeChaosItem?.overrideRoomLock).toBe(true);
     expect(state.activeChaosItem?.chaosHopIntervalMs).toBe(4500);
-    expect(state.reason).toContain("[CHAOS_CYCLONE]");
+    // With nothing on air the chaos item is carried (it resumes the moment a
+    // room comes back) but there is nothing to shuffle: the house is in GAME.
+    expect(state.reason).toContain("[GAME]");
 
     // Clear the item
     clearItemOverride();

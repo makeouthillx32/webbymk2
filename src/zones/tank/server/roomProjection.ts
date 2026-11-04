@@ -49,9 +49,22 @@ export function deriveOfflineRoomKeys(presentation: RoomPresentationRow[]): stri
   return presentation.filter((row) => row.isOffline).map((row) => row.roomKey);
 }
 
+/**
+ * The rooms deriveRooms() drops because an admin switched them off — same
+ * grouping, same visibility policy — tagged `offAir`. Staff only: the public
+ * projection strips them (see toPublicCameraDirectory).
+ */
+export function deriveOffAirRooms(
+  cameras: DiscoveredCamera[],
+  presentation: RoomPresentationRow[],
+): DerivedRoom[] {
+  return deriveRooms(cameras, presentation, "off-air");
+}
+
 export function deriveRooms(
   cameras: DiscoveredCamera[],
   presentation: RoomPresentationRow[],
+  which: "on-air" | "off-air" = "on-air",
 ): DerivedRoom[] {
   const presentationByKey = new Map(presentation.map((row) => [row.roomKey, row]));
 
@@ -77,7 +90,7 @@ export function deriveRooms(
     // rendered "offline" state — nothing about this room, including its
     // camera URLs, leaves the server while it's off. See
     // cameraRegistryDb.ts's setRoomOffline/setAllRoomsOffline.
-    if (curated?.isOffline) continue;
+    if (Boolean(curated?.isOffline) !== (which === "off-air")) continue;
 
     const sorted = [...groupCameras].sort((a, b) => a.priority - b.priority);
     const featured = sorted.find((camera) => camera.presence === "online" || camera.presence === "degraded")
@@ -96,6 +109,7 @@ export function deriveRooms(
       audioOutputKind: curated?.audioOutputKind ?? "embedded",
       audioOutputConfig: curated?.audioOutputConfig ?? {},
       audioInputSourceId: curated?.audioInputSourceId ?? null,
+      ...(which === "off-air" ? { offAir: true } : {}),
     });
   }
 

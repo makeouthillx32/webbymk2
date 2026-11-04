@@ -36,7 +36,7 @@ import {
   normalizeManagerCameraMedia,
   type ManagerCamera,
 } from "./receiverContract";
-import { deriveOfflineRoomKeys, deriveRooms } from "./roomProjection";
+import { deriveOffAirRooms, deriveOfflineRoomKeys, deriveRooms } from "./roomProjection";
 import { liveObsRoomsAsCameras } from "./obsRoomProjection";
 import { cameras as fixtureCameras } from "../fixtures";
 import { attachRecentCameraClips } from "./cameraClipMetadata";
@@ -741,6 +741,7 @@ async function refreshCameraDirectorySnapshot(now: number): Promise<CameraDirect
       // cameras of switched-off rooms — deriveRooms has already removed the
       // rooms themselves by this point.
       offlineRoomKeys: deriveOfflineRoomKeys(roomPresentation),
+      offAirRooms: deriveOffAirRooms(cameras, roomPresentation),
       audioSources,
     };
     cachedSnapshot = snapshot;

@@ -41,6 +41,12 @@ export const DIRECTOR_MODE_PRESENTATION: Record<ServerDirectorMode, DirectorMode
     text: "text-emerald-400",
     dot: "bg-emerald-400 shadow-[0_0_8px_#34d399]",
   },
+  // Nothing on air for Tank: viewers are in the walkable house.
+  GAME: {
+    label: "GAME MODE",
+    text: "text-fuchsia-400",
+    dot: "bg-fuchsia-400 shadow-[0_0_8px_#e879f9]",
+  },
 };
 
 const UNKNOWN_DIRECTOR_MODE: DirectorModePresentation = {

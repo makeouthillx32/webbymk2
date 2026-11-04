@@ -182,6 +182,12 @@ export type DerivedRoom = {
   // the migration comment on tank_rooms.audio_input_source_id. Null means
   // no explicit choice has been made yet.
   audioInputSourceId: string | null;
+  /**
+   * Staff directory only: the room exists and its cameras are still ingested
+   * and tracked, but it is switched off for Tank (tank_rooms.is_offline), so
+   * viewers never see it. Never present in a public payload.
+   */
+  offAir?: boolean;
 };
 
 export type TankAudioRequestKind = "tts" | "sfx" | "hazard_effect";
@@ -265,6 +271,13 @@ export type CameraDirectorySnapshot = {
    * Admin-only: stripped from the public projection's output.
    */
   offlineRoomKeys?: string[];
+  /**
+   * The rooms `rooms` omits because they are switched off, derived the same
+   * way. Staff surfaces (the house console, Axis) show them as off air, so
+   * turning a room off for Tank does not turn it into a ghost for the back
+   * end. Admin-only: stripped from the public projection's output.
+   */
+  offAirRooms?: DerivedRoom[];
 };
 
 export type TankChannel = {
