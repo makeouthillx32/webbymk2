@@ -70,10 +70,12 @@ describe("pixel reskin wiring", () => {
   test("both 3D surfaces render through the pixel pass and play the house effects; previews use the pass", () => {
     for (const file of [read("components", "AltDirector3D.tsx"), read("components", "RoomScene3D.tsx")]) {
       expect(file).toContain("<PixelRenderer />");
-      expect(file).toContain("fx.update(");
-      expect(file).toContain("<primitive object={fx.group} />");
+      expect(file).toMatch(/[fF]x\.update\(/);
+      expect(file).toMatch(/<primitive object=\{(fx|houseFx)\.group\} \/>/);
       expect(file).toContain('imageRendering: "pixelated"');
     }
     expect(read("altDirector", "gamePreviews.ts")).toContain("pass.render(renderer, room.scene, room.camera)");
+    // The house's frame loop destructures \`fx\` from its walk basis: its effects must not be called fx.
+    expect(read("components", "AltDirector3D.tsx")).toContain("houseFx.update(dt, mirror.members, scratch.eye, animate);");
   });
 });

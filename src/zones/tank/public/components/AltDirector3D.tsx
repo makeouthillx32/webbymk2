@@ -221,8 +221,8 @@ function HouseWorld({
     [castGltf.scene, castGltf.animations, avatar],
   );
   useEffect(() => () => mirror.dispose(), [mirror]);
-  const fx = useMemo(() => new HouseFx(), []);
-  useEffect(() => () => fx.dispose(), [fx]);
+  const houseFx = useMemo(() => new HouseFx(), []);
+  useEffect(() => () => houseFx.dispose(), [houseFx]);
   const scratch = useMemo(
     () => ({
       head: new THREE.Vector3(),
@@ -388,7 +388,7 @@ function HouseWorld({
 
     // The mirrored cast: where the real people are, facing the shot.
     mirror.update(dt, scratch.eye, animate);
-    fx.update(dt, mirror.members, scratch.eye, animate);
+    houseFx.update(dt, mirror.members, scratch.eye, animate);
 
     // Dollhouse: on the follow camera the upper walls drop away.
     const showUpper = Boolean(s.shot);
@@ -421,7 +421,7 @@ function HouseWorld({
     <>
       <primitive object={gltf.scene} />
       {separateCast && <primitive object={castGltf.scene} />}
-      <primitive object={fx.group} />
+      <primitive object={houseFx.group} />
       <Visitor groupRef={visitor} sprite={Boolean(avatar)} />
     </>
   );

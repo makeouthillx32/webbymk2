@@ -82,7 +82,13 @@ void main() {
   float lapX = (r + le - 2.0 * d) / d;
   float lapY = (up + dn - 2.0 * d) / d;
   float behind = (lapX < -rel || lapY < -rel) ? 1.0 : 0.0;
-  float rim = (!sky && ((lapX > rel && le > r) || (lapY > rel && up > dn))) ? 1.0 : 0.0;
+  // The near side of an edge is the object's own silhouette: lit where the
+  // farther side is up or left (the light), a darker shade of itself (a
+  // pixel artist's selective outline) where it is down or right.
+  bool nearX = !sky && lapX > rel;
+  bool nearY = !sky && lapY > rel;
+  float rim = ((nearX && le > r) || (nearY && up > dn)) ? 1.0 : 0.0;
+  float selout = ((nearX && le <= r) || (nearY && up <= dn)) ? 1.0 : 0.0;
 
   // Contact shadow: how much of a small ring around this pixel is nearer
   // (corners, under tables, where walls meet floors). Far jumps don't count.
@@ -101,6 +107,7 @@ void main() {
 
   // Grade: a touch of contrast and saturation, warm lights, cool shadows.
   float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = pow(c, vec3(0.88));
   c = mix(vec3(l), c, 1.18);
   c = (c - 0.5) * 1.08 + 0.5;
   c += mix(vec3(-0.012, -0.004, 0.03), vec3(0.03, 0.012, -0.02), smoothstep(0.15, 0.75, l));
@@ -108,8 +115,9 @@ void main() {
   // Depth haze: the far side of a room settles back.
   if (!sky) c = mix(c, haze, smoothstep(5.0, 18.0, d) * 0.4);
 
-  if (rim > 0.5 && behind < 0.5) c = c * 1.18 + 0.03;
-  if (behind > 0.5) c = mix(c, outline, 0.72);
+  if (selout > 0.5) c *= 0.52;
+  else if (rim > 0.5 && behind < 0.5) c = c * 1.2 + 0.04;
+  if (behind > 0.5) c = mix(c, outline, 0.6);
 
   // Vignette, then posterize through the ordered dither.
   vec2 v = vUv - 0.5;
