@@ -52,6 +52,12 @@ type AltDirector3DProps = {
   canWalk: boolean;
   /** A preset from altDirector/avatars.ts; anything unknown falls back to Joe. */
   avatarId?: string;
+  /**
+   * The server director's game cam (a room key). Watchers see exactly this
+   * shot, cut for everyone at once; a walker sees it until they start moving.
+   * null/unknown falls back to the local tour.
+   */
+  programmeShot?: string | null;
   onSignIn?: () => void;
   reducedMotion?: boolean;
   onFailed?: () => void;
@@ -128,6 +134,7 @@ function HouseWorld({
   castUrl,
   walker,
   avatarId,
+  programme,
   input,
   mode,
   effects,
@@ -142,6 +149,7 @@ function HouseWorld({
   castUrl: string | null;
   walker: boolean;
   avatarId: string;
+  programme: React.MutableRefObject<string | null>;
   input: React.MutableRefObject<Input>;
   turn: React.MutableRefObject<number>;
   mode: CameraMode;
@@ -321,19 +329,30 @@ function HouseWorld({
     if (avatar) avatar.rig.position.set(s.x, avatar.baseY + bob, s.z);
     if (avatarAction.current) avatarAction.current.paused = !(moving && animate);
 
-    // Pick the shot. Watchers get the Director's own tour: a cut to the next
-    // room camera every few seconds.
+    // Pick the shot. The server director's game cam when it has one, so every
+    // watcher sees the same cut at the same moment; otherwise the local tour,
+    // a cut to the next room camera every few seconds.
     const floor = walker ? floorAt(map, s.x, s.z) : null;
+    const directed = programme.current && shots.some((shot) => shot.key === programme.current) ? programme.current : null;
     if (!walker) {
-      if (shots.length && (s.watchIndex < 0 || clock.elapsedTime >= s.nextCutAt)) {
-        s.watchIndex = (s.watchIndex + 1) % shots.length;
-        s.nextCutAt = clock.elapsedTime + WATCH_CUT_SECONDS;
+      if (directed) {
+        s.shot = directed;
+      } else {
+        if (shots.length && (s.watchIndex < 0 || clock.elapsedTime >= s.nextCutAt)) {
+          s.watchIndex = (s.watchIndex + 1) % shots.length;
+          s.nextCutAt = clock.elapsedTime + WATCH_CUT_SECONDS;
+        }
+        s.shot = shots[s.watchIndex]?.key ?? null;
       }
-      s.shot = shots[s.watchIndex]?.key ?? null;
     } else if (mode === "director") {
-      scratch.head.set(s.x, 1.35, s.z);
-      scratch.feet.set(s.x, 0.1, s.z);
-      s.shot = pickShot(shots, s.shot, scratch.head, scratch.feet, map, floor?.room ?? null);
+      if (directed && s.walkTime === 0) {
+        // Not walking yet: watch the director's game cam like everyone else.
+        s.shot = directed;
+      } else {
+        scratch.head.set(s.x, 1.35, s.z);
+        scratch.feet.set(s.x, 0.1, s.z);
+        s.shot = pickShot(shots, s.shot, scratch.head, scratch.feet, map, floor?.room ?? null);
+      }
     } else {
       s.shot = null;
     }
@@ -462,6 +481,7 @@ export default function AltDirector3D({
   castUrl = null,
   canWalk,
   avatarId = DEFAULT_AVATAR,
+  programmeShot = null,
   onSignIn,
   reducedMotion = false,
   onFailed,
@@ -472,6 +492,8 @@ export default function AltDirector3D({
   const effects = useRef<Effects>({ tv: false });
   const interact = useRef<HouseHotspot | null>(null);
   const turn = useRef(0);
+  const programme = useRef<string | null>(programmeShot);
+  programme.current = programmeShot;
   const drag = useRef<{ id: number; x: number } | null>(null);
   const [mode, setMode] = useState<CameraMode>("director");
   const [hud, setHud] = useState<Hud>({ place: "The house", shot: "Follow cam", hotspot: null });
@@ -592,6 +614,7 @@ export default function AltDirector3D({
               castUrl={castUrl}
               walker={canWalk}
               avatarId={avatarId}
+              programme={programme}
               input={input}
               mode={mode}
               effects={effects}

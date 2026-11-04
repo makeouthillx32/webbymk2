@@ -2890,6 +2890,7 @@ export function TankExperience({
                     url={houseSceneSrc}
                     castUrl={castSceneUrl(roomSceneManifest)}
                     canWalk={signedIn}
+                    programmeShot={serverDirector.gameCamKey}
                     onSignIn={() => setAccountOpen(true)}
                     reducedMotion={prefersReducedMotion}
                     onFailed={() => setAltDirectorFailedUrl(houseSceneSrc)}

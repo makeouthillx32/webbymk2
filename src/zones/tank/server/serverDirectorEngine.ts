@@ -43,6 +43,7 @@ import { getAllRoomPortals } from "./roomPortalsCatalog";
 import { getActivePilotLease } from "./manualPilotStore";
 import { getActiveDecoupledPolicy } from "./directorPolicyHierarchy";
 import type { ActiveChaosItemPayload } from "../director/chaosDirectorCatalog";
+import { getGameCamHold, loadGameCamKeys, pickGameCam } from "./gameCams";
 import {
   getDirectorProgramFraming,
   persistDirectorProgramFraming,
@@ -82,6 +83,11 @@ export type ServerDirectorState = {
    * receive the short-lived crop published by the staff compositor. */
   ptzState?: VirtualPtzState | null;
   activeChaosItem?: ActiveChaosItemPayload | null;
+  /**
+   * GAME only: the room whose game cam ("TANK — <room>" in the house scene)
+   * is on the programme. activeCameraId stays "": a game cam is not a feed.
+   */
+  gameCamKey?: string | null;
 };
 
 // Boot state until the first tick. Used to claim cam-…090 / AUTO_TRACKING,
@@ -424,19 +430,32 @@ async function evaluateServerDirectorTick(): Promise<ServerDirectorState> {
     // claimed as ON AIR.
     if (onlineCameras.length === 0) {
       const entering = g_serverDirectorState.mode !== "GAME";
+      // The director keeps directing: it cuts between the house's game cams
+      // (gameCams.ts) on a tour, or holds the one staff took. Every cut is
+      // broadcast like a real one so all viewers see the same game cam.
+      const previousGameCam = entering ? null : g_serverDirectorState.gameCamKey ?? null;
+      const gamePick = pickGameCam({
+        keys: await loadGameCamKeys(now),
+        current: previousGameCam,
+        switchedAt: g_serverDirectorState.switchedAt,
+        now,
+        hold: getGameCamHold(now),
+      });
+      const gameCut = entering || gamePick.roomKey !== previousGameCam;
       g_serverDirectorState = {
         activeCameraId: "",
         activeRoomKey: "",
         mode: "GAME",
         ptzState: null,
-        dwellSecondsRemaining: 0,
-        switchedAt: entering ? now : g_serverDirectorState.switchedAt,
-        reason: GAME_MODE_REASON,
+        dwellSecondsRemaining: gamePick.dwellSecondsRemaining,
+        switchedAt: gameCut ? now : g_serverDirectorState.switchedAt,
+        reason: gamePick.roomKey ? gamePick.reason : GAME_MODE_REASON,
         attentionLock,
         activeChaosItem: activeChaosPayload,
+        gameCamKey: gamePick.roomKey,
         updatedAt: now,
       };
-      if (entering) await broadcastDirectorCut(g_serverDirectorState);
+      if (gameCut) await broadcastDirectorCut(g_serverDirectorState);
       return g_serverDirectorState;
     }
     const onAirIds = new Set(cameras.map((c) => c.id));

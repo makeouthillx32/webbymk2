@@ -66,6 +66,7 @@ import {
 } from "../CinematographyMatrix";
 import { TouchDesignerBridge } from "../TouchDesignerBridge";
 import { LiveProgramMonitor } from "../LiveProgramMonitor";
+import { GameCamMatrix } from "../GameCamMatrix/GameCamMatrix";
 import {
   stepFocusEngine,
   DEFAULT_FOCUS_ENGINE_STATE,
@@ -1452,6 +1453,14 @@ export function DirectorWorkspace({
               )}
             </div>
           </div>
+
+          {/* ═══════════ GAME CAMS (the director's programme while no room is on air) ═══════════ */}
+          <GameCamMatrix
+            mode={serverDirector.mode}
+            gameCamKey={serverDirector.gameCamKey}
+            reason={serverDirector.reason}
+            dwellSecondsRemaining={serverDirector.dwellSecondsRemaining}
+          />
 
           {/* ═══════════ MAIN VIRTUAL CANVAS MATRIX (ALL REAL FOOTAGE SIDE-BY-SIDE) ═══════════ */}
           <div className="rounded-xl border border-black/15 bg-black/[0.03] p-4 space-y-3">

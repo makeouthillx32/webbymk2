@@ -57,6 +57,8 @@ export function useServerDirector(options: UseServerDirectorOptions = {}) {
     isSpeaking: boolean;
   }>({ peak: null, isSpeaking: false });
   const [program, setProgram] = useState<DirectorProgramSnapshot | null>(null);
+  // GAME mode's programme: the room whose game cam is on (see gameCams.ts).
+  const [gameCamKey, setGameCamKey] = useState<string | null>(initialState?.gameCamKey ?? null);
 
   const dwellReceivedAtRef = useRef<number>(Date.now());
   const dwellBaseRef = useRef<number>(initialState?.dwellSecondsRemaining ?? 15);
@@ -83,6 +85,7 @@ export function useServerDirector(options: UseServerDirectorOptions = {}) {
       // staff preview disagree with both actual outputs.
       setPtzIfChanged(state.ptzState ?? null);
       setActiveChaosItem(state.activeChaosItem ?? null);
+      setGameCamKey(state.mode === "GAME" ? state.gameCamKey ?? null : null);
       dwellReceivedAtRef.current = Date.now();
       dwellBaseRef.current = state.dwellSecondsRemaining ?? 15;
       setDwellSecondsRemaining(dwellBaseRef.current);
@@ -167,6 +170,7 @@ export function useServerDirector(options: UseServerDirectorOptions = {}) {
     program,
     programAudio,
     activeChaosItem,
+    gameCamKey,
   };
 }
 

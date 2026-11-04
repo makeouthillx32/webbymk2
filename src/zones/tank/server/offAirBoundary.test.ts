@@ -114,7 +114,10 @@ describe("off for Tank, not off for staff", () => {
     expect(source).toContain("isOnAirCamera(pilotLease.activeCameraId, onAirIds)");
     expect(source).toContain('attentionLock.targetType !== "camera" || isOnAirCamera(attentionLock.targetId, onAirIds)');
     // GAME is decided from the PUBLIC projection, before any branch can pick a camera.
-    const game = source.search(/mode: "GAME",\s+ptzState: null,\s+dwellSecondsRemaining: 0,\s+switchedAt: entering/);
+    const game = source.search(/mode: "GAME",\s+ptzState: null,\s+dwellSecondsRemaining: gamePick\.dwellSecondsRemaining,\s+switchedAt: gameCut/);
+    // GAME still directs: game cams, never a real camera id.
+    expect(source).toMatch(/activeCameraId: "",\s+activeRoomKey: "",\s+mode: "GAME"/);
+    expect(source).toContain("gameCamKey: gamePick.roomKey");
     expect(game).toBeGreaterThan(-1);
     expect(game).toBeGreaterThan(source.indexOf("toPublicCameraDirectory(rawSnapshot)"));
     expect(game).toBeLessThan(source.indexOf("const pilotLease = await getActivePilotLease()"));
