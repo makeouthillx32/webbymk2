@@ -74,6 +74,6 @@ describe("pixel pass sizing", () => {
     expect(artSize(900, 480, 3)).toEqual({ width: 300, height: 160 });
     expect(artSize(384, 216, 2)).toEqual({ width: 192, height: 108 });
     expect(artSize(200, 100, 3).height).toBe(96);
-    expect(artSize(4000, 2000, 3).height).toBe(400);
+    expect(artSize(4000, 2000, 3).height).toBe(540);
   });
 });

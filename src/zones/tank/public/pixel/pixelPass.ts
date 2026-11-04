@@ -14,9 +14,9 @@
 import * as THREE from "three";
 
 /** Screen pixels per art pixel. */
-export const DEFAULT_PIXEL_SIZE = 3;
+export const DEFAULT_PIXEL_SIZE = 2;
 const MIN_HEIGHT = 96;
-const MAX_HEIGHT = 400;
+const MAX_HEIGHT = 540;
 
 /** The art resolution for a view of `width` x `height` screen pixels. */
 export function artSize(width: number, height: number, pixelSize = DEFAULT_PIXEL_SIZE): { width: number; height: number } {
@@ -103,26 +103,26 @@ void main() {
     }
     occ /= 8.0;
   }
-  c *= 1.0 - 0.38 * occ;
+  c *= 1.0 - 0.3 * occ;
 
   // Grade: a touch of contrast and saturation, warm lights, cool shadows.
   float l = dot(c, vec3(0.299, 0.587, 0.114));
-  c = pow(c, vec3(0.88));
-  c = mix(vec3(l), c, 1.18);
-  c = (c - 0.5) * 1.08 + 0.5;
-  c += mix(vec3(-0.012, -0.004, 0.03), vec3(0.03, 0.012, -0.02), smoothstep(0.15, 0.75, l));
+  c = pow(c, vec3(0.95));
+  c = mix(vec3(l), c, 1.06);
+  c = (c - 0.5) * 1.04 + 0.5;
+  c += mix(vec3(-0.006, -0.002, 0.015), vec3(0.015, 0.006, -0.01), smoothstep(0.15, 0.75, l));
 
   // Depth haze: the far side of a room settles back.
-  if (!sky) c = mix(c, haze, smoothstep(5.0, 18.0, d) * 0.4);
+  if (!sky) c = mix(c, haze, smoothstep(5.0, 18.0, d) * 0.22);
 
-  if (selout > 0.5) c *= 0.52;
-  else if (rim > 0.5 && behind < 0.5) c = c * 1.2 + 0.04;
-  if (behind > 0.5) c = mix(c, outline, 0.6);
+  if (selout > 0.5) c *= 0.74;
+  else if (rim > 0.5 && behind < 0.5) c = c * 1.08 + 0.015;
+  if (behind > 0.5) c = mix(c, outline, 0.32);
 
   // Vignette, then posterize through the ordered dither.
   vec2 v = vUv - 0.5;
-  c *= 1.0 - 0.32 * smoothstep(0.32, 0.78, length(v * vec2(1.15, 1.0)));
-  float levels = 28.0;
+  c *= 1.0 - 0.18 * smoothstep(0.36, 0.8, length(v * vec2(1.15, 1.0)));
+  float levels = 48.0;
   c = floor(clamp(c, 0.0, 1.0) * levels + bayer(gl_FragCoord.xy)) / levels;
   gl_FragColor = vec4(c, 1.0);
 }`;

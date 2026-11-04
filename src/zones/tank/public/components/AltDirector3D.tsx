@@ -179,7 +179,7 @@ function HouseWorld({
       gltf.animations,
     );
   }, [gltf]);
-  useMemo(() => prepareScene(castGltf.scene), [castGltf.scene]);
+  useMemo(() => prepareScene(castGltf.scene, { shell: false }), [castGltf.scene]);
   const map = useMemo(() => readMap(gltf.scene), [gltf.scene]);
   const shots = useMemo(() => findShots(gltf), [gltf]);
   const upperWalls = useMemo(() => {

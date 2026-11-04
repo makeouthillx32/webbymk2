@@ -79,7 +79,7 @@ function ensureRenderer(): THREE.WebGLRenderer | null {
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.setClearColor(0x05070a, 1);
     pass = new PixelPass();
-    pass.setSize(WIDTH, HEIGHT, 2);
+    pass.setSize(WIDTH, HEIGHT, 1.5);
     const draco = new DRACOLoader();
     draco.setDecoderPath(roomSceneDecoderPath());
     loader = new GLTFLoader();
