@@ -1,16 +1,19 @@
 "use client";
 
 // The off-air stand-in: the room's Blender scene seen from the same spot as
-// its real camera, with the house cast idling and a small drag-to-look.
+// its real camera, with a small drag-to-look. Cast sprites appear only where
+// the live cameras see their person in this room (altDirector/castMirror.ts).
 // Loaded only through next/dynamic (no SSR) and only when a room is dark, so
 // three.js never ships to a viewer who is watching a live feed.
 
 import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useAnimations, useGLTF } from "@react-three/drei";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { roomSceneDecoderPath } from "../roomScenes";
-import { pickClips, prepareScene } from "./sceneMaterials";
+import { prepareScene } from "./sceneMaterials";
+import { CastMirror } from "../altDirector/castMirror";
+import { loadHouseCastOnce } from "../altDirector/houseCastStore";
 
 type Look = { x: number; y: number };
 const LOOK_LIMIT = THREE.MathUtils.degToRad(10);
@@ -40,7 +43,8 @@ function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; room
   useMemo(() => prepareScene(gltf.scene), [gltf.scene]);
   const camera = useMemo(() => roomCamera(gltf.cameras, roomKey), [gltf.cameras, roomKey]);
   const base = useMemo(() => camera?.quaternion.clone() ?? null, [camera]);
-  const { actions } = useAnimations(gltf.animations, gltf.scene);
+  const mirror = useMemo(() => new CastMirror(gltf.scene, gltf.animations, { room: roomKey }), [gltf.scene, gltf.animations, roomKey]);
+  const eye = useMemo(() => new THREE.Vector3(), []);
   const offset = useMemo(() => new THREE.Quaternion(), []);
   const euler = useMemo(() => new THREE.Euler(0, 0, 0, "YXZ"), []);
 
@@ -51,19 +55,19 @@ function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; room
     set({ camera });
   }, [camera, set, size.width, size.height]);
 
+  useEffect(() => () => mirror.dispose(), [mirror]);
   useEffect(() => {
-    const clips = new Set(pickClips(gltf.animations).map((c) => c.name));
-    const playing = Object.entries(actions).filter(([name]) => clips.has(name));
-    if (animate) playing.forEach(([, action]) => action?.reset().play());
-    return () => playing.forEach(([, action]) => action?.stop());
-  }, [actions, animate, gltf.animations]);
+    loadHouseCastOnce();
+  }, []);
 
   useEffect(() => {
     onReady?.();
   }, [onReady]);
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
     if (!camera || !base) return;
+    camera.getWorldPosition(eye);
+    mirror.update(Math.min(delta, 0.1), eye, animate);
     // A slow sway so the room reads as a place, not a screenshot.
     const sway = animate ? Math.sin(clock.elapsedTime * 0.25) * THREE.MathUtils.degToRad(1.2) : 0;
     euler.set(look.current.y, look.current.x + sway, 0);

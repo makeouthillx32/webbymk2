@@ -39,19 +39,29 @@ describe("house cast wiring", () => {
     const hook = read("..", "director", "useServerDirector.ts");
     expect(hook).toContain('{ event: "house_cast" }, (payload) => publishHouseCast(payload.payload)');
     const house = read("components", "AltDirector3D.tsx");
-    expect(house).toContain("const cast = readHouseCast();");
-    expect(house).toContain("if (mirrorLive) castRigs.forEach((rig) => rig.ownClips.forEach((name) => benched.add(name)));");
-    expect(house).toContain("if (!rig || rig === avatar?.rig) continue;");
+    expect(house).toContain("new CastMirror(castGltf.scene, castGltf.animations, { skip: avatar?.rig ?? null })");
+    expect(house).toContain("mirror.update(dt, scratch.eye, animate);");
   });
 });
 
 describe("house cast opt-out wiring", () => {
   test("the worker filters untracked members and staff can toggle them", () => {
     const worker = read("..", "server", "houseCastWorker.ts");
-    expect(worker).toContain("computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked })");
+    expect(worker).toContain("computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked, lastSeen: seenStore.cache })");
     const route = read("..", "..", "..", "app", "api", "tank", "staff", "house-cast", "route.ts");
     expect(route).toContain("checkStaff()");
     const console = read("..", "director-configuration", "components", "DirectorWorkspace", "DirectorWorkspace.tsx");
     expect(console).toContain("<HouseCastPanel />");
+  });
+});
+
+describe("no skit, anywhere", () => {
+  test("no surface plays the rehearsal clips; room scenes mirror their own room only", () => {
+    for (const file of [read("components", "AltDirector3D.tsx"), read("components", "RoomScene3D.tsx"), read("altDirector", "gamePreviews.ts")]) {
+      expect(file).not.toContain("pickClips");
+      expect(file).toContain("CastMirror");
+    }
+    expect(read("components", "RoomScene3D.tsx")).toContain("{ room: roomKey }");
+    expect(read("altDirector", "gamePreviews.ts")).toContain("{ room: roomKey }");
   });
 });

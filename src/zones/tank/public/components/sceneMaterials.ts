@@ -43,12 +43,3 @@ export function prepareScene(root: THREE.Object3D) {
   });
   root.userData.tankPrepared = true;
 }
-
-/** The house cast's rehearsal loop if there is one, else an idle, else the first clip. */
-export function pickClips(clips: THREE.AnimationClip[]) {
-  const matching = (re: RegExp) => clips.filter((c) => re.test(c.name));
-  const skit = matching(/Skit_Rehearsal/i);
-  if (skit.length) return skit;
-  const idle = matching(/idle|loop/i);
-  return idle.length ? idle : clips.slice(0, 1);
-}

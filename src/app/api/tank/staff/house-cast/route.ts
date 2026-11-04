@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkStaff, staffDenialResponse } from "@/zones/tank/server/staffAuth";
-import { getHouseCast } from "@/zones/tank/server/houseCastWorker";
+import { getHouseCast, getLastSeen } from "@/zones/tank/server/houseCastWorker";
 import { loadUntrackedCast, setCastTracked } from "@/zones/tank/server/houseCastPrefs";
 import { CAST_RIGS } from "@/zones/tank/vision/houseCast";
 
@@ -20,11 +20,13 @@ async function denied() {
 async function roster() {
   const untracked = await loadUntrackedCast();
   const live = new Map(getHouseCast().members.map((m) => [m.id, m]));
+  const lastSeen = getLastSeen();
   return Object.entries(CAST_RIGS).map(([id, { kind }]) => ({
     id,
     kind,
     tracked: !untracked.has(id),
     room: live.get(id)?.room ?? null,
+    lastSeen: lastSeen[id] ? { room: lastSeen[id].room, at: lastSeen[id].at } : null,
   }));
 }
 

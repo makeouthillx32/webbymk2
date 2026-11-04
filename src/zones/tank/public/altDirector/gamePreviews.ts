@@ -17,7 +17,9 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { roomSceneDecoderPath } from "../roomScenes";
-import { pickClips, prepareScene } from "../components/sceneMaterials";
+import { prepareScene } from "../components/sceneMaterials";
+import { CastMirror } from "./castMirror";
+import { loadHouseCastOnce } from "./houseCastStore";
 
 const WIDTH = 384;
 const HEIGHT = 216;
@@ -28,7 +30,8 @@ type Room = {
   status: "loading" | "ready" | "failed";
   scene?: THREE.Object3D;
   camera?: THREE.PerspectiveCamera;
-  mixer?: THREE.AnimationMixer;
+  /** No skit: cast sprites only where the live cameras see their person in this room. */
+  mirror?: CastMirror;
   lastRenderAt: number;
   rendered: boolean;
 };
@@ -97,9 +100,8 @@ function load(roomKey: string, url: string) {
         room.status = "failed";
         return;
       }
-      const mixer = new THREE.AnimationMixer(gltf.scene);
-      for (const clip of pickClips(gltf.animations)) mixer.clipAction(clip).play();
-      Object.assign(room, { status: "ready", scene: gltf.scene, camera, mixer, lastRenderAt: performance.now() });
+      const mirror = new CastMirror(gltf.scene, gltf.animations, { room: roomKey });
+      Object.assign(room, { status: "ready", scene: gltf.scene, camera, mirror, lastRenderAt: performance.now() });
       schedule();
     },
     undefined,
@@ -124,7 +126,7 @@ function draw(url: string, targets: Tile[]) {
   const room = rooms.get(url);
   if (!renderer || !room || room.status !== "ready" || !room.scene || !room.camera) return;
   const now = performance.now();
-  if (!stillsOnly) room.mixer?.update(Math.min(1, (now - room.lastRenderAt) / 1000));
+  room.mirror?.update(Math.min(1, (now - room.lastRenderAt) / 1000), room.camera.position, !stillsOnly);
   room.lastRenderAt = now;
   renderer.render(room.scene, room.camera);
   room.rendered = true;
@@ -188,6 +190,7 @@ export function attachGamePreview(
   canvas.height = HEIGHT;
   const tile: Tile = { roomKey, url, canvas, visible: true, drawnFrom: null };
   tiles.add(tile);
+  loadHouseCastOnce();
   load(roomKey, url);
   schedule();
   return {

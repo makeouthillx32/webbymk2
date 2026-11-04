@@ -77,6 +77,37 @@ export type CastMember = {
 
 export type HouseCastState = { updatedAt: number; members: CastMember[] };
 
+/** Where a member was last seen, kept after they leave the cameras (server-side only). */
+export type LastSeen = { x: number; y: number; room: string; at: number };
+
+/**
+ * Fold this tick's members into the last-seen cache. Untracked members are
+ * forgotten outright: unticked means not tracked, and that includes not
+ * remembered.
+ */
+export function rememberLastSeen(
+  cache: Readonly<Record<string, LastSeen>>,
+  members: readonly CastMember[],
+  untracked: ReadonlySet<string> = new Set(),
+): Record<string, LastSeen> {
+  const out: Record<string, LastSeen> = {};
+  for (const [id, seen] of Object.entries(cache)) if (CAST_RIGS[id] && !untracked.has(id)) out[id] = seen;
+  for (const m of members) if (!untracked.has(m.id)) out[m.id] = { x: m.x, y: m.y, room: m.room, at: m.seenAt };
+  return out;
+}
+
+/** A defensive read of the persisted cache. */
+export function parseLastSeen(raw: unknown): Record<string, LastSeen> {
+  const out: Record<string, LastSeen> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    const s = v as Partial<LastSeen> | null;
+    if (!CAST_RIGS[id] || !s || !Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(s.at) || typeof s.room !== "string") continue;
+    out[id] = { x: s.x!, y: s.y!, room: s.room, at: s.at! };
+  }
+  return out;
+}
+
 export type CastBox = {
   nx: number;
   ny: number;
@@ -131,6 +162,9 @@ function merge(list: Sighting[]): Sighting {
  * @param previous    last tick's members (continuity, smoothing, TTL).
  * @param untracked   cast ids staff switched off: never placed, never held,
  *                    never broadcast (an unticked sprite = not tracked).
+ * @param lastSeen    where each member was last seen, however long ago: an
+ *                    animal that reappears takes the slot it was last seen
+ *                    nearest, so the golden dog stays the golden dog.
  */
 export function computeHouseCast(input: {
   readings: readonly CastReading[];
@@ -139,6 +173,7 @@ export function computeHouseCast(input: {
   previous: readonly CastMember[];
   now: number;
   untracked?: ReadonlySet<string>;
+  lastSeen?: Readonly<Record<string, LastSeen>>;
 }): CastMember[] {
   const { readings, cameraRooms, fits, now } = input;
   const untracked = input.untracked ?? new Set<string>();
@@ -198,11 +233,20 @@ export function computeHouseCast(input: {
       seen.set(slot, found[index]);
       taken.add(index);
     }
+    // New arrivals: the free slot last seen nearest wins (a prediction from
+    // the last-seen cache); slots never seen at all come after, in order.
+    const lastSeen = input.lastSeen ?? {};
     found.forEach((s, index) => {
       if (taken.has(index)) return;
-      const slot = slots.find((id) => !seen.has(id) && !prevById.has(id));
-      if (!slot) return;
-      seen.set(slot, s);
+      const free = slots.filter((id) => !seen.has(id) && !prevById.has(id));
+      if (!free.length) return;
+      const ranked = [...free].sort((a, b) => {
+        const la = lastSeen[a];
+        const lb = lastSeen[b];
+        if (la && lb) return dist(la, s) - dist(lb, s);
+        return la ? -1 : lb ? 1 : 0;
+      });
+      seen.set(ranked[0], s);
       taken.add(index);
     });
   }

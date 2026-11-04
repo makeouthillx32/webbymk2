@@ -9,7 +9,18 @@ import { useCallback, useEffect, useState } from "react";
 import { Users } from "lucide-react";
 import { castLabel } from "../../../vision/houseCast";
 
-type Member = { id: string; kind: "human" | "dog" | "cat"; tracked: boolean; room: string | null };
+type Member = {
+  id: string;
+  kind: "human" | "dog" | "cat";
+  tracked: boolean;
+  room: string | null;
+  lastSeen: { room: string; at: number } | null;
+};
+
+function ago(at: number) {
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
+}
 
 const POLL_MS = 4000;
 
@@ -86,7 +97,13 @@ export function HouseCastPanel() {
               />
               {castLabel(member.id)}
               <span className="text-[10px] font-mono font-normal text-white/50">
-                {!member.tracked ? "off" : member.room ? `in ${member.room}` : member.kind === "human" ? "not seen" : "—"}
+                {!member.tracked
+                  ? "off"
+                  : member.room
+                    ? `in ${member.room}`
+                    : member.lastSeen
+                      ? `last ${member.lastSeen.room}, ${ago(member.lastSeen.at)} ago`
+                      : "not seen"}
               </span>
             </button>
           ))}

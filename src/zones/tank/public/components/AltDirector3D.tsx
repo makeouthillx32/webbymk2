@@ -14,7 +14,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useAnimations, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { roomSceneDecoderPath } from "../roomScenes";
-import { pickClips, prepareScene } from "./sceneMaterials";
+import { prepareScene } from "./sceneMaterials";
 import {
   floorAt,
   moveWithCollision,
@@ -24,10 +24,9 @@ import {
   type HouseMap,
 } from "../altDirector/houseMap";
 import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
-import { DEFAULT_AVATAR, faceAvatar, findAvatarRig, findCastRig, prepareAvatar, restoreAvatar, type AvatarRig } from "../altDirector/avatars";
-import { loadHouseCastOnce, readHouseCast } from "../altDirector/houseCastStore";
-import { CAST_RIGS } from "../../vision/houseCast";
-import { toThreeFloor } from "../../vision/fisheyeFloor";
+import { DEFAULT_AVATAR, faceAvatar, findAvatarRig, prepareAvatar, restoreAvatar } from "../altDirector/avatars";
+import { loadHouseCastOnce } from "../altDirector/houseCastStore";
+import { CastMirror } from "../altDirector/castMirror";
 import { mergeStaticMeshes } from "../altDirector/mergeStatic";
 
 type CameraMode = "director" | "follow";
@@ -204,7 +203,7 @@ function HouseWorld({
   }, [gltf.scene]);
   const follow = useMemo(() => new THREE.PerspectiveCamera(55, 1, 0.05, 80), []);
   const visitor = useRef<THREE.Group>(null);
-  const { actions, mixer } = useAnimations(castGltf.animations, castGltf.scene);
+  const { mixer } = useAnimations(castGltf.animations, castGltf.scene);
   // The visitor's body: a cast member's own rig, lifted out of the cast.
   const avatar = useMemo(() => {
     if (!walker) return null;
@@ -212,24 +211,14 @@ function HouseWorld({
     return found ? prepareAvatar(found, castGltf.animations) : null;
   }, [walker, avatarId, castGltf.scene, castGltf.animations]);
   const avatarAction = useRef<THREE.AnimationAction | null>(null);
-  // The house cast mirrors the real house (vision/houseCast.ts): every rig
-  // with a cast id, minus the visitor's own body (the visitor wins).
-  const castRigs = useMemo(() => {
-    const out = new Map<string, AvatarRig>();
-    for (const [id, { rig: rigName }] of Object.entries(CAST_RIGS)) {
-      const rig = findCastRig(castGltf.scene, id, rigName);
-      if (!rig || rig === avatar?.rig) continue;
-      out.set(id, prepareAvatar({ id, rig }, castGltf.animations));
-    }
-    return out;
-  }, [castGltf.scene, castGltf.animations, avatar]);
-  // WHO is mirrored, as React state: it changes when someone walks into or out
-  // of the cameras, not every second. Where they stand is read per frame.
-  const [mirrorKey, setMirrorKey] = useState("");
-  const mirrored = useMemo(() => new Set(mirrorKey ? mirrorKey.split(",") : []), [mirrorKey]);
-  const mirrorLive = mirrored.size > 0;
-  const mirrorActions = useRef(new Map<string, THREE.AnimationAction | null>());
-  const mirrorPos = useRef(new Map<string, { x: number; z: number }>());
+  // The rest of the cast mirrors the real house (altDirector/castMirror.ts):
+  // no skit, and a member no camera can see is not rendered. The visitor's
+  // own body is theirs to move.
+  const mirror = useMemo(
+    () => new CastMirror(castGltf.scene, castGltf.animations, { skip: avatar?.rig ?? null }),
+    [castGltf.scene, castGltf.animations, avatar],
+  );
+  useEffect(() => () => mirror.dispose(), [mirror]);
   const scratch = useMemo(
     () => ({
       head: new THREE.Vector3(),
@@ -251,7 +240,6 @@ function HouseWorld({
     upperShown: null as boolean | null,
     hudKey: "",
     walkTime: 0,
-    castKey: "",
     placed: false,
     watchIndex: -1,
     nextCutAt: 0,
@@ -272,51 +260,8 @@ function HouseWorld({
   }, [shots, follow, size.width, size.height]);
 
   useEffect(() => {
-    // The rest of the cast keeps rehearsing; the visitor's rig sits it out,
-    // and while the house is mirrored the whole cast does: they are the real
-    // people now (or, if nobody sees them, not in the house).
-    const benched = new Set<string>(avatar?.ownClips ?? []);
-    if (mirrorLive) castRigs.forEach((rig) => rig.ownClips.forEach((name) => benched.add(name)));
-    const clips = new Set(pickClips(castGltf.animations).map((c) => c.name).filter((name) => !benched.has(name)));
-    const playing = Object.entries(actions).filter(([name]) => clips.has(name));
-    if (animate) playing.forEach(([, action]) => action?.reset().play());
-    return () => playing.forEach(([, action]) => action?.stop());
-  }, [actions, animate, avatar, castGltf.animations, mirrorLive, castRigs]);
-
-  useEffect(() => {
     loadHouseCastOnce();
   }, []);
-
-  useEffect(() => {
-    if (!mirrorLive) return;
-    // Mirrored rigs walk in place (rehearsal poses minus blocking) while the
-    // real person moves; cast members nobody can see leave the stage.
-    const walking: Array<[AvatarRig, THREE.AnimationAction | null]> = [];
-    castRigs.forEach((rig, id) => {
-      if (!mirrored.has(id)) {
-        rig.rig.visible = false;
-        return;
-      }
-      const action = rig.clip ? mixer.clipAction(rig.clip) : null;
-      if (action) {
-        action.play();
-        action.paused = true;
-      }
-      walking.push([rig, action]);
-    });
-    mirrorActions.current = new Map(walking.map(([rig, action]) => [rig.id, action]));
-    return () => {
-      walking.forEach(([rig, action]) => {
-        action?.stop();
-        if (rig.clip) mixer.uncacheAction(rig.clip);
-      });
-      castRigs.forEach((rig) => {
-        rig.rig.visible = true;
-        restoreAvatar(rig);
-      });
-      mirrorActions.current = new Map();
-    };
-  }, [mirrorLive, mirrored, castRigs, mixer]);
 
   useEffect(() => {
     if (!avatar) return;
@@ -437,36 +382,8 @@ function HouseWorld({
     camera.getWorldPosition(scratch.eye);
     if (avatar) faceAvatar(avatar, Math.atan2(scratch.eye.x - s.x, scratch.eye.z - s.z));
 
-    // The mirrored cast: ease each rig toward where its real person stands
-    // (updates arrive once a second), walking while it moves, facing the shot.
-    const cast = readHouseCast();
-    const castKey = cast.filter((m) => castRigs.has(m.id)).map((m) => m.id).join(",");
-    if (castKey !== s.castKey) {
-      s.castKey = castKey;
-      setMirrorKey(castKey);
-      // Someone who left and comes back appears where they are, not gliding
-      // through walls from where they were last seen.
-      const present = new Set(castKey.split(","));
-      for (const id of [...mirrorPos.current.keys()]) if (!present.has(id)) mirrorPos.current.delete(id);
-    }
-    for (const member of cast) {
-      const rig = castRigs.get(member.id);
-      if (!rig || !mirrored.has(member.id)) continue;
-      const target = toThreeFloor(member);
-      let p = mirrorPos.current.get(member.id);
-      if (!p) {
-        p = { x: target.x, z: target.z };
-        mirrorPos.current.set(member.id, p);
-      }
-      const ease = Math.min(1, dt * 2.5);
-      p.x += (target.x - p.x) * ease;
-      p.z += (target.z - p.z) * ease;
-      const walking = member.moving || Math.hypot(target.x - p.x, target.z - p.z) > 0.12;
-      rig.rig.position.set(p.x, rig.baseY, p.z);
-      const action = mirrorActions.current.get(member.id);
-      if (action) action.paused = !(walking && animate);
-      faceAvatar(rig, Math.atan2(scratch.eye.x - p.x, scratch.eye.z - p.z));
-    }
+    // The mirrored cast: where the real people are, facing the shot.
+    mirror.update(dt, scratch.eye, animate);
 
     // Dollhouse: on the follow camera the upper walls drop away.
     const showUpper = Boolean(s.shot);

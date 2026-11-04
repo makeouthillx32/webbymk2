@@ -14,7 +14,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { parseCameraFits, type RoomCameraFit } from "../vision/fisheyeFloor";
-import { cameraRoomMap, computeHouseCast, houseCastChanged, type HouseCastState } from "../vision/houseCast";
+import {
+  cameraRoomMap,
+  computeHouseCast,
+  houseCastChanged,
+  parseLastSeen,
+  rememberLastSeen,
+  type HouseCastState,
+  type LastSeen,
+} from "../vision/houseCast";
 import { ROOM_SCENE_BUCKET, ROOM_SCENE_FOLDER } from "../public/roomScenes";
 import { getFreshTelemetry } from "./directorTelemetryStore";
 import { getCameraDirectorySnapshot } from "./receiverManager";
@@ -34,6 +42,50 @@ declare global {
   var __tankHouseCastTimer: ReturnType<typeof setInterval> | undefined;
   // eslint-disable-next-line no-var
   var __tankHouseCastDebug: HouseCastDebug | undefined;
+  // eslint-disable-next-line no-var
+  var __tankHouseCastLastSeen: { cache: Record<string, LastSeen>; loaded: boolean; savedAt: number; dirty: boolean } | undefined;
+}
+
+// Where each member was last seen, kept after they leave the cameras and
+// across restarts (tank_platform_settings), so the tracker can predict who a
+// returning animal is. Server-side only: never broadcast.
+const LAST_SEEN_KEY = "house_cast_last_seen";
+const LAST_SEEN_SAVE_MS = 30_000;
+
+function lastSeenStore() {
+  return (globalThis.__tankHouseCastLastSeen ??= { cache: {}, loaded: false, savedAt: 0, dirty: false });
+}
+
+export function getLastSeen(): Record<string, LastSeen> {
+  return lastSeenStore().cache;
+}
+
+async function loadLastSeenOnce() {
+  const store = lastSeenStore();
+  if (store.loaded) return;
+  store.loaded = true;
+  try {
+    const { createAdminClient } = await import("@/utils/supabase/admin");
+    const { data } = await createAdminClient().from("tank_platform_settings").select("value").eq("key", LAST_SEEN_KEY).maybeSingle();
+    store.cache = { ...parseLastSeen(data?.value), ...store.cache };
+  } catch {
+    // Start empty; the cache refills from live sightings.
+  }
+}
+
+async function saveLastSeen(now: number) {
+  const store = lastSeenStore();
+  if (!store.dirty || now - store.savedAt < LAST_SEEN_SAVE_MS) return;
+  store.savedAt = now;
+  store.dirty = false;
+  try {
+    const { createAdminClient } = await import("@/utils/supabase/admin");
+    await createAdminClient()
+      .from("tank_platform_settings")
+      .upsert({ key: LAST_SEEN_KEY, value: store.cache, updated_at: new Date(now).toISOString() }, { onConflict: "key" });
+  } catch {
+    store.dirty = true;
+  }
 }
 
 /** What the last tick had to work with, for staff diagnostics. */
@@ -86,14 +138,20 @@ export async function tickHouseCast(
     getCameraDirectorySnapshot().catch(() => null),
     loadCameraFits(now),
     loadUntrackedCast(now),
+    loadLastSeenOnce(),
   ]);
+  const seenStore = lastSeenStore();
   const prev = globalThis.__tankHouseCast;
   const previous = prev?.state.members ?? [];
   const cameraRooms = snapshot
     ? cameraRoomMap([...snapshot.rooms, ...(snapshot.offAirRooms ?? [])], snapshot.cameras)
     : new Map<string, string>();
   const readings = getFreshTelemetry(now);
-  const members = computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked });
+  const members = computeHouseCast({ readings, cameraRooms, fits, previous, now, untracked, lastSeen: seenStore.cache });
+  const remembered = rememberLastSeen(seenStore.cache, members, untracked);
+  if (members.length || Object.keys(remembered).length !== Object.keys(seenStore.cache).length) seenStore.dirty = true;
+  seenStore.cache = remembered;
+  void saveLastSeen(now);
   globalThis.__tankHouseCastDebug = {
     at: now,
     readings: readings.length,
