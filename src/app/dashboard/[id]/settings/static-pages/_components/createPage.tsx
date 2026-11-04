@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type StaticPageRow = {
   id: string;
+  /** Owning zone (public.zones.key). Pages resolve by (zone_key, slug). */
+  zone_key: string;
   slug: string;
   title: string;
   content: string;
@@ -18,6 +20,7 @@ export type StaticPageRow = {
 };
 
 export type CreateStaticPageInput = {
+  zone_key: string;
   title?: string;
   slug: string;
   content?: string;
@@ -56,12 +59,15 @@ export async function createStaticPage(
 ) {
   const slug = normalizeSlug(input.slug);
   if (!slug) throw new Error("Slug is required.");
+  const zone_key = (input.zone_key || "").trim();
+  if (!zone_key) throw new Error("Zone is required.");
 
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
 
   const payload: StaticPageRow = {
     id,
+    zone_key,
     slug,
     title: (input.title || "").trim() || slugToTitle(slug),
     content: input.content ?? "",

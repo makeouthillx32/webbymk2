@@ -8,6 +8,7 @@ import useLoginSession from "@/lib/useLoginSession";
 import { useTheme } from "@/app/provider";
 import { userRoleCookies } from "@/lib/cookieUtils";
 import { useSignInHref, useSignUpHref } from "@/lib/useSignInHref";
+import { isExternalHref, privacyPolicyHref, shopPolicyHref, termsHref } from "@/lib/legalLinks";
 
 type FooterLink = { name: string; href: string; external?: boolean };
 type FooterSection = { title: string; links: FooterLink[] };
@@ -54,24 +55,21 @@ export default function Footer() {
         links: [
           { name: "Contact", href: "/contact" },
 
-          // ✅ CMS-driven pages (Option B) — update to your real slugs if/when they exist
-          { name: "Shipping", href: "/pages/shipping" },
-          { name: "Returns", href: "/pages/returns" },
+          // Shop's apparel policies (zone-scoped static_pages rows).
+          { name: "Shipping", href: shopPolicyHref("shipping"), external: isExternalHref(shopPolicyHref("shipping")) },
+          { name: "Returns", href: shopPolicyHref("returns"), external: isExternalHref(shopPolicyHref("returns")) },
           { name: "Size Guide", href: "/pages/size-guide" },
         ],
       },
       {
-        title: "About",
+        // static_pages are zone-scoped: Shop has no about/faq/privacy/terms
+        // rows of its own (those were Labs' research-compound copy until
+        // 2026-11-03), so privacy/terms go to the core site's platform-wide
+        // policy and Our Story / FAQs stay out until Shop has its own pages.
+        title: "Legal",
         links: [
-          // ✅ CMS-driven pages (your real slug)
-          { name: "Our Story", href: "/pages/about" },
-
-          // ✅ Landing section
-          { name: "FAQs", href: "/pages/faq" },
-
-          // ✅ Legal CMS pages (your real slugs)
-          { name: "Privacy Policy", href: "/pages/privacy-policy" },
-          { name: "Terms", href: "/pages/terms-and-conditions" },
+          { name: "Privacy Policy", href: privacyPolicyHref(), external: isExternalHref(privacyPolicyHref()) },
+          { name: "Terms", href: termsHref(), external: isExternalHref(termsHref()) },
         ],
       },
     ];
@@ -201,12 +199,12 @@ export default function Footer() {
         <div className="mt-12 flex flex-col gap-4 border-t border-[var(--lt-border)] pt-8 text-xs text-[var(--lt-fg)] opacity-60 md:flex-row md:items-center md:justify-between">
           <p>© {new Date().getFullYear()} Unenter Solutions™. All rights reserved.</p>
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            <Link className="hover:underline" href="/legal/privacy-policy">
+            <a className="hover:underline" href={privacyPolicyHref()}>
               Privacy
-            </Link>
-            <Link className="hover:underline" href="/legal/terms-and-conditions">
+            </a>
+            <a className="hover:underline" href={termsHref()}>
               Terms
-            </Link>
+            </a>
             <Link className="hover:underline" href="/contact">
               Contact
             </Link>

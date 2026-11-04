@@ -808,6 +808,8 @@ async function main() {
     const { data: existing } = await supabase
       .from("static_pages")
       .select("id, slug, version")
+      // static_pages are zone-scoped (2026-11-03): only ever touch Labs' rows.
+      .eq("zone_key", "labs")
       .eq("slug", page.slug)
       .maybeSingle();
 
@@ -836,6 +838,7 @@ async function main() {
     } else {
       console.log(`- Creating new record for '${page.slug}'...`);
       const { error: insertErr } = await supabase.from("static_pages").insert({
+        zone_key: "labs",
         slug: page.slug,
         title: page.title,
         content: page.content,

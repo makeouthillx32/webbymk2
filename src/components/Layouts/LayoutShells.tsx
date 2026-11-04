@@ -8,6 +8,9 @@ import { lazy, Suspense } from "react";
 import { Toaster } from "react-hot-toast";
 import ConditionalOverlays from "@/components/Layouts/overlays/ConditionalOverlays";
 import type { ScreenSize } from "@/components/Layouts/hooks/useScreenSize";
+// Banner "learn more" → the visitor's zone's own privacy policy (Labs) or the
+// core site's platform-wide one — never another zone's.
+import { privacyPolicyHref } from "@/lib/legalLinks";
 
 const AccessibilityOverlay = lazy(
   () => import("@/components/Layouts/overlays/accessibility/accessibility")
@@ -65,19 +68,6 @@ const COOKIE_MESSAGES: Record<ScreenSize, string> = {
   desktop:
     "We use cookies to enhance your experience, analyze site usage, and improve our services. Essential cookies are required for basic functionality.",
 };
-
-/**
- * Where the banner's "learn more" goes: the privacy policy of the zone the
- * visitor is on. Labs and shop serve their policies at /pages/<slug>; the
- * core site has /privacy; other zones (blog, docs, …) don't ship that route,
- * so they link to the core site's.
- */
-function privacyPolicyHref(): string {
-  const zone = process.env.NEXT_PUBLIC_ZONE;
-  if (zone === "labs" || zone === "shop") return "/pages/privacy-policy";
-  if (!zone || zone === "unenter") return "/privacy";
-  return `${(process.env.NEXT_PUBLIC_SITE_URL || "https://www.unenter.live").replace(/\/$/, "")}/privacy`;
-}
 
 export function AppCookieConsent({ screenSize = "desktop" }: { screenSize?: ScreenSize }) {
   if (process.env.NEXT_PUBLIC_ZONE === "tank") return null;

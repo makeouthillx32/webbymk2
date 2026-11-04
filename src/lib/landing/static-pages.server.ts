@@ -1,73 +1,43 @@
 // lib/landing/static-pages.server.ts
 import { createServerClient } from '@/utils/supabase/server';
+import { resolveCurrentZoneKey } from '@/lib/zoneContext';
+import {
+  fetchPublishedStaticPageForZone,
+  type StaticPagesClient,
+  type StaticPageRow,
+} from './static-pages.resolve';
 
-export type StaticPageRow = {
-  id: string;
-  slug: string;
-  title: string;
-  content: string;
-  content_format: 'html' | 'markdown';
-  meta_description: string | null;
-  meta_keywords: string[] | null;
-  og_image_url: string | null;
-  is_published: boolean;
-  published_at: string | null;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
+export type { StaticPageRow } from './static-pages.resolve';
 
 /**
- * Normalize slug by removing leading slashes
- * "privacy-policy" -> "privacy-policy"
- * "/privacy-policy" -> "privacy-policy"
- */
-function normalizeSlug(slug: unknown): string | null {
-  if (typeof slug !== 'string') return null;
-
-  const s = slug.trim();
-  if (!s) return null;
-
-  // Remove leading slashes
-  return s.replace(/^\/+/, '');
-}
-
-/**
- * Fetch a published static page by slug (server-side only)
- * Used by dynamic routes: /pages/[slug] and /legal/[slug]
+ * Fetch a published static page by slug FOR THE CURRENT ZONE (server-side
+ * only). Used by /pages/[slug], /legal/[slug], inline static_html sections and
+ * /api/static-pages/[slug]. A zone without its own row gets null (→ 404),
+ * never another zone's page — see static-pages.resolve.ts.
  */
 export async function getPublishedStaticPageBySlug(
   slug: unknown
 ): Promise<StaticPageRow | null> {
-  const normalized = normalizeSlug(slug);
-  if (!normalized) return null;
-
+  const zoneKey = await resolveCurrentZoneKey();
   const supabase = await createServerClient();
-
-  const { data, error } = await supabase
-    .from('static_pages')
-    .select('*')
-    .eq('slug', normalized)
-    .eq('is_published', true)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[static-pages.server] Error fetching page:', error);
-    return null;
-  }
-
-  return data;
+  return fetchPublishedStaticPageForZone(
+    supabase as unknown as StaticPagesClient,
+    zoneKey,
+    slug,
+  );
 }
 
 /**
- * Fetch all published static pages (for sitemap, navigation, etc.)
+ * Fetch all published static pages of the current zone (sitemap, navigation…).
  */
 export async function getAllPublishedStaticPages(): Promise<StaticPageRow[]> {
+  const zoneKey = await resolveCurrentZoneKey();
   const supabase = await createServerClient();
 
   const { data, error } = await supabase
     .from('static_pages')
     .select('*')
+    .eq('zone_key', zoneKey)
     .eq('is_published', true)
     .order('slug', { ascending: true });
 
@@ -76,5 +46,5 @@ export async function getAllPublishedStaticPages(): Promise<StaticPageRow[]> {
     return [];
   }
 
-  return data || [];
+  return ((data || []) as StaticPageRow[]).filter((row) => row.zone_key === zoneKey);
 }

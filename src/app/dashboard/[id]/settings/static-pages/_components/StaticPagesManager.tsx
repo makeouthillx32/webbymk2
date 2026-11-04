@@ -20,6 +20,7 @@ import { createStaticPage } from './createPage';
 
 type StaticPage = {
   id: string;
+  zone_key: string;
   slug: string;
   title: string;
   content: string;
@@ -50,8 +51,15 @@ const PAGE_CONFIGS = {
   },
 };
 
+// static_pages are zone-scoped (2026-11-03): each page belongs to one zone and
+// a zone only ever serves its own rows. The manager edits one zone at a time
+// so a slug clash or a new page can never land on the wrong site.
+const FALLBACK_ZONE_KEYS = ['unenter', 'shop', 'labs', 'blog', 'docs', 'tank'];
+
 export function StaticPagesManager() {
   const [pages, setPages] = useState<StaticPage[]>([]);
+  const [zoneKeys, setZoneKeys] = useState<string[]>(FALLBACK_ZONE_KEYS);
+  const [zone, setZone] = useState<string>('unenter');
   const [selectedPage, setSelectedPage] = useState<StaticPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,7 +89,26 @@ export function StaticPagesManager() {
 
   useEffect(() => {
     fetchPages();
+    supabase
+      .from('zones')
+      .select('key')
+      .order('key')
+      .then(({ data }) => {
+        const keys = (data ?? []).map((z: { key: string }) => z.key).filter(Boolean);
+        if (keys.length) setZoneKeys(keys);
+      });
   }, []);
+
+  const zonePages = useMemo(
+    () => (pages ?? []).filter((p) => p.zone_key === zone),
+    [pages, zone]
+  );
+
+  // Switching zone selects that zone's first page (never another zone's).
+  useEffect(() => {
+    if (selectedPage?.zone_key === zone) return;
+    setSelectedPage(zonePages[0] ?? null);
+  }, [zone, zonePages]);
 
   useEffect(() => {
     if (selectedPage) {
@@ -96,9 +123,10 @@ export function StaticPagesManager() {
     }
   }, [selectedPage]);
 
+  // Slugs are unique per zone (unique (zone_key, slug)).
   const existingSlugs = useMemo(
-    () => new Set((pages ?? []).map((p) => normalizeSlug(p.slug))),
-    [pages]
+    () => new Set(zonePages.map((p) => normalizeSlug(p.slug))),
+    [zonePages]
   );
 
   async function fetchPages(selectId?: string | null) {
@@ -114,12 +142,9 @@ export function StaticPagesManager() {
       setPages(list);
 
       const targetId = selectId ?? selectedPage?.id ?? null;
-      if (list.length > 0) {
-        const found = targetId ? list.find((p) => p.id === targetId) : null;
-        setSelectedPage(found ?? list[0]);
-      } else {
-        setSelectedPage(null);
-      }
+      const found = targetId ? list.find((p) => p.id === targetId) : null;
+      if (found) setZone(found.zone_key);
+      setSelectedPage(found ?? list.find((p) => p.zone_key === zone) ?? null);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -185,6 +210,7 @@ export function StaticPagesManager() {
       setError(null);
 
       const data = await createStaticPage(supabase, {
+        zone_key: zone,
         title: createForm.title,
         slug,
         content: createForm.content,
@@ -251,7 +277,25 @@ export function StaticPagesManager() {
           </Button>
         </div>
 
-        {pages.length === 0 ? (
+        <label className="mb-3 block text-xs text-[hsl(var(--muted-foreground))]">
+          Zone
+          <select
+            value={zone}
+            onChange={(e) => setZone(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5 text-sm text-[hsl(var(--foreground))]"
+          >
+            {zoneKeys.map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block">
+            Pages are served only on this zone. New pages are created here.
+          </span>
+        </label>
+
+        {zonePages.length === 0 ? (
           <Card className="p-6">
             <div className="text-center">
               <FileText className="mx-auto h-8 w-8 text-[hsl(var(--muted-foreground))]" />
@@ -259,13 +303,13 @@ export function StaticPagesManager() {
                 No pages found
               </p>
               <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                Run the migration to create default pages.
+                This zone has no pages of its own yet.
               </p>
             </div>
           </Card>
         ) : (
           <div className="space-y-1">
-            {pages.map((page) => {
+            {zonePages.map((page) => {
               const config = getPageConfig(page.slug);
               return (
                 <button

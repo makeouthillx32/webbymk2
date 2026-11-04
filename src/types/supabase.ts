@@ -6209,6 +6209,7 @@ export type Database = {
           title: string
           updated_at: string
           version: number
+          zone_key: string
         }
         Insert: {
           content: string
@@ -6224,6 +6225,7 @@ export type Database = {
           title: string
           updated_at?: string
           version?: number
+          zone_key: string
         }
         Update: {
           content?: string
@@ -6239,8 +6241,17 @@ export type Database = {
           title?: string
           updated_at?: string
           version?: number
+          zone_key?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "static_pages_zone_key_fkey"
+            columns: ["zone_key"]
+            isOneToOne: false
+            referencedRelation: "zones"
+            referencedColumns: ["key"]
+          },
+        ]
       }
       static_pages_backup_20260613: {
         Row: {

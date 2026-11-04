@@ -63,3 +63,20 @@ export async function getZoneContext(
     isLocal:  isLocalDevelopmentHost(host),
   });
 }
+
+/**
+ * The zone key (public.zones.key) this render belongs to: the image's
+ * build-time NEXT_PUBLIC_ZONE, else the request's zone context, else the core
+ * site ("unenter"). Zone images always set NEXT_PUBLIC_ZONE, so the fallbacks
+ * only apply to the core / monolith image.
+ */
+export async function resolveCurrentZoneKey(): Promise<string> {
+  const builtZone = process.env.NEXT_PUBLIC_ZONE?.trim();
+  if (builtZone) return builtZone;
+  try {
+    const context = await getZoneContext();
+    return context.zone || "unenter";
+  } catch {
+    return "unenter";
+  }
+}
