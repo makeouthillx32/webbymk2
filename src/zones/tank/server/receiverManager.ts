@@ -346,6 +346,7 @@ async function projectCamera(
     typeof camera.name === "string" && camera.name ? camera.name : camera.id;
   const keyFingerprint = fingerprint(camera.streamKey);
   const mediaScope = normalizeManagerCameraMedia(camera);
+  const audioProbe = telemetryAudioProbe(telemetry);
   const audio = resolveCameraAudio({
     cameraId: camera.id,
     roomScope: mediaScope.roomScope,
@@ -354,7 +355,7 @@ async function projectCamera(
     declaredSourceName: mediaScope.audioSourceName,
     assignment,
     sources: audioSources,
-    probe: telemetryAudioProbe(telemetry),
+    probe: audioProbe,
   });
   // Keep delivery URLs stable for the whole lifecycle grace window. Using the
   // one raw telemetry sample here meant a single 1s manager timeout removed
@@ -454,15 +455,18 @@ async function projectCamera(
       // transcode path active for anyway: this source is HEVC, which no
       // browser can decode over WebRTC — needsVideoTranscode picks that up
       // and normalizes to H.264 automatically once a first read succeeds.
-      // An RTSP house camera whose audio probe is unknown (the manager drops
-      // it whenever it restarts a receiver) also takes the ffmpeg relay:
-      // every fixed camera here sends G.711, so the relay is what it ends up
-      // on anyway, and parking it on the native path in the meantime left
-      // the living room dark on 2026-11-04 until a probe that never came.
+      // An RTSP house camera whose audio codec is unknown (the manager drops
+      // its probe whenever it restarts a receiver) also takes the ffmpeg
+      // relay. "embedded" with no codec reads as browser-safe, but no house
+      // camera sends Opus — G.711 or AAC, both silent over WHEP — so the
+      // relay is where it belongs anyway. Seen 2026-11-04: the living room
+      // sat on the native path with AAC until a probe that never came.
       const transcodeAudio =
         audio.status === "transcode-required" ||
         camera.type === "srtla" ||
-        (camera.type === "rtsp" && audio.status === "probe-required");
+        (camera.type === "rtsp" &&
+          !audioProbe.codec &&
+          (audio.status === "probe-required" || audio.status === "embedded"));
       const externalSource = audio.status === "external-ready" && audio.audioSourceId
         ? audioSources.find((s) => s.id === audio.audioSourceId)
         : null;
