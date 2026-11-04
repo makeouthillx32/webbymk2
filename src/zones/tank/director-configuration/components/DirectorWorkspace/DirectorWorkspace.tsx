@@ -110,7 +110,12 @@ export function DirectorWorkspace({
   initialMode,
   initialRoster,
 }: DirectorWorkspaceProps = {}) {
-  const { snapshot, liveById, isOnline } = useTankCameras();
+  // Staff scope: rooms switched off for Tank stay visible here, tagged offAir,
+  // so the console can still watch and track them. The public list hid every
+  // one of them, and with all rooms off the console fell back to fixture
+  // cameras that could only ever say "no signal". Putting a camera on the
+  // programme is still gated server-side (isOnAirCamera).
+  const { snapshot, liveById, isOnline } = useTankCameras("staff");
   const serverDirector = useServerDirector({ initialState: initialServerDirector });
 
   const [directorState, setDirectorState] = useState<DirectorViewportState>({
@@ -350,12 +355,16 @@ export function DirectorWorkspace({
     // camera by roomScope, so anything absent from a room was dropped on
     // purpose.
     const liveCameraIds = new Set((snapshot?.rooms ?? []).flatMap((room) => room.cameraIds));
+    const offAirIds = new Set(
+      (snapshot?.rooms ?? []).filter((room) => room.offAir).flatMap((room) => room.cameraIds),
+    );
     const discovered = (snapshot?.cameras ?? []).filter((c) => liveCameraIds.has(c.id));
     if (discovered.length > 0) {
       return discovered.map((c) => ({
         id: c.id,
         name: c.name,
         slug: c.slug || c.id,
+        offAir: offAirIds.has(c.id),
         kind: (c.protocol === "rtmp"
           ? "obs"
           : c.protocol === "srt" || c.protocol === "srtla"
@@ -370,6 +379,7 @@ export function DirectorWorkspace({
       id: c.id,
       name: c.name,
       slug: c.slug || c.id,
+      offAir: false,
       kind: (c.id.includes("remote") ? "irlcam" : "ipcam") as "ipcam" | "irlcam" | "usbcam" | "obs",
     }));
   }, [snapshot]);
@@ -1397,6 +1407,14 @@ export function DirectorWorkspace({
                       <span className={`h-2 w-2 rounded-full ${online ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
                       <span>{cam.name}</span>
                       <span className="text-[9px] font-mono opacity-60">[{cam.kind.toUpperCase()}]</span>
+                      {cam.offAir && (
+                        <span
+                          title="Switched off for Tank in the staff room: watch and track only, never on the programme"
+                          className="rounded bg-fuchsia-700/90 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-white"
+                        >
+                          Off air
+                        </span>
+                      )}
                     </button>
                   );
                 })}

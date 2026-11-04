@@ -125,6 +125,13 @@ describe("off for Tank, not off for staff", () => {
   test("the house console reads the staff directory; viewers' surfaces don't", () => {
     const house = readFileSync(join(import.meta.dir, "..", "house", "HouseConsole.tsx"), "utf8");
     expect(house).toContain('useTankCameras("staff")');
+    // The director console is staff too. On the public list, every room off
+    // for Tank meant fixture cameras and "no signal" on every tile.
+    const director = readFileSync(
+      join(import.meta.dir, "..", "director-configuration", "components", "DirectorWorkspace", "DirectorWorkspace.tsx"),
+      "utf8",
+    );
+    expect(director).toContain('useTankCameras("staff")');
     const route = readFileSync(join(import.meta.dir, "..", "..", "..", "app", "api", "tank", "staff", "cameras", "route.ts"), "utf8");
     expect(route).toContain("checkStaff()");
     expect(route).toContain("toStaffCameraDirectory(snapshot)");
