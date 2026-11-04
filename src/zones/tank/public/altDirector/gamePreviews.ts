@@ -20,6 +20,7 @@ import { roomSceneDecoderPath } from "../roomScenes";
 import { prepareScene } from "../components/sceneMaterials";
 import { CastMirror } from "./castMirror";
 import { loadHouseCastOnce } from "./houseCastStore";
+import { PixelPass } from "../pixel/pixelPass";
 
 const WIDTH = 384;
 const HEIGHT = 216;
@@ -39,6 +40,8 @@ type Room = {
 type Tile = { roomKey: string; url: string; canvas: HTMLCanvasElement; visible: boolean; drawnFrom: string | null };
 
 let renderer: THREE.WebGLRenderer | null = null;
+/** The house's pixel look, at 2 screen px per art px on a tile. */
+let pass: PixelPass | null = null;
 let loader: GLTFLoader | null = null;
 const rooms = new Map<string, Room>();
 const tiles = new Set<Tile>();
@@ -75,6 +78,8 @@ function ensureRenderer(): THREE.WebGLRenderer | null {
     renderer.setSize(WIDTH, HEIGHT, false);
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.setClearColor(0x05070a, 1);
+    pass = new PixelPass();
+    pass.setSize(WIDTH, HEIGHT, 2);
     const draco = new DRACOLoader();
     draco.setDecoderPath(roomSceneDecoderPath());
     loader = new GLTFLoader();
@@ -128,7 +133,8 @@ function draw(url: string, targets: Tile[]) {
   const now = performance.now();
   room.mirror?.update(Math.min(1, (now - room.lastRenderAt) / 1000), room.camera.position, !stillsOnly);
   room.lastRenderAt = now;
-  renderer.render(room.scene, room.camera);
+  if (pass) pass.render(renderer, room.scene, room.camera);
+  else renderer.render(room.scene, room.camera);
   room.rendered = true;
   for (const tile of targets) {
     const context = tile.canvas.getContext("2d");

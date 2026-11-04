@@ -27,6 +27,8 @@ import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
 import { DEFAULT_AVATAR, faceAvatar, findAvatarRig, prepareAvatar, restoreAvatar } from "../altDirector/avatars";
 import { loadHouseCastOnce } from "../altDirector/houseCastStore";
 import { CastMirror } from "../altDirector/castMirror";
+import { HouseFx } from "../pixel/houseFx";
+import PixelRenderer from "./PixelRenderer";
 import { mergeStaticMeshes } from "../altDirector/mergeStatic";
 
 type CameraMode = "director" | "follow";
@@ -219,6 +221,8 @@ function HouseWorld({
     [castGltf.scene, castGltf.animations, avatar],
   );
   useEffect(() => () => mirror.dispose(), [mirror]);
+  const fx = useMemo(() => new HouseFx(), []);
+  useEffect(() => () => fx.dispose(), [fx]);
   const scratch = useMemo(
     () => ({
       head: new THREE.Vector3(),
@@ -384,6 +388,7 @@ function HouseWorld({
 
     // The mirrored cast: where the real people are, facing the shot.
     mirror.update(dt, scratch.eye, animate);
+    fx.update(dt, mirror.members, scratch.eye, animate);
 
     // Dollhouse: on the follow camera the upper walls drop away.
     const showUpper = Boolean(s.shot);
@@ -416,6 +421,7 @@ function HouseWorld({
     <>
       <primitive object={gltf.scene} />
       {separateCast && <primitive object={castGltf.scene} />}
+      <primitive object={fx.group} />
       <Visitor groupRef={visitor} sprite={Boolean(avatar)} />
     </>
   );
@@ -608,7 +614,8 @@ export default function AltDirector3D({
       <SceneBoundary key={`${url}|${castUrl ?? ""}`} onFailed={onFailed}>
         <Canvas
           flat
-          dpr={[1, 1.5]}
+          dpr={1}
+          style={{ imageRendering: "pixelated" }}
           frameloop={visible ? "always" : "never"}
           gl={{ antialias: false, powerPreference: "low-power" }}
           onCreated={({ scene }) => {
@@ -632,6 +639,7 @@ export default function AltDirector3D({
               onReady={handlers.ready}
               onBroken={handlers.broken}
             />
+            <PixelRenderer />
           </Suspense>
         </Canvas>
       </SceneBoundary>

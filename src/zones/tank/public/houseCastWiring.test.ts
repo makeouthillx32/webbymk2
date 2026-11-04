@@ -65,3 +65,15 @@ describe("no skit, anywhere", () => {
     expect(read("altDirector", "gamePreviews.ts")).toContain("{ room: roomKey }");
   });
 });
+
+describe("pixel reskin wiring", () => {
+  test("both 3D surfaces render through the pixel pass and play the house effects; previews use the pass", () => {
+    for (const file of [read("components", "AltDirector3D.tsx"), read("components", "RoomScene3D.tsx")]) {
+      expect(file).toContain("<PixelRenderer />");
+      expect(file).toContain("fx.update(");
+      expect(file).toContain("<primitive object={fx.group} />");
+      expect(file).toContain('imageRendering: "pixelated"');
+    }
+    expect(read("altDirector", "gamePreviews.ts")).toContain("pass.render(renderer, room.scene, room.camera)");
+  });
+});

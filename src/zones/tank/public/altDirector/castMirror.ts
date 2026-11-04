@@ -24,7 +24,11 @@ const EASE_PER_SECOND = 2.5;
 /** Still this far from where its person is = still walking there. */
 const WALKING_GAP_M = 0.12;
 
+/** A member as one surface renders them this frame (three.js floor coordinates). */
+export type ShownMember = { id: string; kind: string; x: number; z: number; walking: boolean };
+
 export class CastMirror {
+  private shownList: ShownMember[] = [];
   private readonly rigs = new Map<string, AvatarRig>();
   private readonly actions = new Map<string, THREE.AnimationAction>();
   private readonly positions = new Map<string, { x: number; z: number }>();
@@ -63,8 +67,14 @@ export class CastMirror {
     return this.shownKey;
   }
 
+  /** Who is rendered right now, where, and whether they're walking (for effects). */
+  get members(): readonly ShownMember[] {
+    return this.shownList;
+  }
+
   update(dt: number, eye: THREE.Vector3, animate = true, now = Date.now()) {
     const shown: string[] = [];
+    const list: ShownMember[] = [];
     const ease = Math.min(1, dt * EASE_PER_SECOND);
     for (const member of readHouseCast(now)) {
       const avatar = this.rigs.get(member.id);
@@ -87,6 +97,7 @@ export class CastMirror {
       const action = this.actions.get(member.id);
       if (action) action.paused = !(walking && animate);
       shown.push(member.id);
+      list.push({ id: member.id, kind: member.kind, x: p.x, z: p.z, walking });
     }
     for (const [id, avatar] of this.rigs) {
       if (shown.includes(id)) continue;
@@ -95,6 +106,7 @@ export class CastMirror {
       if (action) action.paused = true;
     }
     this.shownKey = shown.sort().join(",");
+    this.shownList = list;
     this.mixer.update(dt);
   }
 
@@ -108,5 +120,6 @@ export class CastMirror {
     }
     this.rigs.clear();
     this.actions.clear();
+    this.shownList = [];
   }
 }

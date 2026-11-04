@@ -14,6 +14,8 @@ import { roomSceneDecoderPath } from "../roomScenes";
 import { prepareScene } from "./sceneMaterials";
 import { CastMirror } from "../altDirector/castMirror";
 import { loadHouseCastOnce } from "../altDirector/houseCastStore";
+import { HouseFx } from "../pixel/houseFx";
+import PixelRenderer from "./PixelRenderer";
 
 type Look = { x: number; y: number };
 const LOOK_LIMIT = THREE.MathUtils.degToRad(10);
@@ -44,6 +46,7 @@ function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; room
   const camera = useMemo(() => roomCamera(gltf.cameras, roomKey), [gltf.cameras, roomKey]);
   const base = useMemo(() => camera?.quaternion.clone() ?? null, [camera]);
   const mirror = useMemo(() => new CastMirror(gltf.scene, gltf.animations, { room: roomKey }), [gltf.scene, gltf.animations, roomKey]);
+  const fx = useMemo(() => new HouseFx(), []);
   const eye = useMemo(() => new THREE.Vector3(), []);
   const offset = useMemo(() => new THREE.Quaternion(), []);
   const euler = useMemo(() => new THREE.Euler(0, 0, 0, "YXZ"), []);
@@ -56,6 +59,7 @@ function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; room
   }, [camera, set, size.width, size.height]);
 
   useEffect(() => () => mirror.dispose(), [mirror]);
+  useEffect(() => () => fx.dispose(), [fx]);
   useEffect(() => {
     loadHouseCastOnce();
   }, []);
@@ -68,13 +72,19 @@ function RoomModel({ url, roomKey, look, animate, onReady }: { url: string; room
     if (!camera || !base) return;
     camera.getWorldPosition(eye);
     mirror.update(Math.min(delta, 0.1), eye, animate);
+    fx.update(Math.min(delta, 0.1), mirror.members, eye, animate);
     // A slow sway so the room reads as a place, not a screenshot.
     const sway = animate ? Math.sin(clock.elapsedTime * 0.25) * THREE.MathUtils.degToRad(1.2) : 0;
     euler.set(look.current.y, look.current.x + sway, 0);
     camera.quaternion.copy(base).multiply(offset.setFromEuler(euler));
   });
 
-  return <primitive object={gltf.scene} />;
+  return (
+    <>
+      <primitive object={gltf.scene} />
+      <primitive object={fx.group} />
+    </>
+  );
 }
 
 class SceneBoundary extends Component<{ onFailed?: () => void; children: ReactNode }, { failed: boolean }> {
@@ -144,7 +154,8 @@ export default function RoomScene3D({ url, roomKey, reducedMotion = false, onRea
       <SceneBoundary key={url} onFailed={onFailed}>
         <Canvas
           flat
-          dpr={[1, 1.5]}
+          dpr={1}
+          style={{ imageRendering: "pixelated" }}
           frameloop={visible ? "always" : "never"}
           gl={{ antialias: false, powerPreference: "low-power" }}
           onCreated={({ scene }) => {
@@ -153,6 +164,7 @@ export default function RoomScene3D({ url, roomKey, reducedMotion = false, onRea
         >
           <Suspense fallback={null}>
             <RoomModel url={url} roomKey={roomKey} look={look} animate={!reducedMotion} onReady={handleReady} />
+            <PixelRenderer />
           </Suspense>
         </Canvas>
       </SceneBoundary>
