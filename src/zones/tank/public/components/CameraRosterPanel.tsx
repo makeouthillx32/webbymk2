@@ -7,6 +7,8 @@ import { CameraPlayer } from "../CameraPlayer";
 import { ACTIVE_THEME } from "../../theme";
 import type { DiscoveredCamera } from "../../contracts";
 import { RoomTileCrtHover } from "./RoomTileCrtHover";
+import { GamePreview } from "./GamePreview";
+import { GamePreviewBadge } from "./GamePreviewBadge";
 
 const LED_GREEN = "#39ff6a";
 const LED_RED = "#ff3b2f";
@@ -59,6 +61,8 @@ export type CameraRosterItem = {
   title: string;
   camera?: DiscoveredCamera;
   isOnline?: boolean;
+  /** The room's 3D scene; shown as a mini game preview while it has no live feed. */
+  gameSceneUrl?: string | null;
 };
 
 export type CameraRosterPanelProps = {
@@ -71,6 +75,9 @@ export type CameraRosterPanelProps = {
   rooms: CameraRosterItem[];
   selectedRoomSlug: string | null;
   onSelectRoom: (roomKey: string) => void;
+  /** GAME mode: the director's current game cam, shown on the Director tile. */
+  directorGame?: { roomKey: string; url: string } | null;
+  reducedMotion?: boolean;
 };
 
 export function CameraRosterPanel({
@@ -83,6 +90,8 @@ export function CameraRosterPanel({
   rooms,
   selectedRoomSlug,
   onSelectRoom,
+  directorGame = null,
+  reducedMotion = false,
 }: CameraRosterPanelProps) {
   const rosterItems = [
     {
@@ -91,6 +100,7 @@ export function CameraRosterPanel({
       camera: directorCamera,
       isOnline: anyHouseCameraOnline,
       isDirector: true,
+      gameSceneUrl: null as string | null | undefined,
     },
     ...rooms.map((room) => ({ ...room, isDirector: false })),
   ];
@@ -166,6 +176,15 @@ export function CameraRosterPanel({
             room.camera?.tags?.includes("obs") === true ||
             room.camera?.tags?.includes("mobile") === true;
           const previewUrl = room.camera?.previewUrl ?? null;
+          // Off air: the room's game cam instead of a dead tile. The Director
+          // tile follows the director's own game cam in GAME mode.
+          const game = room.isDirector
+            ? (!hasFeed || !isOnline) && directorGame
+              ? directorGame
+              : null
+            : room.gameSceneUrl && !(isOnline && hasFeed)
+              ? { roomKey: room.roomKey, url: room.gameSceneUrl }
+              : null;
 
           return (
             <button
@@ -206,7 +225,9 @@ export function CameraRosterPanel({
                   room.camera?.accent ?? "from-slate-800 via-slate-950 to-black"
                 } flex items-center justify-center pointer-events-none`}
               >
-                {room.isDirector && hasFeed ? (
+                {game ? (
+                  <GamePreview roomKey={game.roomKey} url={game.url} reducedMotion={reducedMotion} />
+                ) : room.isDirector && hasFeed ? (
                   <CameraPlayer
                     key={room.camera?.id ?? room.roomKey}
                     priority="thumbnail"
@@ -232,6 +253,7 @@ export function CameraRosterPanel({
                 ) : null}
 
                 <RoomTileCrtHover />
+                {game && <GamePreviewBadge />}
 
                 {/* Subtle Room Name in Top-Left Corner */}
                 <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 rounded bg-black/70 px-2 py-0.5 backdrop-blur-sm">

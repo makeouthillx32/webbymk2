@@ -5,18 +5,25 @@ import { CameraPlayer } from "../CameraPlayer";
 import type { DiscoveredCamera } from "../../contracts";
 import { ACTIVE_THEME } from "../../theme";
 import { RoomTileCrtHover } from "./RoomTileCrtHover";
+import { GamePreview } from "./GamePreview";
+import { GamePreviewBadge } from "./GamePreviewBadge";
 
 export type RoomEntry = {
   roomKey: string;
   title: string;
   camera?: DiscoveredCamera;
   isOnline?: boolean;
+  /** The room's 3D scene; shown as a mini game preview while it has no live feed. */
+  gameSceneUrl?: string | null;
 };
 
 export type MobileRoomGridProps = {
   rooms: RoomEntry[];
   directorCamera?: DiscoveredCamera;
   directorOnline?: boolean;
+  /** GAME mode: the director's current game cam, shown on the Director tile. */
+  directorGame?: { roomKey: string; url: string } | null;
+  reducedMotion?: boolean;
   onSelectDirector: () => void;
   onSelectRoom: (roomKey: string) => void;
 };
@@ -25,6 +32,8 @@ export function MobileRoomGrid({
   rooms,
   directorCamera,
   directorOnline = false,
+  directorGame = null,
+  reducedMotion = false,
   onSelectDirector,
   onSelectRoom,
 }: MobileRoomGridProps) {
@@ -52,6 +61,9 @@ export function MobileRoomGrid({
 
           {/* Video / Fallback */}
           <div className="absolute inset-0">
+            {directorGame && !directorOnline ? (
+              <GamePreview roomKey={directorGame.roomKey} url={directorGame.url} reducedMotion={reducedMotion} />
+            ) : (
             <CameraPlayer
               priority="thumbnail"
               playbackUrl={
@@ -74,7 +86,9 @@ export function MobileRoomGrid({
               muted
               className="h-full w-full object-cover"
             />
+            )}
           </div>
+          {directorGame && !directorOnline && <GamePreviewBadge />}
 
           {/* Vignette */}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
@@ -86,6 +100,7 @@ export function MobileRoomGrid({
         {rooms.map((room) => {
           const hasFeed = Boolean(room.camera?.playbackUrl);
           const isOnline = Boolean(room.isOnline);
+          const game = room.gameSceneUrl && !(isOnline && hasFeed) ? room.gameSceneUrl : null;
 
           return (
             <button
@@ -108,6 +123,9 @@ export function MobileRoomGrid({
 
               {/* Video / Fallback */}
               <div className="absolute inset-0">
+                {game ? (
+                  <GamePreview roomKey={room.roomKey} url={game} reducedMotion={reducedMotion} />
+                ) : (
                 <CameraPlayer
                   priority="thumbnail"
                   playbackUrl={room.camera?.playbackUrl ?? null}
@@ -119,7 +137,9 @@ export function MobileRoomGrid({
                   muted
                   className="h-full w-full object-cover"
                 />
+                )}
               </div>
+              {game && <GamePreviewBadge />}
 
               {/* Vignette */}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />

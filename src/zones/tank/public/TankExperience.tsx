@@ -1787,6 +1787,16 @@ export function TankExperience({
   // it — directorHasNoRooms flips and the real Director takes the frame.
   const [altDirectorFailedUrl, setAltDirectorFailedUrl] = useState<string | null>(null);
   const houseSceneSrc = houseSceneUrl(roomSceneManifest);
+  // Mini game previews for the All Rooms tiles: a dark room shows its game
+  // cam; in GAME the Director tile shows the director's current game cam.
+  const gamePreviewSceneUrl = (roomKey: string) =>
+    webglAvailable ? roomSceneUrl(roomSceneManifest, roomKey) : null;
+  const directorGamePreview = useMemo(() => {
+    if (!webglAvailable || !roomSceneManifest || serverDirector.mode !== "GAME") return null;
+    const roomKey = serverDirector.gameCamKey ?? Object.keys(roomSceneManifest.rooms).sort()[0] ?? null;
+    const url = roomKey ? roomSceneUrl(roomSceneManifest, roomKey) : null;
+    return roomKey && url ? { roomKey, url } : null;
+  }, [webglAvailable, roomSceneManifest, serverDirector.mode, serverDirector.gameCamKey]);
   // Game / IRL: with rooms on air a viewer may still choose the house. Read
   // after mount (localStorage) so server and first client render agree.
   const [directorView, setDirectorView] = useState<"game" | "irl">("irl");
@@ -2599,12 +2609,15 @@ export function TankExperience({
                   title: room.title,
                   camera: liveCam,
                   isOnline: online,
+                  gameSceneUrl: gamePreviewSceneUrl(room.roomKey),
                 };
               })}
               directorCamera={
                 directorRosterCamera
               }
               directorOnline={anyHouseCameraOnline}
+              directorGame={directorGamePreview}
+              reducedMotion={prefersReducedMotion}
               onSelectDirector={() => navigateTo("director")}
               onSelectRoom={openRoom}
             />
@@ -3503,9 +3516,12 @@ export function TankExperience({
                     isOnline:
                       isOnline(room.roomKey) ||
                       room.cameraIds.some((cid) => isOnline(cid)),
+                    gameSceneUrl: gamePreviewSceneUrl(room.roomKey),
                   }))}
                   selectedRoomSlug={activeRoomSlug}
                   onSelectRoom={openRoom}
+                  directorGame={directorGamePreview}
+                  reducedMotion={prefersReducedMotion}
                 />
               </div>
             )}
