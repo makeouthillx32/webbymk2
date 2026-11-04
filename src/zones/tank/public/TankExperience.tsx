@@ -2894,7 +2894,7 @@ export function TankExperience({
                   <div
                     className={
                       showRoomScene
-                        ? "pointer-events-auto max-w-xs rounded-lg border border-white/15 bg-black/55 px-4 py-3 text-left text-white backdrop-blur-sm"
+                        ? "pointer-events-auto max-w-[calc(100%-0.5rem)] rounded-lg border border-white/15 bg-black/55 px-3 py-2 text-left text-white backdrop-blur-sm sm:max-w-xs sm:px-4 sm:py-3"
                         : "max-w-sm rounded-lg border border-white/15 bg-black/30 p-5 text-center text-white backdrop-blur-sm"
                     }
                   >
@@ -2916,7 +2916,7 @@ export function TankExperience({
                           ? `${activeRoom.title} — live`
                           : `${activeRoom.title} is off air`}
                     </p>
-                    <p className="mt-1 text-xs text-white/65">
+                    <p className={`mt-1 text-xs text-white/65 ${showRoomScene ? "hidden sm:block" : ""}`}>
                       {mode === "director"
                         ? directorHasNoRooms
                           ? "Every room is resting right now. The Director picks back up the moment one comes on."
