@@ -55,10 +55,18 @@ function safeRedirectTarget(candidate: string | null | undefined): string | null
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<Message & { next?: string }>;
+  searchParams: Promise<Message & { next?: string; reason?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const zoneContext = await getZoneContext();
+  // A zone sent them here because their sign-in is too old FOR THAT ZONE
+  // (middleware's per-zone freshness, src/lib/auth/sessionPolicy.ts). The
+  // shared session is still valid, so getUser() below succeeds; bouncing them
+  // back to `next` would be refused again by the same freshness check:
+  // ERR_TOO_MANY_REDIRECTS, which is what the Tank director console hit once
+  // its 7-day backstage ceiling passed. Show the form; signing in restamps
+  // authAt.
+  const reauthRequested = resolvedSearchParams?.reason === "session-expired";
 
   // Already signed in — don't show the form again, send them back to
   // wherever they actually came from (an explicit ?next=, or the zone/page
@@ -70,7 +78,7 @@ export default async function SignInPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (user) {
+  if (user && !reauthRequested) {
     const nextParam =
       typeof resolvedSearchParams?.next === "string" ? resolvedSearchParams.next : null;
     // Peek only, don't clear — a Server Component can read cookies but not
@@ -98,6 +106,11 @@ export default async function SignInPage({
       <h1 className="text-2xl md:text-3xl font-[var(--font-serif)] font-bold text-center text-[hsl(var(--sidebar-primary))] mb-2 leading-[1.2]">
         {isResearcherContext ? "Researcher Sign In" : "Welcome Back"}
       </h1>
+      {reauthRequested && (
+        <p className="text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] mb-4">
+          It&apos;s been a while. Sign in again to continue.
+        </p>
+      )}
       {isResearcherContext && (
         <p className="text-center text-sm text-[hsl(var(--muted-foreground))] font-[var(--font-sans)] mb-4">
           Sign in to checkout with research products. Uses the same account as the shop.
