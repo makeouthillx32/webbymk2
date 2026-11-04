@@ -2,16 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Source files on this Windows host are CRLF; the snippets below are written
+// with LF. Normalise so the assertions test content, not line endings.
+const readSource = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+
 describe("Tank All Rooms layout", () => {
   test("grid mode never mounts the empty hero at desktop widths", () => {
-    const source = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const source = readSource(join(import.meta.dir, "TankExperience.tsx"));
 
     expect(source).toContain('mode === "grid" ? "hidden" : ""');
     expect(source).not.toContain('mode === "grid" ? "hidden lg:block" : ""');
   });
 
   test("desktop exposes All Rooms and only mounts the camera roster there", () => {
-    const source = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const source = readSource(join(import.meta.dir, "TankExperience.tsx"));
     const desktopAllRoomsControl = source.indexOf('active={mode === "grid"}');
     const desktopRosterGuard = source.indexOf(
       '{mode === "grid" && (\n              <div className="hidden lg:flex lg:flex-col lg:gap-2">',
@@ -40,9 +44,8 @@ describe("Tank All Rooms layout", () => {
     expect(source).not.toContain("directorProgram.playbackUrl");
     expect(source).not.toContain("usingDirectorProgram");
 
-    const rosterSource = readFileSync(
-      join(import.meta.dir, "components", "CameraRosterPanel.tsx"),
-      "utf8",
+    const rosterSource = readSource(
+      join(import.meta.dir, "components", "CameraRosterPanel.tsx")
     );
     expect(rosterSource).toContain('roomKey: "__director__"');
     expect(rosterSource).toContain("room.isDirector && hasFeed");
@@ -55,9 +58,8 @@ describe("Tank All Rooms layout", () => {
     expect(rosterSource).toContain("<RoomTileCrtHover />");
     expect(rosterSource).toContain("data-tank-room-tile");
 
-    const mobileGridSource = readFileSync(
-      join(import.meta.dir, "components", "MobileRoomGrid.tsx"),
-      "utf8",
+    const mobileGridSource = readSource(
+      join(import.meta.dir, "components", "MobileRoomGrid.tsx")
     );
     expect(mobileGridSource).toContain(
       "directorCamera?.previewUrl ??\n                directorCamera?.playbackUrl",
@@ -67,9 +69,8 @@ describe("Tank All Rooms layout", () => {
     );
     expect(mobileGridSource.match(/<RoomTileCrtHover \/>/g)).toHaveLength(2);
 
-    const themeStyles = readFileSync(
-      join(import.meta.dir, "TankThemeStyles.tsx"),
-      "utf8",
+    const themeStyles = readSource(
+      join(import.meta.dir, "TankThemeStyles.tsx")
     );
     expect(themeStyles).toContain("@keyframes tank-room-crt-noise");
     expect(themeStyles).toContain("@keyframes tank-room-crt-tear");
@@ -84,18 +85,15 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("season is standalone while Profile owns Daily Bonus and Merch", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
-    const seasonMarquee = readFileSync(
-      join(import.meta.dir, "components", "SeasonMarquee.tsx"),
-      "utf8",
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    const seasonMarquee = readSource(
+      join(import.meta.dir, "components", "SeasonMarquee.tsx")
     );
-    const tankBrand = readFileSync(
-      join(import.meta.dir, "components", "TankBrandBlock.tsx"),
-      "utf8",
+    const tankBrand = readSource(
+      join(import.meta.dir, "components", "TankBrandBlock.tsx")
     );
-    const profile = readFileSync(
-      join(import.meta.dir, "components", "ProfilePanel.tsx"),
-      "utf8",
+    const profile = readSource(
+      join(import.meta.dir, "components", "ProfilePanel.tsx")
     );
 
     expect(experience).toContain("<SeasonMarquee season={season} />");
@@ -117,14 +115,12 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("collapsed desktop rails reserve bento columns instead of floating over video", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
-    const chat = readFileSync(
-      join(import.meta.dir, "components", "ChatConsolePanel.tsx"),
-      "utf8",
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    const chat = readSource(
+      join(import.meta.dir, "components", "ChatConsolePanel.tsx")
     );
-    const restore = readFileSync(
-      join(import.meta.dir, "components", "CollapsedPanelRestore.tsx"),
-      "utf8",
+    const restore = readSource(
+      join(import.meta.dir, "components", "CollapsedPanelRestore.tsx")
     );
 
     expect(experience).toContain(
@@ -141,10 +137,9 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("the floating profile dock owns exactly one rail collapse control", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
-    const profile = readFileSync(
-      join(import.meta.dir, "components", "ProfilePanel.tsx"),
-      "utf8",
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    const profile = readSource(
+      join(import.meta.dir, "components", "ProfilePanel.tsx")
     );
     expect(experience).not.toContain("<PanelRailHeader");
     expect(profile).toContain('aria-label="Tank quick actions"');
@@ -153,7 +148,7 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("selected desktop feeds have an external back control and no picture overlay", () => {
-    const source = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const source = readSource(join(import.meta.dir, "TankExperience.tsx"));
 
     expect(source).toContain('aria-label="Back to All Rooms"');
     expect(source).not.toContain("<DirectorRoomLabel");
@@ -165,7 +160,7 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("desktop level rail belongs to the feed column instead of following full-height chat", () => {
-    const source = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const source = readSource(join(import.meta.dir, "TankExperience.tsx"));
     const levelRail = source.indexOf("data-tank-level-rail");
     const rightChat = source.indexOf("Right: chat — sticky on desktop");
     const shellClose = source.indexOf("MOBILE QUICK ACTION PYRAMID DOCK");
@@ -178,10 +173,9 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("desktop chat supports only open and closed while mobile keeps three stages", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
-    const chat = readFileSync(
-      join(import.meta.dir, "components", "ChatConsolePanel.tsx"),
-      "utf8",
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
+    const chat = readSource(
+      join(import.meta.dir, "components", "ChatConsolePanel.tsx")
     );
 
     expect(chat).toContain('export type MobileChatSize = "hidden" | "half" | "full"');
@@ -193,7 +187,7 @@ describe("Tank All Rooms layout", () => {
   });
 
   test("closing both desktop rails activates a viewport-height focus player", () => {
-    const source = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const source = readSource(join(import.meta.dir, "TankExperience.tsx"));
 
     expect(source).toContain(
       '!desktopRailVisible && desktopChatSize === "hidden" && mode !== "grid"',

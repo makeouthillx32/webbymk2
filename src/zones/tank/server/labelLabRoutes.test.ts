@@ -43,13 +43,14 @@ describe("Label Lab routes and privacy", () => {
     expect(screen).toContain("Yes to all");
   });
 
-  test("both app trees expose the labels API and the private crop route", () => {
-    for (const root of [
-      join(import.meta.dir, "..", "..", "..", "app"),
-      join(import.meta.dir, "..", "..", "..", "..", "zones", "tank", "src", "app"),
-    ]) {
-      expect(readFileSync(join(root, "api", "tank", "labels", "route.ts"), "utf8")).toContain("labelLabRouteHandlers");
-      expect(readFileSync(join(root, "api", "tank", "appearance", "review", "crop", "route.ts"), "utf8")).toContain("GET_CROP");
+  test("core exposes the labels API and private crop route; both trees mount the page", () => {
+    const coreApp = join(import.meta.dir, "..", "..", "..", "app");
+    const zoneApp = join(import.meta.dir, "..", "..", "..", "..", "zones", "tank", "src", "app");
+    // API routes live in core only — a zone copy would silently replace them
+    // in the Tank image (see zoneRouteOverlay.test.ts).
+    expect(readFileSync(join(coreApp, "api", "tank", "labels", "route.ts"), "utf8")).toContain("labelLabRouteHandlers");
+    expect(readFileSync(join(coreApp, "api", "tank", "appearance", "review", "crop", "route.ts"), "utf8")).toContain("GET_CROP");
+    for (const root of [coreApp, zoneApp]) {
       expect(readFileSync(join(root, "house", "labels", "page.tsx"), "utf8")).toContain("LabelLab/Page");
     }
   });

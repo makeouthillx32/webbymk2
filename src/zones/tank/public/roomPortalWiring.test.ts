@@ -2,9 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Source files on this Windows host are CRLF; the snippets below are written
+// with LF. Normalise so the assertions test content, not line endings.
+const readSource = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+
 describe("Tank public doorway wiring", () => {
   test("the server loads saved portals and passes them to the experience", () => {
-    const page = readFileSync(join(import.meta.dir, "..", "Page.tsx"), "utf8");
+    const page = readSource(join(import.meta.dir, "..", "Page.tsx"));
 
     expect(page).toContain('import { getAllRoomPortals } from "./server/roomPortalsCatalog";');
     expect(page).toContain("getAllRoomPortals().catch(() => [])");
@@ -12,7 +16,7 @@ describe("Tank public doorway wiring", () => {
   });
 
   test("doorways follow the displayed camera in rooms and Director", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
 
     expect(experience).toContain('import { RoomPortalOverlay } from "./components/RoomPortalOverlay";');
     expect(experience).toContain("const portalSourceRoomSlug =");
@@ -20,12 +24,14 @@ describe("Tank public doorway wiring", () => {
     expect(experience).toContain(
       '(mode === "room" || mode === "director") &&',
     );
-    expect(experience).toContain("!heroPlayerStyle &&");
+    // A zoomed (transformed) frame hides the doors: their saved coordinates
+    // no longer line up with the picture.
+    expect(experience).toContain("!heroZoomed &&");
     expect(experience).toContain("onSelectRoom={openRoom}");
   });
 
   test("the displayed room refreshes its doors after the server-render deadline", () => {
-    const experience = readFileSync(join(import.meta.dir, "TankExperience.tsx"), "utf8");
+    const experience = readSource(join(import.meta.dir, "TankExperience.tsx"));
 
     expect(experience).toContain(
       'import { fetchPortalsForRoom } from "../server/portalActions";',
@@ -35,9 +41,8 @@ describe("Tank public doorway wiring", () => {
   });
 
   test("an empty portal table falls back to the built-in doorway catalog", () => {
-    const catalog = readFileSync(
-      join(import.meta.dir, "..", "server", "roomPortalsCatalog.ts"),
-      "utf8",
+    const catalog = readSource(
+      join(import.meta.dir, "..", "server", "roomPortalsCatalog.ts")
     );
 
     expect(catalog.match(/else if \(data && data\.length > 0\)/g)).toHaveLength(2);
