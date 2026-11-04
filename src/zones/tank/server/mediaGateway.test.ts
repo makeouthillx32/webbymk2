@@ -4,7 +4,7 @@ import {
   buildPublicCameraPlayback,
   cameraMediaPath,
 } from "../mediaPlayback";
-import { buildManagerSrtSource } from "./mediaGateway";
+import { buildManagerSrtSource, toNativeSrtSourceUrl } from "./mediaGateway";
 
 describe("Tank media gateway public contract", () => {
   test("builds stable WHEP and HLS endpoints for Cam0", () => {
@@ -98,6 +98,24 @@ describe("Tank media gateway public contract", () => {
       streamUser: "user",
       streamKey: "key",
     })).toBeNull();
+  });
+
+  test("toNativeSrtSourceUrl hands MediaMTX's gosrt latency in ms, leaving the stream id intact", () => {
+    const ffmpegUrl = buildManagerSrtSource({
+      lanHost: "192.168.50.85",
+      videoOutPort: 8279,
+      streamUser: "cam1",
+      streamKey: "secret123",
+      latencyMs: 1000,
+    })!;
+    const native = toNativeSrtSourceUrl(ffmpegUrl);
+    // 1000000 read as ms truncates to 16960 in SRT's 16-bit handshake field.
+    expect(native).toContain("&latency=1000&");
+    expect(native).toContain("&rcvlatency=1000&");
+    expect(native).not.toContain("1000000");
+    expect(native).toContain("streamid=play/stream/cam1?srtauth=secret123&");
+    expect(native).toContain("rcvbuf=67108864");
+    expect(toNativeSrtSourceUrl("rtsp://cam/x?latency=5")).toBe("rtsp://cam/x?latency=5");
   });
 });
 

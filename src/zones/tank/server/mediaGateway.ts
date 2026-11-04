@@ -104,6 +104,36 @@ export function buildManagerSrtSource(input: {
   return `srt://${input.lanHost}:${input.videoOutPort}?streamid=${streamId}&mode=caller&latency=${latencyUs}&rcvlatency=${latencyUs}&rcvbuf=67108864&tlpktdrop=0&timeout=5000000`;
 }
 
+/**
+ * The same SRT URL, rewritten for MediaMTX's NATIVE srt source (gosrt), for
+ * the `source: <url>` case where no ffmpeg sits in between.
+ *
+ * buildManagerSrtSource writes `latency`/`rcvlatency` in microseconds because
+ * ffmpeg's libsrt reads them that way. gosrt reads the same keys as
+ * MILLISECONDS, and the handshake carries latency in a 16-bit field — so
+ * 1000000 went out as 1000000 & 0xFFFF = 16960 ms, which the receiver (SLS,
+ * 5000 ms ceiling) rejected on every attempt. Confirmed live 2026-11-04 on
+ * the living-room camera: "rejecting player: latency 16960 ms exceeds
+ * maximum 5000 ms", MediaMTX at 0 bytes, the manager's auto-recovery
+ * restarting a perfectly healthy receiver in a loop.
+ */
+export function toNativeSrtSourceUrl(url: string): string {
+  if (!url.startsWith("srt://")) return url;
+  const q = url.indexOf("?");
+  if (q < 0) return url;
+  // The streamid carries its own `?srtauth=` — split on `&` only, never
+  // re-encode, so the receiver sees the stream id byte-for-byte.
+  const params = url.slice(q + 1).split("&").map((pair) => {
+    const eq = pair.indexOf("=");
+    const key = eq < 0 ? pair : pair.slice(0, eq);
+    if (key !== "latency" && key !== "rcvlatency" && key !== "peerlatency") return pair;
+    const us = Number(pair.slice(eq + 1));
+    if (!Number.isFinite(us) || us <= 0) return pair;
+    return `${key}=${Math.max(1, Math.round(us / 1000))}`;
+  });
+  return `${url.slice(0, q)}?${params.join("&")}`;
+}
+
 export function mediaMtxHeaders() {
   const token = process.env.MEDIAMTX_API_TOKEN;
   return {
@@ -666,7 +696,7 @@ export async function provisionMediaMtxCamera(
         });
   }
 
-  const targetSource = isTranscoding ? "publisher" : sourceUrl;
+  const targetSource = isTranscoding ? "publisher" : toNativeSrtSourceUrl(sourceUrl);
   const bodyObj: Record<string, unknown> = {
     source: targetSource,
     sourceOnDemand: false,

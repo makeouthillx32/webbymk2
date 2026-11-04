@@ -454,7 +454,15 @@ async function projectCamera(
       // transcode path active for anyway: this source is HEVC, which no
       // browser can decode over WebRTC — needsVideoTranscode picks that up
       // and normalizes to H.264 automatically once a first read succeeds.
-      const transcodeAudio = audio.status === "transcode-required" || camera.type === "srtla";
+      // An RTSP house camera whose audio probe is unknown (the manager drops
+      // it whenever it restarts a receiver) also takes the ffmpeg relay:
+      // every fixed camera here sends G.711, so the relay is what it ends up
+      // on anyway, and parking it on the native path in the meantime left
+      // the living room dark on 2026-11-04 until a probe that never came.
+      const transcodeAudio =
+        audio.status === "transcode-required" ||
+        camera.type === "srtla" ||
+        (camera.type === "rtsp" && audio.status === "probe-required");
       const externalSource = audio.status === "external-ready" && audio.audioSourceId
         ? audioSources.find((s) => s.id === audio.audioSourceId)
         : null;
