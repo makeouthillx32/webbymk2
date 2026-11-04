@@ -9,6 +9,7 @@ import {
 } from "./directorAttentionDb";
 import type { DirectorAttentionLock } from "../director/directorMetrics";
 import { getCameraDirectorySnapshot } from "./receiverManager";
+import { startHouseCastTicking } from "./houseCastWorker";
 import { toPublicCameraDirectory } from "./publicCameraProjection";
 import {
   calculateCameraScore,
@@ -1020,6 +1021,9 @@ export function startDirectorTicking(): void {
       console.error("[ServerDirectorEngine] background tick failed:", err);
     });
   }, DIRECTOR_TICK_INTERVAL_MS);
+  // The house cast (live people -> alt director sprites) ticks alongside,
+  // faster: it is cheap and the sprites should keep up with the people.
+  startHouseCastTicking((cast) => realtimeBroadcast("house_cast", cast));
 }
 
 if (shouldDirectProgramme()) startDirectorTicking();

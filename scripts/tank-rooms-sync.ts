@@ -8,6 +8,7 @@
  *   bun scripts/tank-rooms-sync.ts house               # just the walkable house (alt director)
  *   bun scripts/tank-rooms-sync.ts --remove house      # turn the alt director off
  *   bun scripts/tank-rooms-sync.ts cast                # just the cast (rigs, sprites, clips)
+ *   bun scripts/tank-rooms-sync.ts fits                # just the real cameras' fitted lenses
  *   bun scripts/tank-rooms-sync.ts --dry-run
  *
  * The Blender "Tank Rooms" panel exports artifacts/tank-rooms/<room>.glb (same
@@ -22,8 +23,14 @@
  * cast.glb): the alt director Tank shows while every room is off air. Both
  * are published with the rooms unless names are given; each can be published
  * or removed on its own (`cast`, `--remove cast`).
+ *
+ * "fits" is rooms3d/camera-fits.json: every artifacts/tank-rooms/fit/<room>.result.json
+ * from scripts/tank-room-fit.py (each real camera's fisheye lens + pose in the
+ * house). The server projects live detection boxes onto the house floor with
+ * it, so the cast can mirror the people in the rooms. Published with every
+ * sync, or alone with `fits`.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -99,7 +106,28 @@ const publishedAll = await publishedManifest();
 const published = publishedAll.rooms;
 const next: Record<string, Entry> = { ...published };
 const nextFixed: Record<Fixed, Entry | null> = { house: publishedAll.house ?? null, cast: publishedAll.cast ?? null };
-const roomNames = names.filter((n) => !FIXED.includes(n as Fixed));
+const roomNames = names.filter((n) => !FIXED.includes(n as Fixed) && n !== "fits");
+const FIT_DIR = join(LOCAL, "fit");
+
+async function publishFits() {
+  const rooms: Record<string, unknown> = {};
+  for (const name of existsSync(FIT_DIR) ? readdirSync(FIT_DIR).sort() : []) {
+    if (!name.endsWith(".result.json")) continue;
+    const fit = JSON.parse(readFileSync(join(FIT_DIR, name), "utf8")) as { room?: string };
+    if (fit.room) rooms[fit.room] = fit;
+  }
+  if (!Object.keys(rooms).length) {
+    console.log("= fits: none in artifacts/tank-rooms/fit (skipped)");
+    return;
+  }
+  await upload("camera-fits.json", JSON.stringify({ updatedAt: new Date().toISOString(), rooms }, null, 2), "application/json", 60);
+  console.log(`  camera fits: ${Object.keys(rooms).join(", ")}`);
+}
+
+if (!removing && names.length && names.every((n) => n === "fits")) {
+  await publishFits();
+  process.exit(0);
+}
 
 if (removing) {
   if (!names.length) throw new Error("--remove needs at least one room key (or house / cast)");
@@ -153,6 +181,8 @@ if (removing) {
     await upload(`draco/${name}`, readFileSync(join(DRACO_DIR, name)), type, 86400);
   }
 }
+
+if (!removing) await publishFits();
 
 const manifest = JSON.stringify(
   { updatedAt: new Date().toISOString(), rooms: next, house: nextFixed.house, cast: nextFixed.cast },

@@ -7,6 +7,7 @@ import type { ActiveChaosItemPayload } from "./chaosDirectorCatalog";
 import type { DirectorAttentionLock } from "./directorMetrics";
 import type { VirtualPtzState } from "./ptzState";
 import type { DirectorProgramSnapshot } from "../server/directorProgram";
+import { publishHouseCast } from "../public/altDirector/houseCastStore";
 
 export type UseServerDirectorOptions = {
   initialState?: Partial<ServerDirectorState> | null;
@@ -125,6 +126,9 @@ export function useServerDirector(options: UseServerDirectorOptions = {}) {
           setPtzIfChanged(framing.ptzState ?? null);
         }
       })
+      // The house cast (live people -> alt director sprites). Straight into
+      // its own store: it moves every second and must not re-render Tank.
+      .on("broadcast", { event: "house_cast" }, (payload) => publishHouseCast(payload.payload))
       .subscribe((status) => {
         if (status === "SUBSCRIBED") void refreshState();
       });

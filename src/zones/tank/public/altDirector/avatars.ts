@@ -21,7 +21,8 @@ export type AvatarId = (typeof AVATAR_PRESETS)[number]["id"];
 export const DEFAULT_AVATAR: AvatarId = "joe";
 
 export type AvatarRig = {
-  id: AvatarId;
+  /** An AvatarId for the visitor's body; a house-cast id (vision/houseCast.ts) for a mirrored rig. */
+  id: string;
   rig: THREE.Object3D;
   /** The rig's exported rotation; facing is applied as a yaw on top of it. */
   baseQuaternion: THREE.Quaternion;
@@ -56,9 +57,24 @@ export function findAvatarRig(root: THREE.Object3D, id: string | null | undefine
   return null;
 }
 
+/**
+ * A house-cast member's rig by cast id (tagged tank_avatar in Blender) or by
+ * its rig name, with no fallback: a member without a rig simply isn't shown.
+ */
+export function findCastRig(root: THREE.Object3D, id: string, rigName: string): THREE.Object3D | null {
+  return (
+    root.children.find((child) => child.userData?.tank_avatar === id) ??
+    root.children.find((child) => {
+      const name = nameOf(child);
+      return name === rigName || name.startsWith(`${rigName}.`) || name.startsWith(`${rigName}_`);
+    }) ??
+    null
+  );
+}
+
 const yawOf = (v: THREE.Vector3) => Math.atan2(v.x, v.z);
 
-export function prepareAvatar(found: { id: AvatarId; rig: THREE.Object3D }, clips: readonly THREE.AnimationClip[]): AvatarRig {
+export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips: readonly THREE.AnimationClip[]): AvatarRig {
   const { id, rig } = found;
   // The loaded scene is cached across mounts: remember where the rig stood in
   // the cast so a later mount (or a signed-out viewer) gets it back there.
