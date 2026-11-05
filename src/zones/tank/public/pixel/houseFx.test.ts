@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import type { ShownMember } from "../altDirector/castMirror";
-import { artSize } from "./pixelPass";
+import { CRISP_LAYER, artSize } from "./pixelPass";
 
 // HouseFx bakes atlases on a 2D canvas; give it a stand-in document.
 const realDocument = (globalThis as { document?: unknown }).document;
@@ -33,6 +33,7 @@ describe("house fx", () => {
     const fx = new HouseFx();
     fx.update(0.05, [joe(0)], eye);
     expect(fx.counts()).toEqual({ spotted: 1 });
+    expect(fx.group.children.every((c) => c.layers.isEnabled(CRISP_LAYER))).toBe(true);
     fx.update(0.05, [joe(0.1, true)], eye);
     expect(fx.counts().step).toBe(1);
     for (let i = 0; i < 10; i++) fx.update(0.05, [joe(0.2, true)], eye);

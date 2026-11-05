@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import { TILE_METRES, finishFor, projectWorldUvs, surfaceShades, type SurfaceTexture } from "./houseFinish";
+import { CRISP_LAYER } from "../pixel/pixelPass";
 import { prepareScene } from "./sceneMaterials";
 
 const color = (name: string, material = "") => finishFor(name, material)?.color ?? null;
@@ -98,6 +99,9 @@ describe("prepareScene", () => {
     expect((sprite.material as THREE.MeshBasicMaterial).isMeshBasicMaterial).toBe(true);
     expect((screen.material as THREE.MeshBasicMaterial).isMeshBasicMaterial).toBe(true);
     expect(lights(root)).toBe(1);
+    // The cast's sprites are pixel art already: they skip the pixel pass.
+    expect(sprite.layers.isEnabled(CRISP_LAYER)).toBe(true);
+    expect(wall.layers.isEnabled(CRISP_LAYER)).toBe(false);
   });
 
   test("the cast's own file: no finishes, no second set of lights", () => {

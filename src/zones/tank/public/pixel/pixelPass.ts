@@ -7,11 +7,20 @@
 //   - contact shadows in corners and under furniture (a small depth AO),
 //   - a little depth haze, a warm-highlight / cool-shadow grade,
 //   - posterized color with ordered (Bayer) dithering, and a vignette,
-// then scales it up nearest-neighbour so every pixel is a crisp block.
+// then scales it up nearest-neighbour so every pixel is a crisp block. The
+// cast's sprites and the pixel effects are pixel art already and skip all of
+// this (CRISP_LAYER).
 //
 // Plain three.js: render(renderer, scene, camera) replaces renderer.render.
 
 import * as THREE from "three";
+
+/**
+ * Objects on this layer (the cast's sprites, the pixel effects) are pixel art
+ * already: they skip the low-res pass and are drawn at full resolution on top,
+ * still hidden by whatever stands in front of them.
+ */
+export const CRISP_LAYER = 5;
 
 /** Screen pixels per art pixel. */
 export const DEFAULT_PIXEL_SIZE = 2;
@@ -206,6 +215,13 @@ export class PixelPass {
     u.far.value = c.far ?? 100;
     u.ortho.value = c.isOrthographicCamera ? 1 : 0;
 
+    // Already-pixel-art objects sit out the low-res pass.
+    const crisp: THREE.Object3D[] = [];
+    scene.traverseVisible((o) => {
+      if (o.layers.isEnabled(CRISP_LAYER) && ((o as THREE.Mesh).isMesh || (o as THREE.Sprite).isSprite)) crisp.push(o);
+    });
+    for (const o of crisp) o.visible = false;
+
     renderer.setRenderTarget(this.scene);
     renderer.clear();
     renderer.render(scene, camera);
@@ -217,6 +233,44 @@ export class PixelPass {
     this.quad.material = this.blitMaterial;
     renderer.setRenderTarget(previous);
     renderer.render(this.quadScene, this.quadCamera);
+
+    if (crisp.length) this.renderCrisp(renderer, scene, camera, crisp);
+  }
+
+  /**
+   * The crisp objects at full resolution: first the rest of the scene into the
+   * depth buffer only (so a sofa still hides a sprite behind it), then just
+   * the crisp layer, untouched by tone mapping like the pass itself.
+   */
+  private renderCrisp(renderer: THREE.WebGLRenderer, scene: THREE.Object3D, camera: THREE.Camera, crisp: THREE.Object3D[]) {
+    const autoClear = renderer.autoClear;
+    const toneMapping = renderer.toneMapping;
+    const mask = camera.layers.mask;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+
+    const muted: THREE.Material[] = [];
+    scene.traverseVisible((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (m.colorWrite) {
+          m.colorWrite = false;
+          muted.push(m);
+        }
+      }
+    });
+    renderer.render(scene, camera);
+    for (const m of muted) m.colorWrite = true;
+
+    for (const o of crisp) o.visible = true;
+    camera.layers.set(CRISP_LAYER);
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.render(scene, camera);
+
+    camera.layers.mask = mask;
+    renderer.toneMapping = toneMapping;
+    renderer.autoClear = autoClear;
   }
 
   dispose() {

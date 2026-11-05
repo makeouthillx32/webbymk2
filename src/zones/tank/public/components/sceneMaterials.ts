@@ -1,5 +1,6 @@
 // Shared by the off-air room scenes and the alt director's walkable house.
 import * as THREE from "three";
+import { CRISP_LAYER } from "../pixel/pixelPass";
 import { TILE_METRES, finishFor, finishMaterial, houseLights, projectWorldUvs } from "./houseFinish";
 
 // Blender's pixel look is emission-only and unlit. glTF carries it as an
@@ -76,6 +77,8 @@ export function prepareScene(root: THREE.Object3D, { shell = true }: { shell?: b
       ? mesh.material.map((m) => convert(mesh, m, cutout, false))
       : convert(mesh, mesh.material, cutout, true);
     mesh.frustumCulled = !(mesh as THREE.SkinnedMesh).isSkinnedMesh;
+    // The cast is pixel art already: drawn crisp, not through the pixel pass.
+    if (cutout) mesh.layers.enable(CRISP_LAYER);
     // Lambert shading needs normals; an export without them would go black.
     const basic = !Array.isArray(mesh.material) && (mesh.material as THREE.MeshBasicMaterial).isMeshBasicMaterial;
     if (!basic && !mesh.geometry.attributes.normal) mesh.geometry.computeVertexNormals();

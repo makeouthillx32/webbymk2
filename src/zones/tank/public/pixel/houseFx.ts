@@ -13,6 +13,7 @@
 import * as THREE from "three";
 import { HOUSE_EFFECTS, bakeEffect, type HouseEffect, type HouseEffectId } from "./houseEffects";
 import type { ShownMember } from "../altDirector/castMirror";
+import { CRISP_LAYER } from "./pixelPass";
 
 /** Metres per effect pixel on a person (a person is ~64 px tall). */
 export const PX_METRES = 0.027;
@@ -181,6 +182,7 @@ export class HouseFx {
     sprite.scale.set(w * scale, h * scale, 1);
     sprite.renderOrder = 10;
     sprite.frustumCulled = false;
+    sprite.layers.enable(CRISP_LAYER);
     this.group.add(sprite);
     const playing: Playing = { id, sprite, atlas, t: 0, follow: null, x, y, z };
     this.playing.push(playing);
