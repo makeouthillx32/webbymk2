@@ -245,9 +245,19 @@ export class PixelPass {
   private renderCrisp(renderer: THREE.WebGLRenderer, scene: THREE.Object3D, camera: THREE.Camera, crisp: THREE.Object3D[]) {
     const autoClear = renderer.autoClear;
     const toneMapping = renderer.toneMapping;
+    const outputColorSpace = renderer.outputColorSpace;
     const mask = camera.layers.mask;
+    // A colour background clears the screen on every render, even with
+    // autoClear off: it would wipe the pixelated house we just drew.
+    const owner = scene as THREE.Scene;
+    const background = owner.isScene ? owner.background : null;
+    if (owner.isScene) owner.background = null;
     renderer.autoClear = false;
     renderer.clearDepth();
+    // Depth only: render it the way the low-res pass does (no tone mapping,
+    // linear output) so every material reuses that pass's shader.
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
     const muted: THREE.Material[] = [];
     scene.traverseVisible((o) => {
@@ -265,12 +275,13 @@ export class PixelPass {
 
     for (const o of crisp) o.visible = true;
     camera.layers.set(CRISP_LAYER);
-    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = outputColorSpace;
     renderer.render(scene, camera);
 
     camera.layers.mask = mask;
     renderer.toneMapping = toneMapping;
     renderer.autoClear = autoClear;
+    if (owner.isScene) owner.background = background;
   }
 
   dispose() {

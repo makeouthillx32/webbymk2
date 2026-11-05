@@ -78,3 +78,41 @@ describe("pixel pass sizing", () => {
     expect(artSize(4000, 2000, 3).height).toBe(540);
   });
 });
+
+describe("pixel pass crisp layer", () => {
+  test("a scene background can't wipe the house when the crisp sprites draw", async () => {
+    const { PixelPass, CRISP_LAYER } = await import("./pixelPass");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070a);
+    const house = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    const sprite = new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial());
+    sprite.layers.enable(CRISP_LAYER);
+    scene.add(house, sprite);
+    const camera = new THREE.PerspectiveCamera();
+    const backgrounds: unknown[] = [];
+    const renderer = {
+      autoClear: true,
+      toneMapping: THREE.ACESFilmicToneMapping,
+      outputColorSpace: THREE.SRGBColorSpace,
+      getRenderTarget: () => null,
+      setRenderTarget() {},
+      clear() {},
+      clearDepth() {},
+      render(target: THREE.Object3D) {
+        if (target === scene) backgrounds.push(scene.background);
+      },
+    };
+    const pass = new PixelPass();
+    pass.render(renderer as unknown as THREE.WebGLRenderer, scene, camera);
+    // Low-res pass (background kept), depth pass + crisp pass (no background).
+    expect(backgrounds).toHaveLength(3);
+    expect(backgrounds[0]).not.toBeNull();
+    expect(backgrounds.slice(1)).toEqual([null, null]);
+    expect(scene.background).not.toBeNull();
+    expect(renderer.autoClear).toBe(true);
+    expect(renderer.toneMapping).toBe(THREE.ACESFilmicToneMapping);
+    expect(renderer.outputColorSpace).toBe(THREE.SRGBColorSpace);
+    expect(sprite.visible).toBe(true);
+    expect(house.material.colorWrite).toBe(true);
+  });
+});
