@@ -87,6 +87,18 @@ describe("alt director walk map", () => {
     expect(x).toBeLessThan(4);
   });
 
+  test("corner correction: walking at the wall beside a doorway slips you into it", () => {
+    // 15 cm off the doorway's edge (z 1.5..2.5, so the body fits z 1.7..2.3).
+    let [x, z] = [3, 1.55];
+    for (let i = 0; i < 80; i += 1) [x, z] = moveWithCollision(map, x, z, 0.04, 0);
+    expect(x).toBeGreaterThan(4.3);
+    // A plain wall far from any opening still just stops you.
+    [x, z] = [3, 0.5];
+    for (let i = 0; i < 80; i += 1) [x, z] = moveWithCollision(map, x, z, 0.04, 0);
+    expect(x).toBeLessThan(3.8);
+    expect(z).toBeCloseTo(0.5);
+  });
+
   test("the doorway lets you through", () => {
     const [x, z] = moveWithCollision(map, 3, 2, 2, 0);
     expect(x).toBeCloseTo(5, 5);
@@ -139,6 +151,25 @@ describe("alt director camera cuts", () => {
     const foyer2 = cam("foyer-2", [3.8, 2.1, 3.8], [2, 0.8, 2]);
     at(2, 2);
     expect(pickShot([foyer, foyer2], "foyer-2", head, feet, map, "foyer")).toBe("foyer-2");
+  });
+
+  test("a high camera looking down still has you when your feet leave the frame", () => {
+    // Close under the foyer camera: head and chest in shot, feet below it.
+    const steep = cam("foyer", [0.2, 2.4, 0.2], [3.5, 0.9, 3.5]);
+    at(1.1, 1.1);
+    feet.set(1.1, 0.1, 1.1);
+    expect(pickShot([steep], null, head, feet, map, "foyer")).toBe("foyer");
+  });
+
+  test("in a room whose camera can't see you, the follow cam beats another room's camera", () => {
+    // Off to the side of the kitchen camera, which looks west along the
+    // room; the foyer camera can see them through the doorway.
+    const away = cam("kitchen", [7.8, 2.1, 0.2], [4.5, 0.8, 0.2]);
+    const across = cam("foyer", [0.2, 2.1, 2], [6, 0.8, 2]);
+    at(6.5, 2.6);
+    expect(pickShot([away, across], null, head, feet, map, "kitchen")).toBeNull();
+    // A hallway (no camera of its own) still takes any camera that sees you.
+    expect(pickShot([away, across], null, head, feet, map, null)).toBe("foyer");
   });
 });
 

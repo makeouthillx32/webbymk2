@@ -212,10 +212,42 @@ export function canStand(map: HouseMap, x: number, z: number): boolean {
   return !map.blockers.some((b) => inside(b, x, z, map.blockerRadius));
 }
 
+/** How far the walker is nudged sideways to slip through a doorway it clips. */
+export const CORNER_SLIP = 0.3;
+
+/**
+ * Find a sideways nudge (along the other axis, up to CORNER_SLIP) that lets a
+ * blocked step along one axis go through: the nearest offset where the step
+ * is clear and the sidestep to it is too. Returns the signed offset, or null.
+ */
+function slipOffset(map: HouseMap, x: number, z: number, sx: number, sz: number): number | null {
+  const alongX = sx !== 0;
+  for (let k = 1; k * 0.02 <= CORNER_SLIP + 1e-9; k += 1) {
+    for (const sign of [1, -1]) {
+      const off = sign * k * 0.02;
+      const ox = alongX ? x : x + off;
+      const oz = alongX ? z + off : z;
+      if (!canStand(map, ox + sx, oz + sz)) continue;
+      // The sidestep itself must be walkable all the way.
+      let clear = true;
+      for (let j = 1; j <= k && clear; j += 1) {
+        const t = (sign * j * 0.02);
+        clear = canStand(map, alongX ? x : x + t, alongX ? z + t : z);
+      }
+      if (clear) return off;
+    }
+  }
+  return null;
+}
+
 /**
  * Move by (dx, dz), sliding along whatever is in the way. Sub-stepped so a
  * fast frame can never tunnel through a 4 cm wall, and axis-separated so
  * walking diagonally into a wall glides along it instead of sticking.
+ *
+ * Corner correction, as platformers do it: walking straight at a wall just
+ * beside a doorway nudges the walker sideways into the opening (up to
+ * CORNER_SLIP), so a door doesn't need pixel-perfect lining up.
  */
 export function moveWithCollision(map: HouseMap, x: number, z: number, dx: number, dz: number): [number, number] {
   const distance = Math.hypot(dx, dz);
@@ -223,6 +255,7 @@ export function moveWithCollision(map: HouseMap, x: number, z: number, dx: numbe
   const steps = Math.max(1, Math.ceil(distance / 0.02));
   const sx = dx / steps;
   const sz = dz / steps;
+  const slip = Math.hypot(sx, sz); // a nudge is never faster than the walk
   let px = x;
   let pz = z;
   for (let i = 0; i < steps; i += 1) {
@@ -233,6 +266,14 @@ export function moveWithCollision(map: HouseMap, x: number, z: number, dx: numbe
       px += sx;
     } else if (sz !== 0 && canStand(map, px, pz + sz)) {
       pz += sz;
+    } else {
+      // Fully blocked: nudge towards an opening along the main direction.
+      const mainX = Math.abs(sx) >= Math.abs(sz);
+      const off = mainX ? slipOffset(map, px, pz, sx, 0) : slipOffset(map, px, pz, 0, sz);
+      if (off === null) continue;
+      const nudge = Math.sign(off) * Math.min(Math.abs(off), slip);
+      if (mainX && canStand(map, px, pz + nudge)) pz += nudge;
+      else if (!mainX && canStand(map, px + nudge, pz)) px += nudge;
     }
   }
   return [px, pz];
