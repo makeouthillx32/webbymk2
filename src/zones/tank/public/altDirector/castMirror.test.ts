@@ -88,6 +88,19 @@ describe("cast mirror", () => {
     kitchen.dispose();
     expect(root.getObjectByName("Malia_Rig")!.position.x).toBeCloseTo(2.55, 5); // back on its mark
   });
+  test("a room's second camera is the same room (game-room-2 sees the game room)", () => {
+    const root = scene();
+    publishHouseCast({ updatedAt: 1, members: [member("malia", -8.1, -2.0, "game-room-2")] });
+    const gameRoom = new CastMirror(root, [], { room: "game-room" });
+    gameRoom.update(0.016, eye);
+    expect(gameRoom.shown).toBe("malia");
+    gameRoom.dispose();
+    const kitchen = new CastMirror(root, [], { room: "kitchen" });
+    kitchen.update(0.016, eye);
+    expect(kitchen.shown).toBe("");
+    kitchen.dispose();
+  });
+
   test("walk-only avatars wait hidden, except the one the visitor wears", () => {
     const root = scene();
     const rocker = rig("Rocker_Rig", -2, 8);

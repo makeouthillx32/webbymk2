@@ -33,6 +33,13 @@ export const SIT_AFTER_MS = 3000;
 /** A seated member whose person is reported this far from the seat has got up. */
 const STAND_AWAY_M = 1.3;
 
+/**
+ * The room a camera's key stands for: "game-room-2" is the game room's second
+ * camera, so a member it sees is in the game room (the server tags members
+ * with the camera that saw them).
+ */
+export const physicalRoom = (key: string) => key.replace(/-\d+$/, "");
+
 /** A seat near (x, z) in `room` for a body of `kind`, skipping seats already `taken`. */
 export type SeatFinder = (x: number, z: number, room: string, kind: string, taken: ReadonlySet<string>) => HouseSeat | null;
 
@@ -137,9 +144,10 @@ export class CastMirror {
     for (const member of readHouseCast(now)) {
       const avatar = this.rigs.get(member.id);
       if (!avatar) continue;
-      if (this.options.room && member.room !== this.options.room) continue;
+      const room = physicalRoom(member.room);
+      if (this.options.room && room !== physicalRoom(this.options.room)) continue;
       const reported = toThreeFloor(member);
-      const seat = this.seatOf(member.id, member.kind, member.room, reported, member.moving, now);
+      const seat = this.seatOf(member.id, member.kind, room, reported, member.moving, now);
       // Seated, they settle onto the seat itself, not the feet in front of it.
       const target = seat ? { x: seat.at[0], z: seat.at[2] } : reported;
       const lift = seat ? seatLift(seat.at[1], member.kind !== "human" ? "animal" : avatar.sit ? "sit-clip" : "flat") : 0;
