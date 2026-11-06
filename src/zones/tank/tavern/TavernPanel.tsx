@@ -19,7 +19,7 @@
 // just needs to be frequent enough to pick up tick()-only changes, not
 // action-triggered ones.
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { X, Beer, Users, Flame, Volume2, Swords, Crown } from "lucide-react";
 import { ConsoleButton } from "../public/components/ConsoleButton";
 import { ACTIVE_THEME } from "../theme";
@@ -28,6 +28,8 @@ import { joinTavernQueueAction, leaveTavernQueueAction, getTavernQueueStatusActi
 import { resolveTavernChitAction } from "../server/tavernChits";
 import { startTavernMutinyAction, castTavernMutinyVoteAction } from "../server/tavernMutiny";
 import { triggerTavernSfxAction } from "../server/tavernSfx";
+import { castGuests, loadNpcPool, type TankNpcPool } from "./npcs";
+import { TavernNpc } from "./TavernNpc";
 
 const POLL_MS = 6000;
 const AMBER = "#b45309";
@@ -63,6 +65,18 @@ export function TavernPanel({ onClose, signedIn, currentUserId, onOpenSignIn }: 
   const [inQueue, setInQueue] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [, forceTick] = useState(0);
+  // Every customer is a random stranger from the NPC pool, picked from the
+  // chit's id so everyone watching sees the same face.
+  const [npcPool, setNpcPool] = useState<TankNpcPool | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadNpcPool().then((pool) => {
+      if (live) setNpcPool(pool);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -93,6 +107,8 @@ export function TavernPanel({ onClose, signedIn, currentUserId, onOpenSignIn }: 
 
   const shift = snapshot?.shift ?? null;
   const isBartender = !!shift && !!currentUserId && shift.bartenderId === currentUserId;
+  const chits = snapshot?.chits ?? [];
+  const guests = useMemo(() => castGuests(chits, npcPool?.npcs ?? []), [chits, npcPool]);
   const canMutiny = !!shift && !!currentUserId && shift.bartenderId !== currentUserId && !snapshot?.mutiny;
 
   async function withBusy(key: string, fn: () => Promise<void>) {
@@ -193,8 +209,19 @@ export function TavernPanel({ onClose, signedIn, currentUserId, onOpenSignIn }: 
                 <div className="rounded-lg bg-black/80 p-3 border border-white/10">
                   <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-300">Orders</p>
                   <div className="flex flex-col gap-2">
-                    {snapshot.chits.map((chit) => (
-                      <div key={chit.id} className="rounded bg-[#181a1f] p-2 border border-white/10">
+                    {snapshot.chits.map((chit) => {
+                      const guest = guests.get(chit.id);
+                      return (
+                      <div key={chit.id} className="flex gap-2 rounded bg-[#181a1f] p-2 border border-white/10">
+                        {guest && npcPool && (
+                          <TavernNpc npc={guest} cell={npcPool.cell} height={72} talking className="-my-1" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                        {guest && (
+                          <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: AMBER }}>
+                            {guest.name}
+                          </p>
+                        )}
                         <p className="text-xs text-slate-200">{chit.dialogue}</p>
                         <div className="mt-1.5 flex gap-1.5">
                           {chitResponseOptions(chit).map((opt) => (
@@ -213,8 +240,31 @@ export function TavernPanel({ onClose, signedIn, currentUserId, onOpenSignIn }: 
                             </ConsoleButton>
                           ))}
                         </div>
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {!isBartender && chits.length > 0 && npcPool && (
+                <div className="rounded-lg bg-black/80 p-3 border border-white/10">
+                  <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-300">At the bar</p>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {chits.map((chit) => {
+                      const guest = guests.get(chit.id);
+                      if (!guest) return null;
+                      return (
+                        <div key={chit.id} className="flex w-[84px] shrink-0 flex-col items-center gap-1 text-center">
+                          <TavernNpc npc={guest} cell={npcPool.cell} height={80} />
+                          <span className="max-w-full truncate text-[10px] font-black" style={{ color: AMBER }}>
+                            {guest.name}
+                          </span>
+                          <span className="line-clamp-2 text-[9px] leading-tight text-slate-400">{chit.dialogue}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
