@@ -19,7 +19,13 @@ export type RoomSceneManifest = {
   rooms: Record<string, RoomSceneEntry>;
   house: RoomSceneEntry | null;
   cast: RoomSceneEntry | null;
+  /** Who a visitor can walk as (the profile's "Walk as" picker), from the cast entry. */
+  avatars?: WalkAvatar[];
 };
+
+export type WalkAvatar = { id: string; label: string; thumb: string };
+
+const AVATAR_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const ROOM_KEY = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VERSION = /^[a-f0-9]{6,40}$/;
@@ -53,19 +59,35 @@ function fixedEntry(raw: unknown, key: "house" | "cast"): RoomSceneEntry | null 
   return file === `${key}.glb` && typeof version === "string" && VERSION.test(version) ? { file, version } : null;
 }
 
+/** The cast entry's walkable avatars, each with its thumbnail's versioned URL. */
+function castAvatars(raw: unknown, cast: RoomSceneEntry | null): WalkAvatar[] {
+  if (!cast) return [];
+  const entry = (raw as { cast?: { avatars?: unknown; avatarsVersion?: unknown } }).cast;
+  const version = typeof entry?.avatarsVersion === "string" && VERSION.test(entry.avatarsVersion) ? entry.avatarsVersion : cast.version;
+  const out: WalkAvatar[] = [];
+  for (const item of Array.isArray(entry?.avatars) ? entry.avatars : []) {
+    const { id, label } = (item ?? {}) as { id?: unknown; label?: unknown };
+    if (typeof id !== "string" || !AVATAR_ID.test(id) || out.some((a) => a.id === id)) continue;
+    const name = typeof label === "string" && label.trim() ? label.trim().slice(0, 24) : id;
+    out.push({ id, label: name, thumb: `${storageBase()}/avatars/${id}.png?v=${version}` });
+  }
+  return out;
+}
+
 export function parseRoomSceneManifest(raw: unknown): RoomSceneManifest {
   const rooms: Record<string, RoomSceneEntry> = {};
   const house = fixedEntry(raw, "house");
   const cast = fixedEntry(raw, "cast");
+  const avatars = castAvatars(raw, cast);
   const source = raw && typeof raw === "object" ? (raw as { rooms?: unknown }).rooms : null;
-  if (!source || typeof source !== "object") return { rooms, house, cast };
+  if (!source || typeof source !== "object") return { rooms, house, cast, avatars };
   for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
     if (!ROOM_KEY.test(key) || !value || typeof value !== "object") continue;
     const { file, version } = value as { file?: unknown; version?: unknown };
     if (file !== `${key}.glb` || typeof version !== "string" || !VERSION.test(version)) continue;
     rooms[key] = { file, version };
   }
-  return { rooms, house, cast };
+  return { rooms, house, cast, avatars };
 }
 
 /** Versioned URL for a room's scene, or null when that room has none. */

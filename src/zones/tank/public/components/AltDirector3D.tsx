@@ -99,6 +99,14 @@ type AltDirector3DProps = {
   reducedMotion?: boolean;
   onFailed?: () => void;
   className?: string;
+  onHudChange?: (hud: { place: string; shot: string }) => void;
+  cameraMode?: CameraMode;
+  onCameraModeChange?: (mode: CameraMode) => void;
+  hideOverlayHud?: boolean;
+  /** Who they walk as, when the page owns the choice (the profile's "Walk as"). */
+  avatarChoice?: string;
+  /** The floating "Walk as" picker on the canvas; off when the profile hosts it. */
+  avatarPicker?: boolean;
 };
 
 const held = (keys: Set<string>, ...codes: string[]) => (codes.some((c) => keys.has(c)) ? 1 : 0);
@@ -684,6 +692,12 @@ export default function AltDirector3D({
   reducedMotion = false,
   onFailed,
   className = "",
+  onHudChange,
+  cameraMode: cameraModeProp,
+  onCameraModeChange,
+  hideOverlayHud = false,
+  avatarChoice,
+  avatarPicker = true,
 }: AltDirector3DProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const input = useRef<Input>({ keys: new Set(), stick: { x: 0, y: 0 } });
@@ -693,7 +707,13 @@ export default function AltDirector3D({
   const programme = useRef<string | null>(programmeShot);
   programme.current = programmeShot;
   const drag = useRef<{ id: number; x: number } | null>(null);
-  const [mode, setMode] = useState<CameraMode>("director");
+  const [internalMode, setInternalMode] = useState<CameraMode>("director");
+  const mode = cameraModeProp ?? internalMode;
+  const toggleMode = () => {
+    const next = mode === "director" ? "follow" : "director";
+    setInternalMode(next);
+    onCameraModeChange?.(next);
+  };
   const [hud, setHud] = useState<Hud>({ place: "The house", shot: "Follow cam", hotspot: null });
   const [note, setNote] = useState<HouseHotspot | null>(null);
   const [focused, setFocused] = useState(false);
@@ -723,7 +743,8 @@ export default function AltDirector3D({
     }
     wrapper.current?.focus({ preventScroll: true });
   };
-  const wornAvatar = avatarList.some((a) => a.id === chosenAvatar) ? chosenAvatar : DEFAULT_AVATAR;
+  const wanted = avatarChoice ?? chosenAvatar;
+  const wornAvatar = avatarList.some((a) => a.id === wanted) ? wanted : DEFAULT_AVATAR;
 
   useEffect(() => {
     setTouch(window.matchMedia?.("(pointer: coarse)").matches === true);
@@ -744,9 +765,12 @@ export default function AltDirector3D({
       ready: () => setReady(true),
       broken: () => onFailed?.(),
       avatars: (list: { id: string; label: string }[]) => setAvatarList(list),
-      hud: (next: Hud) => setHud(next),
+      hud: (next: Hud) => {
+        setHud(next);
+        onHudChange?.({ place: next.place, shot: next.shot });
+      },
     }),
-    [onFailed],
+    [onFailed, onHudChange],
   );
 
   useEffect(() => {
@@ -795,7 +819,7 @@ export default function AltDirector3D({
           if (!e.repeat) activateHotspot();
         } else if (e.code === "KeyC") {
           e.stopPropagation();
-          if (!e.repeat) setMode((m) => (m === "director" ? "follow" : "director"));
+          if (!e.repeat) toggleMode();
         }
       }}
       onKeyUp={(e) => {
@@ -859,34 +883,38 @@ export default function AltDirector3D({
         </Canvas>
       </SceneBoundary>
 
-      {/* HUD */}
-      <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-1 sm:left-3 sm:top-3">
-        <div className="w-fit rounded border border-white/15 bg-black/55 px-2 py-1 text-white backdrop-blur-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-orange-300">Alt Director</p>
-          <p className="text-xs font-bold">{hud.place}</p>
-          <p className="text-[10px] text-white/60">{hud.shot}</p>
+      {/* HUD (hidden when parent hosts the HUD in the UI footer) */}
+      {!hideOverlayHud && (
+        <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-1 sm:left-3 sm:top-3">
+          <div className="w-fit rounded border border-white/15 bg-black/55 px-2 py-1 text-white backdrop-blur-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-orange-300">Alt Director</p>
+            <p className="text-xs font-bold">{hud.place}</p>
+            <p className="text-[10px] text-white/60">{hud.shot}</p>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className={`pointer-events-none absolute right-2 top-2 sm:right-3 sm:top-3 ${canWalk ? "" : "hidden"}`}>
-        <button
-          type="button"
-          className="pointer-events-auto rounded border border-white/20 bg-black/55 px-2 py-1 text-[11px] font-bold text-white backdrop-blur-sm transition hover:bg-black/75"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setMode((m) => (m === "director" ? "follow" : "director"));
-            wrapper.current?.focus({ preventScroll: true });
-          }}
-          title="Switch camera (C)"
-        >
-          {mode === "director" ? "Camera: Director cuts" : "Camera: Follow"}
-        </button>
-      </div>
+      {!hideOverlayHud && (
+        <div className={`pointer-events-none absolute right-2 top-2 sm:right-3 sm:top-3 ${canWalk ? "" : "hidden"}`}>
+          <button
+            type="button"
+            className="pointer-events-auto rounded border border-white/20 bg-black/55 px-2 py-1 text-[11px] font-bold text-white backdrop-blur-sm transition hover:bg-black/75"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMode();
+              wrapper.current?.focus({ preventScroll: true });
+            }}
+            title="Switch camera (C)"
+          >
+            {mode === "director" ? "Camera: Director cuts" : "Camera: Follow"}
+          </button>
+        </div>
+      )}
 
-      {canWalk && ready && avatarList.length > 1 && (
+      {avatarPicker && canWalk && ready && avatarList.length > 1 && (
         <div
-          className={`pointer-events-none absolute right-2 sm:right-3 top-10 sm:top-12 flex flex-col items-end gap-1`}
+          className={`pointer-events-none absolute right-2 sm:right-3 ${hideOverlayHud ? "top-2 sm:top-3" : "top-10 sm:top-12"} flex flex-col items-end gap-1`}
         >
           <button
             type="button"

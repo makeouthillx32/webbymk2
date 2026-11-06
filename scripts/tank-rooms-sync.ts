@@ -32,6 +32,7 @@
  */
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 const ROOT = join(import.meta.dir, "..");
 const LOCAL = join(ROOT, "artifacts", "tank-rooms");
@@ -84,7 +85,15 @@ async function upload(path: string, body: Uint8Array | string, contentType: stri
   console.log(`  uploaded ${path}`);
 }
 
-type Entry = { file: string; version: string; bytes?: number; exportedAt?: string };
+type Entry = {
+  file: string;
+  version: string;
+  bytes?: number;
+  exportedAt?: string;
+  /** On the cast: who a visitor can walk as, with picker thumbnails at avatars/<id>.png. */
+  avatars?: { id: string; label: string }[];
+  avatarsVersion?: string;
+};
 
 type Manifest = { rooms: Record<string, Entry>; house?: Entry | null; cast?: Entry | null };
 type Fixed = "house" | "cast";
@@ -183,6 +192,28 @@ if (removing) {
 }
 
 if (!removing) await publishFits();
+
+// The walk-as picker (Tank's profile): a front thumbnail per walkable avatar,
+// rendered from the cast by artifacts/tank-sprites/thumbs.py into
+// artifacts/tank-rooms/avatars/ with avatars.json (id + label, in picker order).
+// Published with the cast and listed on its manifest entry.
+const AVATAR_DIR = join(LOCAL, "avatars");
+const AVATAR_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+if (!removing && nextFixed.cast && (!names.length || names.includes("cast")) && existsSync(join(AVATAR_DIR, "avatars.json"))) {
+  const list = JSON.parse(readFileSync(join(AVATAR_DIR, "avatars.json"), "utf8")) as { id: string; label: string }[];
+  const hash = createHash("sha256");
+  const shipped: { id: string; label: string }[] = [];
+  for (const avatar of list) {
+    const file = join(AVATAR_DIR, `${avatar.id}.png`);
+    if (!AVATAR_ID.test(avatar.id) || !existsSync(file)) continue;
+    const png = readFileSync(file);
+    hash.update(avatar.id).update(avatar.label).update(png);
+    await upload(`avatars/${avatar.id}.png`, png, "image/png", 31536000);
+    shipped.push({ id: avatar.id, label: String(avatar.label).slice(0, 24) });
+  }
+  nextFixed.cast = { ...nextFixed.cast, avatars: shipped, avatarsVersion: hash.digest("hex").slice(0, 12) };
+  console.log(`  walk-as avatars: ${shipped.map((a) => a.id).join(", ")}`);
+}
 
 const manifest = JSON.stringify(
   { updatedAt: new Date().toISOString(), rooms: next, house: nextFixed.house, cast: nextFixed.cast },

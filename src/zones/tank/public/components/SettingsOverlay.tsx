@@ -58,6 +58,8 @@ export type TankSettings = {
   showAvatars: boolean;
   blockedUsers: string[];
   filterWords: string[];
+  /** Who they walk as in Game mode (a cast avatar id); chosen in the profile. */
+  walkAvatar?: string;
 };
 
 export const DEFAULT_SETTINGS: TankSettings = {

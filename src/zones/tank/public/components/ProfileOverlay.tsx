@@ -18,6 +18,7 @@ import { ACTIVE_THEME } from "../../theme";
 import { updateTankProfile } from "../../server/actions";
 import { createClient } from "@/utils/supabase/client";
 import type { TankPlayerProfile } from "../../server/gamification";
+import type { WalkAvatar } from "../roomScenes";
 
 const NAME_COLORS = [
   { label: "Red", value: "#ff3b2f" },
@@ -74,6 +75,10 @@ export type ProfileOverlayProps = {
   onClose: () => void;
   onOpenSeasonPass?: () => void;
   onProfileUpdated?: (updated: Partial<TankPlayerProfile>) => void;
+  /** Who they can walk as in Game mode, and who they walk as now. */
+  walkAvatars?: WalkAvatar[];
+  walkAvatar?: string;
+  onWalkAvatarChange?: (id: string) => void;
 };
 
 export function ProfileOverlay({
@@ -81,6 +86,9 @@ export function ProfileOverlay({
   onClose,
   onOpenSeasonPass,
   onProfileUpdated,
+  walkAvatars = [],
+  walkAvatar,
+  onWalkAvatarChange,
 }: ProfileOverlayProps) {
   const [activeTab, setActiveTab] = useState<"profile" | "account" | "billing">("profile");
   const [displayName, setDisplayName] = useState(initialProfile?.displayName ?? "Unenter");
@@ -91,6 +99,9 @@ export function ProfileOverlay({
       "https://db.unenter.live/storage/v1/object/public/tank-avatars/default.png"
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [walkPickerOpen, setWalkPickerOpen] = useState(false);
+  const [walkAs, setWalkAs] = useState(walkAvatar);
+  const walking = walkAvatars.find((a) => a.id === walkAs) ?? walkAvatars[0] ?? null;
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [profileSetupComplete, setProfileSetupComplete] = useState(
     initialProfile?.profileSetupComplete ?? false,
@@ -220,7 +231,7 @@ export function ProfileOverlay({
           <div className="flex gap-2 px-8 pt-3 pb-2 border-b border-black/30">
             <ConsoleButton
               variant={activeTab === "profile" ? "orange" : "gray"}
-              onClick={() => { setActiveTab("profile"); setPickerOpen(false); }}
+              onClick={() => { setActiveTab("profile"); setPickerOpen(false); setWalkPickerOpen(false); }}
               className="flex-1"
             >
               <User className="h-3.5 w-3.5" />
@@ -229,7 +240,7 @@ export function ProfileOverlay({
 
             <ConsoleButton
               variant={activeTab === "account" ? "orange" : "gray"}
-              onClick={() => { setActiveTab("account"); setPickerOpen(false); }}
+              onClick={() => { setActiveTab("account"); setPickerOpen(false); setWalkPickerOpen(false); }}
               className="flex-1"
             >
               <Lock className="h-3.5 w-3.5" />
@@ -238,7 +249,7 @@ export function ProfileOverlay({
 
             <ConsoleButton
               variant={activeTab === "billing" ? "orange" : "gray"}
-              onClick={() => { setActiveTab("billing"); setPickerOpen(false); }}
+              onClick={() => { setActiveTab("billing"); setPickerOpen(false); setWalkPickerOpen(false); }}
               className="flex-1"
             >
               <CreditCard className="h-3.5 w-3.5" />
@@ -249,7 +260,7 @@ export function ProfileOverlay({
           {/* Scrollable Modal Content */}
           <div className="flex-1 overflow-y-auto px-8 py-3.5 pb-6 space-y-4">
             {/* ═══════════ PROFILE TAB ═══════════ */}
-            {activeTab === "profile" && !pickerOpen && (
+            {activeTab === "profile" && !pickerOpen && !walkPickerOpen && (
               <div className="space-y-3.5">
                 {!profileSetupComplete && (
                   <div className="rounded border border-[#ff7a00]/70 bg-[#ff7a00]/15 p-3 text-[#241f14]">
@@ -371,6 +382,38 @@ export function ProfileOverlay({
                   </div>
                 </div>
 
+                {/* Walk As: who they are in Game mode, the same box as the avatar */}
+                {walking && (
+                  <div className="flex gap-4 items-center">
+                    <div className="flex flex-col items-center gap-1.5 shrink-0">
+                      <div className="relative h-20 w-20 overflow-hidden rounded border border-black/60 bg-black/80 shadow-inner flex items-center justify-center p-1">
+                        <img
+                          src={walking.thumb}
+                          alt={walking.label}
+                          className="h-full w-full object-contain drop-shadow-sm"
+                          style={{ imageRendering: "pixelated" }}
+                        />
+                      </div>
+                      <ConsoleButton
+                        variant="gray"
+                        onClick={() => setWalkPickerOpen(true)}
+                        className="!py-1 !px-3 !text-[11px] w-full"
+                      >
+                        Change
+                      </ConsoleButton>
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <span className="block text-xs font-black uppercase tracking-wider text-[#241f14]" style={{ fontFamily: ACTIVE_THEME.fonts.label }}>
+                        Walk As
+                      </span>
+                      <p className="text-sm font-black text-[#241f14]">{walking.label}</p>
+                      <p className="text-[10px] font-bold leading-relaxed text-[#4c4630]">
+                        Who you are when you walk the house in Game mode.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Bio Field */}
                 <div>
                   <label className="block text-xs font-black uppercase tracking-wider text-[#241f14] mb-1" style={{ fontFamily: ACTIVE_THEME.fonts.label }}>
@@ -464,6 +507,62 @@ export function ProfileOverlay({
                         </div>
                         <span className="mt-1 max-w-full truncate text-[9px] font-bold text-slate-400 group-hover:text-white">
                           {filename.replace(".png", "")}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ═══════════ WALK AS PICKER VIEW ═══════════ */}
+            {activeTab === "profile" && walkPickerOpen && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setWalkPickerOpen(false)}
+                    className="flex items-center gap-1 text-xs font-black uppercase tracking-wide text-[#241f14] hover:text-[#ff4d00]"
+                    style={{ fontFamily: ACTIVE_THEME.fonts.label }}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Back to Profile
+                  </button>
+                  <span className="text-[11px] font-black uppercase text-[#444]" style={{ fontFamily: ACTIVE_THEME.fonts.label }}>
+                    Walk As
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2.5 max-h-[50vh] overflow-y-auto p-1 bg-black/80 rounded border border-black/60">
+                  {walkAvatars.map((avatar) => {
+                    const isSelected = walking?.id === avatar.id;
+                    return (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          setWalkAs(avatar.id);
+                          onWalkAvatarChange?.(avatar.id);
+                          setWalkPickerOpen(false);
+                        }}
+                        className={`group relative flex flex-col items-center justify-center p-1.5 rounded border transition active:scale-95 ${
+                          isSelected
+                            ? "border-yellow-400 bg-yellow-400/20 ring-2 ring-yellow-400"
+                            : "border-white/10 bg-black/60 hover:border-white/30"
+                        }`}
+                      >
+                        <div className="relative h-14 w-12 overflow-hidden flex items-center justify-center">
+                          <img
+                            src={avatar.thumb}
+                            alt={avatar.label}
+                            className="h-full w-full object-contain drop-shadow-sm"
+                            style={{ imageRendering: "pixelated" }}
+                            loading="lazy"
+                          />
+                        </div>
+                        <span className="mt-1 max-w-full truncate text-[9px] font-bold text-slate-400 group-hover:text-white">
+                          {avatar.label}
                         </span>
                       </button>
                     );

@@ -62,6 +62,30 @@ describe("Tank off-air 3D room scenes", () => {
     expect(houseSceneUrl(null)).toBeNull();
   });
 
+  test("the cast lists who you can walk as, each with a versioned thumbnail", () => {
+    const manifest = parseRoomSceneManifest({
+      rooms: {},
+      house: { file: "house.glb", version: "1e4b2d4df7a6" },
+      cast: {
+        file: "cast.glb",
+        version: "220d53127454",
+        avatarsVersion: "abcdef123456",
+        avatars: [
+          { id: "joe", label: "Joe" },
+          { id: "rocker", label: "Rocker" },
+          { id: "../evil", label: "x" },
+          { id: "joe", label: "Joe again" },
+          { id: "monk" },
+        ],
+      },
+    });
+    expect(manifest.avatars?.map((a) => [a.id, a.label])).toEqual([["joe", "Joe"], ["rocker", "Rocker"], ["monk", "monk"]]);
+    expect(manifest.avatars?.[1].thumb).toEndWith("/tank-assets/rooms3d/avatars/rocker.png?v=abcdef123456");
+    // No cast, no list (and no crash on junk).
+    expect(parseRoomSceneManifest({ rooms: {}, cast: { file: "x.glb", version: "220d53127454", avatars: [{ id: "joe" }] } }).avatars).toEqual([]);
+    expect(parseRoomSceneManifest(null).avatars).toEqual([]);
+  });
+
   test("the cast is its own fixed file and only counts next to a house", () => {
     const both = parseRoomSceneManifest({
       rooms: {},

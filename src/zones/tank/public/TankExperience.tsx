@@ -1817,6 +1817,11 @@ export function TankExperience({
       viewerPrefersGame: directorView === "game",
     }) &&
     altDirectorFailedUrl !== houseSceneSrc;
+  const [altGameHud, setAltGameHud] = useState<{ place: string; shot: string }>({
+    place: "The house",
+    shot: "Follow cam",
+  });
+  const [altCameraMode, setAltCameraMode] = useState<"director" | "follow">("director");
 
   // Room the hero player is actually showing. In director mode that's whichever
   // room the server director cut to (not the room being browsed), otherwise it
@@ -2809,7 +2814,7 @@ export function TankExperience({
                 data-tank-focus-stage={desktopFocusView ? "side-rails" : undefined}
               >
               <div
-                className={`hidden text-white lg:flex ${
+                className={`flex text-white ${
                   desktopFocusView
                     ? "lg:!contents"
                     : "items-center justify-between border-b border-white/10 bg-[#0b0c0e] px-3 py-2"
@@ -2827,6 +2832,45 @@ export function TankExperience({
                     ? "Director"
                     : (activeRoom?.title ?? "Room")}
                 </span>
+
+                {directorToggle.visible && (
+                  <div
+                    className={`flex items-center overflow-hidden rounded-full border border-white/20 bg-black/60 text-[11px] font-black uppercase tracking-wide text-white backdrop-blur-sm ${
+                      desktopFocusView ? "lg:col-start-3 lg:row-start-1 lg:order-2 lg:mb-2" : ""
+                    }`}
+                    role="group"
+                    aria-label="Director view"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={showAltDirector}
+                      onClick={() => chooseDirectorView("game")}
+                      className={`flex items-center gap-1 px-2.5 py-1 transition sm:px-3 sm:py-1.5 ${
+                        showAltDirector ? "bg-fuchsia-500/80" : "hover:bg-white/10"
+                      }`}
+                    >
+                      <Gamepad2 className="h-3.5 w-3.5" /> Game
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={!showAltDirector}
+                      disabled={!directorToggle.irlAvailable}
+                      title={
+                        directorToggle.irlAvailable
+                          ? "Watch the live cameras"
+                          : "No room is on air right now"
+                      }
+                      onClick={() => chooseDirectorView("irl")}
+                      className={`flex items-center gap-1 px-2.5 py-1 transition disabled:cursor-not-allowed disabled:opacity-40 sm:px-3 sm:py-1.5 ${
+                        !showAltDirector ? "bg-emerald-600/80" : "hover:bg-white/10"
+                      }`}
+                    >
+                      <Radio className="h-3.5 w-3.5" /> IRL
+                    </button>
+                  </div>
+                )}
+
                 <div
                   className={`flex min-w-0 items-center justify-end gap-3 ${
                     desktopFocusView
@@ -2835,12 +2879,32 @@ export function TankExperience({
                   }`}
                 >
                   {desktopFocusView && (
-                    <p className="order-2 text-left text-[10px] leading-relaxed text-white/55">
-                      {mode === "director"
-                        ? DIRECTOR_ROOM.description
-                        : (activeRoom?.description ??
-                          "Connected camera room view.")}
-                    </p>
+                    showAltDirector ? (
+                      <div className="order-2 flex flex-col gap-1.5 rounded border border-white/15 bg-black/55 p-2 text-left text-white backdrop-blur-sm">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-orange-400">
+                          ALT DIRECTOR
+                        </span>
+                        <p className="text-xs font-bold text-white">{altGameHud.place}</p>
+                        <p className="text-[11px] text-white/70">{altGameHud.shot}</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAltCameraMode((m) => (m === "director" ? "follow" : "director"));
+                          }}
+                          className="mt-1 rounded border border-white/20 bg-white/10 px-2 py-1 text-center text-[11px] font-bold text-white transition hover:bg-white/20"
+                          title="Switch camera (C)"
+                        >
+                          {altCameraMode === "director" ? "Camera: Director cuts" : "Camera: Follow"} (C)
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="order-2 text-left text-[10px] leading-relaxed text-white/55">
+                        {mode === "director"
+                          ? DIRECTOR_ROOM.description
+                          : (activeRoom?.description ??
+                            "Connected camera room view.")}
+                      </p>
+                    )
                   )}
                   <button
                     type="button"
@@ -2907,38 +2971,16 @@ export function TankExperience({
                     onSignIn={() => setAccountOpen(true)}
                     reducedMotion={prefersReducedMotion}
                     onFailed={() => setAltDirectorFailedUrl(houseSceneSrc)}
+                    onHudChange={setAltGameHud}
+                    cameraMode={altCameraMode}
+                    onCameraModeChange={setAltCameraMode}
+                    hideOverlayHud={true}
+                    avatarChoice={settings.walkAvatar}
+                    avatarPicker={false}
                   />
                 )}
 
-                {/* Game / IRL. IRL is greyed out while no room is on air;
-                    the house is always there to fall back to. */}
-                {directorToggle.visible && (
-                  <div
-                    className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 overflow-hidden rounded-full border border-white/20 bg-black/60 text-[11px] font-black uppercase tracking-wide text-white backdrop-blur-sm sm:top-3"
-                    role="group"
-                    aria-label="Director view"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={showAltDirector}
-                      onClick={() => chooseDirectorView("game")}
-                      className={`flex items-center gap-1 px-3 py-1.5 transition ${showAltDirector ? "bg-fuchsia-500/80" : "hover:bg-white/10"}`}
-                    >
-                      <Gamepad2 className="h-3.5 w-3.5" /> Game
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={!showAltDirector}
-                      disabled={!directorToggle.irlAvailable}
-                      title={directorToggle.irlAvailable ? "Watch the live cameras" : "No room is on air right now"}
-                      onClick={() => chooseDirectorView("irl")}
-                      className={`flex items-center gap-1 px-3 py-1.5 transition disabled:cursor-not-allowed disabled:opacity-40 ${!showAltDirector ? "bg-emerald-600/80" : "hover:bg-white/10"}`}
-                    >
-                      <Radio className="h-3.5 w-3.5" /> IRL
-                    </button>
-                  </div>
-                )}
+
 
                 {showRoomScene && roomSceneSrc && (
                   <RoomScene3D
@@ -3291,25 +3333,57 @@ export function TankExperience({
                 }`}
                 data-tank-player-footer
               >
-                <div
-                  className={`min-w-0 items-start gap-2 ${
-                    desktopFocusView ? "flex lg:hidden" : "flex"
-                  }`}
-                >
-                  <span
-                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
-                      heroOnline
-                        ? "bg-[#39ff6a] shadow-[0_0_6px_#39ff6a]"
-                        : "bg-red-500 shadow-[0_0_6px_#ef4444]"
+                {showAltDirector ? (
+                  <div
+                    className={`min-w-0 items-center justify-between gap-2 rounded border border-white/15 bg-black/55 px-2.5 py-1 text-white backdrop-blur-sm ${
+                      desktopFocusView ? "flex lg:hidden" : "flex"
                     }`}
-                  />
-                  <p className="min-w-0 truncate text-[10px] text-white/65 sm:text-[11px]">
-                    {mode === "director"
-                      ? DIRECTOR_ROOM.description
-                      : (activeRoom?.description ??
-                        "Connected camera room view.")}
-                  </p>
-                </div>
+                  >
+                    <div className="flex min-w-0 items-center gap-2 text-xs">
+                      <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-orange-400">
+                        ALT DIRECTOR
+                      </span>
+                      <span className="text-white/30">•</span>
+                      <span className="truncate font-bold text-white">
+                        {altGameHud.place}
+                      </span>
+                      <span className="text-white/30">•</span>
+                      <span className="truncate text-[11px] text-white/70">
+                        {altGameHud.shot}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAltCameraMode((m) => (m === "director" ? "follow" : "director"));
+                      }}
+                      className="shrink-0 rounded border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold text-white transition hover:bg-white/20 active:translate-y-px"
+                      title="Switch camera (C)"
+                    >
+                      {altCameraMode === "director" ? "Camera: Director cuts" : "Camera: Follow"} (C)
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    className={`min-w-0 items-start gap-2 ${
+                      desktopFocusView ? "flex lg:hidden" : "flex"
+                    }`}
+                  >
+                    <span
+                      className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                        heroOnline
+                          ? "bg-[#39ff6a] shadow-[0_0_6px_#39ff6a]"
+                          : "bg-red-500 shadow-[0_0_6px_#ef4444]"
+                      }`}
+                    />
+                    <p className="min-w-0 truncate text-[10px] text-white/65 sm:text-[11px]">
+                      {mode === "director"
+                        ? DIRECTOR_ROOM.description
+                        : (activeRoom?.description ??
+                          "Connected camera room view.")}
+                    </p>
+                  </div>
+                )}
 
                 <div
                   className={`flex items-center justify-between gap-3 ${
@@ -4103,6 +4177,14 @@ export function TankExperience({
           initialProfile={livePlayerProfile ?? playerProfile}
           onClose={() => setProfileOpen(false)}
           onOpenSeasonPass={() => setOverlayView("season")}
+          walkAvatars={roomSceneManifest?.avatars ?? []}
+          walkAvatar={settings.walkAvatar ?? safeStorage.getItem("tank.altDirector.avatar") ?? undefined}
+          onWalkAvatarChange={(id) => {
+            try {
+              safeStorage.setItem("tank.altDirector.avatar", id);
+            } catch {}
+            handleSaveSettings({ ...settings, walkAvatar: id });
+          }}
           onProfileUpdated={(updated) => {
             setPlayerProfile((prev) => ({
               xp: prev?.xp ?? 0,
