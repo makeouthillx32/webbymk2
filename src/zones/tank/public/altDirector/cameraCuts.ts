@@ -5,6 +5,11 @@
 // the shot while it still sees the visitor, so walking along a frame edge
 // never ping-pongs between two angles. Where no camera sees them (hallways),
 // the walker falls back to its own follow camera.
+//
+// A camera must also see where the visitor is heading: a fixed angle that
+// frames them but not the doorway they're walking at is no help, so while
+// they walk, a point just ahead of them has to be in frame too, or the
+// shot goes to one that has it, or to the follow (avatar) camera.
 
 import * as THREE from "three";
 import { segmentHitsWall, type HouseMap } from "./houseMap";
@@ -54,6 +59,18 @@ export function shotScore(shot: ShotCamera, head: THREE.Vector3, feet: THREE.Vec
   return 0.5 * (seen / 3) + 0.5 * centre;
 }
 
+/** Ahead of the visitor: in frame for the shot they're on (a touch of slack), well in frame to cut to a new one. */
+const AHEAD_EDGE_HOLD = 1.05;
+const AHEAD_EDGE_CUT = 0.85;
+
+/** Whether a point is in front of the camera and inside its frame (to `edge`, 1 = the frame's border). */
+export function inFrame(camera: THREE.PerspectiveCamera, point: THREE.Vector3, edge = EDGE): boolean {
+  camera.updateMatrixWorld();
+  projected.copy(point).project(camera);
+  if (projected.z < -1 || projected.z > 1) return false;
+  return Math.max(Math.abs(projected.x), Math.abs(projected.y)) <= edge;
+}
+
 const belongsTo = (key: string, room: string | null) => Boolean(room) && (key === room || key.startsWith(`${room}-`));
 
 /**
@@ -75,6 +92,8 @@ export function pickShot(
   room: string | null,
   /** Just cut: keep the current shot while it can still see them (no flicker on a doorway seam). */
   hold = false,
+  /** Walking: a point just ahead of them, which the shot must see as well. */
+  ahead: THREE.Vector3 | null = null,
 ): string | null {
   const roomHasCamera = shots.some((shot) => belongsTo(shot.key, room));
   let currentSees = false;
@@ -83,6 +102,7 @@ export function pickShot(
   for (const shot of shots) {
     const score = shotScore(shot, head, feet, map);
     if (score === null) continue;
+    if (ahead && !inFrame(shot.camera, ahead, shot.key === currentKey ? AHEAD_EDGE_HOLD : AHEAD_EDGE_CUT)) continue;
     if (shot.key === currentKey) currentSees = true;
     if (belongsTo(shot.key, room) && (!bestInRoom || score > bestInRoom.score)) bestInRoom = { key: shot.key, score };
     if (!best || score > best.score) best = { key: shot.key, score };

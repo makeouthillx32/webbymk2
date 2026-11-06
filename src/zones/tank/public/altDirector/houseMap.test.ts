@@ -242,3 +242,27 @@ describe("floor seams (walls decide the doors, not mesh cuts)", () => {
     expect(canStand(apart, 2.25, 1.5)).toBe(false);
   });
 });
+
+describe("camera cuts look where you're going", () => {
+  const head = new THREE.Vector3(2, 1.35, 2);
+  const feet = new THREE.Vector3(2, 0.1, 2);
+  // The foyer camera frames the middle of the room, not the doorway at -x.
+  const foyer = cam("foyer", [3.8, 2.1, 2], [2, 0.8, 2]);
+  const narrow = (() => {
+    const shot = cam("foyer", [3.8, 2.1, 3.8], [2.6, 0.8, 2.6]);
+    shot.camera.fov = 30;
+    shot.camera.updateProjectionMatrix();
+    return shot;
+  })();
+
+  test("a shot that frames you but not where you walk gives way to the avatar cam", () => {
+    const ahead = new THREE.Vector3(2, 1, 0.7); // walking at a door the narrow camera can't see
+    expect(pickShot([narrow], null, head, feet, map, "foyer")).toBe("foyer");
+    expect(pickShot([narrow], "foyer", head, feet, map, "foyer", true, ahead)).toBeNull();
+  });
+
+  test("a shot that sees the way ahead keeps it", () => {
+    const ahead = new THREE.Vector3(1.4, 1, 2);
+    expect(pickShot([foyer], "foyer", head, feet, map, "foyer", true, ahead)).toBe("foyer");
+  });
+});

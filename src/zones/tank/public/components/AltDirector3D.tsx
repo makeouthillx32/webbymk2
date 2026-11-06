@@ -78,6 +78,8 @@ const CAST_SEAT_REACH = 0.75;
 const CAST_PET_SEAT_REACH = 1.1;
 /** Director cuts: a fresh shot holds at least this long while it can still see the walker. */
 const SHOT_MIN_HOLD_S = 1.2;
+/** Director cuts: the shot must see this far ahead of a walker (m), or it goes to one that does, or the avatar cam. */
+const LOOK_AHEAD_M = 1.3;
 /** Skates: how fast speed builds (per s), and how slowly it bleeds off when you let go. */
 const GLIDE_ACCEL = 3;
 const GLIDE_COAST = 1.3;
@@ -441,6 +443,7 @@ function HouseWorld({
       dir: new THREE.Vector3(),
       want: new THREE.Vector3(),
       eye: new THREE.Vector3(),
+      ahead: new THREE.Vector3(),
     }),
     [],
   );
@@ -455,6 +458,9 @@ function HouseWorld({
     basisInput: null as [number, number] | null,
     /** Until when the walk direction stays as it was (a pause at a doorway mustn't flip it). */
     basisUntil: 0,
+    /** The way the walker last walked (unit, ground plane): where the shot must look ahead to. */
+    headingX: 0,
+    headingZ: 0,
     /** When the camera last cut (shots hold a moment so a doorway seam can't flicker them). */
     shotAt: 0,
     upperShown: null as boolean | null,
@@ -608,6 +614,11 @@ function HouseWorld({
     const wx = fx * forward - fz * right;
     const wz = fz * forward + fx * right;
     const speed = held(keys, "ShiftLeft", "ShiftRight") || amount > 1.25 ? RUN_SPEED : WALK_SPEED;
+    if (moving) {
+      const length = Math.hypot(wx, wz) || 1;
+      s.headingX = wx / length;
+      s.headingZ = wz / length;
+    }
 
     // Sitting: E by a seat sits down facing out; E again, or walking off, stands
     // them back up where they were.
@@ -719,8 +730,28 @@ function HouseWorld({
       } else {
         scratch.head.set(s.x, 1.35, s.z);
         scratch.feet.set(s.x, 0.1, s.z);
-        const next = pickShot(shots, s.shot, scratch.head, scratch.feet, map, floor?.room ?? null, clock.elapsedTime - s.shotAt < SHOT_MIN_HOLD_S);
-        if (next !== s.shot) s.shotAt = clock.elapsedTime;
+        // Walking (or just paused): the shot has to see where they're going too.
+        const heading = !s.seat && (moving || clock.elapsedTime < s.basisUntil) && (s.headingX || s.headingZ);
+        if (heading) scratch.ahead.set(s.x + s.headingX * LOOK_AHEAD_M, 1, s.z + s.headingZ * LOOK_AHEAD_M);
+        const next = pickShot(
+          shots,
+          s.shot,
+          scratch.head,
+          scratch.feet,
+          map,
+          floor?.room ?? null,
+          clock.elapsedTime - s.shotAt < SHOT_MIN_HOLD_S,
+          heading ? scratch.ahead : null,
+        );
+        if (next !== s.shot) {
+          s.shotAt = clock.elapsedTime;
+          // Out of the fixed angles onto the avatar cam: it looks the way the
+          // last camera did, so the stick keeps walking the same way.
+          if (next === null && s.basis) {
+            s.followYaw = Math.atan2(s.basis.fx, s.basis.fz);
+            s.placed = false;
+          }
+        }
         s.shot = next;
       }
     } else {
