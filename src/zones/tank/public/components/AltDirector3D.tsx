@@ -19,8 +19,10 @@ import {
   floorAt,
   moveWithCollision,
   nearestHotspot,
+  nearestSeat,
   parseHouseMap,
   type HouseHotspot,
+  type HouseSeat,
   type HouseMap,
 } from "../altDirector/houseMap";
 import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
@@ -43,7 +45,29 @@ import { mergeStaticMeshes } from "../altDirector/mergeStatic";
 type CameraMode = "director" | "follow";
 type Input = { keys: Set<string>; stick: { x: number; y: number } };
 type Hud = { place: string; shot: string; hotspot: HouseHotspot | null };
-type Effects = { tv: boolean };
+/** Shared between the HUD and the frame loop: the TV, and a pending sit/stand. */
+type Effects = { tv: boolean; seat: string | null };
+/** A seated paper-doll's hip is this high (its Sit clip); a higher seat lifts it. */
+const SIT_HIP_M = 0.47;
+/** A flat card (no Sit clip) sinks until this much of it is below the seat top. */
+const FLAT_HIP_M = 0.82;
+/** Skates: how fast speed builds (per s), and how slowly it bleeds off when you let go. */
+const GLIDE_ACCEL = 3;
+const GLIDE_COAST = 1.3;
+/** A seat in reach wins over a hotspot unless the hotspot is this much closer. */
+const SEAT_PREFERENCE_M = 0.3;
+const STAND_PROMPT: HouseHotspot = {
+  id: "stand",
+  label: "Stand up",
+  blurb: "",
+  effect: null,
+  at: [0, 0, 0],
+  r: 0,
+  node: null,
+  fx: null,
+  room: null,
+  seat: "stand",
+};
 
 const WALK_SPEED = 1.5; // m/s
 const RUN_SPEED = 2.8;
@@ -226,8 +250,11 @@ function HouseWorld({
   }, [walker, avatarId, castGltf.scene, castGltf.animations]);
   const avatarAction = useRef<THREE.AnimationAction | null>(null);
   const idleAction = useRef<THREE.AnimationAction | null>(null);
+  const sitAction = useRef<THREE.AnimationAction | null>(null);
   /** 0 standing (Idle) … 1 walking (Walk), eased so the two blend. */
   const walkBlend = useRef(0);
+  /** 0 on their feet … 1 seated, eased the same way. */
+  const sitBlend = useRef(0);
   // The rest of the cast mirrors the real house (altDirector/castMirror.ts):
   // no skit, and a member no camera can see is not rendered. The visitor's
   // own body is theirs to move.
@@ -259,6 +286,13 @@ function HouseWorld({
     upperShown: null as boolean | null,
     hudKey: "",
     walkTime: 0,
+    /** Velocity (m/s): instant on foot, eased on skates. */
+    vx: 0,
+    vz: 0,
+    /** The seat they're on, and where they stood before sitting down. */
+    seat: null as HouseSeat | null,
+    standX: 0,
+    standZ: 0,
     placed: false,
     watchIndex: -1,
     nextCutAt: 0,
@@ -288,6 +322,11 @@ function HouseWorld({
     // older rig plays its rehearsal poses, minus its blocking, only while walking.
     const action = avatar.clip ? mixer.clipAction(avatar.clip) : null;
     const idle = avatar.idle ? mixer.clipAction(avatar.idle) : null;
+    const sit = avatar.sit && idle ? mixer.clipAction(avatar.sit) : null;
+    if (sit) {
+      sit.play();
+      sit.setEffectiveWeight(0);
+    }
     if (action) {
       action.play();
       action.paused = !idle;
@@ -298,15 +337,20 @@ function HouseWorld({
       idle.setEffectiveWeight(1);
     }
     walkBlend.current = 0;
+    sitBlend.current = 0;
     avatarAction.current = action;
     idleAction.current = idle;
+    sitAction.current = sit;
     return () => {
       action?.stop();
       idle?.stop();
+      sit?.stop();
       if (avatar.clip) mixer.uncacheAction(avatar.clip);
       if (avatar.idle) mixer.uncacheAction(avatar.idle);
+      if (avatar.sit) mixer.uncacheAction(avatar.sit);
       avatarAction.current = null;
       idleAction.current = null;
+      sitAction.current = null;
       restoreAvatar(avatar);
     };
   }, [avatar, mixer]);
@@ -364,13 +408,65 @@ function HouseWorld({
     const wx = fx * forward - fz * right;
     const wz = fz * forward + fx * right;
     const speed = held(keys, "ShiftLeft", "ShiftRight") || amount > 1.25 ? RUN_SPEED : WALK_SPEED;
-    if (moving) {
-      [s.x, s.z] = moveWithCollision(map, s.x, s.z, wx * speed * dt, wz * speed * dt);
-      s.yaw = angleLerp(s.yaw, Math.atan2(wx, wz), dt * 12);
+
+    // Sitting: E by a seat sits down facing out; E again, or walking off, stands
+    // them back up where they were.
+    const request = effects.current.seat;
+    effects.current.seat = null;
+    if (s.seat && (request === "stand" || moving || !walker)) {
+      s.x = s.standX;
+      s.z = s.standZ;
+      s.seat = null;
+    } else if (request && request !== "stand" && walker && !s.seat) {
+      const seat = map.seats.find((candidate) => candidate.id === request);
+      if (seat) {
+        s.standX = s.x;
+        s.standZ = s.z;
+        s.seat = seat;
+        s.x = seat.at[0];
+        s.z = seat.at[2];
+        s.yaw = seat.yaw;
+        s.vx = 0;
+        s.vz = 0;
+      }
+    }
+
+    // On skates speed builds and bleeds off; on foot it is instant.
+    const glide = avatar?.gait === "glide";
+    const targetX = moving ? wx * speed : 0;
+    const targetZ = moving ? wz * speed : 0;
+    if (glide) {
+      const rate = Math.min(1, dt * (moving ? GLIDE_ACCEL : GLIDE_COAST));
+      s.vx += (targetX - s.vx) * rate;
+      s.vz += (targetZ - s.vz) * rate;
+    } else {
+      s.vx = targetX;
+      s.vz = targetZ;
+    }
+    const pace = Math.hypot(s.vx, s.vz);
+    const stepping = !s.seat && (moving || (glide && pace > 0.2));
+    if (!s.seat && pace > 0.01) {
+      const [nx, nz] = moveWithCollision(map, s.x, s.z, s.vx * dt, s.vz * dt);
+      // A wall stops a coasting skater dead.
+      if (glide && !moving && Math.hypot(nx - s.x, nz - s.z) < pace * dt * 0.5) {
+        s.vx = 0;
+        s.vz = 0;
+      }
+      s.x = nx;
+      s.z = nz;
+    }
+    if (stepping) {
+      if (moving) s.yaw = angleLerp(s.yaw, Math.atan2(wx, wz), dt * 12);
       s.walkTime += dt;
     }
     // A rig with real Walk/Idle clips bobs inside its clip; flat cards get a code bob.
-    const bob = moving && animate && !avatar?.animated ? Math.abs(Math.sin(s.walkTime * 9)) * 0.05 : 0;
+    const bob = stepping && animate && !avatar?.animated ? Math.abs(Math.sin(s.walkTime * 9)) * 0.05 : 0;
+    // Seated: a paper-doll's Sit clip puts its hip at SIT_HIP_M, so a taller seat
+    // lifts it; a flat card sinks into the seat and the cushion hides its legs.
+    let seatLift = 0;
+    if (s.seat && avatar) {
+      seatLift = sitAction.current ? Math.min(Math.max(s.seat.at[1] - SIT_HIP_M, 0), 0.3) : s.seat.at[1] - FLAT_HIP_M;
+    }
     if (visitor.current) {
       visitor.current.visible = walker;
       visitor.current.position.set(s.x, 0, s.z);
@@ -381,18 +477,24 @@ function HouseWorld({
     if (avatar) {
       // A walk-only avatar waits hidden in the cast until it is worn.
       avatar.rig.visible = true;
-      avatar.rig.position.set(s.x, avatar.baseY + bob, s.z);
+      avatar.rig.position.set(s.x, avatar.baseY + bob + seatLift, s.z);
     }
     if (idleAction.current && avatarAction.current) {
       const walk = avatarAction.current;
       const idle = idleAction.current;
+      const sit = sitAction.current;
       walk.paused = idle.paused = !animate;
-      walkBlend.current += ((moving ? 1 : 0) - walkBlend.current) * Math.min(1, dt * 10);
-      walk.setEffectiveWeight(walkBlend.current);
-      idle.setEffectiveWeight(1 - walkBlend.current);
-      walk.timeScale = moving ? speed / CLIP_WALK_SPEED : 1;
+      if (sit) sit.paused = !animate;
+      walkBlend.current += ((stepping ? 1 : 0) - walkBlend.current) * Math.min(1, dt * 10);
+      sitBlend.current += ((s.seat && sit ? 1 : 0) - sitBlend.current) * Math.min(1, dt * 12);
+      const up = 1 - sitBlend.current;
+      walk.setEffectiveWeight(walkBlend.current * up);
+      idle.setEffectiveWeight((1 - walkBlend.current) * up);
+      sit?.setEffectiveWeight(sitBlend.current);
+      // Skates roll at whatever speed they carry; feet keep step with the walk.
+      walk.timeScale = stepping ? (glide ? pace : speed) / CLIP_WALK_SPEED : 1;
     } else if (avatarAction.current) {
-      avatarAction.current.paused = !(moving && animate);
+      avatarAction.current.paused = !(stepping && animate);
     }
 
     // Pick the shot. The server director's game cam when it has one, so every
@@ -444,7 +546,7 @@ function HouseWorld({
       const toCamera = Math.atan2(scratch.eye.x - s.x, scratch.eye.z - s.z);
       faceAvatar(avatar, toCamera);
       // Directional avatars: the front, side or back card, by where they walk.
-      poseAvatarView(avatar, s.yaw, toCamera, moving, s.walkTime, animate);
+      poseAvatarView(avatar, s.yaw, toCamera, stepping, s.walkTime, animate);
     }
 
     // The mirrored cast: where the real people are, facing the shot.
@@ -453,7 +555,7 @@ function HouseWorld({
     // they walk, a "spotted" pop when they first step in.
     houseFx.update(
       dt,
-      walker && avatar ? [...mirror.members, { id: "visitor", kind: "human", x: s.x, z: s.z, walking: moving }] : mirror.members,
+      walker && avatar ? [...mirror.members, { id: "visitor", kind: "human", x: s.x, z: s.z, walking: stepping }] : mirror.members,
       scratch.eye,
       animate,
     );
@@ -474,7 +576,20 @@ function HouseWorld({
       else material.color.copy(tvScreen.userData.offColor as THREE.Color);
     }
 
-    const spot = walker ? nearestHotspot(map, s.x, s.z) : null;
+    // What E does here: stand up, sit on the seat in reach, else the nearest hotspot.
+    let spot: HouseHotspot | null = null;
+    if (walker && s.seat) spot = STAND_PROMPT;
+    else if (walker) {
+      const seat = avatar ? nearestSeat(map, s.x, s.z) : null;
+      const near = nearestHotspot(map, s.x, s.z);
+      // A seat wins (a chair's own hotspot sits right on it) unless something
+      // else is clearly closer, like the monitor in front of the gaming chair.
+      const seatDistance = seat ? Math.hypot(seat.at[0] - s.x, seat.at[2] - s.z) : Infinity;
+      const spotDistance = near ? Math.hypot(near.at[0] - s.x, near.at[2] - s.z) : Infinity;
+      spot = seat && seatDistance <= spotDistance + SEAT_PREFERENCE_M
+        ? { ...STAND_PROMPT, id: `seat-${seat.id}`, label: `Sit · ${seat.label}`, seat: seat.id, room: seat.room }
+        : near;
+    }
     interact.current = spot;
     const shotName = s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
     const place = floor?.label ?? (walker ? "The house" : shotName.replace(/ cam$/, ""));
@@ -572,7 +687,7 @@ export default function AltDirector3D({
 }: AltDirector3DProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const input = useRef<Input>({ keys: new Set(), stick: { x: 0, y: 0 } });
-  const effects = useRef<Effects>({ tv: false });
+  const effects = useRef<Effects>({ tv: false, seat: null });
   const interact = useRef<HouseHotspot | null>(null);
   const turn = useRef(0);
   const programme = useRef<string | null>(programmeShot);
@@ -644,6 +759,10 @@ export default function AltDirector3D({
   const activateHotspot = () => {
     const spot = interact.current;
     if (!spot || !canWalk) return;
+    if (spot.seat) {
+      effects.current.seat = spot.seat;
+      return;
+    }
     if (spot.effect === "tv") effects.current.tv = !effects.current.tv;
     setNote(spot);
   };

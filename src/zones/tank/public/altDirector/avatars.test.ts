@@ -88,6 +88,23 @@ describe("alt director avatars", () => {
     expect(avatar.idle?.duration).toBeCloseTo(2, 6);
     // The source clips stay untouched for anyone else using the cast.
     expect(walk.tracks[0].times[0]).toBeCloseTo(t0, 6);
+    expect(avatar.sit).toBeNull();
+    expect(avatar.gait).toBe("walk");
+  });
+
+  test("a Sit clip and a gait tag from Blender come through", () => {
+    const { scene } = castScene();
+    const rig = findAvatarRig(scene, "joe")!;
+    rig.rig.userData.tank_gait = "glide";
+    const track = () => [new THREE.QuaternionKeyframeTrack("Joe_Rig_Head.quaternion", [1 / 24, 1], [0, 0, 0, 1, 0, 0.1, 0, 0.995])];
+    const clips = ["Walk", "Idle", "Sit"].map((n) => new THREE.AnimationClip(`Joe_Rig_${n}`, -1, track()));
+    const avatar = prepareAvatar(rig, clips);
+    expect(avatar.sit?.name).toBe("Joe_Rig_Sit__avatar");
+    expect(avatar.sit?.tracks[0].times[0]).toBeCloseTo(0, 6);
+    expect(avatar.clip?.name).toBe("Joe_Rig_Walk__avatar");
+    expect(avatar.gait).toBe("glide");
+    rig.rig.userData.tank_gait = "moonwalk";
+    expect(prepareAvatar(rig, clips).gait).toBe("walk");
   });
 
   test("an older rig with only its rehearsal clip is not animated and has no idle", () => {

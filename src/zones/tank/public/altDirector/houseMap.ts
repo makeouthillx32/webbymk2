@@ -28,6 +28,8 @@ export type HouseHotspot = {
    * the wall. Null when it stands on no floor at all; then reach alone decides.
    */
   room: string | null;
+  /** Set on the prompts the walker builds for seats: the seat id to sit on, or "stand". */
+  seat?: string;
 };
 
 /** An FX anchor placed in Blender: where a pixelfx effect plays. */
@@ -43,6 +45,17 @@ export type HouseFx = {
 
 export type HouseAvatar = { id: string; node: string };
 
+/** Somewhere to sit (a "Seat · …" empty in Blender, tank_seat = its label). */
+export type HouseSeat = {
+  id: string;
+  label: string;
+  /** The seat's top, centre: [x, height, z]. */
+  at: [number, number, number];
+  /** The way someone sitting there faces (0 = three +Z, like the spawn). */
+  yaw: number;
+  room: string | null;
+};
+
 export type HouseMap = {
   radius: number;
   blockerRadius: number;
@@ -51,6 +64,7 @@ export type HouseMap = {
   walls: Rect[];
   blockers: Rect[];
   hotspots: HouseHotspot[];
+  seats: HouseSeat[];
   fx: HouseFx[];
   avatars: HouseAvatar[];
 };
@@ -124,6 +138,23 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
     });
   }
 
+  const seats: HouseSeat[] = [];
+  for (const raw of Array.isArray(m.seats) ? m.seats : []) {
+    const seat = raw as Record<string, unknown>;
+    const id = typeof seat?.id === "string" && SLUG.test(seat.id) ? seat.id : null;
+    const label = text(seat?.label, 40);
+    const at = seat?.at;
+    if (!id || !label || !Array.isArray(at) || at.length !== 3 || !at.every(finite) || !finite(seat.yaw)) continue;
+    if (at[1] < 0.1 || at[1] > 1.2) continue; // a seat, not a shelf
+    seats.push({
+      id,
+      label,
+      at: [at[0], at[1], at[2]],
+      yaw: seat.yaw,
+      room: typeof seat.room === "string" && AREA.test(seat.room) ? seat.room : roomOfPoint(floors, at[0], at[2]),
+    });
+  }
+
   const fx: HouseFx[] = [];
   for (const f of Array.isArray(m.fx) ? m.fx : []) {
     const anchor = f as Record<string, unknown>;
@@ -160,6 +191,7 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
     walls: rects(m.walls),
     blockers: rects(m.blockers),
     hotspots,
+    seats,
     fx,
     avatars,
   };
@@ -319,6 +351,26 @@ export function nearestHotspot(map: HouseMap, x: number, z: number): HouseHotspo
     const d = Math.hypot(spot.at[0] - x, spot.at[2] - z);
     if (d <= spot.r && d < bestDistance) {
       best = spot;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+/** How close to a seat's centre a walker must stand to sit (the cushion is in the way). */
+export const SEAT_REACH = 1.2;
+
+/** The closest seat within reach in the walker's room, if any. */
+export function nearestSeat(map: HouseMap, x: number, z: number): HouseSeat | null {
+  const floor = floorAt(map, x, z);
+  const here = floor ? areaOf(floor) : null;
+  let best: HouseSeat | null = null;
+  let bestDistance = Infinity;
+  for (const seat of map.seats) {
+    if (here && seat.room && seat.room !== here) continue;
+    const d = Math.hypot(seat.at[0] - x, seat.at[2] - z);
+    if (d <= SEAT_REACH && d < bestDistance) {
+      best = seat;
       bestDistance = d;
     }
   }

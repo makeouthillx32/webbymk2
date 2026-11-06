@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
-import { canStand, floorAt, moveWithCollision, nearestHotspot, parseHouseMap, segmentHitsWall, type HouseMap } from "./houseMap";
+import { canStand, floorAt, moveWithCollision, nearestHotspot, nearestSeat, parseHouseMap, segmentHitsWall, type HouseMap } from "./houseMap";
 import { pickShot, type ShotCamera } from "./cameraCuts";
 
 // Two 4 m rooms side by side, a wall between them at x = 4 with a 1 m doorway
@@ -124,6 +124,24 @@ describe("alt director walk map", () => {
     // An explicit room from the export wins; one off every floor goes by reach alone.
     const placed = parseHouseMap({ ...RAW, hotspots: [{ ...tv, room: "kitchen" }, { ...tv, id: "far", at: [20, 1, 2] }] }) as HouseMap;
     expect(placed.hotspots.map((h) => h.room)).toEqual(["kitchen", null]);
+  });
+
+  test("seats parse, belong to their room, and are offered only within reach there", () => {
+    const sofa = { id: "sofa-1", label: "Sofa", at: [6.5, 0.6, 1], yaw: Math.PI };
+    const seated = parseHouseMap({
+      ...RAW,
+      seats: [
+        sofa,
+        { id: "Bad Id", label: "x", at: [1, 0.5, 1], yaw: 0 },
+        { id: "shelf", label: "Shelf", at: [1, 1.8, 1], yaw: 0 },
+        { id: "no-yaw", label: "x", at: [1, 0.5, 1] },
+      ],
+    }) as HouseMap;
+    expect(seated.seats.map((seat) => [seat.id, seat.room])).toEqual([["sofa-1", "kitchen"]]);
+    expect(nearestSeat(seated, 6.5, 2)?.id).toBe("sofa-1");
+    expect(nearestSeat(seated, 6.5, 3)).toBeNull(); // 2 m away: out of reach
+    expect(nearestSeat(seated, 3.8, 1)).toBeNull(); // foyer side of the wall
+    expect(map.seats).toEqual([]);
   });
 
   test("sight lines are blocked by walls, clear through the doorway", () => {

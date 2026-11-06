@@ -28,6 +28,8 @@ export const AVATAR_PRESETS = [
 export type AvatarId = (typeof AVATAR_PRESETS)[number]["id"];
 export const DEFAULT_AVATAR: AvatarId = "joe";
 
+export type AvatarGait = "walk" | "heavy" | "glide";
+
 export type AvatarRig = {
   /** An AvatarId for the visitor's body; a house-cast id (vision/houseCast.ts) for a mirrored rig. */
   id: string;
@@ -42,8 +44,12 @@ export type AvatarRig = {
   clip: THREE.AnimationClip | null;
   /** Its standing loop (breathing), when the rig has one. */
   idle: THREE.AnimationClip | null;
+  /** Its seated loop, when the rig has one; a flat card sinks into the seat instead. */
+  sit: THREE.AnimationClip | null;
   /** True when the rig carries real Walk/Idle clips: no code bob or rock on top. */
   animated: boolean;
+  /** How it moves (tank_gait in Blender): "glide" rolls on and coasts to a stop. */
+  gait: AvatarGait;
   /** Clip names that belong to this rig — the cast loop must leave them alone. */
   ownClips: Set<string>;
   /** Directional cards (tank_view in Blender), or null for a single-card rig like Joe. */
@@ -136,9 +142,13 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
   };
   const walkSource = own.find((c) => /_Walk$/.test(c.name));
   const idleSource = own.find((c) => /_Idle$/.test(c.name));
-  const legacy = own.find((c) => !/_(Walk|Idle)$/.test(c.name));
+  const sitSource = own.find((c) => /_Sit$/.test(c.name));
+  const legacy = own.find((c) => !/_(Walk|Idle|Sit)$/.test(c.name));
   const clip = walkSource ? inPlace(walkSource, true) : legacy ? inPlace(legacy, false) : null;
   const idle = idleSource ? inPlace(idleSource, true) : null;
+  const sit = sitSource ? inPlace(sitSource, true) : null;
+  const gaitTag = String(rig.userData?.tank_gait ?? "");
+  const gait: AvatarGait = gaitTag === "glide" || gaitTag === "heavy" ? gaitTag : "walk";
 
   // Seen from every side now, and with its own materials so nothing else changes.
   rig.traverse((object) => {
@@ -169,7 +179,9 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
     baseYaw: yawOf(facing),
     clip,
     idle,
+    sit,
     animated: Boolean(walkSource),
+    gait,
     ownClips: new Set(own.map((c) => c.name)),
     views,
   };
