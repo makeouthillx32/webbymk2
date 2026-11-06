@@ -110,6 +110,22 @@ describe("alt director walk map", () => {
     expect(nearestHotspot(map, 5, 1)).toBeNull();
   });
 
+  test("a hotspot only answers someone standing in its own room", () => {
+    // A TV against the foyer side of the wall, reaching 1.5 m: it would cover
+    // half the kitchen by distance alone.
+    const tv = { id: "tv", label: "TV", blurb: "On.", at: [3.9, 1, 2], r: 1.5 };
+    // A lamp just off the kitchen floor (in the wall) still belongs to the kitchen.
+    const lamp = { id: "lamp", label: "Lamp", blurb: "Click.", at: [8.2, 1, 2], r: 1.5 };
+    const roomy = parseHouseMap({ ...RAW, hotspots: [...RAW.hotspots, tv, lamp] }) as HouseMap;
+    expect(roomy.hotspots.map((h) => h.room)).toEqual(["kitchen", "foyer", "kitchen"]);
+    expect(nearestHotspot(roomy, 3.2, 2)?.id).toBe("tv");
+    expect(nearestHotspot(roomy, 4.6, 2)).toBeNull(); // kitchen side: the TV is through the wall
+    expect(nearestHotspot(roomy, 7.4, 2)?.id).toBe("lamp");
+    // An explicit room from the export wins; one off every floor goes by reach alone.
+    const placed = parseHouseMap({ ...RAW, hotspots: [{ ...tv, room: "kitchen" }, { ...tv, id: "far", at: [20, 1, 2] }] }) as HouseMap;
+    expect(placed.hotspots.map((h) => h.room)).toEqual(["kitchen", null]);
+  });
+
   test("sight lines are blocked by walls, clear through the doorway", () => {
     expect(segmentHitsWall(map.walls, 2, 1, 6, 1)).toBe(true);
     expect(segmentHitsWall(map.walls, 2, 2, 6, 2)).toBe(false);

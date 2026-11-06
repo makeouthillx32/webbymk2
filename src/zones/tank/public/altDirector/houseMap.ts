@@ -22,6 +22,12 @@ export type HouseHotspot = {
   node: string | null;
   /** A pixelfx effect id ("pickups/sparkle") to play when it's used, if any. */
   fx: string | null;
+  /**
+   * The room it belongs to (areaOf its floor). It only answers a walker
+   * standing in that room: the TV must not light up from the foyer through
+   * the wall. Null when it stands on no floor at all; then reach alone decides.
+   */
+  room: string | null;
 };
 
 /** An FX anchor placed in Blender: where a pixelfx effect plays. */
@@ -97,6 +103,7 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
   if (!floors.length) return null;
 
   const hotspots: HouseHotspot[] = [];
+  const AREA = /^[a-z0-9][a-z0-9-]*$/;
   for (const h of Array.isArray(m.hotspots) ? m.hotspots : []) {
     const spot = h as Record<string, unknown>;
     const id = text(spot?.id, 40);
@@ -113,6 +120,7 @@ export function parseHouseMap(raw: unknown): HouseMap | null {
       r: Math.min(Math.max(spot.r, 0.3), 4),
       node: text(spot.node, 120),
       fx: typeof spot.fx === "string" && FX_ID.test(spot.fx) ? spot.fx : null,
+      room: typeof spot.room === "string" && AREA.test(spot.room) ? spot.room : roomOfPoint(floors, at[0], at[2]),
     });
   }
 
@@ -197,6 +205,27 @@ export function floorSeams(floors: readonly HouseFloor[]): HouseFloor[] {
   return seams;
 }
 
+/** A floor's room: its camera room key, else its own label ("Entry hall"). */
+export const areaOf = (floor: HouseFloor): string => floor.room ?? floor.label;
+
+/** Furniture against a wall can sit just off its floor: it still belongs to the floor this close. */
+const ROOM_SNAP_M = 0.35;
+
+/** The room a piece of furniture at (x, z) belongs to: the floor under it, else the nearest one within ROOM_SNAP_M. */
+function roomOfPoint(floors: readonly HouseFloor[], x: number, z: number): string | null {
+  let best: HouseFloor | null = null;
+  let bestDistance = Infinity;
+  for (const f of floors) {
+    const [x0, z0, x1, z1] = f.rect;
+    const d = Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(z0 - z, 0, z - z1));
+    if (d < bestDistance) {
+      best = f;
+      bestDistance = d;
+    }
+  }
+  return best && bestDistance <= ROOM_SNAP_M ? areaOf(best) : null;
+}
+
 const inside = (r: Rect, x: number, z: number, pad = 0) =>
   x > r[0] - pad && x < r[2] + pad && z > r[1] - pad && z < r[3] + pad;
 
@@ -279,11 +308,14 @@ export function moveWithCollision(map: HouseMap, x: number, z: number, dx: numbe
   return [px, pz];
 }
 
-/** The closest hotspot within reach, if any. */
+/** The closest hotspot within reach in the room the walker stands in, if any. */
 export function nearestHotspot(map: HouseMap, x: number, z: number): HouseHotspot | null {
+  const floor = floorAt(map, x, z);
+  const here = floor ? areaOf(floor) : null;
   let best: HouseHotspot | null = null;
   let bestDistance = Infinity;
   for (const spot of map.hotspots) {
+    if (here && spot.room && spot.room !== here) continue;
     const d = Math.hypot(spot.at[0] - x, spot.at[2] - z);
     if (d <= spot.r && d < bestDistance) {
       best = spot;
