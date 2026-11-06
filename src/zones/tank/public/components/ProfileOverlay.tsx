@@ -552,7 +552,7 @@ export function ProfileOverlay({
                             : "border-white/10 bg-black/60 hover:border-white/30"
                         }`}
                       >
-                        <div className="relative h-14 w-12 overflow-hidden flex items-center justify-center">
+                        <div className="relative h-12 w-12 overflow-hidden rounded-sm flex items-center justify-center">
                           <img
                             src={avatar.thumb}
                             alt={avatar.label}

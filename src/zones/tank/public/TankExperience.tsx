@@ -214,6 +214,7 @@ const RoomScene3D = dynamic(() => import("./components/RoomScene3D"), {
   loading: () => null,
 });
 // The walkable house, only while every room is off air (see AltDirector3D).
+import type { AltDirectorHud } from "./altDirector/hud";
 const AltDirector3D = dynamic(() => import("./components/AltDirector3D"), {
   ssr: false,
   loading: () => null,
@@ -1817,10 +1818,17 @@ export function TankExperience({
       viewerPrefersGame: directorView === "game",
     }) &&
     altDirectorFailedUrl !== houseSceneSrc;
-  const [altGameHud, setAltGameHud] = useState<{ place: string; shot: string }>({
+  const [altGameHud, setAltGameHud] = useState<AltDirectorHud>({
     place: "The house",
     shot: "Follow cam",
+    hint: null,
+    note: null,
   });
+  // In Game mode the house's own words take the description line's place.
+  const altGameLine = altGameHud.note
+    ? `${altGameHud.note.label}: ${altGameHud.note.blurb}`
+    : `${altGameHud.place} · ${altGameHud.shot}${altGameHud.hint ? `. ${altGameHud.hint}` : ""}`;
+  const altCameraLabel = altCameraMode === "director" ? "Director cuts · C" : "Follow · C";
   const [altCameraMode, setAltCameraMode] = useState<"director" | "follow">("director");
 
   // Room the hero player is actually showing. In director mode that's whichever
@@ -2880,23 +2888,19 @@ export function TankExperience({
                 >
                   {desktopFocusView && (
                     showAltDirector ? (
-                      <div className="order-2 flex flex-col gap-1.5 rounded border border-white/15 bg-black/55 p-2 text-left text-white backdrop-blur-sm">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-orange-400">
-                          ALT DIRECTOR
-                        </span>
-                        <p className="text-xs font-bold text-white">{altGameHud.place}</p>
-                        <p className="text-[11px] text-white/70">{altGameHud.shot}</p>
+                      <p className="order-2 text-left text-[10px] leading-relaxed text-white/55">
+                        {altGameLine}{" "}
                         <button
                           type="button"
                           onClick={() => {
                             setAltCameraMode((m) => (m === "director" ? "follow" : "director"));
                           }}
-                          className="mt-1 rounded border border-white/20 bg-white/10 px-2 py-1 text-center text-[11px] font-bold text-white transition hover:bg-white/20"
+                          className="font-bold text-white/75 underline-offset-2 hover:text-white hover:underline"
                           title="Switch camera (C)"
                         >
-                          {altCameraMode === "director" ? "Camera: Director cuts" : "Camera: Follow"} (C)
+                          Camera: {altCameraLabel}
                         </button>
-                      </div>
+                      </p>
                     ) : (
                       <p className="order-2 text-left text-[10px] leading-relaxed text-white/55">
                         {mode === "director"
@@ -3335,32 +3339,23 @@ export function TankExperience({
               >
                 {showAltDirector ? (
                   <div
-                    className={`min-w-0 items-center justify-between gap-2 rounded border border-white/15 bg-black/55 px-2.5 py-1 text-white backdrop-blur-sm ${
+                    className={`min-w-0 items-start gap-2 ${
                       desktopFocusView ? "flex lg:hidden" : "flex"
                     }`}
                   >
-                    <div className="flex min-w-0 items-center gap-2 text-xs">
-                      <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-orange-400">
-                        ALT DIRECTOR
-                      </span>
-                      <span className="text-white/30">•</span>
-                      <span className="truncate font-bold text-white">
-                        {altGameHud.place}
-                      </span>
-                      <span className="text-white/30">•</span>
-                      <span className="truncate text-[11px] text-white/70">
-                        {altGameHud.shot}
-                      </span>
-                    </div>
+                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-orange-500 shadow-[0_0_6px_#f97316]" />
+                    <p className="min-w-0 flex-1 truncate text-[10px] text-white/65 sm:text-[11px]">
+                      {altGameLine}
+                    </p>
                     <button
                       type="button"
                       onClick={() => {
                         setAltCameraMode((m) => (m === "director" ? "follow" : "director"));
                       }}
-                      className="shrink-0 rounded border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold text-white transition hover:bg-white/20 active:translate-y-px"
+                      className="shrink-0 text-[10px] font-bold text-white/65 transition hover:text-white sm:text-[11px]"
                       title="Switch camera (C)"
                     >
-                      {altCameraMode === "director" ? "Camera: Director cuts" : "Camera: Follow"} (C)
+                      Camera: {altCameraLabel}
                     </button>
                   </div>
                 ) : (

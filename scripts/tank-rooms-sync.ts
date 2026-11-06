@@ -193,9 +193,10 @@ if (removing) {
 
 if (!removing) await publishFits();
 
-// The walk-as picker (Tank's profile): a front thumbnail per walkable avatar,
-// rendered from the cast by artifacts/tank-sprites/thumbs.py into
-// artifacts/tank-rooms/avatars/ with avatars.json (id + label, in picker order).
+// The walk-as picker (Tank's profile): a headshot per walkable avatar. Front
+// renders come from artifacts/tank-sprites/thumbs.py (artifacts/tank-rooms/avatars/,
+// with avatars.json: id + label, in picker order); heads.py crops them into
+// avatars/heads/. A missing headshot falls back to the full-body render.
 // Published with the cast and listed on its manifest entry.
 const AVATAR_DIR = join(LOCAL, "avatars");
 const AVATAR_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -204,7 +205,8 @@ if (!removing && nextFixed.cast && (!names.length || names.includes("cast")) && 
   const hash = createHash("sha256");
   const shipped: { id: string; label: string }[] = [];
   for (const avatar of list) {
-    const file = join(AVATAR_DIR, `${avatar.id}.png`);
+    const head = join(AVATAR_DIR, "heads", `${avatar.id}.png`);
+    const file = existsSync(head) ? head : join(AVATAR_DIR, `${avatar.id}.png`);
     if (!AVATAR_ID.test(avatar.id) || !existsSync(file)) continue;
     const png = readFileSync(file);
     hash.update(avatar.id).update(avatar.label).update(png);

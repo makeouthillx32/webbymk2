@@ -56,6 +56,11 @@ const GLIDE_ACCEL = 3;
 const GLIDE_COAST = 1.3;
 /** A seat in reach wins over a hotspot unless the hotspot is this much closer. */
 const SEAT_PREFERENCE_M = 0.3;
+import type { AltDirectorHud } from "../altDirector/hud";
+export type { AltDirectorHud };
+
+const WANDER_HINT = "The house is empty. Have a wander: click to walk around · WASD or arrows · E to look · C for camera";
+
 const STAND_PROMPT: HouseHotspot = {
   id: "stand",
   label: "Stand up",
@@ -99,7 +104,7 @@ type AltDirector3DProps = {
   reducedMotion?: boolean;
   onFailed?: () => void;
   className?: string;
-  onHudChange?: (hud: { place: string; shot: string }) => void;
+  onHudChange?: (hud: AltDirectorHud) => void;
   cameraMode?: CameraMode;
   onCameraModeChange?: (mode: CameraMode) => void;
   hideOverlayHud?: boolean;
@@ -765,13 +770,20 @@ export default function AltDirector3D({
       ready: () => setReady(true),
       broken: () => onFailed?.(),
       avatars: (list: { id: string; label: string }[]) => setAvatarList(list),
-      hud: (next: Hud) => {
-        setHud(next);
-        onHudChange?.({ place: next.place, shot: next.shot });
-      },
+      hud: (next: Hud) => setHud(next),
     }),
-    [onFailed, onHudChange],
+    [onFailed],
   );
+
+  const wandering = ready && canWalk && !focused && !touch;
+  useEffect(() => {
+    onHudChange?.({
+      place: hud.place,
+      shot: hud.shot,
+      hint: wandering ? WANDER_HINT : null,
+      note: note ? { label: note.label, blurb: note.blurb } : null,
+    });
+  }, [onHudChange, hud.place, hud.shot, wandering, note]);
 
   useEffect(() => {
     if (canWalk) return;
@@ -956,7 +968,7 @@ export default function AltDirector3D({
         </div>
       )}
 
-      {note && (
+      {note && !hideOverlayHud && (
         <div className="pointer-events-none absolute inset-x-0 top-14 flex justify-center px-3 sm:top-16">
           <div className="max-w-sm rounded-lg border border-white/15 bg-black/70 px-3 py-2 text-center text-white backdrop-blur-sm">
             <p className="text-xs font-bold">{note.label}</p>
@@ -1006,7 +1018,7 @@ export default function AltDirector3D({
         </div>
       )}
 
-      {ready && canWalk && !focused && !touch && (
+      {wandering && !hideOverlayHud && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="rounded-lg border border-white/15 bg-black/60 px-4 py-3 text-center text-white backdrop-blur-sm">
             <p className="text-sm font-bold">The house is empty. Have a wander.</p>
