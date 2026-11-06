@@ -61,6 +61,14 @@ describe("house fx", () => {
     expect(fx.group.children).toHaveLength(0);
   });
 
+  test("a poof plays once where it's asked for, then clears", () => {
+    const fx = new HouseFx();
+    fx.poof(1, 2);
+    expect(fx.counts()).toEqual({ vanish: 1 });
+    for (let i = 0; i < 40; i++) fx.update(0.1, [], eye);
+    expect(fx.counts()).toEqual({});
+  });
+
   test("reduced motion: no effects at all", () => {
     const fx = new HouseFx();
     fx.update(0.05, [joe(0)], eye, false);

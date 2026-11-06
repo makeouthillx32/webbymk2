@@ -168,6 +168,11 @@ export class HouseFx {
     }
   }
 
+  /** A one-off cartoon poof on the floor at (x, z): a visitor swapping avatars. */
+  poof(x: number, z: number, kind = "human") {
+    this.play("vanish", x, 0, z, kind);
+  }
+
   private play(id: HouseEffectId, x: number, y: number, z: number, kind: string): Playing | null {
     const atlas = atlasFor(id);
     if (!atlas) return null;

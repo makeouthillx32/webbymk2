@@ -38,8 +38,12 @@ export type AvatarRig = {
   baseY: number;
   /** World yaw the sprite faces at its exported rotation. */
   baseYaw: number;
-  /** Its rehearsal clip minus anything that would move the rig across the floor. */
+  /** Its walk: the rig's own Walk clip, else its rehearsal clip; minus anything that would move the rig across the floor. */
   clip: THREE.AnimationClip | null;
+  /** Its standing loop (breathing), when the rig has one. */
+  idle: THREE.AnimationClip | null;
+  /** True when the rig carries real Walk/Idle clips: no code bob or rock on top. */
+  animated: boolean;
   /** Clip names that belong to this rig — the cast loop must leave them alone. */
   ownClips: Set<string>;
   /** Directional cards (tank_view in Blender), or null for a single-card rig like Joe. */
@@ -112,20 +116,29 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
 
   const rigName = nameOf(rig);
   const own = clips.filter((clip) => clip.name.startsWith(rigName) || clip.name.startsWith(rig.name));
-  let clip: THREE.AnimationClip | null = null;
-  if (own[0]) {
-    const tracks = own[0].tracks.filter((track) => {
-      const { nodeName, propertyName } = THREE.PropertyBinding.parseTrackName(track.name);
-      const node = nodeName ? rig.getObjectByName(nodeName) : null;
-      if (!node) return true;
-      if (node === rig) return false;
-      // The root bone's position is the skit's blocking (walking between
-      // marks); the visitor moves the rig, so drop it.
-      const isRootBone = (node as THREE.Bone).isBone && !(node.parent as THREE.Bone | null)?.isBone;
-      return !(isRootBone && propertyName === "position");
-    });
-    clip = new THREE.AnimationClip(`${own[0].name}__avatar`, own[0].duration, tracks);
-  }
+  const inPlace = (source: THREE.AnimationClip, fromZero: boolean) => {
+    const tracks = source.tracks
+      .filter((track) => {
+        const { nodeName, propertyName } = THREE.PropertyBinding.parseTrackName(track.name);
+        const node = nodeName ? rig.getObjectByName(nodeName) : null;
+        if (!node) return true;
+        if (node === rig) return false;
+        // The root bone's position is the skit's blocking (walking between
+        // marks); the visitor moves the rig, so drop it.
+        const isRootBone = (node as THREE.Bone).isBone && !(node.parent as THREE.Bone | null)?.isBone;
+        return !(isRootBone && propertyName === "position");
+      })
+      .map((track) => track.clone());
+    // Blender exports a loop from frame 1 (t = 1/fps): start it at 0 so it loops without a hitch.
+    const start = fromZero ? Math.min(...tracks.map((t) => t.times[0] ?? 0)) : 0;
+    if (start > 0) tracks.forEach((t) => t.shift(-start));
+    return new THREE.AnimationClip(`${source.name}__avatar`, fromZero ? -1 : source.duration, tracks);
+  };
+  const walkSource = own.find((c) => /_Walk$/.test(c.name));
+  const idleSource = own.find((c) => /_Idle$/.test(c.name));
+  const legacy = own.find((c) => !/_(Walk|Idle)$/.test(c.name));
+  const clip = walkSource ? inPlace(walkSource, true) : legacy ? inPlace(legacy, false) : null;
+  const idle = idleSource ? inPlace(idleSource, true) : null;
 
   // Seen from every side now, and with its own materials so nothing else changes.
   rig.traverse((object) => {
@@ -155,6 +168,8 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
     baseY: castPose.position.y,
     baseYaw: yawOf(facing),
     clip,
+    idle,
+    animated: Boolean(walkSource),
     ownClips: new Set(own.map((c) => c.name)),
     views,
   };
@@ -165,6 +180,8 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const FRONT_CONE = (55 * Math.PI) / 180;
 /** A view only changes once the angle is this far past its edge, so it doesn't flicker on the line. */
 const VIEW_HYSTERESIS = (8 * Math.PI) / 180;
+/** The Walk clips are timed for this speed (m/s); faster walking plays them faster. */
+export const CLIP_WALK_SPEED = 1.5;
 /** Stride cards alternate this often while walking (s). */
 const STRIDE_SECONDS = 0.2;
 /** Side-to-side rock while walking (radians), about the feet. */
@@ -213,7 +230,8 @@ export function poseAvatarView(
   state.name = name;
   state.flip = picked.flip;
   const shown = views[name] ?? views.front;
-  const rock = walking && animate ? Math.sin(walkTime * 9) * WALK_ROCK : 0;
+  // A rig with its own Walk clip walks for real; the rock is for flat cards.
+  const rock = walking && animate && !avatar.animated ? Math.sin(walkTime * 9) * WALK_ROCK : 0;
   for (const card of Object.values(views)) {
     if (!card) continue;
     card.visible = card === shown;

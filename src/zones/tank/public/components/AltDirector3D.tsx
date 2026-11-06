@@ -25,6 +25,7 @@ import {
 } from "../altDirector/houseMap";
 import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
 import {
+  CLIP_WALK_SPEED,
   DEFAULT_AVATAR,
   availableAvatars,
   faceAvatar,
@@ -224,6 +225,9 @@ function HouseWorld({
     return found ? prepareAvatar(found, castGltf.animations) : null;
   }, [walker, avatarId, castGltf.scene, castGltf.animations]);
   const avatarAction = useRef<THREE.AnimationAction | null>(null);
+  const idleAction = useRef<THREE.AnimationAction | null>(null);
+  /** 0 standing (Idle) … 1 walking (Walk), eased so the two blend. */
+  const walkBlend = useRef(0);
   // The rest of the cast mirrors the real house (altDirector/castMirror.ts):
   // no skit, and a member no camera can see is not rendered. The visitor's
   // own body is theirs to move.
@@ -280,20 +284,42 @@ function HouseWorld({
 
   useEffect(() => {
     if (!avatar) return;
-    // The rig's rehearsal poses, minus its blocking, play only while walking.
+    // A rig with Walk + Idle clips plays both and blends between them; an
+    // older rig plays its rehearsal poses, minus its blocking, only while walking.
     const action = avatar.clip ? mixer.clipAction(avatar.clip) : null;
+    const idle = avatar.idle ? mixer.clipAction(avatar.idle) : null;
     if (action) {
       action.play();
-      action.paused = true;
+      action.paused = !idle;
+      if (idle) action.setEffectiveWeight(0);
     }
+    if (idle) {
+      idle.play();
+      idle.setEffectiveWeight(1);
+    }
+    walkBlend.current = 0;
     avatarAction.current = action;
+    idleAction.current = idle;
     return () => {
       action?.stop();
+      idle?.stop();
       if (avatar.clip) mixer.uncacheAction(avatar.clip);
+      if (avatar.idle) mixer.uncacheAction(avatar.idle);
       avatarAction.current = null;
+      idleAction.current = null;
       restoreAvatar(avatar);
     };
   }, [avatar, mixer]);
+
+  // Swapping avatars (or first stepping in): a poof covers the change.
+  const lastAvatar = useRef<string | null>(null);
+  useEffect(() => {
+    const id = avatar?.id ?? null;
+    if (id && lastAvatar.current && lastAvatar.current !== id && animate) {
+      houseFx.poof(state.current.x, state.current.z);
+    }
+    lastAvatar.current = id;
+  }, [avatar, animate, houseFx]);
 
   useEffect(() => {
     onReady();
@@ -337,13 +363,14 @@ function HouseWorld({
     const { fx, fz } = s.basis;
     const wx = fx * forward - fz * right;
     const wz = fz * forward + fx * right;
+    const speed = held(keys, "ShiftLeft", "ShiftRight") || amount > 1.25 ? RUN_SPEED : WALK_SPEED;
     if (moving) {
-      const speed = held(keys, "ShiftLeft", "ShiftRight") || amount > 1.25 ? RUN_SPEED : WALK_SPEED;
       [s.x, s.z] = moveWithCollision(map, s.x, s.z, wx * speed * dt, wz * speed * dt);
       s.yaw = angleLerp(s.yaw, Math.atan2(wx, wz), dt * 12);
       s.walkTime += dt;
     }
-    const bob = moving && animate ? Math.abs(Math.sin(s.walkTime * 9)) * 0.05 : 0;
+    // A rig with real Walk/Idle clips bobs inside its clip; flat cards get a code bob.
+    const bob = moving && animate && !avatar?.animated ? Math.abs(Math.sin(s.walkTime * 9)) * 0.05 : 0;
     if (visitor.current) {
       visitor.current.visible = walker;
       visitor.current.position.set(s.x, 0, s.z);
@@ -356,7 +383,17 @@ function HouseWorld({
       avatar.rig.visible = true;
       avatar.rig.position.set(s.x, avatar.baseY + bob, s.z);
     }
-    if (avatarAction.current) avatarAction.current.paused = !(moving && animate);
+    if (idleAction.current && avatarAction.current) {
+      const walk = avatarAction.current;
+      const idle = idleAction.current;
+      walk.paused = idle.paused = !animate;
+      walkBlend.current += ((moving ? 1 : 0) - walkBlend.current) * Math.min(1, dt * 10);
+      walk.setEffectiveWeight(walkBlend.current);
+      idle.setEffectiveWeight(1 - walkBlend.current);
+      walk.timeScale = moving ? speed / CLIP_WALK_SPEED : 1;
+    } else if (avatarAction.current) {
+      avatarAction.current.paused = !(moving && animate);
+    }
 
     // Pick the shot. The server director's game cam when it has one, so every
     // watcher sees the same cut at the same moment; otherwise the local tour,
@@ -412,7 +449,14 @@ function HouseWorld({
 
     // The mirrored cast: where the real people are, facing the shot.
     mirror.update(dt, scratch.eye, animate);
-    houseFx.update(dt, mirror.members, scratch.eye, animate);
+    // The visitor counts as a member for the effects: dust at their feet as
+    // they walk, a "spotted" pop when they first step in.
+    houseFx.update(
+      dt,
+      walker && avatar ? [...mirror.members, { id: "visitor", kind: "human", x: s.x, z: s.z, walking: moving }] : mirror.members,
+      scratch.eye,
+      animate,
+    );
 
     // Dollhouse: on the follow camera the upper walls drop away.
     const showUpper = Boolean(s.shot);

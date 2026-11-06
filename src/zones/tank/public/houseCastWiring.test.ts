@@ -76,6 +76,6 @@ describe("pixel reskin wiring", () => {
     }
     expect(read("altDirector", "gamePreviews.ts")).toContain("pass.render(renderer, room.scene, room.camera)");
     // The house's frame loop destructures \`fx\` from its walk basis: its effects must not be called fx.
-    expect(read("components", "AltDirector3D.tsx")).toContain("houseFx.update(dt, mirror.members, scratch.eye, animate);");
+    expect(read("components", "AltDirector3D.tsx")).toMatch(/houseFx\.update\(\s*dt,\s*walker && avatar \?/);
   });
 });

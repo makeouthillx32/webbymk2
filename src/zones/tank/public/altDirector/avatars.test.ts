@@ -69,6 +69,34 @@ describe("alt director avatars", () => {
     expect(avatar.clip?.tracks.map((t) => t.name)).toEqual(["Joe_Rig_Head.quaternion"]);
   });
 
+  test("a rig with Walk and Idle clips plays them in place, from time zero", () => {
+    const { scene } = castScene();
+    // glTF exports start a 24 fps action at frame 1, i.e. 1/24 s.
+    const t0 = 1 / 24;
+    const walk = new THREE.AnimationClip("Joe_Rig_Walk", -1, [
+      new THREE.VectorKeyframeTrack("Joe_Rig_Root.position", [t0, 1 + t0], [0, 0, 0, 2, 0, 0]),
+      new THREE.QuaternionKeyframeTrack("Joe_Rig_Head.quaternion", [t0, 1 + t0], [0, 0, 0, 1, 0, 0.1, 0, 0.995]),
+    ]);
+    const idle = new THREE.AnimationClip("Joe_Rig_Idle", -1, [
+      new THREE.QuaternionKeyframeTrack("Joe_Rig_Head.quaternion", [t0, 2 + t0], [0, 0, 0, 1, 0, 0.05, 0, 0.999]),
+    ]);
+    const avatar = prepareAvatar(findAvatarRig(scene, "joe")!, [walk, idle]);
+    expect(avatar.animated).toBe(true);
+    expect(avatar.clip?.tracks.map((t) => t.name)).toEqual(["Joe_Rig_Head.quaternion"]);
+    expect(avatar.clip?.tracks[0].times[0]).toBeCloseTo(0, 6);
+    expect(avatar.clip?.duration).toBeCloseTo(1, 6);
+    expect(avatar.idle?.duration).toBeCloseTo(2, 6);
+    // The source clips stay untouched for anyone else using the cast.
+    expect(walk.tracks[0].times[0]).toBeCloseTo(t0, 6);
+  });
+
+  test("an older rig with only its rehearsal clip is not animated and has no idle", () => {
+    const { scene, clips } = castScene();
+    const avatar = prepareAvatar(findAvatarRig(scene, "joe")!, clips);
+    expect(avatar.animated).toBe(false);
+    expect(avatar.idle).toBeNull();
+  });
+
   test("the card turns to face the camera and goes back to its cast mark", () => {
     const { scene, joe, clips } = castScene();
     const avatar = prepareAvatar(findAvatarRig(scene, "joe")!, clips);
