@@ -14,7 +14,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useAnimations, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { roomSceneDecoderPath } from "../roomScenes";
-import { prepareScene } from "./sceneMaterials";
+import { objectName, prepareScene } from "./sceneMaterials";
 import {
   floorAt,
   moveWithCollision,
@@ -175,7 +175,7 @@ function HouseWorld({
     prepareScene(gltf.scene);
     mergeStaticMeshes(
       gltf.scene,
-      (mesh) => /^PX_TV_Screen/.test(String(mesh.userData?.name ?? mesh.name)),
+      (mesh) => /^PX_TV_Screen/.test(objectName(mesh)),
       gltf.animations,
     );
   }, [gltf]);
@@ -193,7 +193,7 @@ function HouseWorld({
     let screen: THREE.Mesh | null = null;
     gltf.scene.traverse((o) => {
       const mesh = o as THREE.Mesh;
-      if (!screen && mesh.isMesh && /^PX_TV_Screen/.test(String(mesh.userData?.name ?? mesh.name))) screen = mesh;
+      if (!screen && mesh.isMesh && /^PX_TV_Screen/.test(objectName(mesh))) screen = mesh;
     });
     if (screen && !(screen as THREE.Mesh).userData.offColor) {
       const mesh = screen as THREE.Mesh;

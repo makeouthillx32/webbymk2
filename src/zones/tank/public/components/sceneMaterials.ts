@@ -26,12 +26,22 @@ export function toLit(material: THREE.Material): THREE.Material {
   return lit;
 }
 
-/** The Blender object name of a mesh (a multi-material object's parts carry it on their group). */
-function objectName(mesh: THREE.Object3D): string {
-  const own = mesh.userData?.name;
-  if (typeof own === "string" && own) return own;
-  const parent = mesh.parent?.userData?.name;
-  return typeof parent === "string" && parent ? parent : mesh.name;
+const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+
+/**
+ * The Blender object name a finish (or the TV screen) is keyed on. The v1.0
+ * outliner rename keeps each object's old name in `tank_src`; objects added
+ * after it have none and go by their own name. A multi-material object's parts
+ * carry both on their group.
+ */
+export function objectName(mesh: THREE.Object3D): string {
+  return (
+    text(mesh.userData?.tank_src) ??
+    text(mesh.userData?.name) ??
+    text(mesh.parent?.userData?.tank_src) ??
+    text(mesh.parent?.userData?.name) ??
+    mesh.name
+  );
 }
 
 /**

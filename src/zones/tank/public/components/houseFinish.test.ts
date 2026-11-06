@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import { TILE_METRES, finishFor, projectWorldUvs, surfaceShades, type SurfaceTexture } from "./houseFinish";
 import { CRISP_LAYER } from "../pixel/pixelPass";
-import { prepareScene } from "./sceneMaterials";
+import { objectName, prepareScene } from "./sceneMaterials";
 
 const color = (name: string, material = "") => finishFor(name, material)?.color ?? null;
 
@@ -109,5 +109,23 @@ describe("prepareScene", () => {
     prepareScene(root, { shell: false });
     expect((wall.material as THREE.MeshBasicMaterial).isMeshBasicMaterial).toBe(true);
     expect(lights(root)).toBe(0);
+  });
+});
+
+describe("objectName", () => {
+  test("a renamed object keeps its finish through tank_src", () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+    mesh.userData = { name: "Living room · TV screen", tank_src: "PX_TV_Screen.001" };
+    expect(objectName(mesh)).toBe("PX_TV_Screen.001");
+    // Multi-material parts: the group carries both names.
+    const group = new THREE.Group();
+    group.userData = { name: "Shoe rack · shoe 04", tank_src: "AUDIT shoe.004" };
+    const part = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+    group.add(part);
+    expect(objectName(part)).toBe("AUDIT shoe.004");
+    // Objects added after the rename go by their own name.
+    const fresh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+    fresh.userData = { name: "V5 trace 99" };
+    expect(objectName(fresh)).toBe("V5 trace 99");
   });
 });
