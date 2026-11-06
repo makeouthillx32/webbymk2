@@ -55,13 +55,15 @@ import {
   type HouseStations,
 } from "../altDirector/houseStations";
 import { PLAY_SECONDS, TABLE_CANVAS, TableQueue, describeTableGame, drawTableGame, type TableGame } from "../altDirector/tableGames";
-import { TavernBar, barCast, type BarCast } from "../altDirector/tavernBar";
+import { TavernBar, barCast, type BarCast, type WaitingGuest } from "../altDirector/tavernBar";
 import { BASIS_GRACE_S, holdBasis, type Basis } from "../altDirector/walkBasis";
 import { TV_CANVAS, TvFeed, drawTv } from "../altDirector/houseTv";
 import { CRISP_LAYER } from "../pixel/pixelPass";
 import { loadNpcPool, type TankNpcPool } from "../../tavern/npcs";
 import type { TavernSnapshot } from "../../tavernTypes";
 import type { ChatMessage } from "../../contracts";
+import { getTavernQueueStatusAction, joinTavernQueueAction, leaveTavernQueueAction } from "../../server/tavernQueue";
+import { resolveTavernChitAction } from "../../server/tavernChits";
 
 type CameraMode = "director" | "follow";
 type Input = { keys: Set<string>; stick: { x: number; y: number } };
@@ -85,6 +87,8 @@ const GLIDE_ACCEL = 3;
 const GLIDE_COAST = 1.3;
 /** A seat in reach wins over a hotspot unless the hotspot is this much closer. */
 const SEAT_PREFERENCE_M = 0.3;
+/** On your shift: a waiting customer this close (m) is who E serves, from either side of the bar. */
+const SERVE_REACH_M = 2.4;
 import type { AltDirectorHud } from "../altDirector/hud";
 export type { AltDirectorHud };
 
@@ -143,8 +147,8 @@ type AltDirector3DProps = {
   avatarPicker?: boolean;
   /** The chat in view: its mini-game results replay on the living room's game table. */
   chatMessages?: readonly ChatMessage[];
-  /** E at the kitchen bar: open the Tavern (the bartender game). */
-  onOpenTavern?: () => void;
+  /** The signed-in viewer: whether the apron at the house's bar is theirs. */
+  currentUserId?: string | null;
   /** Send a chat command for the walker ("/roll"): the house's buttons play through chat like typing. */
   onCommand?: (text: string) => void;
 };
@@ -158,8 +162,9 @@ const TABLE_PLAYS = [
   { key: "Digit5", label: "Unbox", emoji: "📦", command: "/unbox" },
 ] as const;
 
-/** How often the bar re-reads who is serving and who is waiting. */
+/** How often the bar re-reads who is serving and who is waiting; quicker while a shift runs. */
 const TAVERN_POLL_MS = 10_000;
+const TAVERN_SHIFT_POLL_MS = 5_000;
 /** The table cam redraws its felt at this rate while a game plays (pixel-art pacing). */
 const TABLE_FPS = 15;
 /** Watchers stay on the table this long after a game lands, before the director takes back over. */
@@ -274,6 +279,7 @@ function HouseWorld({
   tableQueue,
   onTableResult,
   tavern,
+  barHandle,
   tvFeed,
 }: {
   url: string;
@@ -296,6 +302,8 @@ function HouseWorld({
   /** A table game has landed: its result, for the HUD line. */
   onTableResult: (game: TableGame) => void;
   tavern: { cast: BarCast; pool: TankNpcPool | null };
+  /** The bar, for the HUD: E tells it who was just served. */
+  barHandle: React.MutableRefObject<TavernBar | null>;
   tvFeed: TvFeed;
 }) {
   const gltf = useGLTF(url, roomSceneDecoderPath());
@@ -390,8 +398,14 @@ function HouseWorld({
     },
     [tv],
   );
-  const bar = useMemo(() => new TavernBar(barSpots(stations)), [stations]);
-  useEffect(() => () => bar.dispose(), [bar]);
+  const bar = useMemo(() => new TavernBar(barSpots(stations), map), [stations, map]);
+  useEffect(() => {
+    barHandle.current = bar;
+    return () => {
+      if (barHandle.current === bar) barHandle.current = null;
+      bar.dispose();
+    };
+  }, [bar, barHandle]);
   useEffect(() => {
     bar.set(tavern.cast, tavern.pool);
   }, [bar, tavern]);
@@ -849,6 +863,11 @@ function HouseWorld({
         ? { ...STAND_PROMPT, id: `seat-${seat.id}`, label: `Sit · ${seat.label}`, seat: seat.id, room: seat.room }
         : near;
     }
+    // Your shift: the customer in reach is who E serves, before any stool or the bar itself.
+    if (walker && !s.seat && tavern.cast.mine) {
+      const guest = bar.nearestWaiting(s.x, s.z, SERVE_REACH_M);
+      if (guest) spot = serveHotspot(guest);
+    }
     interact.current = spot;
     const shotName = onTable ? "Table cam" : onTv ? "TV cam" : s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
     const place = floor?.label ?? (walker ? "The house" : shotName.replace(/ cam$/, ""));
@@ -941,14 +960,36 @@ function gameNote(game: TableGame): HouseHotspot {
   return { ...STAND_PROMPT, id: `table-${game.id}`, label: "Game table", blurb: describeTableGame(game), seat: undefined };
 }
 
-/** What the bar says when you walk up to it. */
-function tavernBlurb(snapshot: TavernSnapshot | null): string {
-  if (!snapshot) return "The Tavern. Opening it in chat.";
-  if (!snapshot.enabled) return "The Tavern is closed tonight.";
-  const waiting = snapshot.chits.filter((c) => c.outcome === "pending").length;
-  const orders = waiting === 1 ? "1 order waiting" : `${waiting} orders waiting`;
-  if (snapshot.shift) return `${snapshot.shift.bartenderName} has the apron. ${orders}. Opening the Tavern in chat.`;
-  return `Nobody is behind the bar. ${orders}. Grab the apron in the Tavern.`;
+/** E at a waiting customer, on your shift: serve them what they asked for. */
+function serveHotspot(guest: WaitingGuest): HouseHotspot {
+  return {
+    id: `tavern-serve-${guest.chitId}`,
+    label: `${guest.response.label} · ${guest.name}`,
+    blurb: guest.dialogue,
+    effect: "tavern",
+    at: [guest.x, 1, guest.z],
+    r: SERVE_REACH_M,
+    node: null,
+    fx: null,
+    room: null,
+    serve: { chitId: guest.chitId, response: guest.response.key, name: guest.name },
+  };
+}
+
+const countdown = (iso: string) => {
+  const s = Math.max(0, Math.floor((Date.parse(iso) - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+type TavernQueueSpot = { inQueue: boolean; position: number | null };
+
+/** What E at the bar will do, as its prompt says it. */
+function barPrompt(snapshot: TavernSnapshot | null, cast: BarCast, queue: TavernQueueSpot | null): string {
+  if (!snapshot) return "Tavern";
+  if (!snapshot.enabled) return "Tavern (closed)";
+  if (cast.mine) return "Tavern · your shift";
+  if (queue?.inQueue) return `Leave the apron line${queue.position ? ` (#${queue.position})` : ""}`;
+  return snapshot.shift ? "Get in line for the apron" : "Grab the apron";
 }
 
 export default function AltDirector3D({
@@ -968,7 +1009,7 @@ export default function AltDirector3D({
   avatarChoice,
   avatarPicker = true,
   chatMessages,
-  onOpenTavern,
+  currentUserId = null,
   onCommand,
 }: AltDirector3DProps) {
   const wrapper = useRef<HTMLDivElement>(null);
@@ -988,6 +1029,9 @@ export default function AltDirector3D({
   };
   const [hud, setHud] = useState<Hud>({ place: "The house", shot: "Follow cam", hotspot: null });
   const [note, setNote] = useState<HouseHotspot | null>(null);
+  // Your place in line for the apron: asked when you walk up to the bar, and after E changes it.
+  const [tavernQueue, setTavernQueue] = useState<TavernQueueSpot | null>(null);
+  const atBar = hud.hotspot?.effect === "tavern" && !hud.hotspot.serve;
   const [focused, setFocused] = useState(false);
   const [touch, setTouch] = useState(false);
   const [visible, setVisible] = useState(true);
@@ -1023,33 +1067,71 @@ export default function AltDirector3D({
     tableQueue.offer(chatMessages, Date.now());
     tvFeed.offer(chatMessages, Date.now());
   }, [chatMessages, tableQueue, tvFeed]);
-  // The bar: who has the apron and who is waiting, from the public Tavern snapshot.
-  const [tavern, setTavern] = useState<{ cast: BarCast; pool: TankNpcPool | null }>({ cast: { bartender: null, guests: [] }, pool: null });
+  // The bar: who has the apron and who is waiting, from the public Tavern
+  // snapshot. The whole game plays in the house: customers walk in and wait
+  // at the counter, the bartender serves them with E (see tavernAct).
+  const [tavern, setTavern] = useState<{ cast: BarCast; pool: TankNpcPool | null; snapshot: TavernSnapshot | null }>({
+    cast: { bartender: null, mine: false, guests: [] },
+    pool: null,
+    snapshot: null,
+  });
   const tavernSnapshot = useRef<TavernSnapshot | null>(null);
+  const barHandle = useRef<TavernBar | null>(null);
+  /** Re-read the bar now (after E did something), instead of at the next poll. */
+  const refreshTavern = useRef<() => void>(() => {});
   useEffect(() => {
     if (!ready || !visible) return;
     let live = true;
+    let timer = 0;
+    let generation = 0;
     const refresh = async () => {
+      const mine = ++generation;
+      window.clearTimeout(timer);
       try {
         const [res, pool] = await Promise.all([fetch("/api/tank/tavern"), loadNpcPool()]);
         const snapshot = res.ok ? ((await res.json()) as TavernSnapshot) : null;
-        if (!live) return;
+        if (!live || mine !== generation) return;
         tavernSnapshot.current = snapshot;
-        const cast = barCast(snapshot);
+        const cast = barCast(snapshot, currentUserId);
+        const shape = (s: TavernSnapshot | null) => `${s?.enabled}|${s?.shift?.id ?? ""}`;
         setTavern((previous) =>
-          previous.pool === pool && JSON.stringify(previous.cast) === JSON.stringify(cast) ? previous : { cast, pool },
+          previous.pool === pool && JSON.stringify(previous.cast) === JSON.stringify(cast) && shape(previous.snapshot) === shape(snapshot)
+            ? previous
+            : { cast, pool, snapshot },
         );
       } catch {
         // The bar just stays as it was.
       }
+      if (live && mine === generation) {
+        timer = window.setTimeout(refresh, tavernSnapshot.current?.shift ? TAVERN_SHIFT_POLL_MS : TAVERN_POLL_MS);
+      }
     };
+    refreshTavern.current = () => void refresh();
     void refresh();
-    const timer = window.setInterval(refresh, TAVERN_POLL_MS);
     return () => {
       live = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
+      refreshTavern.current = () => {};
     };
-  }, [ready, visible]);
+  }, [ready, visible, currentUserId]);
+  // Taking the apron, and handing it back, are news.
+  const wasBartender = useRef(false);
+  useEffect(() => {
+    const mine = tavern.cast.mine;
+    if (mine === wasBartender.current) return;
+    wasBartender.current = mine;
+    if (mine) setTavernQueue({ inQueue: false, position: null });
+    setNote({
+      ...STAND_PROMPT,
+      id: "tavern-shift",
+      effect: "tavern",
+      seat: undefined,
+      label: mine ? "The apron is yours!" : "Your shift is over",
+      blurb: mine
+        ? "Customers are coming in at the front door. Get behind the bar, walk up to one and press E to serve them before their bubble runs out."
+        : "Thanks for tending the bar.",
+    });
+  }, [tavern.cast.mine]);
 
   const wanted = avatarChoice ?? chosenAvatar;
   const wornAvatar = avatarList.some((a) => a.id === wanted) ? wanted : DEFAULT_AVATAR;
@@ -1116,12 +1198,64 @@ export default function AltDirector3D({
       return;
     }
     if (spot.effect === "tavern") {
-      setNote({ ...spot, blurb: tavernBlurb(tavernSnapshot.current) });
-      onOpenTavern?.();
+      void tavernAct(spot);
       return;
     }
     setNote(spot);
   };
+
+  // The Tavern, played in the house: E serves the customer in front of you on
+  // your shift; otherwise E at the bar takes the apron, or a place in line for it.
+  const tavernBusy = useRef(false);
+  const tavernAct = async (spot: HouseHotspot) => {
+    if (tavernBusy.current) return;
+    tavernBusy.current = true;
+    const say = (label: string, blurb: string) => setNote({ ...spot, label, blurb });
+    try {
+      const snapshot = tavernSnapshot.current;
+      if (spot.serve) {
+        const { chitId, response, name } = spot.serve;
+        const result = await resolveTavernChitAction(chitId, response);
+        if (result.success) {
+          barHandle.current?.markServed(chitId);
+          say(`${name} is served`, result.outcome === "failed" ? "Not quite what they wanted…" : "Tips go in the jar. Keep them coming!");
+        } else {
+          say("Couldn't serve that", result.error ?? "Try again.");
+        }
+        return;
+      }
+      if (!snapshot) return say("Tavern", "The bar is still opening up. Try again in a moment.");
+      if (!snapshot.enabled) return say("Tavern", "The Tavern is closed tonight.");
+      if (snapshot.shift && barCast(snapshot, currentUserId).mine) {
+        const waiting = snapshot.chits.filter((c) => c.outcome === "pending").length;
+        return say(
+          "You have the apron",
+          `${waiting === 1 ? "1 customer is" : `${waiting} customers are`} waiting. Walk up to one and press E to serve them. Your shift ends in ${countdown(snapshot.shift.deadlineAt)}.`,
+        );
+      }
+      const status = await getTavernQueueStatusAction();
+      if (status.inQueue) {
+        const left = await leaveTavernQueueAction();
+        if (!left.success) return say("Tavern", left.error ?? "Try again.");
+        setTavernQueue({ inQueue: false, position: null });
+        return say("Out of line", "You gave up your place for the apron.");
+      }
+      const joined = await joinTavernQueueAction();
+      if (!joined.success) return say("Tavern", joined.error ?? "Couldn't get in line.");
+      setTavernQueue({ inQueue: true, position: joined.position ?? null });
+      if (snapshot.shift) {
+        say("You're in line", `You're #${joined.position ?? "?"} for the apron. ${snapshot.shift.bartenderName} has it; you're up when their shift ends.`);
+      } else {
+        say("The apron's yours in a moment", "In a few seconds you take over the bar, and customers start coming in at the front door.");
+      }
+    } catch {
+      say("Tavern", "Something went wrong. Try again.");
+    } finally {
+      tavernBusy.current = false;
+      refreshTavern.current();
+    }
+  };
+  const promptLabel = hud.hotspot ? (atBar ? barPrompt(tavern.snapshot, tavern.cast, tavernQueue) : hud.hotspot.label) : "";
 
   return (
     <div
@@ -1219,6 +1353,7 @@ export default function AltDirector3D({
               tableQueue={tableQueue}
               onTableResult={handlers.tableResult}
               tavern={tavern}
+              barHandle={barHandle}
               tvFeed={tvFeed}
             />
             <PixelRenderer />
@@ -1345,7 +1480,7 @@ export default function AltDirector3D({
               wrapper.current?.focus({ preventScroll: true });
             }}
           >
-            {touch ? hud.hotspot.label : `E · ${hud.hotspot.label}`}
+            {touch ? promptLabel : `E · ${promptLabel}`}
           </button>
         )}
       </div>

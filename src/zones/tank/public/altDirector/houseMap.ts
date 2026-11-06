@@ -31,6 +31,8 @@ export type HouseHotspot = {
   room: string | null;
   /** Set on the prompts the walker builds for seats: the seat id to sit on, or "stand". */
   seat?: string;
+  /** Set on the bartender's prompt at a waiting customer: the order E serves, and how. */
+  serve?: { chitId: string; response: string; name: string };
 };
 
 /** An FX anchor placed in Blender: where a pixelfx effect plays. */

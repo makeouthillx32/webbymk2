@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { nearestHotspot, parseHouseMap, type HouseMap } from "./houseMap";
 import { BAR_HOTSPOT, BAR_STAFF_HOTSPOT, DEFAULT_STATIONS, STATION_NODES, TABLE_HOTSPOT, barSpots, tableFov, tableSeats, tableView, withStations } from "./houseStations";
-import { barCast } from "./tavernBar";
+import { assignPlaces, barCast } from "./tavernBar";
+import { orderBubble, orderResponse } from "../../tavern/orders";
 import type { TavernSnapshot } from "../../tavernTypes";
 
 // The v1.0 living room, kitchen and their seats.
@@ -99,7 +100,53 @@ describe("barCast", () => {
   });
 
   test("a closed tavern is an empty bar", () => {
-    expect(barCast(snapshot({ enabled: false, chits: [chit("a", "pending")] }))).toEqual({ bartender: null, guests: [] });
-    expect(barCast(null)).toEqual({ bartender: null, guests: [] });
+    expect(barCast(snapshot({ enabled: false, chits: [chit("a", "pending")] }))).toEqual({ bartender: null, mine: false, guests: [] });
+    expect(barCast(null)).toEqual({ bartender: null, mine: false, guests: [] });
+  });
+
+  test("your own shift is yours: you serve as yourself", () => {
+    const shift = {
+      id: "s",
+      bartenderId: "me",
+      bartenderName: "Joe",
+      bartenderClickId: null,
+      clickBonusApplies: false,
+      startedAt: "2026-11-06T20:00:00Z",
+      deadlineAt: "2026-11-06T20:25:00Z",
+      chaos: 0,
+      sfxAllowanceRemaining: 5,
+      tipsTokens: 0,
+      status: "active" as const,
+      takeoverShieldedUntil: null,
+    };
+    expect(barCast(snapshot({ shift }), "me").mine).toBe(true);
+    expect(barCast(snapshot({ shift }), "someone").mine).toBe(false);
+    expect(barCast(snapshot({ shift })).bartender).toEqual({ id: "me", name: "Joe" });
+  });
+});
+
+describe("counter places", () => {
+  test("a guest keeps their place; a newcomer takes the first free one", () => {
+    const first = assignPlaces(new Map(), ["a", "b", "c"], 3);
+    expect([...first]).toEqual([["a", 0], ["b", 1], ["c", 2]]);
+    // a was served and left; c stays where they stand, d steps into a's place.
+    const next = assignPlaces(first, ["b", "c", "d"], 3);
+    expect(next.get("b")).toBe(1);
+    expect(next.get("c")).toBe(2);
+    expect(next.get("d")).toBe(0);
+  });
+
+  test("more guests than places: the extra wait unseen", () => {
+    expect(assignPlaces(new Map(), ["a", "b", "c"], 2).has("c")).toBe(false);
+  });
+});
+
+describe("orders", () => {
+  test("the bubble says what they want; E sends the answer that serves it", () => {
+    expect(orderBubble({ troubleType: null, payload: { item: "ale" } })).toBe("🍺 Ale");
+    expect(orderBubble({ troubleType: "spill", payload: {} })).toBe("💦 Spill!");
+    expect(orderResponse({ troubleType: null, payload: { item: "mead" } })).toEqual({ key: "serve:mead", label: "Serve mead" });
+    expect(orderResponse({ troubleType: "newcomer", payload: {} })).toEqual({ key: "handle:newcomer", label: "Say hello" });
+    expect(orderResponse({ troubleType: null, payload: {} })).toBeNull();
   });
 });

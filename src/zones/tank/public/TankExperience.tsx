@@ -1030,14 +1030,6 @@ export function TankExperience({
     setMobileChatSizeState(size);
     persistMobileChatSize(size);
   };
-  // E at the house's kitchen bar opens the Tavern in the chat panel,
-  // bringing the chat back first if it was tucked away.
-  const [tavernRequest, setTavernRequest] = useState(0);
-  const openTavernFromHouse = useCallback(() => {
-    setDesktopChatSizeState((size) => (size === "hidden" ? "full" : size));
-    setMobileChatSizeState((size) => (size === "hidden" ? "full" : size));
-    setTavernRequest((n) => n + 1);
-  }, []);
 
   const setDesktopChatSize = (size: "hidden" | "full") => {
     setDesktopChatSizeState(size);
@@ -2991,7 +2983,7 @@ export function TankExperience({
                     avatarChoice={settings.walkAvatar}
                     avatarPicker={false}
                     chatMessages={messages}
-                    onOpenTavern={openTavernFromHouse}
+                    currentUserId={playerProfile?.id ?? initialProfile?.id ?? null}
                     onCommand={(text) => void postMessage(text)}
                   />
                 )}
@@ -3746,7 +3738,6 @@ export function TankExperience({
                 initialProfile?.userName ||
                 "Viewer"
               }
-              tavernRequest={tavernRequest}
               />
             </div>
           </div>

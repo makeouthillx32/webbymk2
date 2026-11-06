@@ -30,6 +30,7 @@ import { startTavernMutinyAction, castTavernMutinyVoteAction } from "../server/t
 import { triggerTavernSfxAction } from "../server/tavernSfx";
 import { castGuests, loadNpcPool, type TankNpcPool } from "./npcs";
 import { TavernNpc } from "./TavernNpc";
+import { orderResponse } from "./orders";
 
 const POLL_MS = 6000;
 const AMBER = "#b45309";
@@ -51,12 +52,8 @@ function formatCountdown(deadlineIso: string): string {
 }
 
 function chitResponseOptions(chit: TavernChit): { key: string; label: string }[] {
-  if (chit.troubleType) {
-    return [{ key: `handle:${chit.troubleType}`, label: chit.troubleType === "spill" ? "Clean it up" : "Say hello" }];
-  }
-  const item = (chit.payload?.item as string | undefined) ?? null;
-  if (!item) return [];
-  return [{ key: `serve:${item}`, label: `Serve ${item}` }];
+  const response = orderResponse(chit);
+  return response ? [response] : [];
 }
 
 export function TavernPanel({ onClose, signedIn, currentUserId, onOpenSignIn }: TavernPanelProps) {
