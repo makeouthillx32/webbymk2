@@ -2992,6 +2992,7 @@ export function TankExperience({
                     avatarPicker={false}
                     chatMessages={messages}
                     onOpenTavern={openTavernFromHouse}
+                    onCommand={(text) => void postMessage(text)}
                   />
                 )}
 

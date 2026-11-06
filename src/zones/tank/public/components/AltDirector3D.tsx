@@ -49,11 +49,14 @@ import {
   tableFov,
   tableSeats,
   tableView,
+  tvFov,
+  tvView,
   withStations,
   type HouseStations,
 } from "../altDirector/houseStations";
 import { PLAY_SECONDS, TABLE_CANVAS, TableQueue, describeTableGame, drawTableGame, type TableGame } from "../altDirector/tableGames";
 import { TavernBar, barCast, type BarCast } from "../altDirector/tavernBar";
+import { TV_CANVAS, TvFeed, drawTv } from "../altDirector/houseTv";
 import { CRISP_LAYER } from "../pixel/pixelPass";
 import { loadNpcPool, type TankNpcPool } from "../../tavern/npcs";
 import type { TavernSnapshot } from "../../tavernTypes";
@@ -62,7 +65,7 @@ import type { ChatMessage } from "../../contracts";
 type CameraMode = "director" | "follow";
 type Input = { keys: Set<string>; stick: { x: number; y: number } };
 type Hud = { place: string; shot: string; hotspot: HouseHotspot | null };
-/** Shared between the HUD and the frame loop: the TV, and a pending sit/stand. */
+/** Shared between the HUD and the frame loop: watching the TV, and a pending sit/stand. */
 type Effects = { tv: boolean; seat: string | null };
 /**
  * How close a mirrored body's foot point must be to a seat to sit on it. A
@@ -141,7 +144,18 @@ type AltDirector3DProps = {
   chatMessages?: readonly ChatMessage[];
   /** E at the kitchen bar: open the Tavern (the bartender game). */
   onOpenTavern?: () => void;
+  /** Send a chat command for the walker ("/roll"): the house's buttons play through chat like typing. */
+  onCommand?: (text: string) => void;
 };
+
+/** What the game table's buttons (and keys 1 to 5) play, through chat. */
+const TABLE_PLAYS = [
+  { key: "Digit1", label: "Roll", emoji: "🎲", command: "/roll 20" },
+  { key: "Digit2", label: "Flip", emoji: "🪙", command: "/flip heads 10" },
+  { key: "Digit3", label: "Slots", emoji: "🎰", command: "/slots 20" },
+  { key: "Digit4", label: "Roulette", emoji: "🔫", command: "/roulette" },
+  { key: "Digit5", label: "Unbox", emoji: "📦", command: "/unbox" },
+] as const;
 
 /** How often the bar re-reads who is serving and who is waiting. */
 const TAVERN_POLL_MS = 10_000;
@@ -259,6 +273,7 @@ function HouseWorld({
   tableQueue,
   onTableResult,
   tavern,
+  tvFeed,
 }: {
   url: string;
   castUrl: string | null;
@@ -280,6 +295,7 @@ function HouseWorld({
   /** A table game has landed: its result, for the HUD line. */
   onTableResult: (game: TableGame) => void;
   tavern: { cast: BarCast; pool: TankNpcPool | null };
+  tvFeed: TvFeed;
 }) {
   const gltf = useGLTF(url, roomSceneDecoderPath());
   // The cast (rigs, sprites, clips) ships as its own file so animating them
@@ -340,6 +356,39 @@ function HouseWorld({
     },
     [table],
   );
+  // Tank TV: the chat's commands, on the living room TV, and a camera square on to it.
+  const tv = useMemo(() => {
+    const view = tvView(stations);
+    const canvas = document.createElement("canvas");
+    canvas.width = TV_CANVAS.width;
+    canvas.height = TV_CANVAS.height;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const picture = new THREE.Mesh(
+      new THREE.PlaneGeometry(view.screen.width, view.screen.height),
+      new THREE.MeshBasicMaterial({ map: texture }),
+    );
+    picture.name = "Tank TV picture";
+    picture.rotation.y = view.screen.yaw;
+    picture.position.set(...view.screen.at);
+    picture.layers.enable(CRISP_LAYER);
+    const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 30);
+    camera.position.set(...view.eye);
+    camera.lookAt(...view.target);
+    camera.updateMatrixWorld();
+    return { view, ctx: canvas.getContext("2d"), texture, picture, camera, drawn: "" };
+  }, [stations]);
+  useEffect(
+    () => () => {
+      tv.texture.dispose();
+      tv.picture.geometry.dispose();
+      (tv.picture.material as THREE.Material).dispose();
+    },
+    [tv],
+  );
   const bar = useMemo(() => new TavernBar(barSpots(stations)), [stations]);
   useEffect(() => () => bar.dispose(), [bar]);
   useEffect(() => {
@@ -352,20 +401,6 @@ function HouseWorld({
       if (o.userData?.tank_layer === "upper") list.push(o);
     });
     return list;
-  }, [gltf.scene]);
-  const tvScreen = useMemo(() => {
-    let screen: THREE.Mesh | null = null;
-    gltf.scene.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!screen && mesh.isMesh && /^PX_TV_Screen/.test(objectName(mesh))) screen = mesh;
-    });
-    if (screen && !(screen as THREE.Mesh).userData.offColor) {
-      const mesh = screen as THREE.Mesh;
-      // Its own material, so lighting the TV tints nothing else.
-      mesh.material = (mesh.material as THREE.MeshBasicMaterial).clone();
-      mesh.userData.offColor = (mesh.material as THREE.MeshBasicMaterial).color.clone();
-    }
-    return screen as THREE.Mesh | null;
   }, [gltf.scene]);
   const follow = useMemo(() => new THREE.PerspectiveCamera(55, 1, 0.05, 80), []);
   const visitor = useRef<THREE.Group>(null);
@@ -436,6 +471,8 @@ function HouseWorld({
     nextCutAt: 0,
     /** Watchers: the table cam holds until then. */
     tableUntil: 0,
+    /** Watchers: the TV cam holds until then. */
+    tvUntil: 0,
     /** The table game whose result has been announced. */
     announced: "",
   });
@@ -455,7 +492,10 @@ function HouseWorld({
     table.camera.aspect = aspect;
     table.camera.fov = tableFov(table.view, aspect);
     table.camera.updateProjectionMatrix();
-  }, [shots, follow, table, size.width, size.height]);
+    tv.camera.aspect = aspect;
+    tv.camera.fov = tvFov(tv.view, aspect);
+    tv.camera.updateProjectionMatrix();
+  }, [shots, follow, table, tv, size.width, size.height]);
 
   useEffect(() => {
     loadHouseCastOnce();
@@ -703,7 +743,21 @@ function HouseWorld({
     if (playing) s.tableUntil = clock.elapsedTime + TABLE_LINGER_S;
     const onTable = walker ? Boolean(s.seat && atTable.has(s.seat.id)) : clock.elapsedTime < s.tableUntil;
 
-    const camera = onTable ? table.camera : s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
+    // Tank TV, the same way: its picture follows the chat; a walker watches it
+    // with E (walking off stops), and watchers cut to it while a card is up.
+    const nowMs = Date.now();
+    const showing = tvFeed.tick(clock.elapsedTime);
+    const tvKey = showing ? `${showing.card.id}:${Math.floor(showing.t * (animate ? TABLE_FPS : 1))}` : `idle:${Math.floor(nowMs / (animate ? 250 : 1000))}`;
+    if (tvKey !== tv.drawn && tv.ctx) {
+      drawTv(tv.ctx, showing?.card ?? null, showing ? (animate ? showing.t : 99) : 0, tvFeed.live(nowMs), nowMs);
+      tv.texture.needsUpdate = true;
+      tv.drawn = tvKey;
+    }
+    if (walker && moving) effects.current.tv = false;
+    if (showing) s.tvUntil = clock.elapsedTime + TABLE_LINGER_S;
+    const onTv = !onTable && (walker ? effects.current.tv : clock.elapsedTime < s.tvUntil);
+
+    const camera = onTable ? table.camera : onTv ? tv.camera : s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
     if (get().camera !== camera) set({ camera });
 
     // Paper-sprite rule: the cast are flat cards, so the visitor's card always
@@ -729,7 +783,7 @@ function HouseWorld({
     );
 
     // Dollhouse: on the follow camera the upper walls drop away.
-    const showUpper = onTable || Boolean(s.shot);
+    const showUpper = onTable || onTv || Boolean(s.shot);
     if (s.upperShown !== showUpper) {
       upperWalls.forEach((o) => {
         o.visible = showUpper;
@@ -737,12 +791,6 @@ function HouseWorld({
       s.upperShown = showUpper;
     }
 
-    // The TV hotspot: a slow colour wash while it's on.
-    if (tvScreen) {
-      const material = tvScreen.material as THREE.MeshBasicMaterial;
-      if (effects.current.tv) material.color.setHSL((clock.elapsedTime * 0.08) % 1, 0.7, 0.62);
-      else material.color.copy(tvScreen.userData.offColor as THREE.Color);
-    }
 
     // What E does here: stand up, sit on the seat in reach, else the nearest hotspot.
     let spot: HouseHotspot | null = null;
@@ -759,7 +807,7 @@ function HouseWorld({
         : near;
     }
     interact.current = spot;
-    const shotName = onTable ? "Table cam" : s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
+    const shotName = onTable ? "Table cam" : onTv ? "TV cam" : s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
     const place = floor?.label ?? (walker ? "The house" : shotName.replace(/ cam$/, ""));
     const hudKey = `${place}|${shotName}|${spot?.id ?? ""}`;
     if (hudKey !== s.hudKey) {
@@ -774,6 +822,7 @@ function HouseWorld({
       {separateCast && <primitive object={castGltf.scene} />}
       <primitive object={houseFx.group} />
       <primitive object={table.mat} />
+      <primitive object={tv.picture} />
       <primitive object={bar.group} />
       <Visitor groupRef={visitor} sprite={Boolean(avatar)} />
     </>
@@ -877,6 +926,7 @@ export default function AltDirector3D({
   avatarPicker = true,
   chatMessages,
   onOpenTavern,
+  onCommand,
 }: AltDirector3DProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const input = useRef<Input>({ keys: new Set(), stick: { x: 0, y: 0 } });
@@ -924,9 +974,12 @@ export default function AltDirector3D({
   };
   // The game table replays the chat's mini-games, in order.
   const tableQueue = useMemo(() => new TableQueue(), []);
+  const tvFeed = useMemo(() => new TvFeed(), []);
   useEffect(() => {
-    if (chatMessages?.length) tableQueue.offer(chatMessages, Date.now());
-  }, [chatMessages, tableQueue]);
+    if (!chatMessages?.length) return;
+    tableQueue.offer(chatMessages, Date.now());
+    tvFeed.offer(chatMessages, Date.now());
+  }, [chatMessages, tableQueue, tvFeed]);
   // The bar: who has the apron and who is waiting, from the public Tavern snapshot.
   const [tavern, setTavern] = useState<{ cast: BarCast; pool: TankNpcPool | null }>({ cast: { bartender: null, guests: [] }, pool: null });
   const tavernSnapshot = useRef<TavernSnapshot | null>(null);
@@ -984,6 +1037,8 @@ export default function AltDirector3D({
   );
 
   const wandering = ready && canWalk && !focused && !touch;
+  // Seated at the game table: the games are a button (or a number key) away.
+  const atTableNow = ready && canWalk && hud.shot === "Table cam";
   useEffect(() => {
     onHudChange?.({
       place: hud.place,
@@ -1007,7 +1062,16 @@ export default function AltDirector3D({
       effects.current.seat = spot.seat;
       return;
     }
-    if (spot.effect === "tv") effects.current.tv = !effects.current.tv;
+    if (spot.effect === "tv") {
+      effects.current.tv = !effects.current.tv;
+      setNote({
+        ...spot,
+        blurb: effects.current.tv
+          ? "Tank TV: items, drops, level-ups, quests and house events from chat play here. Walk off to stop watching."
+          : "Back to the house.",
+      });
+      return;
+    }
     if (spot.effect === "tavern") {
       setNote({ ...spot, blurb: tavernBlurb(tavernSnapshot.current) });
       onOpenTavern?.();
@@ -1045,6 +1109,13 @@ export default function AltDirector3D({
         } else if (e.code === "KeyC") {
           e.stopPropagation();
           if (!e.repeat) toggleMode();
+        } else if (atTableNow && onCommand) {
+          const play = TABLE_PLAYS.find((p) => p.key === e.code);
+          if (play && !e.repeat) {
+            e.preventDefault();
+            e.stopPropagation();
+            onCommand(play.command);
+          }
         }
       }}
       onKeyUp={(e) => {
@@ -1105,6 +1176,7 @@ export default function AltDirector3D({
               tableQueue={tableQueue}
               onTableResult={handlers.tableResult}
               tavern={tavern}
+              tvFeed={tvFeed}
             />
             <PixelRenderer />
           </Suspense>
@@ -1137,6 +1209,30 @@ export default function AltDirector3D({
           >
             {mode === "director" ? "Camera: Director cuts" : "Camera: Follow"}
           </button>
+        </div>
+      )}
+
+      {atTableNow && onCommand && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center px-2 sm:bottom-3">
+          <div className="pointer-events-auto flex flex-wrap justify-center gap-1 rounded border border-white/15 bg-black/60 p-1 backdrop-blur-sm">
+            {TABLE_PLAYS.map((play, i) => (
+              <button
+                key={play.command}
+                type="button"
+                className="rounded border border-white/20 bg-black/50 px-2 py-1 text-[11px] font-bold text-white transition hover:bg-orange-500/30"
+                title={`${play.command} (${i + 1})`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCommand(play.command);
+                  wrapper.current?.focus({ preventScroll: true });
+                }}
+              >
+                <span aria-hidden="true">{play.emoji}</span> {play.label}
+                <span className="ml-1 hidden text-white/40 sm:inline">{i + 1}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

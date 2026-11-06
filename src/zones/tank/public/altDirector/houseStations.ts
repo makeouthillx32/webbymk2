@@ -17,18 +17,22 @@ export type HouseStations = {
   table: Box;
   /** The kitchen peninsula's worktop: the bar. Customers stand on its low-x (living room) side. */
   bar: Box;
+  /** The living room TV's screen (Tank TV, see houseTv.ts). */
+  tv: Box;
 };
 
 /** The furniture each station sits on, by Blender object name ("Coffee table — oval coffee table"). */
 export const STATION_NODES: Record<keyof HouseStations, RegExp> = {
   table: /^Coffee table\s*[—–-]\s*oval coffee table$/i,
   bar: /^Peninsula\s*[—–-]\s*worktop$/i,
+  tv: /^TV & media console\s*[—–-]\s*screen$/i,
 };
 
 /** Where they were in house v1.0, for a house exported without those names. */
 export const DEFAULT_STATIONS: HouseStations = {
   table: { min: [2.18, 0.4, 0.36], max: [3.72, 0.48, 1.54] },
   bar: { min: [4.8, 0.84, -3.46], max: [5.58, 0.92, -2.02] },
+  tv: { min: [0.14, 1.35, -0.12], max: [0.16, 2.03, 1.64] },
 };
 
 const centre = (box: Box): [number, number, number] => [
@@ -114,4 +118,45 @@ export function barSpots(stations: HouseStations, perRow = 3, rows = 2): { barte
     }
   }
   return { bartender: { x: max[0] + 0.42, z: cz + 0.3 }, guests };
+}
+
+export type TvView = {
+  /** The picture: centre, size (m) and which way it faces (yaw about +y; 0 faces +z). */
+  screen: { at: [number, number, number]; width: number; height: number; yaw: number };
+  /** The TV cam: across the room, square on to the screen. */
+  eye: [number, number, number];
+  target: [number, number, number];
+};
+
+/** How far the TV cam stands back from the screen. */
+const TV_CAM_DISTANCE = 2.3;
+
+/**
+ * The screen's thin side is the way it faces; of its two faces, the one
+ * towards the game table (the room) is the front.
+ */
+export function tvView(stations: HouseStations): TvView {
+  const { min, max } = stations.tv;
+  const [cx, cy, cz] = centre(stations.tv);
+  const [tx, , tz] = centre(stations.table);
+  const alongX = max[0] - min[0] < max[2] - min[2];
+  const sign = alongX ? Math.sign(tx - cx) || 1 : Math.sign(tz - cz) || 1;
+  const front = 0.008;
+  const at: [number, number, number] = alongX
+    ? [(sign > 0 ? max[0] : min[0]) + sign * front, cy, cz]
+    : [cx, cy, (sign > 0 ? max[2] : min[2]) + sign * front];
+  const width = (alongX ? max[2] - min[2] : max[0] - min[0]) * 0.97;
+  const height = (max[1] - min[1]) * 0.95;
+  const yaw = alongX ? (sign > 0 ? Math.PI / 2 : -Math.PI / 2) : sign > 0 ? 0 : Math.PI;
+  const eye: [number, number, number] = alongX
+    ? [at[0] + sign * TV_CAM_DISTANCE, cy - 0.05, cz]
+    : [cx, cy - 0.05, at[2] + sign * TV_CAM_DISTANCE];
+  return { screen: { at, width, height, yaw }, eye, target: at };
+}
+
+/** Vertical field of view (degrees) that fits the screen, with a little room around it. */
+export function tvFov(view: TvView, aspect: number): number {
+  const distance = Math.hypot(view.eye[0] - view.target[0], view.eye[2] - view.target[2]);
+  const half = Math.max((view.screen.height / 2) * 1.35, ((view.screen.width / 2) * 1.12) / Math.max(0.2, aspect));
+  return (2 * Math.atan(half / distance) * 180) / Math.PI;
 }
