@@ -55,4 +55,16 @@ describe("cast mirror", () => {
     kitchen.dispose();
     expect(root.getObjectByName("Malia_Rig")!.position.x).toBeCloseTo(2.55, 5); // back on its mark
   });
+  test("walk-only avatars wait hidden, except the one the visitor wears", () => {
+    const root = scene();
+    const rocker = rig("Rocker_Rig", -2, 8);
+    rocker.userData.tank_avatar = "rocker";
+    const monk = rig("Monk_Rig", 0, 8);
+    monk.userData.tank_avatar = "monk";
+    root.add(rocker, monk);
+    const mirror = new CastMirror(root, [], { skip: monk });
+    mirror.update(0.016, eye);
+    expect(rocker.visible).toBe(false);
+    expect(monk.visible).toBe(true);
+  });
 });

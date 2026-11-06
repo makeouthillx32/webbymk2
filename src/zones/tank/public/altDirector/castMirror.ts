@@ -47,6 +47,12 @@ export class CastMirror {
     private readonly options: { skip?: THREE.Object3D | null; room?: string | null } = {},
   ) {
     this.mixer = new THREE.AnimationMixer(root);
+    // Walk-only avatars (a rig tagged tank_avatar that is nobody in the house)
+    // wait out of sight until a visitor walks as one.
+    for (const child of root.children) {
+      const id = child.userData?.tank_avatar;
+      if (typeof id === "string" && !(id in CAST_RIGS) && child !== options.skip) child.visible = false;
+    }
     for (const [id, { rig: rigName }] of Object.entries(CAST_RIGS)) {
       const rig = findCastRig(root, id, rigName);
       if (!rig || rig === options.skip) continue;

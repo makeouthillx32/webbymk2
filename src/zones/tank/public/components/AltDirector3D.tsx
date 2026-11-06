@@ -24,7 +24,15 @@ import {
   type HouseMap,
 } from "../altDirector/houseMap";
 import { pickShot, type ShotCamera } from "../altDirector/cameraCuts";
-import { DEFAULT_AVATAR, faceAvatar, findAvatarRig, prepareAvatar, restoreAvatar } from "../altDirector/avatars";
+import {
+  DEFAULT_AVATAR,
+  availableAvatars,
+  faceAvatar,
+  findAvatarRig,
+  poseAvatarView,
+  prepareAvatar,
+  restoreAvatar,
+} from "../altDirector/avatars";
 import { loadHouseCastOnce } from "../altDirector/houseCastStore";
 import { CastMirror } from "../altDirector/castMirror";
 import { HouseFx } from "../pixel/houseFx";
@@ -148,6 +156,7 @@ function HouseWorld({
   onHud,
   onReady,
   onBroken,
+  onAvatars,
 }: {
   url: string;
   castUrl: string | null;
@@ -163,6 +172,8 @@ function HouseWorld({
   onHud: (hud: Hud) => void;
   onReady: () => void;
   onBroken: () => void;
+  /** The avatars this cast actually has, for the picker. */
+  onAvatars: (list: { id: string; label: string }[]) => void;
 }) {
   const gltf = useGLTF(url, roomSceneDecoderPath());
   // The cast (rigs, sprites, clips) ships as its own file so animating them
@@ -288,6 +299,10 @@ function HouseWorld({
     onReady();
   }, [onReady]);
 
+  useEffect(() => {
+    onAvatars(availableAvatars(castGltf.scene));
+  }, [castGltf.scene, onAvatars]);
+
   useFrame(({ clock }, rawDelta) => {
     if (!map) return;
     const dt = Math.min(rawDelta, 0.05);
@@ -336,7 +351,11 @@ function HouseWorld({
       const body = visitor.current.getObjectByName("visitor-body");
       if (body) body.position.y = bob;
     }
-    if (avatar) avatar.rig.position.set(s.x, avatar.baseY + bob, s.z);
+    if (avatar) {
+      // A walk-only avatar waits hidden in the cast until it is worn.
+      avatar.rig.visible = true;
+      avatar.rig.position.set(s.x, avatar.baseY + bob, s.z);
+    }
     if (avatarAction.current) avatarAction.current.paused = !(moving && animate);
 
     // Pick the shot. The server director's game cam when it has one, so every
@@ -384,7 +403,12 @@ function HouseWorld({
     // Paper-sprite rule: the cast are flat cards, so the visitor's card always
     // turns to whichever camera has the shot.
     camera.getWorldPosition(scratch.eye);
-    if (avatar) faceAvatar(avatar, Math.atan2(scratch.eye.x - s.x, scratch.eye.z - s.z));
+    if (avatar) {
+      const toCamera = Math.atan2(scratch.eye.x - s.x, scratch.eye.z - s.z);
+      faceAvatar(avatar, toCamera);
+      // Directional avatars: the front, side or back card, by where they walk.
+      poseAvatarView(avatar, s.yaw, toCamera, moving, s.walkTime, animate);
+    }
 
     // The mirrored cast: where the real people are, facing the shot.
     mirror.update(dt, scratch.eye, animate);
@@ -489,6 +513,8 @@ function Stick({ input }: { input: React.MutableRefObject<Input> }) {
   );
 }
 
+const AVATAR_STORAGE_KEY = "tank.altDirector.avatar";
+
 export default function AltDirector3D({
   url,
   castUrl = null,
@@ -515,6 +541,30 @@ export default function AltDirector3D({
   const [touch, setTouch] = useState(false);
   const [visible, setVisible] = useState(true);
   const [ready, setReady] = useState(false);
+  // Which cast sprite the visitor walks as. Remembered on this device; the
+  // list is whatever rigs the published cast actually has.
+  const [chosenAvatar, setChosenAvatar] = useState<string>(avatarId);
+  const [avatarList, setAvatarList] = useState<{ id: string; label: string }[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(AVATAR_STORAGE_KEY);
+      if (saved) setChosenAvatar(saved);
+    } catch {
+      // Private mode: Joe it is.
+    }
+  }, []);
+  const chooseAvatar = (id: string) => {
+    setChosenAvatar(id);
+    setPickerOpen(false);
+    try {
+      window.localStorage.setItem(AVATAR_STORAGE_KEY, id);
+    } catch {
+      // Not remembered; still worn for this visit.
+    }
+    wrapper.current?.focus({ preventScroll: true });
+  };
+  const wornAvatar = avatarList.some((a) => a.id === chosenAvatar) ? chosenAvatar : DEFAULT_AVATAR;
 
   useEffect(() => {
     setTouch(window.matchMedia?.("(pointer: coarse)").matches === true);
@@ -534,6 +584,7 @@ export default function AltDirector3D({
     () => ({
       ready: () => setReady(true),
       broken: () => onFailed?.(),
+      avatars: (list: { id: string; label: string }[]) => setAvatarList(list),
       hud: (next: Hud) => setHud(next),
     }),
     [onFailed],
@@ -627,7 +678,7 @@ export default function AltDirector3D({
               url={url}
               castUrl={castUrl}
               walker={canWalk}
-              avatarId={avatarId}
+              avatarId={wornAvatar}
               programme={programme}
               input={input}
               mode={mode}
@@ -638,6 +689,7 @@ export default function AltDirector3D({
               onHud={handlers.hud}
               onReady={handlers.ready}
               onBroken={handlers.broken}
+              onAvatars={handlers.avatars}
             />
             <PixelRenderer />
           </Suspense>
@@ -668,6 +720,50 @@ export default function AltDirector3D({
           {mode === "director" ? "Camera: Director cuts" : "Camera: Follow"}
         </button>
       </div>
+
+      {canWalk && ready && avatarList.length > 1 && (
+        <div
+          className={`pointer-events-none absolute right-2 sm:right-3 top-10 sm:top-12 flex flex-col items-end gap-1`}
+        >
+          <button
+            type="button"
+            className="pointer-events-auto rounded border border-white/20 bg-black/55 px-2 py-1 text-[11px] font-bold text-white backdrop-blur-sm transition hover:bg-black/75"
+            aria-expanded={pickerOpen}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPickerOpen((open) => !open);
+            }}
+            title="Choose who you walk as"
+          >
+            Walk as: {avatarList.find((a) => a.id === wornAvatar)?.label ?? "Joe"}
+          </button>
+          {pickerOpen && (
+            <div
+              role="listbox"
+              aria-label="Avatars"
+              className="pointer-events-auto grid max-h-64 grid-cols-2 gap-1 overflow-y-auto rounded-lg border border-white/15 bg-black/75 p-1.5 backdrop-blur-sm"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {avatarList.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  role="option"
+                  aria-selected={a.id === wornAvatar}
+                  className={`rounded px-2 py-1 text-left text-[11px] font-bold transition ${a.id === wornAvatar ? "bg-orange-600 text-white" : "text-white/85 hover:bg-white/10"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    chooseAvatar(a.id);
+                  }}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {note && (
         <div className="pointer-events-none absolute inset-x-0 top-14 flex justify-center px-3 sm:top-16">

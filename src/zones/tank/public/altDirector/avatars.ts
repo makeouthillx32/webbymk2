@@ -15,6 +15,14 @@ export const AVATAR_PRESETS = [
   { id: "molly", label: "Molly", rig: "Molly_Rig" },
   { id: "james", label: "James", rig: "James_Rig" },
   { id: "kitty", label: "Kitty", rig: "Kitty_Rig" },
+  // Walk-only avatars (2026-11-05): nobody in the house plays them, so they
+  // stay hidden until someone walks as one. Each has front / side / back
+  // cards (the coach a stride too); see poseAvatarView.
+  { id: "rocker", label: "Rocker", rig: "Rocker_Rig" },
+  { id: "professor", label: "Professor", rig: "Professor_Rig" },
+  { id: "monk", label: "Monk", rig: "Monk_Rig" },
+  { id: "coach", label: "Coach", rig: "Coach_Rig" },
+  { id: "skater", label: "Skater", rig: "Skater_Rig" },
 ] as const;
 
 export type AvatarId = (typeof AVATAR_PRESETS)[number]["id"];
@@ -34,9 +42,30 @@ export type AvatarRig = {
   clip: THREE.AnimationClip | null;
   /** Clip names that belong to this rig — the cast loop must leave them alone. */
   ownClips: Set<string>;
+  /** Directional cards (tank_view in Blender), or null for a single-card rig like Joe. */
+  views: AvatarViews | null;
 };
 
+export type ViewName = "front" | "side" | "back" | "walk";
+export type AvatarViews = Partial<Record<ViewName, THREE.Object3D>> & { front: THREE.Object3D };
+
 const nameOf = (object: THREE.Object3D) => String(object.userData?.name ?? object.name ?? "");
+
+function rigFor(root: THREE.Object3D, preset: (typeof AVATAR_PRESETS)[number]) {
+  return (
+    root.children.find((child) => child.userData?.tank_avatar === preset.id) ??
+    root.children.find((child) => {
+      const name = nameOf(child);
+      return name === preset.rig || name.startsWith(`${preset.rig}.`) || name.startsWith(`${preset.rig}_`);
+    }) ??
+    null
+  );
+}
+
+/** The presets whose rig is actually in this cast, in picker order. */
+export function availableAvatars(root: THREE.Object3D): { id: AvatarId; label: string }[] {
+  return AVATAR_PRESETS.filter((preset) => rigFor(root, preset)).map(({ id, label }) => ({ id, label }));
+}
 
 /**
  * A rig tagged as an avatar in Blender ("Make avatar" in the Alt Director
@@ -46,12 +75,7 @@ const nameOf = (object: THREE.Object3D) => String(object.userData?.name ?? objec
 export function findAvatarRig(root: THREE.Object3D, id: string | null | undefined): { id: AvatarId; rig: THREE.Object3D } | null {
   const wanted = AVATAR_PRESETS.find((p) => p.id === id) ?? AVATAR_PRESETS[0];
   for (const preset of wanted.id === DEFAULT_AVATAR ? [wanted] : [wanted, AVATAR_PRESETS[0]]) {
-    const tagged = root.children.find((child) => child.userData?.tank_avatar === preset.id);
-    if (tagged) return { id: preset.id, rig: tagged };
-    const rig = root.children.find((child) => {
-      const name = nameOf(child);
-      return name === preset.rig || name.startsWith(`${preset.rig}.`) || name.startsWith(`${preset.rig}_`);
-    });
+    const rig = rigFor(root, preset);
     if (rig) return { id: preset.id, rig };
   }
   return null;
@@ -116,6 +140,14 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(toDouble) : toDouble(mesh.material);
   });
 
+  const cards: Partial<Record<ViewName, THREE.Object3D>> = {};
+  rig.traverse((object) => {
+    const view = object.userData?.tank_view as ViewName | undefined;
+    if (view && !cards[view]) cards[view] = object;
+  });
+  const views = cards.front ? (cards as AvatarViews) : null;
+  if (views) rig.userData.avatarView ??= { name: "front", flip: false };
+
   return {
     id,
     rig,
@@ -124,7 +156,70 @@ export function prepareAvatar(found: { id: string; rig: THREE.Object3D }, clips:
     baseYaw: yawOf(facing),
     clip,
     ownClips: new Set(own.map((c) => c.name)),
+    views,
   };
+}
+
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+/** Walking within this of straight at the camera shows the front card; of straight away, the back. */
+const FRONT_CONE = (55 * Math.PI) / 180;
+/** A view only changes once the angle is this far past its edge, so it doesn't flicker on the line. */
+const VIEW_HYSTERESIS = (8 * Math.PI) / 180;
+/** Stride cards alternate this often while walking (s). */
+const STRIDE_SECONDS = 0.2;
+/** Side-to-side rock while walking (radians), about the feet. */
+const WALK_ROCK = 0.045;
+
+/**
+ * Which card a directional avatar shows: the camera always sees the card face
+ * on (faceAvatar), so the view follows the walking heading relative to the
+ * camera. Side cards face right and are mirrored for walking left; a stride
+ * card, if there is one, alternates with the side card while walking.
+ *
+ * @param heading  world yaw the avatar walks towards (atan2(dx, dz)).
+ * @param toCamera world yaw from the avatar to the camera.
+ */
+export function pickView(
+  heading: number,
+  toCamera: number,
+  previous: { name: ViewName; flip: boolean },
+): { name: "front" | "side" | "back"; flip: boolean } {
+  const r = wrap(heading - toCamera);
+  const off = Math.abs(r);
+  const prev = previous.name === "walk" ? "side" : previous.name;
+  const frontEdge = FRONT_CONE + (prev === "front" ? VIEW_HYSTERESIS : prev === "side" ? -VIEW_HYSTERESIS : 0);
+  const backEdge = Math.PI - FRONT_CONE - (prev === "back" ? VIEW_HYSTERESIS : prev === "side" ? -VIEW_HYSTERESIS : 0);
+  const name = off < frontEdge ? "front" : off > backEdge ? "back" : "side";
+  // Moving to the viewer's right is +sin(r); the side card faces right.
+  const flip = name === "side" ? (Math.abs(Math.sin(r)) < 0.05 ? previous.flip : Math.sin(r) < 0) : false;
+  return { name, flip };
+}
+
+/** Show the card for this frame (no-op for single-card rigs). */
+export function poseAvatarView(
+  avatar: AvatarRig,
+  heading: number,
+  toCamera: number,
+  walking: boolean,
+  walkTime: number,
+  animate = true,
+) {
+  const views = avatar.views;
+  if (!views) return;
+  const state = avatar.rig.userData.avatarView as { name: ViewName; flip: boolean };
+  const picked = pickView(heading, toCamera, state);
+  let name: ViewName = picked.name;
+  if (name === "side" && walking && animate && views.walk && Math.floor(walkTime / STRIDE_SECONDS) % 2 === 1) name = "walk";
+  state.name = name;
+  state.flip = picked.flip;
+  const shown = views[name] ?? views.front;
+  const rock = walking && animate ? Math.sin(walkTime * 9) * WALK_ROCK : 0;
+  for (const card of Object.values(views)) {
+    if (!card) continue;
+    card.visible = card === shown;
+  }
+  shown.scale.x = picked.flip ? -1 : 1;
+  shown.rotation.z = rock;
 }
 
 /** Put the rig back on its cast mark. */
@@ -133,6 +228,7 @@ export function restoreAvatar(avatar: AvatarRig) {
   if (!castPose) return;
   avatar.rig.position.copy(castPose.position);
   avatar.rig.quaternion.copy(castPose.quaternion);
+  if (avatar.views) poseAvatarView(avatar, 0, 0, false, 0);
 }
 
 const up = new THREE.Vector3(0, 1, 0);
