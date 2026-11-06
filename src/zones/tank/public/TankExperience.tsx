@@ -1828,8 +1828,8 @@ export function TankExperience({
   const altGameLine = altGameHud.note
     ? `${altGameHud.note.label}: ${altGameHud.note.blurb}`
     : `${altGameHud.place} · ${altGameHud.shot}${altGameHud.hint ? `. ${altGameHud.hint}` : ""}`;
-  const altCameraLabel = altCameraMode === "director" ? "Director cuts · C" : "Follow · C";
   const [altCameraMode, setAltCameraMode] = useState<"director" | "follow">("director");
+  const altCameraLabel = altCameraMode === "director" ? "Director cuts · C" : "Follow · C";
 
   // Room the hero player is actually showing. In director mode that's whichever
   // room the server director cut to (not the room being browsed), otherwise it
