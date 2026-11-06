@@ -16,7 +16,8 @@ export type HouseHotspot = {
   id: string;
   label: string;
   blurb: string;
-  effect: "tv" | null;
+  /** What E does beyond showing the blurb: light the TV, open the Tavern, explain the game table. */
+  effect: "tv" | "tavern" | "table" | null;
   at: [number, number, number];
   r: number;
   node: string | null;

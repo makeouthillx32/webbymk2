@@ -42,6 +42,22 @@ import { CastMirror } from "../altDirector/castMirror";
 import { HouseFx } from "../pixel/houseFx";
 import PixelRenderer from "./PixelRenderer";
 import { mergeStaticMeshes } from "../altDirector/mergeStatic";
+import {
+  DEFAULT_STATIONS,
+  STATION_NODES,
+  barSpots,
+  tableFov,
+  tableSeats,
+  tableView,
+  withStations,
+  type HouseStations,
+} from "../altDirector/houseStations";
+import { PLAY_SECONDS, TABLE_CANVAS, TableQueue, describeTableGame, drawTableGame, type TableGame } from "../altDirector/tableGames";
+import { TavernBar, barCast, type BarCast } from "../altDirector/tavernBar";
+import { CRISP_LAYER } from "../pixel/pixelPass";
+import { loadNpcPool, type TankNpcPool } from "../../tavern/npcs";
+import type { TavernSnapshot } from "../../tavernTypes";
+import type { ChatMessage } from "../../contracts";
 
 type CameraMode = "director" | "follow";
 type Input = { keys: Set<string>; stick: { x: number; y: number } };
@@ -121,7 +137,43 @@ type AltDirector3DProps = {
   avatarChoice?: string;
   /** The floating "Walk as" picker on the canvas; off when the profile hosts it. */
   avatarPicker?: boolean;
+  /** The chat in view: its mini-game results replay on the living room's game table. */
+  chatMessages?: readonly ChatMessage[];
+  /** E at the kitchen bar: open the Tavern (the bartender game). */
+  onOpenTavern?: () => void;
 };
+
+/** How often the bar re-reads who is serving and who is waiting. */
+const TAVERN_POLL_MS = 10_000;
+/** The table cam redraws its felt at this rate while a game plays (pixel-art pacing). */
+const TABLE_FPS = 15;
+/** Watchers stay on the table this long after a game lands, before the director takes back over. */
+const TABLE_LINGER_S = 1.2;
+
+/**
+ * Where the game stations sit, measured from the furniture before the scene's
+ * static meshes are merged away. Kept on the scene, since the cached glTF is
+ * merged only once and a remount can't measure it again.
+ */
+function measureStations(root: THREE.Object3D): HouseStations {
+  const kept = root.userData.tankStations as HouseStations | undefined;
+  if (kept) return kept;
+  root.updateMatrixWorld(true);
+  const found: Partial<HouseStations> = {};
+  const box = new THREE.Box3();
+  root.traverse((o) => {
+    const name = String(o.userData?.name ?? o.name ?? "").replace(/_/g, " ");
+    for (const key of Object.keys(STATION_NODES) as (keyof HouseStations)[]) {
+      if (found[key] || !STATION_NODES[key].test(name) || !(o as THREE.Mesh).isMesh) continue;
+      box.setFromObject(o);
+      if (box.isEmpty()) continue;
+      found[key] = { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] };
+    }
+  });
+  const stations = { ...DEFAULT_STATIONS, ...found };
+  root.userData.tankStations = stations;
+  return stations;
+}
 
 const held = (keys: Set<string>, ...codes: string[]) => (codes.some((c) => keys.has(c)) ? 1 : 0);
 
@@ -204,6 +256,9 @@ function HouseWorld({
   onReady,
   onBroken,
   onAvatars,
+  tableQueue,
+  onTableResult,
+  tavern,
 }: {
   url: string;
   castUrl: string | null;
@@ -221,6 +276,10 @@ function HouseWorld({
   onBroken: () => void;
   /** The avatars this cast actually has, for the picker. */
   onAvatars: (list: { id: string; label: string }[]) => void;
+  tableQueue: TableQueue;
+  /** A table game has landed: its result, for the HUD line. */
+  onTableResult: (game: TableGame) => void;
+  tavern: { cast: BarCast; pool: TankNpcPool | null };
 }) {
   const gltf = useGLTF(url, roomSceneDecoderPath());
   // The cast (rigs, sprites, clips) ships as its own file so animating them
@@ -229,16 +288,63 @@ function HouseWorld({
   const castGltf = useGLTF(castUrl ?? url, roomSceneDecoderPath());
   const separateCast = castGltf !== gltf;
   const { set, get, size } = useThree();
-  useMemo(() => {
+  const stations = useMemo(() => {
+    const measured = measureStations(gltf.scene);
     prepareScene(gltf.scene);
     mergeStaticMeshes(
       gltf.scene,
       (mesh) => /^PX_TV_Screen/.test(objectName(mesh)),
       gltf.animations,
     );
+    return measured;
   }, [gltf]);
   useMemo(() => prepareScene(castGltf.scene, { shell: false }), [castGltf.scene]);
-  const map = useMemo(() => readMap(gltf.scene), [gltf.scene]);
+  // The walk map, plus the game stations' hotspots (the bar, the game table).
+  const map = useMemo(() => {
+    const read = readMap(gltf.scene);
+    return read ? withStations(read, stations) : null;
+  }, [gltf.scene, stations]);
+  const atTable = useMemo(() => (map ? tableSeats(map.seats, stations) : new Set<string>()), [map, stations]);
+  // The game table: a felt mat on the coffee table, and a camera straight above it.
+  const table = useMemo(() => {
+    const view = tableView(stations);
+    const canvas = document.createElement("canvas");
+    canvas.width = TABLE_CANVAS.width;
+    canvas.height = TABLE_CANVAS.height;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.Mesh(
+      new THREE.PlaneGeometry(view.mat.width, view.mat.depth),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.5 }),
+    );
+    mat.name = "Game table mat";
+    // Flat on the table, its top edge away from the couch (the table cam's up).
+    mat.rotation.x = -Math.PI / 2;
+    mat.position.set(...view.mat.at);
+    mat.layers.enable(CRISP_LAYER);
+    const camera = new THREE.PerspectiveCamera(46, 1, 0.05, 20);
+    camera.up.set(0, 0, -1);
+    camera.position.set(...view.eye);
+    camera.lookAt(...view.target);
+    camera.updateMatrixWorld();
+    return { view, canvas, ctx: canvas.getContext("2d"), texture, mat, camera, drawn: "" };
+  }, [stations]);
+  useEffect(
+    () => () => {
+      table.texture.dispose();
+      table.mat.geometry.dispose();
+      (table.mat.material as THREE.Material).dispose();
+    },
+    [table],
+  );
+  const bar = useMemo(() => new TavernBar(barSpots(stations)), [stations]);
+  useEffect(() => () => bar.dispose(), [bar]);
+  useEffect(() => {
+    bar.set(tavern.cast, tavern.pool);
+  }, [bar, tavern]);
   const shots = useMemo(() => findShots(gltf), [gltf]);
   const upperWalls = useMemo(() => {
     const list: THREE.Object3D[] = [];
@@ -328,6 +434,10 @@ function HouseWorld({
     placed: false,
     watchIndex: -1,
     nextCutAt: 0,
+    /** Watchers: the table cam holds until then. */
+    tableUntil: 0,
+    /** The table game whose result has been announced. */
+    announced: "",
   });
 
   useEffect(() => {
@@ -342,7 +452,10 @@ function HouseWorld({
     }
     follow.aspect = aspect;
     follow.updateProjectionMatrix();
-  }, [shots, follow, size.width, size.height]);
+    table.camera.aspect = aspect;
+    table.camera.fov = tableFov(table.view, aspect);
+    table.camera.updateProjectionMatrix();
+  }, [shots, follow, table, size.width, size.height]);
 
   useEffect(() => {
     loadHouseCastOnce();
@@ -573,7 +686,24 @@ function HouseWorld({
     scratch.look.set(s.x, 0.8, s.z);
     follow.lookAt(scratch.look);
 
-    const camera = s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
+    // The game table. Its felt redraws while a game plays; sitting at the
+    // table (or, for watchers, any game being played) puts the shot on it.
+    const playing = tableQueue.tick(clock.elapsedTime);
+    const drawKey = playing ? `${playing.game.id}:${Math.floor(playing.t * (animate ? TABLE_FPS : 1))}` : "idle";
+    if (drawKey !== table.drawn && table.ctx) {
+      // Reduced motion: no tumble, straight to the result.
+      drawTableGame(table.ctx, playing?.game ?? null, playing ? (animate ? playing.t : PLAY_SECONDS[playing.game.kind]) : 0);
+      table.texture.needsUpdate = true;
+      table.drawn = drawKey;
+    }
+    if (playing && playing.t >= PLAY_SECONDS[playing.game.kind] && s.announced !== playing.game.id) {
+      s.announced = playing.game.id;
+      onTableResult(playing.game);
+    }
+    if (playing) s.tableUntil = clock.elapsedTime + TABLE_LINGER_S;
+    const onTable = walker ? Boolean(s.seat && atTable.has(s.seat.id)) : clock.elapsedTime < s.tableUntil;
+
+    const camera = onTable ? table.camera : s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
     if (get().camera !== camera) set({ camera });
 
     // Paper-sprite rule: the cast are flat cards, so the visitor's card always
@@ -588,6 +718,7 @@ function HouseWorld({
 
     // The mirrored cast: where the real people are, facing the shot.
     mirror.update(dt, scratch.eye, animate);
+    bar.update(dt, animate);
     // The visitor counts as a member for the effects: dust at their feet as
     // they walk, a "spotted" pop when they first step in.
     houseFx.update(
@@ -598,7 +729,7 @@ function HouseWorld({
     );
 
     // Dollhouse: on the follow camera the upper walls drop away.
-    const showUpper = Boolean(s.shot);
+    const showUpper = onTable || Boolean(s.shot);
     if (s.upperShown !== showUpper) {
       upperWalls.forEach((o) => {
         o.visible = showUpper;
@@ -628,7 +759,7 @@ function HouseWorld({
         : near;
     }
     interact.current = spot;
-    const shotName = s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
+    const shotName = onTable ? "Table cam" : s.shot ? shots.find((shot) => shot.key === s.shot)?.label ?? "Room cam" : "Follow cam";
     const place = floor?.label ?? (walker ? "The house" : shotName.replace(/ cam$/, ""));
     const hudKey = `${place}|${shotName}|${spot?.id ?? ""}`;
     if (hudKey !== s.hudKey) {
@@ -642,6 +773,8 @@ function HouseWorld({
       <primitive object={gltf.scene} />
       {separateCast && <primitive object={castGltf.scene} />}
       <primitive object={houseFx.group} />
+      <primitive object={table.mat} />
+      <primitive object={bar.group} />
       <Visitor groupRef={visitor} sprite={Boolean(avatar)} />
     </>
   );
@@ -711,6 +844,21 @@ function Stick({ input }: { input: React.MutableRefObject<Input> }) {
 
 const AVATAR_STORAGE_KEY = "tank.altDirector.avatar";
 
+/** A table game's result as a HUD note. */
+function gameNote(game: TableGame): HouseHotspot {
+  return { ...STAND_PROMPT, id: `table-${game.id}`, label: "Game table", blurb: describeTableGame(game), seat: undefined };
+}
+
+/** What the bar says when you walk up to it. */
+function tavernBlurb(snapshot: TavernSnapshot | null): string {
+  if (!snapshot) return "The Tavern. Opening it in chat.";
+  if (!snapshot.enabled) return "The Tavern is closed tonight.";
+  const waiting = snapshot.chits.filter((c) => c.outcome === "pending").length;
+  const orders = waiting === 1 ? "1 order waiting" : `${waiting} orders waiting`;
+  if (snapshot.shift) return `${snapshot.shift.bartenderName} has the apron. ${orders}. Opening the Tavern in chat.`;
+  return `Nobody is behind the bar. ${orders}. Grab the apron in the Tavern.`;
+}
+
 export default function AltDirector3D({
   url,
   castUrl = null,
@@ -727,6 +875,8 @@ export default function AltDirector3D({
   hideOverlayHud = false,
   avatarChoice,
   avatarPicker = true,
+  chatMessages,
+  onOpenTavern,
 }: AltDirector3DProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const input = useRef<Input>({ keys: new Set(), stick: { x: 0, y: 0 } });
@@ -772,6 +922,39 @@ export default function AltDirector3D({
     }
     wrapper.current?.focus({ preventScroll: true });
   };
+  // The game table replays the chat's mini-games, in order.
+  const tableQueue = useMemo(() => new TableQueue(), []);
+  useEffect(() => {
+    if (chatMessages?.length) tableQueue.offer(chatMessages, Date.now());
+  }, [chatMessages, tableQueue]);
+  // The bar: who has the apron and who is waiting, from the public Tavern snapshot.
+  const [tavern, setTavern] = useState<{ cast: BarCast; pool: TankNpcPool | null }>({ cast: { bartender: null, guests: [] }, pool: null });
+  const tavernSnapshot = useRef<TavernSnapshot | null>(null);
+  useEffect(() => {
+    if (!ready || !visible) return;
+    let live = true;
+    const refresh = async () => {
+      try {
+        const [res, pool] = await Promise.all([fetch("/api/tank/tavern"), loadNpcPool()]);
+        const snapshot = res.ok ? ((await res.json()) as TavernSnapshot) : null;
+        if (!live) return;
+        tavernSnapshot.current = snapshot;
+        const cast = barCast(snapshot);
+        setTavern((previous) =>
+          previous.pool === pool && JSON.stringify(previous.cast) === JSON.stringify(cast) ? previous : { cast, pool },
+        );
+      } catch {
+        // The bar just stays as it was.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, TAVERN_POLL_MS);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [ready, visible]);
+
   const wanted = avatarChoice ?? chosenAvatar;
   const wornAvatar = avatarList.some((a) => a.id === wanted) ? wanted : DEFAULT_AVATAR;
 
@@ -795,6 +978,7 @@ export default function AltDirector3D({
       broken: () => onFailed?.(),
       avatars: (list: { id: string; label: string }[]) => setAvatarList(list),
       hud: (next: Hud) => setHud(next),
+      tableResult: (game: TableGame) => setNote(gameNote(game)),
     }),
     [onFailed],
   );
@@ -824,6 +1008,11 @@ export default function AltDirector3D({
       return;
     }
     if (spot.effect === "tv") effects.current.tv = !effects.current.tv;
+    if (spot.effect === "tavern") {
+      setNote({ ...spot, blurb: tavernBlurb(tavernSnapshot.current) });
+      onOpenTavern?.();
+      return;
+    }
     setNote(spot);
   };
 
@@ -913,6 +1102,9 @@ export default function AltDirector3D({
               onReady={handlers.ready}
               onBroken={handlers.broken}
               onAvatars={handlers.avatars}
+              tableQueue={tableQueue}
+              onTableResult={handlers.tableResult}
+              tavern={tavern}
             />
             <PixelRenderer />
           </Suspense>

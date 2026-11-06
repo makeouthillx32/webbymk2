@@ -149,6 +149,8 @@ export type ChatConsolePanelProps = {
   currentUserTokens?: number;
   onOpenMessenger?: () => void;
   onOpenSignIn?: () => void;
+  /** Bumped by the house (E at the kitchen bar): opens the Tavern. */
+  tavernRequest?: number;
 };
 
 const USER_COLORS = [
@@ -208,9 +210,13 @@ export function ChatConsolePanel({
   currentUserTokens = 0,
   onOpenMessenger,
   onOpenSignIn,
+  tavernRequest = 0,
 }: ChatConsolePanelProps) {
   const [superChatOpen, setSuperChatOpen] = useState(false);
   const [tavernOverlayOpen, setTavernOverlayOpen] = useState(false);
+  useEffect(() => {
+    if (tavernRequest > 0) setTavernOverlayOpen(true);
+  }, [tavernRequest]);
   const [liveUserTokens, setLiveUserTokens] = useState(currentUserTokens);
   useEffect(() => setLiveUserTokens(currentUserTokens), [currentUserTokens]);
   const [roomDropdownOpen, setRoomDropdownOpen] = useState(false);
