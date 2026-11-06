@@ -39,7 +39,10 @@ describe("house cast wiring", () => {
     const hook = read("..", "director", "useServerDirector.ts");
     expect(hook).toContain('{ event: "house_cast" }, (payload) => publishHouseCast(payload.payload)');
     const house = read("components", "AltDirector3D.tsx");
-    expect(house).toContain("new CastMirror(castGltf.scene, castGltf.animations, { skip: avatar?.rig ?? null })");
+    expect(house).toContain("new CastMirror(castGltf.scene, castGltf.animations, {");
+    expect(house).toContain("skip: avatar?.rig ?? null,");
+    // The mirrored people and pets sit where the house has seats.
+    expect(house).toContain("seatFor: (x, z, room, kind, taken) =>");
     expect(house).toContain("mirror.update(dt, scratch.eye, animate);");
   });
 });

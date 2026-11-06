@@ -20,6 +20,7 @@ import {
   moveWithCollision,
   nearestHotspot,
   nearestSeat,
+  seatLift as seatLiftFor,
   parseHouseMap,
   type HouseHotspot,
   type HouseSeat,
@@ -47,10 +48,14 @@ type Input = { keys: Set<string>; stick: { x: number; y: number } };
 type Hud = { place: string; shot: string; hotspot: HouseHotspot | null };
 /** Shared between the HUD and the frame loop: the TV, and a pending sit/stand. */
 type Effects = { tv: boolean; seat: string | null };
-/** A seated paper-doll's hip is this high (its Sit clip); a higher seat lifts it. */
-const SIT_HIP_M = 0.47;
-/** A flat card (no Sit clip) sinks until this much of it is below the seat top. */
-const FLAT_HIP_M = 0.82;
+/**
+ * How close a mirrored body's foot point must be to a seat to sit on it. A
+ * seated person's box ends at their feet, just in front of the seat; a pet's
+ * ends on the cushion, which the floor projection throws further from the
+ * camera, so pets get more room.
+ */
+const CAST_SEAT_REACH = 0.75;
+const CAST_PET_SEAT_REACH = 1.1;
 /** Skates: how fast speed builds (per s), and how slowly it bleeds off when you let go. */
 const GLIDE_ACCEL = 3;
 const GLIDE_COAST = 1.3;
@@ -272,8 +277,14 @@ function HouseWorld({
   // no skit, and a member no camera can see is not rendered. The visitor's
   // own body is theirs to move.
   const mirror = useMemo(
-    () => new CastMirror(castGltf.scene, castGltf.animations, { skip: avatar?.rig ?? null }),
-    [castGltf.scene, castGltf.animations, avatar],
+    () =>
+      new CastMirror(castGltf.scene, castGltf.animations, {
+        skip: avatar?.rig ?? null,
+        // The real people (and pets) sit where the house has seats.
+        seatFor: (x, z, room, kind, taken) =>
+          nearestSeat(map, x, z, { reach: kind === "human" ? CAST_SEAT_REACH : CAST_PET_SEAT_REACH, room, skip: taken }),
+      }),
+    [castGltf.scene, castGltf.animations, avatar, map],
   );
   useEffect(() => () => mirror.dispose(), [mirror]);
   const houseFx = useMemo(() => new HouseFx(), []);
@@ -478,7 +489,7 @@ function HouseWorld({
     // lifts it; a flat card sinks into the seat and the cushion hides its legs.
     let seatLift = 0;
     if (s.seat && avatar) {
-      seatLift = sitAction.current ? Math.min(Math.max(s.seat.at[1] - SIT_HIP_M, 0), 0.3) : s.seat.at[1] - FLAT_HIP_M;
+      seatLift = seatLiftFor(s.seat.at[1], sitAction.current ? "sit-clip" : "flat");
     }
     if (visitor.current) {
       visitor.current.visible = walker;
@@ -568,7 +579,7 @@ function HouseWorld({
     // they walk, a "spotted" pop when they first step in.
     houseFx.update(
       dt,
-      walker && avatar ? [...mirror.members, { id: "visitor", kind: "human", x: s.x, z: s.z, walking: stepping }] : mirror.members,
+      walker && avatar ? [...mirror.members, { id: "visitor", kind: "human", x: s.x, z: s.z, walking: stepping, seated: Boolean(s.seat) }] : mirror.members,
       scratch.eye,
       animate,
     );

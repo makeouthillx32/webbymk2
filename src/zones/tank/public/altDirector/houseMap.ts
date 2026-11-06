@@ -361,20 +361,46 @@ export function nearestHotspot(map: HouseMap, x: number, z: number): HouseHotspo
 export const SEAT_REACH = 1.2;
 
 /** The closest seat within reach in the walker's room, if any. */
-export function nearestSeat(map: HouseMap, x: number, z: number): HouseSeat | null {
+export function nearestSeat(
+  map: HouseMap,
+  x: number,
+  z: number,
+  options: { reach?: number; room?: string | null; skip?: ReadonlySet<string> } = {},
+): HouseSeat | null {
   const floor = floorAt(map, x, z);
-  const here = floor ? areaOf(floor) : null;
+  // The floor under the point decides the room; off every floor (a mirrored
+  // body's foot point can land a little short), the room the caller says.
+  const here = floor ? areaOf(floor) : (options.room ?? null);
+  const reach = options.reach ?? SEAT_REACH;
   let best: HouseSeat | null = null;
   let bestDistance = Infinity;
   for (const seat of map.seats) {
     if (here && seat.room && seat.room !== here) continue;
+    if (options.skip?.has(seat.id)) continue;
     const d = Math.hypot(seat.at[0] - x, seat.at[2] - z);
-    if (d <= SEAT_REACH && d < bestDistance) {
+    if (d <= reach && d < bestDistance) {
       best = seat;
       bestDistance = d;
     }
   }
   return best;
+}
+
+/** A seated paper-doll's hip is this high (its Sit clip); a higher seat lifts it. */
+export const SIT_HIP_M = 0.47;
+/** A flat card (no Sit clip) sinks until this much of it is below the seat top. */
+export const FLAT_HIP_M = 0.82;
+
+/**
+ * How far to raise (or sink) a body sitting on a seat whose top is `seatTop`
+ * high. A Sit clip puts the hip at SIT_HIP_M, so a taller seat lifts it a
+ * little; a flat person card sinks so the cushion hides its legs; an animal
+ * simply gets up on the seat, the way a cat takes a chair.
+ */
+export function seatLift(seatTop: number, body: "sit-clip" | "flat" | "animal"): number {
+  if (body === "animal") return seatTop;
+  if (body === "sit-clip") return Math.min(Math.max(seatTop - SIT_HIP_M, 0), 0.3);
+  return seatTop - FLAT_HIP_M;
 }
 
 /** Does the ground segment a→b cross any wall? (slab test per rect) */
