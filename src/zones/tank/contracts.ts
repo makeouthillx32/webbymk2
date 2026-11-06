@@ -438,7 +438,7 @@ export type ChatMessage = {
     droppedItemName?: string;
     droppedItemIcon?: string;
   };
-  rouletteResult?: { chamber: number; survived: boolean; timeoutSeconds?: number };
+  rouletteResult?: { chamber: number; survived: boolean; timeoutSeconds?: number; chambersRemaining?: number; reloaded?: boolean };
   crateResult?: {
     crateName: string;
     rarity: ItemRarity;

@@ -4,6 +4,18 @@ import { tryFireOverlayFx } from "./overlayFxStore";
 import type { ChatMessage, ChatMessageType } from "../contracts";
 import type { ItemRarity } from "../itemRarity";
 import { TANK_ITEM_CATALOG, TANK_ITEM_ICONS, getTankItemIcon } from "../tankItemCatalog";
+import {
+  enqueueTurn,
+  completeTurn,
+  leaveStationQueue,
+  pullRouletteTrigger,
+  getStation,
+  formatLinesStatusReport,
+  type StationType,
+} from "./minigameStationQueue";
+import { getTavernSnapshotAction } from "./tavernSnapshot";
+import { joinTavernQueueAction, leaveTavernQueueAction } from "./tavernQueue";
+import { startTavernMutinyAction, castTavernMutinyVoteAction } from "./tavernMutiny";
 
 export type ItemActionDefinition = {
   slug: string;
@@ -291,6 +303,102 @@ export const FLAVOR_RNG_ACTIONS = [
 
 const SLOT_SYMBOLS = ["🍒", "🍋", "💎", "🔔", "7️⃣", "⚡"];
 
+function scheduleQueueAdvance(stationType: StationType) {
+  const station = getStation(stationType);
+  setTimeout(async () => {
+    const next = completeTurn(stationType);
+    if (!next) return;
+
+    try {
+      if (stationType === "coin") {
+        await executeCoinflip(
+          next.userId,
+          next.userName,
+          next.roomId,
+          next.params.choice as "heads" | "tails",
+          next.params.wager as number,
+        );
+      } else if (stationType === "dice") {
+        await executeDiceRoll(
+          next.userId,
+          next.userName,
+          next.roomId,
+          next.params.sides as number,
+        );
+      } else if (stationType === "slots") {
+        await executeSlots(
+          next.userId,
+          next.userName,
+          next.roomId,
+          next.params.wager as number,
+        );
+      } else if (stationType === "roulette") {
+        await executeRoulette(next.userId, next.userName, next.roomId);
+      } else if (stationType === "unbox") {
+        await executeCrateUnbox(next.userId, next.userName, next.roomId);
+      }
+    } catch (err) {
+      console.error(`[MinigameQueue] Auto-turn execution error for ${stationType}:`, err);
+    }
+
+    scheduleQueueAdvance(stationType);
+  }, station.turnDurationMs);
+}
+
+async function dispatchTurnBasedMinigame(
+  stationType: StationType,
+  userId: string,
+  userName: string,
+  roomId: string,
+  command: string,
+  params: Record<string, unknown>,
+  executeFn: () => Promise<ChatMessage | null>,
+): Promise<ChatMessage | null> {
+  const res = enqueueTurn(stationType, { userId, userName, roomId, command, params });
+  const station = getStation(stationType);
+
+  if (res.status === "turn_ready") {
+    const msg = await executeFn();
+    scheduleQueueAdvance(stationType);
+    return msg;
+  } else if (res.status === "queued") {
+    return await broadcastActionMessage(
+      roomId,
+      userId,
+      userName,
+      `🚶 @${userName} stepped in line for ${station.name}! (Position: #${res.position} | ${res.queueLength} in line)`,
+      "action",
+    );
+  } else if (res.status === "already_queued") {
+    return await broadcastActionMessage(
+      roomId,
+      userId,
+      userName,
+      `⏳ @${userName}, you're already in line at Position #${res.position} for ${station.name}!`,
+      "action",
+    );
+  } else if (res.status === "queue_full") {
+    if (stationType === "roulette") {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `🔫 The Russian Roulette table is full! (Maximum 6 players per round). Wait for the cylinder to reset!`,
+        "action",
+      );
+    } else {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `⚠️ The line for ${station.name} is currently full (${res.maxQueue}/${res.maxQueue}). Try again shortly!`,
+        "action",
+      );
+    }
+  }
+  return null;
+}
+
 // Main Chat Command and RNG Router
 export async function processChatRngTrigger(
   userId: string,
@@ -301,6 +409,143 @@ export async function processChatRngTrigger(
   const trimmed = messageText.trim();
   const lower = trimmed.toLowerCase();
 
+  // 0. Line & Queue inspection / management
+  if (lower === "/line" || lower === "/lines" || lower === "/queue") {
+    let tavernSnap = null;
+    try {
+      tavernSnap = await getTavernSnapshotAction();
+    } catch {}
+    return await broadcastActionMessage(roomId, userId, "SYSTEM", formatLinesStatusReport(tavernSnap), "action");
+  }
+
+  // Bartender & Tavern commands (/bar, /tavern, /apron, /mutiny)
+  if (lower === "/bar" || lower === "/tavern" || lower === "/bartender") {
+    try {
+      const snap = await getTavernSnapshotAction();
+      if (!snap.enabled) {
+        return await broadcastActionMessage(roomId, userId, "SYSTEM", "🍺 The Tank Tavern is currently closed.", "action");
+      }
+      if (snap.shift) {
+        return await broadcastActionMessage(
+          roomId,
+          userId,
+          "SYSTEM",
+          `🍺 [TAVERN] Active Bartender: @${snap.shift.bartenderName} | Chaos: ${snap.shift.chaos}% | Tips: ${snap.shift.tipsTokens} Tokens | Orders: ${snap.chits.length} | Line: ${snap.queueLength} waiting for Apron.\n💡 Type /bar join to get in line for the Apron, or /mutiny to vote!`,
+          "action",
+        );
+      } else {
+        return await broadcastActionMessage(
+          roomId,
+          userId,
+          "SYSTEM",
+          `🍺 [TAVERN] The bar is unstaffed! No bartender is on shift. Line: ${snap.queueLength} waiting.\n💡 Type /bar join to step up and claim the Apron!`,
+          "action",
+        );
+      }
+    } catch {
+      return await broadcastActionMessage(roomId, userId, "SYSTEM", "🍺 Failed to fetch Tavern status.", "action");
+    }
+  }
+
+  if (lower === "/bar join" || lower === "/bartender join" || lower === "/apron" || lower === "/apron join") {
+    const res = await joinTavernQueueAction();
+    if (res.success) {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `🍺 @${userName} stepped in line for the Bartender Apron! (Position: #${res.position} in queue)`,
+        "action",
+      );
+    } else {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `⚠️ @${userName}: ${res.error ?? "Failed to join Tavern queue."}`,
+        "action",
+      );
+    }
+  }
+
+  if (lower === "/bar leave" || lower === "/bartender leave" || lower === "/apron leave") {
+    const res = await leaveTavernQueueAction();
+    if (res.success) {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `🍺 @${userName} stepped out of the Tavern queue.`,
+        "action",
+      );
+    } else {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `⚠️ @${userName}: ${res.error ?? "Failed to leave Tavern queue."}`,
+        "action",
+      );
+    }
+  }
+
+  if (lower === "/mutiny" || lower.startsWith("/mutiny ")) {
+    const parts = lower.split(/\s+/);
+    const sub = parts[1];
+    if (sub === "overturn" || sub === "defend") {
+      const snap = await getTavernSnapshotAction();
+      if (!snap.mutiny) {
+        return await broadcastActionMessage(roomId, userId, userName, `⚠️ There is no active mutiny to vote on!`, "action");
+      }
+      const res = await castTavernMutinyVoteAction(snap.mutiny.id, sub);
+      if (res.success) {
+        return await broadcastActionMessage(
+          roomId,
+          userId,
+          userName,
+          `⚔️ @${userName} voted to ${sub.toUpperCase()} the current Bartender!`,
+          "action",
+        );
+      } else {
+        return await broadcastActionMessage(roomId, userId, userName, `⚠️ @${userName}: ${res.error}`, "action");
+      }
+    } else {
+      const res = await startTavernMutinyAction();
+      if (res.success) {
+        return await broadcastActionMessage(
+          roomId,
+          userId,
+          userName,
+          `⚔️ MUTINY! @${userName} called a mutiny against the Bartender! Type /mutiny overturn or /mutiny defend to vote!`,
+          "action",
+        );
+      } else {
+        return await broadcastActionMessage(roomId, userId, userName, `⚠️ @${userName}: ${res.error}`, "action");
+      }
+    }
+  }
+
+  if (lower === "/leave" || lower === "/leavequeue") {
+    const res = leaveStationQueue(userId);
+    if (res.left) {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `${userName} stepped out of line for ${res.stationName}.`,
+        "action",
+      );
+    } else {
+      return await broadcastActionMessage(
+        roomId,
+        userId,
+        userName,
+        `${userName} is not waiting in any minigame station line.`,
+        "action",
+      );
+    }
+  }
+
   // 1. /dice or /roll [sides]
   if (lower.startsWith("/dice") || lower.startsWith("/roll")) {
     const parts = lower.split(/\s+/);
@@ -308,7 +553,15 @@ export async function processChatRngTrigger(
     if (parts.length > 1 && !isNaN(Number(parts[1]))) {
       sides = Math.min(Math.max(Number(parts[1]), 2), 1000);
     }
-    return await executeDiceRoll(userId, userName, roomId, sides);
+    return await dispatchTurnBasedMinigame(
+      "dice",
+      userId,
+      userName,
+      roomId,
+      parts[0],
+      { sides },
+      () => executeDiceRoll(userId, userName, roomId, sides),
+    );
   }
 
   // 2. /flip or /coinflip [heads|tails] [wager]
@@ -318,7 +571,15 @@ export async function processChatRngTrigger(
     let wager = 10;
     const numPart = parts.find((p) => !isNaN(Number(p)) && Number(p) > 0);
     if (numPart) wager = Math.min(Math.max(Number(numPart), 1), 500);
-    return await executeCoinflip(userId, userName, roomId, choice, wager);
+    return await dispatchTurnBasedMinigame(
+      "coin",
+      userId,
+      userName,
+      roomId,
+      parts[0],
+      { choice, wager },
+      () => executeCoinflip(userId, userName, roomId, choice, wager),
+    );
   }
 
   // 3. /slots or /spin [wager]
@@ -327,17 +588,43 @@ export async function processChatRngTrigger(
     let wager = 20;
     const numPart = parts.find((p) => !isNaN(Number(p)) && Number(p) > 0);
     if (numPart) wager = Math.min(Math.max(Number(numPart), 5), 500);
-    return await executeSlots(userId, userName, roomId, wager);
+    return await dispatchTurnBasedMinigame(
+      "slots",
+      userId,
+      userName,
+      roomId,
+      parts[0],
+      { wager },
+      () => executeSlots(userId, userName, roomId, wager),
+    );
   }
 
   // 4. /roulette or /tankroulette
   if (lower.startsWith("/roulette") || lower.startsWith("/tankroulette")) {
-    return await executeRoulette(userId, userName, roomId);
+    const parts = lower.split(/\s+/);
+    return await dispatchTurnBasedMinigame(
+      "roulette",
+      userId,
+      userName,
+      roomId,
+      parts[0],
+      {},
+      () => executeRoulette(userId, userName, roomId),
+    );
   }
 
   // 5. /unbox or /crate
   if (lower.startsWith("/unbox") || lower.startsWith("/crate")) {
-    return await executeCrateUnbox(userId, userName, roomId);
+    const parts = lower.split(/\s+/);
+    return await dispatchTurnBasedMinigame(
+      "unbox",
+      userId,
+      userName,
+      roomId,
+      parts[0],
+      {},
+      () => executeCrateUnbox(userId, userName, roomId),
+    );
   }
 
   // 6. /use <item_slug>
@@ -556,16 +843,15 @@ export async function executeRoulette(
   userName: string,
   roomId: string,
 ): Promise<ChatMessage | null> {
-  const chamber = Math.floor(Math.random() * 6) + 1;
-  const survived = chamber !== 6;
+  const { chamber, survived, chambersRemaining } = pullRouletteTrigger();
 
   const admin = createAdminClient();
 
   if (survived) {
     await awardProfileRewards(admin, userId, 20, 15);
-    const fullText = `🔫 *CLICK* — Chamber ${chamber}/6 was empty! ${userName} survived Tank Roulette! (+20 XP, +15 Tokens)`;
+    const fullText = `🔫 *CLICK* — Chamber ${chamber}/6 was empty! (${chambersRemaining} chambers left) ${userName} survived Tank Roulette! (+20 XP, +15 Tokens)`;
     return await saveAndBroadcast(admin, roomId, userId, userName, fullText, "roulette", {
-      rouletteResult: { chamber, survived: true },
+      rouletteResult: { chamber, survived: true, chambersRemaining },
     });
   } else {
     // 2-minute timeout on loss
