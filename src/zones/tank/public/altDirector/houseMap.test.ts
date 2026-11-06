@@ -173,6 +173,8 @@ describe("alt director camera cuts", () => {
     expect(pickShot([foyer, kitchen], null, head, feet, map, "foyer")).toBe("foyer");
     at(6, 2.5);
     expect(pickShot([foyer, kitchen], "foyer", head, feet, map, "kitchen")).toBe("kitchen");
+    // Just cut to the foyer: it holds while it still sees them, even over the seam.
+    expect(pickShot([foyer, kitchen], "foyer", head, feet, map, "kitchen", true)).toBe("foyer");
   });
 
   test("a camera that can't see you (wall, or behind it) never takes the shot", () => {

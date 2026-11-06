@@ -73,6 +73,8 @@ export function pickShot(
   feet: THREE.Vector3,
   map: HouseMap,
   room: string | null,
+  /** Just cut: keep the current shot while it can still see them (no flicker on a doorway seam). */
+  hold = false,
 ): string | null {
   const roomHasCamera = shots.some((shot) => belongsTo(shot.key, room));
   let currentSees = false;
@@ -85,6 +87,7 @@ export function pickShot(
     if (belongsTo(shot.key, room) && (!bestInRoom || score > bestInRoom.score)) bestInRoom = { key: shot.key, score };
     if (!best || score > best.score) best = { key: shot.key, score };
   }
+  if (hold && currentSees && currentKey) return currentKey;
   if (roomHasCamera) {
     if (currentSees && currentKey && belongsTo(currentKey, room)) return currentKey;
     return bestInRoom?.key ?? null;

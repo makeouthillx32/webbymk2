@@ -56,6 +56,10 @@ type Effects = { tv: boolean; seat: string | null };
  */
 const CAST_SEAT_REACH = 0.75;
 const CAST_PET_SEAT_REACH = 1.1;
+/** Director cuts: how long the walk direction outlives letting go of the keys. */
+const BASIS_GRACE_S = 1;
+/** Director cuts: a fresh shot holds at least this long while it can still see the walker. */
+const SHOT_MIN_HOLD_S = 1.2;
 /** Skates: how fast speed builds (per s), and how slowly it bleeds off when you let go. */
 const GLIDE_ACCEL = 3;
 const GLIDE_COAST = 1.3;
@@ -307,6 +311,10 @@ function HouseWorld({
     followYaw: map?.spawn[2] ?? 0,
     shot: null as string | null,
     basis: null as { fx: number; fz: number } | null,
+    /** Until when the walk direction stays as it was (a pause at a doorway mustn't flip it). */
+    basisUntil: 0,
+    /** When the camera last cut (shots hold a moment so a doorway seam can't flicker them). */
+    shotAt: 0,
     upperShown: null as boolean | null,
     hudKey: "",
     walkTime: 0,
@@ -420,10 +428,13 @@ function HouseWorld({
     // The basis is the camera's facing on the ground. On a fixed camera it is
     // held for as long as the visitor keeps moving: a cut mid-stride must not
     // flip which way "up" walks (the classic fixed-camera trap).
+    // It also outlives a short pause: let go at a door frame and press again,
+    // and "up" still walks the way it did, not back out under the new camera.
     const active = s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
+    if (moving) s.basisUntil = clock.elapsedTime + BASIS_GRACE_S;
     if (!s.shot) {
       s.basis = { fx: Math.sin(s.followYaw), fz: Math.cos(s.followYaw) };
-    } else if (!moving || !s.basis) {
+    } else if (!s.basis || (!moving && clock.elapsedTime >= s.basisUntil)) {
       active.getWorldDirection(scratch.dir);
       const length = Math.hypot(scratch.dir.x, scratch.dir.z) || 1;
       s.basis = { fx: scratch.dir.x / length, fz: scratch.dir.z / length };
@@ -543,7 +554,9 @@ function HouseWorld({
       } else {
         scratch.head.set(s.x, 1.35, s.z);
         scratch.feet.set(s.x, 0.1, s.z);
-        s.shot = pickShot(shots, s.shot, scratch.head, scratch.feet, map, floor?.room ?? null);
+        const next = pickShot(shots, s.shot, scratch.head, scratch.feet, map, floor?.room ?? null, clock.elapsedTime - s.shotAt < SHOT_MIN_HOLD_S);
+        if (next !== s.shot) s.shotAt = clock.elapsedTime;
+        s.shot = next;
       }
     } else {
       s.shot = null;
