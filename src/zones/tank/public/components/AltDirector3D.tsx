@@ -56,6 +56,7 @@ import {
 } from "../altDirector/houseStations";
 import { PLAY_SECONDS, TABLE_CANVAS, TableQueue, describeTableGame, drawTableGame, type TableGame } from "../altDirector/tableGames";
 import { TavernBar, barCast, type BarCast } from "../altDirector/tavernBar";
+import { BASIS_GRACE_S, holdBasis, type Basis } from "../altDirector/walkBasis";
 import { TV_CANVAS, TvFeed, drawTv } from "../altDirector/houseTv";
 import { CRISP_LAYER } from "../pixel/pixelPass";
 import { loadNpcPool, type TankNpcPool } from "../../tavern/npcs";
@@ -75,8 +76,6 @@ type Effects = { tv: boolean; seat: string | null };
  */
 const CAST_SEAT_REACH = 0.75;
 const CAST_PET_SEAT_REACH = 1.1;
-/** Director cuts: how long the walk direction outlives letting go of the keys. */
-const BASIS_GRACE_S = 1;
 /** Director cuts: a fresh shot holds at least this long while it can still see the walker. */
 const SHOT_MIN_HOLD_S = 1.2;
 /** Skates: how fast speed builds (per s), and how slowly it bleeds off when you let go. */
@@ -451,7 +450,9 @@ function HouseWorld({
     yaw: map?.spawn[2] ?? 0,
     followYaw: map?.spawn[2] ?? 0,
     shot: null as string | null,
-    basis: null as { fx: number; fz: number } | null,
+    basis: null as Basis | null,
+    /** The input direction the walk direction is held for (see walkBasis.ts). */
+    basisInput: null as [number, number] | null,
     /** Until when the walk direction stays as it was (a pause at a doorway mustn't flip it). */
     basisUntil: 0,
     /** When the camera last cut (shots hold a moment so a doorway seam can't flicker them). */
@@ -579,20 +580,31 @@ function HouseWorld({
     const moving = amount > 0.08;
 
     // The basis is the camera's facing on the ground. On a fixed camera it is
-    // held for as long as the visitor keeps moving: a cut mid-stride must not
-    // flip which way "up" walks (the classic fixed-camera trap).
-    // It also outlives a short pause: let go at a door frame and press again,
-    // and "up" still walks the way it did, not back out under the new camera.
+    // held while the visitor keeps pushing the same way (and through a short
+    // pause): a cut mid-stride must not flip which way "up" walks. Steering
+    // somewhere new re-reads the camera, so left is left on the screen in
+    // front of them (see walkBasis.ts).
     const active = s.shot ? shots.find((shot) => shot.key === s.shot)?.camera ?? follow : follow;
-    if (moving) s.basisUntil = clock.elapsedTime + BASIS_GRACE_S;
     if (!s.shot) {
       s.basis = { fx: Math.sin(s.followYaw), fz: Math.cos(s.followYaw) };
-    } else if (!s.basis || (!moving && clock.elapsedTime >= s.basisUntil)) {
+      s.basisInput = null;
+      if (moving) s.basisUntil = clock.elapsedTime + BASIS_GRACE_S;
+    } else {
       active.getWorldDirection(scratch.dir);
       const length = Math.hypot(scratch.dir.x, scratch.dir.z) || 1;
-      s.basis = { fx: scratch.dir.x / length, fz: scratch.dir.z / length };
+      const hold = holdBasis(
+        { basis: s.basis, input: s.basisInput, until: s.basisUntil },
+        { fx: scratch.dir.x / length, fz: scratch.dir.z / length },
+        forward,
+        right,
+        moving,
+        clock.elapsedTime,
+      );
+      s.basis = hold.basis;
+      s.basisInput = hold.input;
+      s.basisUntil = hold.until;
     }
-    const { fx, fz } = s.basis;
+    const { fx, fz } = s.basis ?? { fx: 0, fz: 1 };
     const wx = fx * forward - fz * right;
     const wz = fz * forward + fx * right;
     const speed = held(keys, "ShiftLeft", "ShiftRight") || amount > 1.25 ? RUN_SPEED : WALK_SPEED;
